@@ -91,6 +91,9 @@ class Tracker:
         # Runs edbb0d8b / 8e73b7dc: pedidos de corte del historial del LLM
         # (workspace de cada llamada), con su lugar en `timeline`.
         self.history_reset_calls: list[str] = []
+        # Costo del LLM registrado al episodio: (episodio, tokens de entrada)
+        # de cada registro (también los de los intentos cortados, V2).
+        self.episode_llm_usage: list[tuple[str, int]] = []
         # Costo real (2026-10-06): lo que el turno le manda al registro del episodio.
         self.usage_records: list[RecordEpisodeLLMUsageInput] = []
 
@@ -350,8 +353,8 @@ def _make_fake_activities(
     # Costo del turno al episodio: solo corre cuando el LLM reporta `usage`.
     @activity.defn(name="record_episode_llm_usage")
     async def fake_record_episode_llm_usage(input: RecordEpisodeLLMUsageInput) -> None:
+        tracker.episode_llm_usage.append((input.episode_id, input.prompt_tokens))
         tracker.usage_records.append(input)
-        return None
 
     return [
         # El egreso del workflow V2 (motor de decisiones F4) es la activity

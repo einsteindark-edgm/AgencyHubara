@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import asdict, replace
 from typing import Any
 
@@ -391,14 +392,20 @@ async def _send_freeform(
             cost_usd_micros=None,
             rate_card_version=None,
         )
-        for wamid in delivered_wamids:
-            log_entry = replace(log_entry, wa_message_id=wamid)
-            _append_outbound_to_active_episode(metadata, log_entry)
-        metadata["last_outbound"] = asdict(log_entry)
-        _record_freeform_send(metadata, fingerprint, now_ms)
-        # Misma escritura: el índice de citas no merece IO extra.
-        _merge_outbound_text_index(metadata, sent_bubbles, author)
-        _write_metadata(session_id, metadata)
+        entries = [replace(log_entry, wa_message_id=wamid) for wamid in delivered_wamids]
+
+        def _record_sent(fresh: dict[str, Any]) -> dict[str, Any]:
+            for entry in entries:
+                _append_outbound_to_active_episode(fresh, entry)
+            fresh["last_outbound"] = asdict(entries[-1])
+            _record_freeform_send(fresh, fingerprint, now_ms)
+            # Misma escritura: el índice de citas no merece IO extra.
+            _merge_outbound_text_index(fresh, sent_bubbles, author)
+            return fresh
+
+        # Sobre la lectura fresca: el envío tardó segundos (1,5 s entre
+        # burbujas) y la copia leída antes ya no es la de disco.
+        _update_metadata(session_id, _record_sent)
 
     if failed_error is not None:
         log.error(
@@ -439,21 +446,9 @@ async def send_image_to_session(
 
     # PM-B10: registrar el outbound (simetría con el path de texto) — sin esto
     # las fotos del operador son invisibles para cost-tracking / analytics /
-    # `lead_state.engaged`. Solo si el envío tuvo éxito, sobre lectura fresca.
+    # `lead_state.engaged`. Solo si el envío tuvo éxito, sobre lectura fresca
+    # y bajo el candado del store.
     if result.ok:
-        fresh = _read_metadata(session_id)
-        if not fresh and metadata:
-            # PM2-B2: la lectura fresca vino vacía (OSError transitorio / JSON
-            # corrupto) para una sesión que 30ms antes TENÍA datos. Escribir el
-            # dict vacío mutado borraría active_route=humano/episodes → el bot
-            # revive en medio de la intervención. El log entry es best-effort:
-            # mejor perderlo que perder la metadata.
-            log.error(
-                "send_image outbound log skipped: fresh metadata read came back "
-                "empty for a session that had data",
-                session_id=session_id,
-            )
-            return result
         log_entry = OutboundLogEntry(
             sent_at_ms=_now_ms(),
             wa_message_id=result.wa_message_id or "",
@@ -463,9 +458,25 @@ async def send_image_to_session(
             cost_usd_micros=None,
             rate_card_version=None,
         )
-        _append_outbound_to_active_episode(fresh, log_entry)
-        fresh["last_outbound"] = asdict(log_entry)
-        _write_metadata(session_id, fresh)
+
+        def _record_image(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if not fresh and metadata:
+                # PM2-B2: la lectura fresca vino vacía (OSError transitorio /
+                # JSON corrupto) para una sesión que 30ms antes TENÍA datos.
+                # Escribir el dict vacío mutado borraría active_route=humano/
+                # episodes → el bot revive en medio de la intervención. El log
+                # entry es best-effort: mejor perderlo que perder la metadata.
+                log.error(
+                    "send_image outbound log skipped: fresh metadata read came back "
+                    "empty for a session that had data",
+                    session_id=session_id,
+                )
+                return None
+            _append_outbound_to_active_episode(fresh, log_entry)
+            fresh["last_outbound"] = asdict(log_entry)
+            return fresh
+
+        _update_metadata(session_id, _record_image)
 
     return result
 
@@ -540,16 +551,6 @@ async def send_document_to_session(
     # Registro del outbound (simetría con imagen/texto) — sin esto los PDFs del
     # operador son invisibles para cost-tracking / analytics / lead_state.
     if result.ok:
-        fresh = _read_metadata(session_id)
-        if not fresh and metadata:
-            # PM2-B2: lectura fresca vacía para una sesión con datos — escribir
-            # el dict mutado pisaría active_route/episodes. Log best-effort.
-            log.error(
-                "send_document outbound log skipped: fresh metadata read came "
-                "back empty for a session that had data",
-                session_id=session_id,
-            )
-            return result
         log_entry = OutboundLogEntry(
             sent_at_ms=_now_ms(),
             wa_message_id=result.wa_message_id or "",
@@ -559,9 +560,23 @@ async def send_document_to_session(
             cost_usd_micros=None,
             rate_card_version=None,
         )
-        _append_outbound_to_active_episode(fresh, log_entry)
-        fresh["last_outbound"] = asdict(log_entry)
-        _write_metadata(session_id, fresh)
+
+        def _record_document(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if not fresh and metadata:
+                # PM2-B2: lectura fresca vacía para una sesión con datos —
+                # escribir el dict mutado pisaría active_route/episodes. Log
+                # best-effort.
+                log.error(
+                    "send_document outbound log skipped: fresh metadata read came "
+                    "back empty for a session that had data",
+                    session_id=session_id,
+                )
+                return None
+            _append_outbound_to_active_episode(fresh, log_entry)
+            fresh["last_outbound"] = asdict(log_entry)
+            return fresh
+
+        _update_metadata(session_id, _record_document)
 
     return result
 
@@ -679,13 +694,27 @@ def _read_metadata(session_id: str) -> dict[str, Any]:
         return {}
 
 
-def _write_metadata(session_id: str, data: dict[str, Any]) -> None:
-    """Escribe metadata.json atómicamente (write tmp + rename)."""
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    metadata_file.parent.mkdir(parents=True, exist_ok=True)
-    tmp = metadata_file.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(metadata_file)
+def _update_metadata(
+    session_id: str,
+    mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+) -> dict[str, Any] | None:
+    """Anota un envío que YA SALIÓ en metadata.json: `mutator` aplica SOLO lo
+    del envío sobre la lectura fresca, bajo el candado del store (incidente
+    2026-10-06: la copia leída antes del envío pisaba lo que otro escritor
+    puso mientras Meta respondía). Import local: platform/state importa de
+    config — evita el ciclo en el import del módulo.
+
+    De mejor esfuerzo (PR #393, octava revisión): si la anotación falla (el
+    store ya reintentó los errores pasajeros), se registra y se sigue. Lanzar
+    haría que Temporal reintentara la activity y el mensaje saldría otra vez
+    (misma regla que `_safe_update` del flush: el envío ya ocurrió)."""
+    from src.platform.state import FilesystemMetadataStore
+
+    try:
+        return FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, mutator)
+    except Exception as exc:  # noqa: BLE001 — el envío ya ocurrió: nunca reenviar por anotarlo
+        log.error("outbound_record_failed_after_send", session_id=session_id, error=repr(exc)[:200])
+        return None
 
 
 def _resolve_phone_number_id(metadata: dict[str, Any]) -> str:
@@ -1023,29 +1052,36 @@ async def send_template_to_session(
         cost_usd_micros=None,
         rate_card_version=None,
     )
-    _append_outbound_to_active_episode(metadata, log_entry)
-    metadata["last_outbound"] = asdict(log_entry)
-    # Marca de idempotencia: persistida en la MISMA escritura que el outbound
-    # para que un retry posterior (post-persistencia) la encuentre y dedupe.
-    _record_template_send(
-        metadata, fingerprint, result.wa_message_id or "", now_ms
-    )
-    # WS2: la info de costo/lane del outbound SALE de la central (choke point,
-    # WHATSAPP_WINDOW_STRATEGY.md §6). Estimación pre-envío (la verdad
-    # autoritativa la trae después el `pricing` del webhook message_status).
-    try:
-        _decision = evaluate_send(
-            now_ms, metadata, CHANNEL_TEMPLATE, spec.category, get_current_rate_card()
+
+    def _record_template(fresh: dict[str, Any]) -> dict[str, Any]:
+        _append_outbound_to_active_episode(fresh, log_entry)
+        fresh["last_outbound"] = asdict(log_entry)
+        # Marca de idempotencia: persistida en la MISMA escritura que el
+        # outbound para que un retry posterior (post-persistencia) la
+        # encuentre y dedupe.
+        _record_template_send(
+            fresh, fingerprint, result.wa_message_id or "", now_ms
         )
-        annotate_last_outbound_policy(metadata, _decision)
-    except Exception:  # noqa: BLE001 — el estampado nunca debe tumbar el send
-        # exc_info=True: sin la causa, un fallo del estimador (ej. shape de
-        # rate card cambia) queda invisible — doblemente, porque hoy nadie
-        # consume last_outbound_policy (premortem A2/M2).
-        log.warning(
-            "send_policy_annotate_failed", session_id=session_id, exc_info=True
-        )
-    _write_metadata(session_id, metadata)
+        # WS2: la info de costo/lane del outbound SALE de la central (choke
+        # point, WHATSAPP_WINDOW_STRATEGY.md §6). Estimación pre-envío (la
+        # verdad autoritativa la trae después el `pricing` del webhook
+        # message_status).
+        try:
+            _decision = evaluate_send(
+                now_ms, fresh, CHANNEL_TEMPLATE, spec.category, get_current_rate_card()
+            )
+            annotate_last_outbound_policy(fresh, _decision)
+        except Exception:  # noqa: BLE001 — el estampado nunca debe tumbar el send
+            # exc_info=True: sin la causa, un fallo del estimador (ej. shape de
+            # rate card cambia) queda invisible — doblemente, porque hoy nadie
+            # consume last_outbound_policy (premortem A2/M2).
+            log.warning(
+                "send_policy_annotate_failed", session_id=session_id, exc_info=True
+            )
+        return fresh
+
+    # Sobre la lectura fresca (el envío a Meta tardó) y bajo el candado.
+    _update_metadata(session_id, _record_template)
 
     # HU-WA24H-001 pre-mortem F2.2: el dashboard del operador lee el JSONL
     # del session_history para mostrar el chat. Sin esto, los templates

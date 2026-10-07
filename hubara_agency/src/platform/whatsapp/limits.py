@@ -179,14 +179,13 @@ def cap_list_rows_total(
     sections: list[dict],
     total_cap: int = MAX_LIST_ROWS_TOTAL,
 ) -> list[dict]:
-    """**Legacy** — usá `paginate_list_rows` en su lugar.
+    """**Legacy**: usa `paginate_list_rows` en su lugar.
 
-    Recorta destructivamente al cap. Mantenido como defensa última en
-    el dispatch layer: si un intent llega con sections que suman >cap
-    (porque el tool no paginó correctamente o el intent vino de otro
-    path), devolvemos la primera página de `paginate_list_rows`.
+    Recorta destructivamente al cap. Desde 2026-10-06 el dispatch ya no lo
+    usa: la lista de respaldo de `products_list` sale en páginas de a 10
+    (`paginate_list_rows`) en vez de perder las filas que no caben.
 
-    Para nuevos call-sites: usá `paginate_list_rows`.
+    Para nuevos call-sites: usa `paginate_list_rows`.
 
     Si una section queda sin rows tras el recorte, se elimina del output
     (Meta rechaza sections vacías).

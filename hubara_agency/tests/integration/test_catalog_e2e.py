@@ -77,7 +77,7 @@ async def test_e2e_write_then_read_then_tool(tmp_path: Path):
     )
     payload = json.loads(out)
     assert payload["count"] == 1
-    assert payload["stale"] is False
+    assert "stale" not in payload  # la edad de la copia no es asunto del LLM
     assert payload["results"][0]["handle"] == "luz-serena"
     assert payload["results"][0]["price"] == "23000"
 

@@ -14,21 +14,46 @@ DEHA:
     activity (90s) no nos pille.
   * R-DIP: no importa workflow/client de Temporal — solo `@activity.defn`.
 
-El idempotency-key efectivo es `intent.id` (uuid generado en la tool). Si
-Temporal reintenta esta activity tras un fallo parcial, los intents YA
-enviados quedaron limpiados (limpieza pre-envío de cada item), evitando
-duplicados al cliente.
+Una tarjeta entregada no vuelve a salir (incidente 2026-10-06): el turno 4
+mandó la foto de un producto y el turno 5 la volvió a mandar sin que el bot la
+pidiera — una escritura vieja de `metadata.json` la devolvió a la cola. Desde
+entonces:
+
+  * cada intent tiene identidad (`ui_intent_id`: el `id` que pone quien lo
+    encola, o uno estable derivado de qué es y cuándo se encoló en los
+    encolados antes de que hubiera id);
+  * cada intent despachado queda anotado en un registro de solo-agregar FUERA
+    de `metadata.json` (`ui_intents_delivered.jsonl` de la sesión), y antes de
+    mandar se descarta sin enviar todo intent ya entregado con ese id (y el
+    mismo intent fallido; ver `_DELIVERED_LOG`);
+  * sacar el intent de la cola y anotar sus fotos en `outbound_media_index` es
+    un `update()` sobre la lectura fresca, por id (con el candado del store):
+    lo que otro escritor puso mientras se enviaba no se pisa.
+
+Si Temporal reintenta tras un fallo parcial, los intents ya despachados están
+en el registro y fuera de la cola: no se repiten. Un intent ya ENTREGADO no
+sale otra vez aunque una escritura vieja lo devuelva a la cola.
+
+La garantía es «al menos una vez», no «exactamente una vez»: un intent puede
+repetirse si el worker cae ENTRE el envío a Meta y la anotación en el registro
+(milisegundos; el reintento lo manda de nuevo), o si dos flushes de la MISMA
+sesión corren a la vez (el del turno y el del endpoint `/order`): los dos lo
+leen pendiente antes de que cualquiera lo anote. Se revisa el registro justo
+antes de cada envío para achicar esa ventana, no para cerrarla.
 
 Resilencia: cada intent va dentro de try/except aislado. Un intent con
 payload corrupto NO bloquea a los siguientes. Errores se loguean + se
 emite analytics `error.flush_intent`.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import asyncio
+import hashlib
 import json
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -37,16 +62,19 @@ from temporalio import activity
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
+from src.plugins.chats.agent.sales.card_messages import (
+    order_card_record,
+    order_card_text,
+    shipping_fields_text,
+)
 from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
     get_nequi_number,
 )
 from src.plugins.chats.agent.sales.config.shipping import (
-    ORDER_SUMMARY_SHIPPING_LINE,
-    ORDER_SUMMARY_SHIPPING_NOTE,
     SHIPPING_RATES_MESSAGE,
-    cash_on_delivery_available,
+    shipping_flow_id,
 )
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
@@ -90,6 +118,11 @@ _INTENT_TEXT_NEUTRAL: dict[str, str | None] = {
     "footer": None,
 }
 
+#: Intents cuyos textos arma el CÓDIGO, no el LLM (el mensaje y el encabezado
+#: del formulario de envío): no pasan por el saneador ni le preguntan a Jev.
+#: Salen tal cual, el mismo `customer_text` que leen la traza y la ③.
+_CODE_TEXT_KINDS = frozenset({"shipping_flow"})
+
 
 async def _sanitize_intent_client_text(
     kind: str, params: dict[str, Any], *, session_id: str | None = None
@@ -108,6 +141,8 @@ async def _sanitize_intent_client_text(
     from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
 
     out = dict(params)
+    if kind in _CODE_TEXT_KINDS:
+        return out
     for key, neutral in _INTENT_TEXT_NEUTRAL.items():
         value = out.get(key)
         if not isinstance(value, str) or not value.strip():
@@ -135,10 +170,6 @@ async def _sanitize_intent_client_text(
         else:
             out[key] = cleaned
     return out
-
-
-#: Máximo del cuerpo de un mensaje con botones en WhatsApp.
-_MAX_ORDER_BODY = 1024
 
 
 def _format_cop(amount: int, currency: str) -> str:
@@ -330,7 +361,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
 
     Devuelve un registro por intent intentado, en orden: `{kind, wamid, ok}`
     (`wamid` de Meta si salió; `None` si falló o no se despachó). Los intents
-    vencidos que se descartan sin intentar no aparecen.
+    vencidos o ya entregados que se descartan sin intentar no aparecen.
 
     Función PLANA (sin `activity.info()` ni heartbeat): la invoca la activity
     de arriba desde el workflow Sales y, desde D1.2b, el endpoint
@@ -338,6 +369,11 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     por Meta Business Agent (no hay turno del bot que flushee las
     instrucciones de pago). `activity.logger` es seguro fuera de un activity:
     sin contexto solo omite el sufijo con los datos del activity.
+
+    `metadata.json` se lee UNA vez (qué mandar, a qué número) y NUNCA se
+    escribe con esa copia: cada cambio (sacar de la cola, el índice de fotos,
+    CAPI, los fallos) es un `update()` con SOLO sus llaves sobre la lectura
+    fresca (incidente 2026-10-06, ver el docstring del módulo).
     """
     # Imports tardíos para evitar tocar httpx/Temporal-imports en module load
     from src.platform.analytics import (
@@ -347,20 +383,37 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     from src.platform.config import WORKSPACE_VAULT_DIR
     from src.platform.whatsapp import client as wa_client
     from src.platform.whatsapp import dtos as wa_dtos
+    from src.sdk.runtime import FilesystemMetadataStore
 
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    if not metadata_file.exists():
+    session_dir = WORKSPACE_VAULT_DIR / session_id
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    # Por el store: un metadata dañado se lee de la última copia buena
+    # (decisión del operador, 2026-10-06). Esa copia va una escritura atrás:
+    # si trae una tarjeta ya entregada, el registro de entregas la frena.
+    data = read_retrying_transient_errors_sync(store, session_id)
+
+    intents = [it for it in (data.get("pending_ui_intents") or []) if isinstance(it, dict)]
+    if not intents:
         return []
-    try:
-        data = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+
+    # Una tarjeta entregada no vuelve a salir (incidente 2026-10-06): un
+    # intent que ya figura en el registro de entregas volvió a la cola por una
+    # escritura vieja — se descarta sin mandarlo (la foto del turno 4 salió
+    # otra vez en el turno 5).
+    delivery_log = _delivery_log(session_dir)
+    repeated = [it for it in intents if delivery_log.blocks(it)]
+    if repeated:
         activity.logger.warning(
-            "flush_ui_intents.bad_metadata",
-            extra={"session_id": session_id},
+            "flush_ui_intents.already_delivered_discarded",
+            extra={
+                "session_id": session_id,
+                "discarded": [
+                    {"id": ui_intent_id(it), "kind": it.get("kind")} for it in repeated
+                ],
+            },
         )
-        return []
-
-    intents = list(data.get("pending_ui_intents") or [])
+        _settle_intents(store, session_id, {ui_intent_id(it) for it in repeated})
+        intents = [it for it in intents if not delivery_log.blocks(it)]
     if not intents:
         return []
 
@@ -397,8 +450,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 ],
             },
         )
-        data["pending_ui_intents"] = fresh_intents
-        _safe_write_metadata(metadata_file, data)
+        _settle_intents(store, session_id, {ui_intent_id(it) for it in stale_intents})
     intents = fresh_intents
     if not intents:
         return []
@@ -414,8 +466,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             extra={"session_id": session_id, "intents_count": len(intents)},
         )
         # Limpiar igual — no podemos enviar, mejor no acumular forever
-        data["pending_ui_intents"] = []
-        _safe_write_metadata(metadata_file, data)
+        _settle_intents(store, session_id, {ui_intent_id(it) for it in intents})
         return []
 
     last_inbound_msg_id = data.get("last_inbound_message_id")
@@ -425,30 +476,39 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
     report: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
 
-    # PREMORTEM #1: idempotency on Temporal retry.
-    # ANTES (bug): leíamos N intents, dispatch todos, limpiábamos al final.
-    # Si crash post-dispatch del 3er intent: Temporal reintenta, lee los
-    # MISMOS 5 intents (no se limpiaron), dispatch otra vez los 3 que ya
-    # se enviaron → cliente recibe duplicados + billing Meta x2.
-    # AHORA (fix): por cada intent exitoso, lo removemos del array Y
-    # escribimos metadata. Si crash en el 3er intent, al retry quedan
-    # 2+1=3 pendientes (los 2 enviados ya se limpiaron, el que falló se
-    # reintenta o se descarta según política abajo).
-    #
-    # Hacemos una copia de la lista para iterar — `pending_ui_intents`
-    # se va vaciando in-place.
-    intents_pending = list(intents)
-    data["pending_ui_intents"] = intents_pending
-
-    while intents_pending:
-        intent = intents_pending[0]
+    # PREMORTEM #1 (idempotencia ante el retry de Temporal): cada intent
+    # despachado se anota en el registro de entregas y sale de la cola ANTES
+    # de cualquier otra operación (analytics es best-effort y NO bloquea la
+    # idempotencia). Si crashea en el 3er intent, al retry los 2 enviados ya
+    # no están en la cola y figuran en el registro. Salir de la cola es un
+    # `update()` por id sobre la lectura fresca: lo que otro escritor puso
+    # mientras se enviaba (otro intent, el aviso de entrega) no se pisa.
+    for intent in intents:
+        intent_id = ui_intent_id(intent)
         kind = intent.get("kind")
+        if _delivery_log(session_dir).blocks(intent):
+            # Otro flush lo despachó mientras este enviaba los anteriores.
+            activity.logger.warning(
+                "flush_ui_intents.already_delivered_discarded",
+                extra={
+                    "session_id": session_id,
+                    "discarded": [{"id": intent_id, "kind": kind}],
+                },
+            )
+            _settle_intents(store, session_id, {intent_id})
+            continue
         params = intent.get("params") or {}
         analytics_meta = intent.get("analytics") or {}
         # Fotos enviadas en ESTE intent (wamid → producto/diseño). Se
         # persiste en `outbound_media_index` aunque el envelope global
         # falle a medias — cada foto que SÍ llegó es citable.
         media_log: list[dict[str, Any]] = []
+        # Páginas de la lista de respaldo que no llegaron aunque el intent sí
+        # salió (la primera página llegó): van a `ui_intents_failures`.
+        page_failures: list[dict[str, Any]] = []
+        # Lo que de verdad salió cuando no es lo de `params` (la lista de
+        # campos si el formulario no salió como Flow): el marcador lleva eso.
+        sent: dict[str, Any] = {}
         try:
             # Motor de decisiones (`destinatario`, F5): los textos del LLM se
             # deciden UNA vez, acá. Lo que sale y lo que muestra el panel
@@ -466,8 +526,10 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
                 media_log=media_log,
+                sent=sent,
                 session_id=session_id,
                 client_text_decided=True,
+                failures=page_failures,
             )
         except Exception as e:  # noqa: BLE001
             activity.logger.warning(
@@ -480,18 +542,18 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             )
             failed.append({"kind": kind, "error": str(e)})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            # Pop el intent fallido (NO retry automático — el LLM puede
-            # decidir reemitir en próxima iteración) y persistir.
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            # Fuera de la cola (NO retry automático — el LLM puede decidir
+            # reemitir en próxima iteración).
+            _record_delivery(session_dir, intent, ok=False, wamid=None)
+            _settle_intents(store, session_id, {intent_id})
             continue
 
         if result is None:
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            _record_delivery(session_dir, intent, ok=False, wamid=None)
+            _settle_intents(store, session_id, {intent_id})
             continue
 
         if not result.ok:
@@ -505,53 +567,43 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
             )
             failed.append({"kind": kind, "error": result.error})
             report.append({"kind": kind, "wamid": None, "ok": False})
-            intents_pending.pop(0)
-            _safe_write_metadata(metadata_file, data)
+            _record_delivery(session_dir, intent, ok=False, wamid=None)
+            _settle_intents(store, session_id, {intent_id})
             continue
 
-        # ENVÍO EXITOSO — pop e inmediatamente persistir antes de
-        # cualquier otra operación (analytics es best-effort y NO debe
-        # bloquear la idempotencia).
-        intents_pending.pop(0)
-        if media_log:
-            _merge_media_index(data, media_log)
-        if kind == "shipping_flow":
-            # Run 01a0a0f1 (2026-09-14): `_mark_flow_awaiting_reply` escribe
-            # el flag del Flow releyendo el archivo, y esta escritura lo
-            # pisaba con la copia vieja de `data` → el timeout extendido de
-            # ghosting (10 min) nunca aplicaba. Se trae el flag fresco antes
-            # de persistir.
-            _reload_flow_awaiting_flag(metadata_file, data)
-        _safe_write_metadata(metadata_file, data)
+        # ENVÍO EXITOSO — anotar la entrega y sacarlo de la cola (con sus
+        # fotos en el índice) antes de cualquier otra operación.
+        _record_delivery(session_dir, intent, ok=True, wamid=result.wa_message_id)
+        _settle_intents(store, session_id, {intent_id}, media_log=media_log)
         report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
+        failed.extend(page_failures)
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
         # InitiateCheckout). Se encola acá y lo manda el flusher del turno.
-        try:
-            if _enqueue_capi_for_sent_intent(
-                data, session_id=session_id, kind=kind, params=params, now_ms=now_ms
-            ):
-                _safe_write_metadata(metadata_file, data)
-        except Exception:  # noqa: BLE001 - atribución nunca bloquea el envío
-            pass
+        _enqueue_capi_after_send(store, session_id, kind=kind, params=params, now_ms=now_ms)
 
-        # Marker al histórico del dashboard (post-pop, post-write —
-        # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
+        # Marker al histórico del dashboard (post-envío — best-effort: si
+        # crashea, el intent NO se reenvía y el flush sigue).
         try:
-            history_event = _build_history_event(kind, params)
+            history_event = _build_history_event(kind, params, sent_text=sent.get("text"))
             if history_event is not None:
                 # `wamid`: destino de las citas del cliente ("este" citando
                 # los botones / el catálogo / la foto). Sin él el dashboard
                 # muestra "Mensaje no disponible" (caso 2026-09-17).
                 if result.wa_message_id:
                     history_event["wamid"] = result.wa_message_id
+                if page_failures:
+                    # La nota no dice que llegó lo que no llegó.
+                    history_event["content"] += "".join(
+                        f" No llegó la página {f['page']} de {f['pages']}." for f in page_failures
+                    )
                 _append_history_event(session_id, history_event)
         except Exception:  # noqa: BLE001 - observability nunca bloquea
             pass
 
-        # Analytics outbound (post-pop, post-write — si esto crashea, el
-        # intent NO se reenvía).
+        # Analytics outbound (post-envío — si esto crashea, el intent NO se
+        # reenvía).
         try:
             ev = make_outbound_sent(
                 session_id=session_id,
@@ -571,12 +623,219 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
 
     # Persistir failures finales (histórico, último N).
     if failed:
-        history = list(data.get("ui_intents_failures") or [])
-        history.extend(failed)
-        data["ui_intents_failures"] = history[-50:]
-        _safe_write_metadata(metadata_file, data)
+        _append_failures(store, session_id, failed)
 
     return report
+
+
+def ui_intent_id(intent: dict[str, Any]) -> str:
+    """La identidad de un intent encolado.
+
+    El `id` que le puso quien lo encoló (`_append_intent`, `register_order`).
+    Los encolados antes de que hubiera id (o por un camino que no lo pone)
+    reciben uno estable derivado de qué son y cuándo se encolaron: el mismo en
+    cada lectura, así el flush los reconoce aunque una escritura vieja los
+    devuelva a la cola.
+    """
+    raw = intent.get("id")
+    if isinstance(raw, str) and raw:
+        return raw
+    if isinstance(raw, int) and not isinstance(raw, bool):
+        return str(raw)
+    material = json.dumps(
+        {
+            "kind": intent.get("kind"),
+            "params": intent.get("params"),
+            "queued_at_ms": intent.get("queued_at_ms"),
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+        default=str,
+    )
+    return "sin-id-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:24]
+
+
+#: Registro de entregas de la sesión (solo-agregar, FUERA de `metadata.json`):
+#: una línea JSON por intent despachado — `{id, kind, ok, wamid, queued_at_ms,
+#: at_ms}` —, también los fallidos. Antes de mandar, el flush descarta todo
+#: intent ENTREGADO (`ok`) con el mismo id, y el MISMO intent fallido (mismo id
+#: y mismo `queued_at_ms`: un fallido no se reintenta solo, el LLM decide
+#: reemitir). Un reencolado legítimo con el id de un fallido sí sale: las
+#: instrucciones de pago llevan un id fijo por pedido (`payinstr-<order_id>`).
+_DELIVERED_LOG = "ui_intents_delivered.jsonl"
+
+#: Cuánto del final del registro se lee: un intent vence a los
+#: `_UI_INTENT_TTL_MS` (10 min), así que solo importan las entregas recientes;
+#: 64 KiB son cientos de líneas.
+_DELIVERED_TAIL_BYTES = 64 * 1024
+
+
+@dataclass(frozen=True)
+class _DeliveryLog:
+    """Lo que dice el final del registro de entregas."""
+
+    #: ids entregados: bloquean cualquier intent con ese id.
+    delivered: frozenset[str] = frozenset()
+    #: `(id, queued_at_ms)` fallidos: bloquean solo ESE intent.
+    failed: frozenset[tuple[str, str]] = frozenset()
+
+    def blocks(self, intent: dict[str, Any]) -> bool:
+        intent_id = ui_intent_id(intent)
+        return intent_id in self.delivered or (intent_id, _queued_key(intent)) in self.failed
+
+
+def _queued_key(intent: dict[str, Any]) -> str:
+    return json.dumps(intent.get("queued_at_ms"))
+
+
+def _delivery_log(session_dir: Path) -> _DeliveryLog:
+    """El final del registro de entregas (vacío si no hay registro)."""
+    path = session_dir / _DELIVERED_LOG
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            start = max(0, size - _DELIVERED_TAIL_BYTES)
+            fh.seek(start)
+            chunk = fh.read()
+    except FileNotFoundError:
+        return _DeliveryLog()
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.delivered_log_unreadable", extra={"path": str(path)}
+        )
+        return _DeliveryLog()
+    lines = chunk.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]  # la primera puede venir cortada
+    delivered: set[str] = set()
+    failed: set[tuple[str, str]] = set()
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            continue
+        if row.get("ok") is True:
+            delivered.add(row["id"])
+        else:
+            failed.add((row["id"], _queued_key(row)))
+    return _DeliveryLog(frozenset(delivered), frozenset(failed))
+
+
+def _record_delivery(
+    session_dir: Path,
+    intent: dict[str, Any],
+    *,
+    ok: bool,
+    wamid: str | None,
+) -> None:
+    """Agrega el intent despachado al registro de entregas. Best-effort: si
+    no se puede escribir, el intent igual sale de la cola."""
+    intent_id = ui_intent_id(intent)
+    row = {
+        "id": intent_id,
+        "kind": intent.get("kind"),
+        "ok": ok,
+        "wamid": wamid,
+        "queued_at_ms": intent.get("queued_at_ms"),
+        "at_ms": int(time.time() * 1000),
+    }
+    try:
+        session_dir.mkdir(parents=True, exist_ok=True)
+        with (session_dir / _DELIVERED_LOG).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.delivered_log_write_failed",
+            extra={"intent_id": intent_id},
+        )
+
+
+def _settle_intents(
+    store: Any,
+    session_id: str,
+    intent_ids: set[str],
+    *,
+    media_log: list[dict[str, Any]] | None = None,
+) -> None:
+    """Saca de la cola, por id y sobre la lectura FRESCA, los intents ya
+    resueltos (enviados, fallidos, vencidos o repetidos) y anota en
+    `outbound_media_index` las fotos que salieron. Lo demás de la cola (lo que
+    una tool encoló mientras tanto) queda como está.
+
+    Caso borde conocido (segunda revisión del PR #393, M1): saca por id, no
+    por `(id, queued_at_ms)`. Si mientras se enviaba se reencolara un intent
+    con el MISMO id —un reencolado legítimo de las instrucciones de pago,
+    `payinstr-<order_id>`—, también saldría de la cola sin enviarse. Hoy no se
+    alcanza: ese id solo lo encola `register_order` al crear el pedido, en el
+    turno y antes del flush, y `/order` no reencola un pedido ya registrado.
+    Si algún día se reencola en caliente, sacar por `(id, queued_at_ms)` como
+    hace el registro de fallidos (`_DeliveryLog.blocks`)."""
+
+    def _settle(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        pending = fresh.get("pending_ui_intents")
+        queue = pending if isinstance(pending, list) else []
+        kept = [
+            it
+            for it in queue
+            if not (isinstance(it, dict) and ui_intent_id(it) in intent_ids)
+        ]
+        if len(kept) == len(queue) and not media_log:
+            return None  # ya no estaban: nada que escribir
+        fresh["pending_ui_intents"] = kept
+        if media_log:
+            _merge_media_index(fresh, media_log)
+        return fresh
+
+    _safe_update(store, session_id, _settle)
+
+
+def _enqueue_capi_after_send(
+    store: Any,
+    session_id: str,
+    *,
+    kind: str | None,
+    params: dict[str, Any],
+    now_ms: int,
+) -> None:
+    """Encola (sobre la lectura fresca) el evento CAPI del intent recién
+    enviado. Best-effort: la atribución nunca bloquea el envío."""
+
+    def _enqueue(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        enqueued = _enqueue_capi_for_sent_intent(
+            fresh, session_id=session_id, kind=kind, params=params, now_ms=now_ms
+        )
+        return fresh if enqueued else None
+
+    try:
+        store.update(session_id, _enqueue)
+    except Exception:  # noqa: BLE001 - atribución nunca bloquea el envío
+        pass
+
+
+def _append_failures(store: Any, session_id: str, failed: list[dict[str, Any]]) -> None:
+    """Agrega los fallos del flush al histórico (`ui_intents_failures`, últimos 50)."""
+
+    def _append(fresh: dict[str, Any]) -> dict[str, Any]:
+        history = list(fresh.get("ui_intents_failures") or [])
+        history.extend(failed)
+        fresh["ui_intents_failures"] = history[-50:]
+        return fresh
+
+    _safe_update(store, session_id, _append)
+
+
+def _safe_update(store: Any, session_id: str, mutator: Any) -> None:
+    """`store.update` que no tumba el flush por un error de disco (el envío ya
+    ocurrió): se loguea y sigue, como antes."""
+    try:
+        store.update(session_id, mutator)
+    except OSError:
+        activity.logger.warning(
+            "flush_ui_intents.write_failed", extra={"session_id": session_id}
+        )
 
 
 async def _dispatch_intent(
@@ -590,10 +849,17 @@ async def _dispatch_intent(
     to_number: str,
     last_inbound_message_id: str | None,
     media_log: list[dict[str, Any]] | None = None,
+    sent: dict[str, Any] | None = None,
     session_id: str | None = None,
     client_text_decided: bool = False,
+    failures: list[dict[str, Any]] | None = None,
 ):
     """Mapea `kind` a la función `send_*` correspondiente.
+
+    `failures`: lista mutable donde la lista de respaldo de `products_list`
+    (en páginas) anota cada página que no llegó cuando la primera sí llegó
+    (`{kind, error, page, pages}`): el intent cuenta como enviado y el
+    caller las deja en `ui_intents_failures`.
 
     `client_text_decided`: el caller ya pasó los textos del LLM por
     `_sanitize_intent_client_text` (el flush lo hace para que el marker del
@@ -608,6 +874,11 @@ async def _dispatch_intent(
     send exitoso — `{wa_message_id, handle, title, image_url, label}` — para
     que el caller persista `outbound_media_index` (resolver replies del
     cliente que citan una foto; caso wa_573125671604).
+
+    `sent`: dict mutable donde se anota lo que de verdad salió cuando no es
+    lo de `params` — `{"text": ...}` si el formulario de envío cayó a la
+    lista de campos por texto — para que el marcador del historial no
+    muestre un mensaje que el cliente no recibió.
 
     Devuelve `OutboundResult` o None si el kind es desconocido / intent
     invalido sin posibilidad de envío.
@@ -705,8 +976,13 @@ async def _dispatch_intent(
                         to_number,
                         wa_dtos.InteractiveProductListOutbound(
                             catalog_id=catalog_id,
+                            # `category`: el nombre de la categoría que mostró
+                            # `present_products`; lo arma el código, así que no
+                            # pasa por la guarda del texto del LLM.
                             header_text=wa_limits.truncate(
-                                params.get("header_text") or "Nuestro catálogo",
+                                params.get("header_text")
+                                or params.get("category")
+                                or "Nuestro catálogo",
                                 wa_limits.MAX_PRODUCT_LIST_HEADER,
                             ),
                             body=wa_limits.truncate(
@@ -744,23 +1020,94 @@ async def _dispatch_intent(
                     },
                 )
 
-        # Fallback: interactive.list (sin Meta Catalog — cap 10 total).
-        sections_payload = wa_limits.cap_list_rows_total(
-            sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL
-        )
+        # Respaldo: interactive.list (sin el catálogo de Meta). WhatsApp acepta
+        # 10 filas por lista y el intent trae hasta 30 (incidente 2026-10-06):
+        # va en páginas de a 10, en vez de recortar las demás en silencio.
+        # Si la primera página falla no se sigue (nada llegó: el intent falla).
+        # Si falla otra, las demás salen igual, la que faltó queda en
+        # `failures` (el caller la deja en `ui_intents_failures`) y se
+        # devuelve la PRIMERA página: la que lleva el texto del asesor y a la
+        # que apuntan las citas del cliente. El intent sale de la cola recién
+        # cuando vuelve este dispatch: si la activity se cae entre páginas, el
+        # reintento de Temporal reenvía desde la página 1 (con las páginas, esa
+        # ventana pasa de milisegundos a segundos).
+        pages = wa_limits.paginate_list_rows(sections_payload, wa_limits.MAX_LIST_ROWS_TOTAL)
+        first = None
+        for page_idx, page_sections in enumerate(pages):
+            outbound_page = (
+                wa_dtos.InteractiveListOutbound(
+                    body=(
+                        (params.get("intro_text") or "Mira las opciones:")
+                        if page_idx == 0
+                        else "Más productos del catálogo:"
+                    ),
+                    button_label=params.get("button_label", "Ver opciones"),
+                    sections=[
+                        wa_dtos.ListSection(
+                            title=s.get("title", "Opciones"),
+                            rows=[
+                                wa_dtos.ListRow(
+                                    id=r["id"],
+                                    title=r["title"],
+                                    description=r.get("description"),
+                                )
+                                for r in s["rows"]
+                            ],
+                        )
+                        for s in page_sections
+                    ],
+                )
+            )
+            if page_idx == 0:
+                # Nada llegó todavía: un fallo (o una excepción) es del intent.
+                result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
+                if result is None or not result.ok:
+                    return result
+                first = result
+                continue
+            # La página 1 ya llegó: lo que falle de acá en adelante (respuesta
+            # o excepción) se anota y se sigue.
+            try:
+                result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
+                error = None if result is not None and result.ok else (
+                    result.error if result is not None else "no_result"
+                )
+            except Exception as e:  # noqa: BLE001 — la primera página ya llegó
+                error = f"{type(e).__name__}: {e}"
+            if error is not None:
+                activity.logger.warning(
+                    "products_list.page_send_failed",
+                    extra={"page": page_idx + 1, "pages": len(pages), "error": error},
+                )
+                if failures is not None:
+                    failures.append({
+                        "kind": "products_list",
+                        "error": error,
+                        "page": page_idx + 1,
+                        "pages": len(pages),
+                    })
+        return first
+
+    if kind == "categories":
+        # El catálogo no cabe en un mensaje: el cliente recibe sus categorías
+        # en UNA lista (`present_products`, menú de `catalog_menu.py`). Nunca
+        # es el catálogo de Meta: las filas son categorías, no productos.
+        from src.platform.whatsapp import limits as wa_limits
+        from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
+
         sections = [
             wa_dtos.ListSection(
-                title=s.get("title", "Opciones"),
+                title=s.get("title") or "Categorías",
                 rows=[
                     wa_dtos.ListRow(
                         id=r["id"],
                         title=r["title"],
                         description=r.get("description"),
                     )
-                    for r in (s.get("rows") or [])
+                    for r in s["rows"]
                 ],
             )
-            for s in sections_payload
+            for s in (params.get("sections") or [])
             if s.get("rows")
         ]
         if not sections:
@@ -769,8 +1116,12 @@ async def _dispatch_intent(
             phone_number_id,
             to_number,
             wa_dtos.InteractiveListOutbound(
-                body=params.get("intro_text", "Mira las opciones:"),
-                button_label=params.get("button_label", "Ver opciones"),
+                body=category_menu_body(
+                    params.get("intro_text") or "",
+                    params.get("more_categories") or [],
+                    max_len=wa_limits.MAX_LIST_BODY,
+                ),
+                button_label=params.get("button_label") or "Ver categorías",
                 sections=sections,
             ),
         )
@@ -783,15 +1134,11 @@ async def _dispatch_intent(
         #   3. Placeholder → caemos al fallback de texto plano.
         # El env-first hace que cambiar el Flow en Meta (re-publicar →
         # nuevo flow_id) sea un re-deploy del worker SIN tocar código.
-        env_flow_id = (os.environ.get("META_FLOW_ID_SHIPPING") or "").strip()
-        flow_id = (
-            env_flow_id
-            if env_flow_id and env_flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER"
-            else params.get("flow_id")
-        )
-        use_native_flow = bool(flow_id and flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER")
+        # La misma regla que usa la tool para decir en `customer_text` qué va
+        # a leer el cliente (`config/shipping.shipping_flow_id`).
+        flow_id = shipping_flow_id(params.get("flow_id"))
 
-        if use_native_flow:
+        if flow_id is not None:
             # Defensa en profundidad (post-mortem run bc54cb93, 2026-05-25):
             # ANTES el send_flow estaba sin try/except. Si Meta rechazaba o
             # `_mark_flow_awaiting_reply` lanzaba NameError, el cliente se
@@ -852,38 +1199,9 @@ async def _dispatch_intent(
         # (anti-patrón sesión adc6400c — la opción "Compartir ubicación" no
         # funciona y el cliente abandona). Las formas de pago se informan
         # con sus condiciones (requisito 2026-08-31).
-        order_total_cop = int(params.get("order_total_cop") or 0)
-        nequi = get_nequi_number()
-        payment_lines = []
-        if cash_on_delivery_available(order_total_cop):
-            payment_lines.append(
-                "  • Contra entrega — el valor se calcula con la "
-                "transportadora"
-            )
-        payment_lines.append(
-            f"  • Pago anticipado — Nequi o llave {nequi}"
-            if nequi
-            else "  • Pago anticipado (Nequi)"
-        )
-        payment_lines.append(
-            "  • Link de pago — recargo adicional de "
-            f"{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA} con Nequi o "
-            f"Bancolombia, {PAYMENT_LINK_SURCHARGE_OTHER_BANKS} con otros "
-            "bancos"
-        )
-        payment_block = "\n".join(payment_lines)
-        text = (
-            "Para coordinar el envío necesito estos datos, puedes "
-            "enviármelos en un solo mensaje o uno por uno:\n\n"
-            "🏙️ *Ciudad*\n"
-            "📍 *Barrio*\n"
-            "🏠 *Dirección* (calle, número, apartamento)\n"
-            "📞 *Teléfono* de contacto\n"
-            "🙋 *Nombre de quien recibe* el pedido\n"
-            "🪪 *Cédula* de quien recibe (opcional)\n"
-            "💳 *Método de pago*, elige entre:\n"
-            f"{payment_block}"
-        )
+        text = shipping_fields_text(int(params.get("order_total_cop") or 0), get_nequi_number())
+        if sent is not None:
+            sent["text"] = text
         return await wa_client.send_text(
             phone_number_id,
             to_number,
@@ -893,73 +1211,10 @@ async def _dispatch_intent(
     if kind == "order_confirmation":
         # Por ahora: fallback transparente a interactive.buttons con resumen
         # textual completo. A.12 nativo (interactive.order_details) requiere
-        # Meta Catalog + gateway approved — se activará por feature flag.
-        items = params.get("items") or []
-        # La variante va cuando el producto se repite en varias líneas
-        # («1× Velón Gorrión (Lila · Lavanda)»); si no, la línea de siempre.
-        lines = [
-            (
-                f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')}"
-                + (f" ({it['variant']})" if it.get("variant") else "")
-                + f" — ${it.get('unit_price_cop', 0):,}"
-            ).replace(",", ".")
-            for it in items
-        ]
-        items_summary = "\n".join(lines)
-        subtotal = int(params.get("subtotal_cop", 0))
-        shipping = int(params.get("shipping_cop", 0))
-        total = int(params.get("total_cop", 0))
-        currency = params.get("currency", "COP")
-        payment_method = params.get("payment_method")
-        body_lines = [
-            "*Resumen de tu pedido*",
-            items_summary,
-            "",
-            f"Subtotal productos: {_format_cop(subtotal, currency)}",
-        ]
-        discount_cop = params.get("discount_cop")
-        if isinstance(discount_cop, int) and discount_cop > 0:
-            coupon = params.get("coupon_code")
-            body_lines.append(
-                f"Descuento{f' ({coupon})' if coupon else ''}: −{_format_cop(discount_cop, currency)}"
-            )
-        if payment_method == "cash_on_delivery":
-            # Regla del operador (2026-09-07, `config/shipping.py`): con
-            # contra entrega el envío se paga al recibir y la transportadora
-            # lo recalcula antes de despachar → NO se muestra valor de envío
-            # ni total (sería subtotal + un envío que no es definitivo); va
-            # "Por confirmar" + la nota. `shipping_cop`/`total_cop` siguen en
-            # el intent (analytics), no se renderizan.
-            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_LINE])
-        else:
-            # Pago anticipado / link: el cliente paga el envío AHORA con la
-            # tarifa mínima (misma que valida SEC-07 en register_order y que
-            # muestra payment_instructions, #236) → se aclara que es mínima y
-            # se da el total. Envío 0 = "sin costo", nunca se inventa reparto.
-            shipping_line = (
-                f"Envío (tarifa mínima): {_format_cop(shipping, currency)}"
-                if shipping > 0
-                else "Envío: sin costo"
-            )
-            body_lines.extend([shipping_line, f"Total: {_format_cop(total, currency)}"])
-        body_lines.extend([
-            "",
-            f"📍 Dirección: {params.get('shipping_address_summary', '')}",
-            "",
-            f"💳 Medio de pago: {_humanize_payment(payment_method)}",
-        ])
-        if payment_method == "cash_on_delivery":
-            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_NOTE])
-        body = "\n".join(body_lines)
-        # Cupo por unidad (premortem B4): qué unidades llevan el descuento, o
-        # por qué no — la tarjeta termina el turno del bot, así que el cliente
-        # lo lee acá. Va al final y cabe en el cuerpo (máx. de WhatsApp).
-        note = params.get("coupon_note")
-        if isinstance(note, str) and note.strip():
-            room = _MAX_ORDER_BODY - len(body) - len("\n\n🎟️ ")
-            if room >= 40:
-                text = note.strip()
-                body += "\n\n🎟️ " + (text if len(text) <= room else text[: room - 1].rstrip() + "…")
+        # Meta Catalog + gateway approved — se activará por feature flag. El
+        # texto lo arma `card_messages.order_card_text`: el mismo que devuelve
+        # la tool en `customer_text` y que lleva el marcador del historial.
+        body = order_card_text(params)
         ref = params.get("reference_id", "HUB")
         return await wa_client.send_interactive_buttons(
             phone_number_id,
@@ -1331,8 +1586,22 @@ def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _card_marker(head: str, text: str) -> str:
+    """«<head> — con el mensaje: «<texto>»» para una tarjeta cuyo texto arma el
+    código. El texto se recorta ADENTRO del marcador para que el marcador
+    entero quepa en una línea de la ventana de Jev, que corta los mensajes
+    largos por el PRINCIPIO: lo primero que se lee es qué mandó el bot."""
+    from src.plugins.chats.agent.sales.decisions.context import MAX_LINE_CHARS
+
+    text = text.strip()
+    if not text:
+        return head
+    prefix = f"{head} — con el mensaje: «"
+    return f"{prefix}{_trunc(text, MAX_LINE_CHARS - len(prefix) - 1)}»"
+
+
 def _build_history_event(
-    kind: str | None, params: dict[str, Any]
+    kind: str | None, params: dict[str, Any], *, sent_text: str | None = None
 ) -> dict[str, Any] | None:
     """Marker human-readable del intent enviado, para el JSONL del dashboard.
 
@@ -1378,11 +1647,30 @@ def _build_history_event(
         total = sum(
             len(s.get("rows") or []) for s in (params.get("sections") or [])
         )
-        content = f"🛍️ El bot envió el catálogo con {total} productos"
+        category = str(params.get("category") or "").strip()
+        content = (
+            f"🛍️ El bot envió los productos de la categoría {category} ({total})"
+            if category
+            else f"🛍️ El bot envió el catálogo con {total} productos"
+        )
+    elif kind == "categories":
+        content = _categories_note(params)
     elif kind == "shipping_flow":
-        content = "📋 El bot pidió los datos de envío (formulario)"
+        # El mensaje del formulario y el resumen del pedido los arma el
+        # código: van como los leyó el cliente (incidente 2026-10-06: el
+        # operador, Jev y Calidad LLM no los veían). Si el Flow no salió, la
+        # lista de campos que se mandó por texto (`sent_text`).
+        if sent_text:
+            content = _card_marker("📋 El bot pidió los datos de envío por texto", sent_text)
+        else:
+            content = _card_marker(
+                "📋 El bot pidió los datos de envío (formulario)", str(params.get("body") or "")
+            )
     elif kind == "order_confirmation":
-        content = "🧾 El bot envió el resumen del pedido con botones para confirmar"
+        # Sin la dirección del cliente: el registro no la necesita.
+        content = _card_marker(
+            "🧾 El bot envió el resumen del pedido con botones para confirmar", order_card_record(params)
+        )
     elif kind == "reaction":
         content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
     elif kind == "contact_card":
@@ -1419,6 +1707,41 @@ def _build_history_event(
     }
 
 
+def _categories_note(params: dict[str, Any]) -> str:
+    """El menú de categorías en el historial: sus filas, cuántos productos
+    tiene cada una y el texto que leyó el cliente. Jev lee cada línea del
+    historial hasta 500 caracteres y una más larga la corta por el PRINCIPIO
+    (se perdería qué se ofreció): el texto del menú se arma para el espacio
+    que queda, con la misma regla del mensaje (se recorta el texto del
+    asesor; la guía y las categorías nombradas quedan)."""
+    from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
+    from src.plugins.chats.agent.sales.decisions.context import MAX_LINE_CHARS
+
+    rows = [
+        r
+        for s in (params.get("sections") or [])
+        if isinstance(s, dict)
+        for r in (s.get("rows") or [])
+        if isinstance(r, dict)
+    ]
+    listed = ", ".join(
+        f"{r.get('title')} ({r['description']})" if r.get("description") else str(r.get("title"))
+        for r in rows
+    )
+    head = f"🗂️ El bot envió el menú de categorías: {listed}."
+    room = MAX_LINE_CHARS - len(head) - len(" Mensaje: «»")
+    if room < 20:
+        return head[:MAX_LINE_CHARS]
+    body = " ".join(
+        category_menu_body(
+            str(params.get("intro_text") or ""),
+            params.get("more_categories") or [],
+            max_len=room,
+        ).split()
+    )
+    return f"{head} Mensaje: «{body}»"
+
+
 def _append_history_event(session_id: str, event: dict[str, Any]) -> None:
     """Appendea el marker al JSONL que lee el dashboard. Best-effort: el
     envío al cliente YA ocurrió; un fallo de I/O acá se loguea y no
@@ -1443,30 +1766,6 @@ def _append_history_event(session_id: str, event: dict[str, Any]) -> None:
         )
 
 
-def _safe_write_metadata(path, data: dict) -> None:
-    try:
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    except OSError:
-        activity.logger.warning(
-            "flush_ui_intents.write_failed", extra={"path": str(path)}
-        )
-
-
-def _reload_flow_awaiting_flag(metadata_file: Path, data: dict[str, Any]) -> None:
-    """Copia a `data` el `shipping_flow_awaiting_reply_since_ms` que
-    `_mark_flow_awaiting_reply` acaba de escribir en disco (lost update)."""
-    try:
-        fresh = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    flag = fresh.get("shipping_flow_awaiting_reply_since_ms")
-    if isinstance(flag, int) and not isinstance(flag, bool):
-        data["shipping_flow_awaiting_reply_since_ms"] = flag
-
-
 def _mark_flow_awaiting_reply(to_number: str) -> None:
     """Escribe `shipping_flow_awaiting_reply_since_ms` en metadata.json para
     que el workflow Sales extienda su timeout de ghosting (sesión c4e3416f).
@@ -1486,21 +1785,20 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
     envío del Flow. Fallback a `time.time()` solo defensivo por si la helper se
     llamara desde fuera de un activity context en el futuro (no es el caso hoy
     — todos los call-sites están dentro de `flush_pending_ui_intents_activity`).
+
+    Escribe SOLO el flag, con `update()` sobre la lectura fresca: el flush lo
+    respeta al sacar el Flow de la cola (run 01a0a0f1, 2026-09-14: la copia
+    vieja del flush lo pisaba y el ghosting cerraba a los 5 min).
     """
     from src.platform.config import WORKSPACE_VAULT_DIR
+    from src.sdk.runtime import FilesystemMetadataStore
 
     session_id = f"{WHATSAPP_SESSION_PREFIX}{to_number}"
     metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
     if not metadata_file.exists():
         return
-    try:
-        data = json.loads(metadata_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        activity.logger.warning(
-            "flush_ui_intents.flow_awaiting_flag_read_failed",
-            extra={"session_id": session_id, "error": str(e)},
-        )
-        return
+    # Un metadata dañado ya no aborta: `update()` lo recupera con la última
+    # copia buena (decisión del operador, 2026-10-06).
 
     try:
         # SDK-native: estable entre retries de esta activity attempt.
@@ -1510,16 +1808,8 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
         # activity context en el futuro. Wall-clock se acerca lo suficiente.
         ts_ms = int(time.time() * 1000)
 
-    data["shipping_flow_awaiting_reply_since_ms"] = ts_ms
-    _safe_write_metadata(metadata_file, data)
+    def _mark(fresh: dict[str, Any]) -> dict[str, Any]:
+        fresh["shipping_flow_awaiting_reply_since_ms"] = ts_ms
+        return fresh
 
-
-def _humanize_payment(code: str | None) -> str:
-    # `card` es legacy (órdenes registradas antes del requisito 2026-08-31);
-    # las 3 formas vigentes son transfer / payment_link / cash_on_delivery.
-    return {
-        "card": "Tarjeta",
-        "transfer": "Pago anticipado (Nequi)",
-        "payment_link": "Link de pago",
-        "cash_on_delivery": "Contra entrega",
-    }.get(code or "", code or "Por confirmar")
+    _safe_update(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_id, _mark)

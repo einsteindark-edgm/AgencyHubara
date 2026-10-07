@@ -169,10 +169,23 @@ Medusa live durante la conversación (latency + cuota).
 
 #### Scenario: Snapshot stale
 
-- GIVEN el snapshot tiene > 60min sin actualizarse
+- GIVEN la copia local del catálogo cumplió `CATALOG_MAX_AGE_MINUTES` (30) sin actualizarse
 - WHEN se invocan tools de catálogo
-- THEN aún devuelven datos (stale pero válidos) — `catalog_sync` correrá pronto
+- THEN devuelven los datos de la copia: para el bot es la verdad de la conversación
+- AND el envelope de `search_products` NO trae `stale` ni `manifest`: la edad de la copia queda en el log y en el dashboard (`GET /api/catalog/snapshot`), con la misma regla (vieja desde que cumple el tope, inclusive)
+- AND el refresco de la copia es MANUAL: el botón Sync del dashboard (no hay Schedule ni horario; decisión del operador 2026-10-06)
 - AND si el snapshot está corrupto o no cargado, las tools devuelven `{error: "catalog_unavailable"}` y el LLM debe decirle al cliente "estoy verificando..."
+
+#### Scenario: «¿Qué productos tienen?» (incidente 2026-10-06)
+
+- GIVEN el cliente pide ver qué hay o el catálogo
+- WHEN el LLM llama `present_products` sin handles (sin buscar antes)
+- THEN la tool lee el catálogo completo de la copia local y, si cabe en la lista de productos de WhatsApp (hasta 30 productos en hasta 10 secciones), lo encola en UN intent por categoría: el cliente lo recibe en UN mensaje
+- AND si no cabe, el cliente recibe sus categorías en una lista (una fila por categoría con cuántos productos tiene, id `categoria:<slug>`; con más de 10, las 10 con más productos y las demás nombradas en el texto; los productos sin categoría, y los de una categoría «Otros» real, en UNA fila «Otros»); con una sola categoría el menú sobra y salen sus primeros 30
+- AND cuando elige una, el LLM recibe `[el cliente eligió la categoría: <nombre> (category="categoria:<slug>")]` y `present_products(category=…)` le muestra los de esa categoría (hasta 30; si hay más, la tool lo dice): con el id de la fila, sin preguntarle al motor; con lo que escribió el cliente, lo decide la capacidad `categoria` del motor, igual que en `search_products`
+- AND un producto sin precio no entra al mensaje; con el catálogo de WhatsApp conectado tampoco uno sin foto (el criterio del push a Meta; la lista de respaldo, que es texto, no la necesita): queda un warning y el envelope lo dice (`incomplete`); si ninguno de una categoría puede ir, el LLM recibe cuáles existen y qué les falta
+- AND sin el catálogo de Meta (o si Meta lo rechaza), la lista de respaldo (`interactive.list`) sale en páginas de a 10 filas: nada se recorta en silencio; una página que no llega queda en `ui_intents_failures` y las citas apuntan a la primera
+- AND el historial del dashboard (que también lee Jev) dice qué menú de categorías vio el cliente y de qué categoría era una lista
 
 ### Requirement: Tool de cierre — register_order
 
@@ -435,6 +448,18 @@ La decisión es pura (`first_contact_greeting.should_send_first_contact_greeting
 y la hora vive en la activity `build_first_contact_greeting` (R-DET). Gated por
 `workflow.patched("first-contact-greeting-v1")`.
 
+Primer contacto = el cliente nunca había hablado con la tienda (`ep_001`).
+Delta 2026-10-06 (PR #390): un cliente que VUELVE (episodio nuevo después de
+otro; el historial del LLM se corta al empezarlo y su primer mensaje llega con
+«[Conversación anterior con este cliente, ya cerrada: …]» adelante, así que
+PARECE nuevo) NO es primer contacto. El workflow no le inyecta la Burbuja 1
+(`returning-customer-no-welcome-v1`) y el guion (`SOUL.md`,
+`etapa_descubrimiento`) le dice al LLM que no dé la bienvenida de marca ni la
+propuesta de valor y que siga la nota del turno: episodio nuevo, cortesía o
+respuesta a campaña. El guion no le ordena saludar ni preguntar en qué ayudar:
+la nota de la campaña dice «No vuelvas a saludar» y la de cortesía «no
+preguntes en qué más puedes ayudar».
+
 #### Scenario: primer contacto que sale por present_products sin saludo
 
 - GIVEN el historial no tiene mensajes del agente (primer contacto)
@@ -449,6 +474,14 @@ y la hora vive en la activity `build_first_contact_greeting` (R-DET). Gated por
 - GIVEN el historial ya tiene mensajes del agente
 - WHEN un turno termina con `present_products`
 - THEN NO se inyecta ninguna burbuja de saludo (regla del guion: retomar el hilo)
+
+#### Scenario: cliente que vuelve con un saludo (2026-10-06)
+
+- GIVEN el cliente cerró un episodio hace 11 días y escribe «Buenas»
+- AND su primer mensaje del episodio nuevo llega con «[Conversación anterior…]» adelante
+- WHEN el LLM responde ese turno y los siguientes
+- THEN ningún texto del episodio trae «Bienvenido a *Hubara*» ni la propuesta de valor (APE-04)
+- AND el turno sigue la nota que trae (con `ventas-3`: si Jev dice que es solo un saludo, `cortesia` no lo marca y la nota es la del episodio nuevo, no la de cortesía)
 
 #### Scenario: el saludo ya viajó en el canal legítimo
 
@@ -917,6 +950,78 @@ consultado solo cuando hay una foto leyéndose).
 - WHEN el ingest avisa que está leyendo una foto del cliente
 - THEN la respuesta sin la foto no sale, el turno espera la foto y responde con las dos cosas
 
+### Requirement: Una ráfaga recibe una sola respuesta aunque el cliente siga escribiendo (bot nuevo, 2026-10-06)
+
+Incidente 2026-10-06 (bot nuevo): el cliente mandó la dirección en 6 mensajes
+en 14 s; el turno se recompuso 2 veces (el tope), respondió a mitad y los 3
+últimos formaron otro turno con la nota «desde tu última respuesta», que el bot
+leyó como respuesta a su pregunta («No te entendí bien, ¿me confirmas el
+teléfono?»). El bot nuevo (`HubaraSalesSessionWorkflowV2`):
+- SHALL seguir recomponiendo el turno, pasado el tope de 2 reinicios, mientras
+  la ráfaga no pase 30 s y sin pasar de 6 reinicios (7 intentos: techo de
+  costo). Los 30 s cuentan desde que el turno empieza a juntar la ráfaga; si
+  son mensajes que sobraron del turno anterior, desde el fin de ese turno;
+- SHALL esperar, antes de relanzar un turno cortado, a que el cliente termine
+  de escribir (1,5 s de silencio, dentro de lo que quede de los 30 s); la
+  traza lo dice en el paso `restart` (`settle_ms`);
+- SHALL revisar la bandeja justo antes de grabar la respuesta: si el cliente
+  escribió y el turno todavía no le mostró nada (ninguna herramienta que le
+  llega ni nada encolado para él, como una reacción; el texto de
+  `send_reply` aún no salió) ni tomó una decisión (pedido, cierre,
+  escalación), la respuesta no sale, el modelo no la recuerda y el turno
+  vuelve a empezar con todo (corte `before_record`). Lo que llega después de
+  grabar y antes de enviar (la guarda de variantes, la verificación ③, la red
+  del relevo) ya no corta: la respuesta sale y esos mensajes van al turno
+  siguiente, con la nota de continuación;
+- SHALL registrar al episodio el costo de cada intento cortado, sin tumbar la
+  sesión si ese registro falla;
+- SHALL avisarle al turno siguiente, cuando lo que el cliente escribió no
+  alcanzó a entrar (techo, presupuesto, un turno que ya le mostró algo, o
+  llegó entre grabar y enviar), que esos mensajes llegaron mientras preparaba
+  la respuesta anterior y pueden continuarla: la nota
+  `[CONTINUACIÓN DE RÁFAGA…]` cita lo anterior, enumera los mensajes nuevos si
+  son varios, pide no tomarlos como respuesta a su última pregunta y
+  reemplaza a la nota de ráfaga («…desde tu última respuesta», falsa aquí);
+  en la traza, `continuation_note`. Solo cuenta lo que llegó ANTES de la
+  primera salida del turno (saludo, texto o componentes): lo que llega
+  después pudo ser una respuesta a eso y la nota no lo da por continuación
+  (si llegan juntos, la nota dice cuál es cuál).
+El V1 no cambia. Las sesiones vivas del V2 re-juegan igual (gates
+`burst-time-budget-v1`, `turn-interrupt-before-record-v1` y
+`turn-interrupt-cost-v1`, protegidos por una historia congelada con control
+negativo). La traza llama `burst_note` solo a la nota de ráfaga de verdad (la
+hora de Bogotá es `clock`; las demás notas del turno, `turn_context`).
+
+#### Scenario: La dirección en seis mensajes
+
+- GIVEN el cliente manda la dirección en varios mensajes seguidos mientras el modelo piensa
+- WHEN cada mensaje llega antes de que salga la respuesta
+- THEN el bot responde UNA vez, con todos los mensajes en el mismo turno
+
+#### Scenario: Un mensaje mientras se decide el envío
+
+- GIVEN el modelo ya escribió la respuesta y el motor está decidiendo el envío
+- WHEN el cliente escribe otra cosa
+- THEN esa respuesta no sale ni queda en el historial del modelo, y el turno responde a los dos mensajes
+
+#### Scenario: El cliente no para de escribir
+
+- GIVEN el turno ya se recompuso 6 veces (o la ráfaga pasó los 30 s)
+- WHEN llega otro mensaje
+- THEN el bot responde con lo que tenía y el mensaje forma el turno siguiente, con la nota de continuación
+
+#### Scenario: El turno ya le mostró algo al cliente
+
+- GIVEN el turno ya pidió el catálogo
+- WHEN el cliente escribe mientras se decide el envío
+- THEN el turno no se corta y el mensaje va al turno siguiente, con la nota de continuación
+
+#### Scenario: El cliente contesta después de que la respuesta salió
+
+- GIVEN el bot ya envió «¿Me confirmas el teléfono?»
+- WHEN el cliente contesta mientras el turno termina (el outbox de Meta, la traza)
+- THEN su mensaje forma el turno siguiente SIN la nota de continuación: es su respuesta
+
 ### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
 
 Cada ítem del carrito de WhatsApp (`product_retailer_id`: SKU o id de variante)
@@ -1058,7 +1163,8 @@ La traza (versión 2) SHALL registrar, además de los campos v1, los `steps` del
 turno en el orden en que pasaron, con su tiempo relativo al inicio del turno:
 cada `llm_chat` (ronda, motivo de fin, tools pedidas, tokens y qué pasó con su
 texto), cada `execute_tool` (con su resultado), cada corte del turno (cliente
-esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B), cada
+esperando, escalación, `send_reply`, cierre de tag, Checkpoints A y B, y en el
+bot nuevo el corte antes de grabar `before_record`), cada
 guarda con el texto antes y después, cada reinicio por corrientazo y cada
 burbuja o componente que salió, con su wamid. SHALL traer también un
 `turn_key` determinista (`run:<run_id>/t:<n>`), `source` (`prod` o

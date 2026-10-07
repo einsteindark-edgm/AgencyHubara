@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
+#
+# Paquete de decisión de Hubara (velas), ventas, versión 3. PAQUETES_DE_DECISION.md.
+# Es `ventas-2@2` con lo que dejó a la vista el incidente del 2026-10-06 (bot V2
+# con Jev para un número de prueba) y nada más (una prueba lo exige:
+# test_decisions_ventas_3.py):
+#   - cortesia: un saludo solo con el que el cliente abre la conversación no es
+#     cortesía; si la tienda no le escribe hace 24 h o más (o nunca le
+#     escribió), Jev dice además si es SOLO un saludo (vista `reply_gap`): si
+#     lo es, no es cortesía; un «gracias» tardío sí lo es.
+#   - compra: si se sabe que el asesor no preguntó por la compra, el «sí» que la
+#     regla leyó en el texto se retira (salvo un aplazamiento con certeza).
+#   - afirmacion: Jev dice qué afirma el texto; la tabla lo cruza con las
+#     herramientas del turno.
+#   - cantidad (decisión del operador): si el cliente dice cuántas unidades
+#     quiere, se anota aunque el asesor no lo haya preguntado (solo Jev).
+#   - turn.yaml (rafaga-v6): `confirma_compra` más estrecha y el asunto `gusto`.
+# Se promueve nombrándolo en Terraform (`tenants.<t>.lab.decisions_bundle =
+# "ventas-3"`), después de medirlo en el laboratorio (`B@ventas-3`).
+# Inmutable: otra pregunta u otro umbral = otra versión. Certificar:
+#   cd hubara_agency && uv run python -m src.sdk.cli decisions check
+id: ventas-3
+version: 3
+engine_contract: 1
+oracle: jev-1.13
+capabilities:
+  - acuse
+  - afirmacion
+  - baja
+  - cantidad
+  - categoria
+  - cierre
+  - compra
+  - contactar
+  - cortesia
+  - cupon
+  - datos
+  - destinatario
+  - destinatario_oracion
+  - destinatario_plantilla
+  - enumeracion
+  - familia_de_color
+  - fuera_de_catalogo
+  - item_del_pedido
+  - monto
+  - persona
+  - portavelas
+  - preambulo
+  - producto_nombrado
+  - relevo
+  - rescate
+  - retoma
+  - saludo
+  - selector
+  - zona_de_envio

@@ -37,7 +37,7 @@
    }
   },
   "catalog.SearchProductsTool": {
-   "description": "Busca productos del catálogo de Hubara. El search es case-insensitive y matchea en title, handle, tags, categorías y description del producto. Pasa `q=\"\"` (string vacío) para LISTAR TODO el catálogo (útil cuando el cliente pregunta '¿qué tienen?'). Pasa `q=\"<tema>\"` para filtrar (ej: 'lavanda', 'religiosa', 'cera de palma'). Retorna hasta `limit` productos con precio, handle, imagen y tags.",
+   "description": "Busca productos del catálogo de Hubara. El search es case-insensitive y matchea en title, handle, tags, categorías y description del producto. Pasa `q=\"<tema>\"` para filtrar (ej: 'lavanda', 'religiosa', 'cera de palma'). Para mostrarle al cliente qué tienen o el catálogo NO busques: usa present_products sin handles (manda el catálogo completo o sus categorías). Retorna hasta `limit` productos con precio, handle, imagen y tags.",
    "name": "search_products",
    "parameters": {
     "properties": {
@@ -48,13 +48,13 @@
      },
      "limit": {
       "default": 10,
-      "description": "Máximo de productos a retornar (default 10, máximo 30 para listar todo el catálogo).",
+      "description": "Máximo de productos a retornar (default 10, máximo 30).",
       "maximum": 30,
       "minimum": 1,
       "type": "integer"
      },
      "q": {
-      "description": "Texto de búsqueda. Substring case-insensitive contra title, handle, tags, categorías y description. Pasa string vacío (\"\") para LISTAR TODO el catálogo.",
+      "description": "Texto de búsqueda. Substring case-insensitive contra title, handle, tags, categorías y description. String vacío (\"\") = sin filtro de texto (con `category`, todos los de esa categoría).",
       "maxLength": 100,
       "type": "string"
      }
@@ -417,10 +417,15 @@
    }
   },
   "ui_intents.PresentProductsTool": {
-   "description": "Envía una lista tappable de hasta 30 productos al cliente — el cliente la ve como un menú dentro del chat y puede tocar uno para elegirlo. Úsala cuando vayas a mostrar 4 o más productos. Para 1-3 productos, mejor descríbelos en texto. Para UN producto con foto, usa present_product_detail. Los handles deben venir de search_products (closed-list strict).",
+   "description": "Envía productos al cliente en UN mensaje del catálogo de WhatsApp (hasta 30, agrupados por categoría): los ve dentro del chat y elige ahí. Tres usos: (1) pide ver qué tienen o el catálogo: llámala SIN handles y sin search_products antes; si todo el catálogo cabe, sale entero, y si no, el cliente recibe primero sus categorías para elegir una. (2) Eligió o pidió una categoría: `category`, sin handles. (3) 4 o más productos puntuales: `handles` de search_products (closed-list strict). Para 1-3 productos, mejor descríbelos en texto. Para UN producto con foto, usa present_product_detail.",
    "name": "present_products",
    "parameters": {
     "properties": {
+     "category": {
+      "description": "Categoría cuyos productos quieres mostrar: el `category` que trae '[el cliente eligió la categoría: …]', tal cual («categoria:…»), o el nombre como lo escribió el cliente. Úsala sin handles.",
+      "maxLength": 100,
+      "type": "string"
+     },
      "group_by": {
       "default": "categories",
       "description": "Cómo agrupar los productos en sections. 'categories' agrupa por categories[] real del producto. 'tags' usa tags[]. 'none' los pone todos en una sección.",
@@ -432,7 +437,7 @@
       "type": "string"
      },
      "handles": {
-      "description": "Handles de los productos a mostrar, en el orden que quieres que aparezcan. Solo handles vistos en search_products.",
+      "description": "Handles de los productos a mostrar, en el orden que quieres que aparezcan. Solo handles vistos en search_products. Sin handles (ni category) se muestra el catálogo completo.",
       "items": {
        "maxLength": 200,
        "minLength": 1,
@@ -449,7 +454,6 @@
      }
     },
     "required": [
-     "handles",
      "intro_text"
     ],
     "type": "object"
@@ -533,7 +537,7 @@
    }
   },
   "ui_intents.RequestShippingDetailsTool": {
-   "description": "Pide al cliente los datos de envío (ciudad, barrio, dirección, teléfono, nombre de quien recibe, cédula opcional, método de pago). Llámala UNA SOLA VEZ por sesión, después de que el cliente confirmó qué quiere comprar. Pasa los `items` del pedido (handle EXACTO visto en search_products / get_product_by_handle + cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula el total y decide las formas de pago — tú NUNCA mandas montos. El sistema le manda un mensaje de texto enumerando los campos — el cliente responde libremente por chat y tú vas armando los datos hasta tenerlos completos. NO repitas la lista en tu propio texto: la tool ya manda el mensaje formateado.",
+   "description": "Pide al cliente los datos de envío (ciudad, barrio, dirección, teléfono, nombre de quien recibe, cédula opcional, método de pago) con el formulario de WhatsApp. Llámala UNA SOLA VEZ por sesión, después de que el cliente confirmó qué quiere comprar. Pasa los `items` del pedido (handle EXACTO visto en search_products / get_product_by_handle + cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula el total y decide las formas de pago; tú NUNCA mandas montos. El formulario sale con un mensaje que arma el sistema: producto, variantes del pedido, cantidad, subtotal en productos y que el envío va aparte. NO repitas ese mensaje ni la lista de campos en tu texto. Si el cliente además preguntó otra cosa, respóndela con `send_reply` junto con esta tool, en la misma respuesta: la tool termina tu turno.",
    "name": "request_shipping_details",
    "parameters": {
     "properties": {

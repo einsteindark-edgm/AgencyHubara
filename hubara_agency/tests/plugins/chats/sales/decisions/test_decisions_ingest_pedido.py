@@ -14,6 +14,8 @@ el de hoy; acá se prende cada capacidad con el control de producción
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -57,7 +59,7 @@ class _Loader:
         return "\n".join(self.calls[-1]["extra_context"])
 
 
-class _Store:
+class _Store(MergingMetadataStoreMixin):
     def __init__(self, data: dict) -> None:
         self.data = {SID: data}
 

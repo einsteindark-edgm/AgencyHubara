@@ -4,6 +4,8 @@ no se cierra como CONFIRMADO_SIN_DATOS ni se escala a humano; y un cliente que
 APLAZA recibe texto, no un formulario."""
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import json
 from pathlib import Path
 from typing import Any
@@ -307,7 +309,7 @@ class _Loader:
         self.calls.append((session_id, message, extra_context or []))
 
 
-class _Store:
+class _Store(MergingMetadataStoreMixin):
     def __init__(self, initial: dict[str, dict[str, Any]] | None = None) -> None:
         self.store: dict[str, dict[str, Any]] = dict(initial or {})
 

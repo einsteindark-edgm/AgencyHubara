@@ -83,27 +83,33 @@ class TransferToSalesAgentTool(ToolBase):
         self._vault_dir = Path(vault_dir) if vault_dir is not None else WORKSPACE_VAULT_DIR
 
     async def execute_with_context(self, ctx: ToolContext, resumen: str) -> str:
+        from src.platform.state import FilesystemMetadataStore
+
         metadata_file = self._vault_dir / ctx.session_key / "metadata.json"
-        metadata_file.parent.mkdir(parents=True, exist_ok=True)
-        data: dict[str, Any] = {}
         if metadata_file.exists():
-            data = json.loads(metadata_file.read_text(encoding="utf-8"))
+            # Un metadata corrupto hace fallar la tool, como siempre: no se
+            # reescribe una sesión que no se pudo leer.
+            json.loads(metadata_file.read_text(encoding="utf-8"))
 
-        data["active_route"] = ROUTE_VENTAS
-        data["tag"] = "RETOMA_VENTA"
-        data["motivo"] = resumen
+        def _transfer(data: dict[str, Any]) -> dict[str, Any]:
+            # Sobre la lectura fresca y solo la ruta, la etiqueta y su
+            # historial (incidente 2026-10-06).
+            data["active_route"] = ROUTE_VENTAS
+            data["tag"] = "RETOMA_VENTA"
+            data["motivo"] = resumen
 
-        history = data.setdefault("status_history", [])
-        history.append(
-            {
-                "tag": "RETOMA_VENTA",
-                "motivo": resumen,
-                "active_route": ROUTE_VENTAS,
-                "timestamp": time.time(),
-            }
-        )
+            history = data.setdefault("status_history", [])
+            history.append(
+                {
+                    "tag": "RETOMA_VENTA",
+                    "motivo": resumen,
+                    "active_route": ROUTE_VENTAS,
+                    "timestamp": time.time(),
+                }
+            )
+            return data
 
-        metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _transfer)
 
         # ADR-001: la tool ya NO abre temporal_client ni hace start_workflow.
         # Devuelve una decision serializada; el workflow la lee y dispara la activity.

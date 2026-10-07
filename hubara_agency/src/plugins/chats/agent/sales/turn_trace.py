@@ -15,11 +15,15 @@ import json
 import re
 from typing import Any
 
+from src.plugins.chats.agent.sales.card_texts import envelope_card_text
 from src.plugins.chats.agent.sales.decisions.audit import contract_compliance
 from src.plugins.chats.shared.draft_items import draft_items
 
 _ARG_MAX = 160
 _EXCERPT_MAX = 240
+#: El cuerpo de un mensaje interactivo de WhatsApp: el texto de una tarjeta
+#: nunca pasa de ahí.
+_CARD_TEXT_MAX = 1024
 
 # Claves booleanas que, en False, significan "la tool NO hizo su efecto".
 _FALSE_MEANS_REJECTED = ("queued", "registered", "escalated", "verified")
@@ -110,6 +114,11 @@ def summarize_tool_event(
     compact_args = {
         str(k): _short(v, arg_max) for k, v in (args or {}).items() if v not in (None, "", [])
     }
+    # El texto que el código armó para el cliente con la tarjeta (mensaje del
+    # formulario, resumen del pedido, tarifas): lo que el cliente LEYÓ, entero
+    # hasta el cuerpo de WhatsApp. Incidente 2026-10-06 (turno 9): sin él, la
+    # calificación daba el formulario por «sin texto».
+    card_text = envelope_card_text(result) if error is None else None
     return {
         "name": name,
         "ok": error is None,
@@ -117,6 +126,7 @@ def summarize_tool_event(
         "notes": notes,
         "args": compact_args,
         "excerpt": _short(result or "", _EXCERPT_MAX),
+        **({"card_text": _short(card_text, _CARD_TEXT_MAX)} if card_text else {}),
     }
 
 
@@ -204,20 +214,31 @@ def _bound(text: Any, limit: int = TEXT_MAX) -> str:
 
 # Notas que el turno inyectó en `plugin_context` (solo el nombre va a la traza).
 _CONTEXT_NOTE_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("[CONTEXTO DE TURNO", "burst_note"),
+    ("[CONTINUACIÓN", "continuation_note"),
     ("[DATOS DEL PEDIDO", "draft"),
     ("[HANDOFF_REMARKETING]", "handoff"),
     ("[PLAN DEL TURNO]", "turn_plan"),
 )
+# Todas las notas «[CONTEXTO DE TURNO…]» empiezan igual: la de ráfaga, la hora
+# de Bogotá y las del ingest (episodio nuevo, foto citada). La traza decía
+# `burst_note` en cada turno con hora, aunque fuera de un solo mensaje
+# (incidente 2026-10-06): se distinguen por lo que dicen después del encabezado.
+_TURN_CONTEXT = "[CONTEXTO DE TURNO"
+_TURN_CONTEXT_KINDS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*El cliente te escribió \d+ mensajes"), "burst_note"),
+    (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*Hora actual en Colombia"), "clock"),
+)
+
+
+def _context_note_name(text: str) -> str:
+    if text.startswith(_TURN_CONTEXT):
+        return next((n for pattern, n in _TURN_CONTEXT_KINDS if pattern.match(text)), "turn_context")
+    return next((n for prefix, n in _CONTEXT_NOTE_PREFIXES if text.startswith(prefix)), "other")
 
 
 def context_note_names(plugin_context: list[str] | None) -> list[str]:
     """Nombres de las notas de contexto del turno, en orden (sin su texto)."""
-    names: list[str] = []
-    for note in plugin_context or []:
-        text = note.lstrip() if isinstance(note, str) else ""
-        names.append(next((n for prefix, n in _CONTEXT_NOTE_PREFIXES if text.startswith(prefix)), "other"))
-    return names
+    return [_context_note_name(note.lstrip() if isinstance(note, str) else "") for note in plugin_context or []]
 
 
 def _bound_value(value: Any, limit: int = TEXT_MAX, *, max_items: int = _MAX_TOOLS) -> Any:

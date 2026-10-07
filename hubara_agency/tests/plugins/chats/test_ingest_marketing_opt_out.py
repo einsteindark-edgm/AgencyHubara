@@ -7,6 +7,8 @@ de report/sanción).
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import time
 from typing import Any
 
@@ -28,7 +30,7 @@ class FakeLoadOrStart:
         pass
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self, seed: dict[str, dict] | None = None) -> None:
         self.store: dict[str, dict] = dict(seed or {})
 

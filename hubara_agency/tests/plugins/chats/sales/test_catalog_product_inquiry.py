@@ -14,6 +14,8 @@ Un producto que el catálogo no tiene nunca llega al prompt.
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from dataclasses import dataclass
 from typing import Any
 
@@ -85,7 +87,7 @@ class _History:
         self.events.append({"content": content, **kw})
 
 
-class _Metadata:
+class _Metadata(MergingMetadataStoreMixin):
     def __init__(self) -> None:
         self.store: dict[str, dict[str, Any]] = {}
 

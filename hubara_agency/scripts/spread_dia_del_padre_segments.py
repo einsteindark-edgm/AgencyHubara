@@ -33,6 +33,7 @@ import argparse
 import asyncio
 import json
 import os
+from pathlib import Path
 
 import httpx
 from loguru import logger
@@ -41,6 +42,7 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.logging import setup_logging
 from src.platform.meta.graph import graph_url
 from src.platform.medusa.composition import get_medusa_client
+from src.platform.state import FilesystemMetadataStore
 from src.plugins.ads.synthetic_seed import plan_segment_spread
 
 setup_logging()
@@ -99,6 +101,34 @@ def _load_sessions() -> list[tuple[str, dict]]:
     return out
 
 
+def apply_spread_to_vault(vault_dir: Path, plan: list[dict], campaign_ad_ids: frozenset[str]) -> list[str]:
+    """Escribe en el vault el reparto planeado, con el store (candado +
+    atómico; antes `write_text`, a medias y sin candado): cada sesión se vuelve
+    a planear sobre su lectura FRESCA y se escribe solo si sigue siendo de la
+    campaña. Lo que otro escritor puso entre cargar y aplicar no se pisa.
+    Devuelve las sesiones que escribió (Medusa se re-estampa solo en esas)."""
+    store = FilesystemMetadataStore(vault_dir)
+    written: list[str] = []
+    for p in plan:
+        key, new_ad = p["session_key"], p["new_source_id"]
+
+        def respread(fresh: dict, key: str = key, new_ad: str = new_ad) -> dict | None:
+            replanned = plan_segment_spread([(key, fresh)], campaign_ad_ids, [new_ad])
+            return replanned[0]["metadata"] if replanned else None
+
+        if store.update(key, respread) is not None:
+            written.append(key)
+    return written
+
+
+def plan_to_restamp(plan: list[dict], written: list[str]) -> list[dict]:
+    """Las entradas del reparto cuyas órdenes se re-estampan en Medusa: solo
+    las de las sesiones que el vault escribió. Una que saltó (ya no era de la
+    campaña) dejaría su orden con un anuncio que la conversación no tiene."""
+    done = set(written)
+    return [p for p in plan if p["session_key"] in done]
+
+
 async def _patch_order(client, order_id: str, patch: dict) -> None:
     from src.platform.medusa.client import MedusaAPIError
 
@@ -144,17 +174,13 @@ async def main() -> None:
         return
 
     # 1) vault
-    for p in plan:
-        meta_file = WORKSPACE_VAULT_DIR / p["session_key"] / "metadata.json"
-        meta_file.write_text(
-            json.dumps(p["metadata"], indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-    logger.info("vault: {} sesiones reescritas", len(plan))
+    written = apply_spread_to_vault(WORKSPACE_VAULT_DIR, plan, frozenset(ads))
+    logger.info("vault: {} sesiones reescritas", len(written))
 
     # 2) Medusa — re-estampa la atribución de las ventas movidas
     client = get_medusa_client()
     ok = failed = 0
-    for p in plan:
+    for p in plan_to_restamp(plan, written):
         adset_id, adset_name = ads[p["new_source_id"]]
         patch = {
             "meta_ad_id": p["new_source_id"],

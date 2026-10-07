@@ -15,6 +15,7 @@ Funciones puras (sin I/O): el caller lee el vault.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any
 
@@ -39,8 +40,11 @@ INTENT_BY_TOOL: dict[str, str] = {
     "react_to_message": "reaction",
 }
 
+# `categories`: el menú de categorías con que `present_products` contesta
+# cuando el catálogo no cabe en un mensaje (PR #394). En una conversación sin
+# traza solo queda ese componente: también atiende el pedido del catálogo.
 CATALOG_DISPLAY_INTENTS = frozenset(
-    {"products_list", "product_detail", "product_gallery", "variant_picker"}
+    {"products_list", "product_detail", "product_gallery", "variant_picker", "categories"}
 )
 
 _CONFIRM_BUTTON_MARKERS = ("[el cliente tocó el botón: ✅ confirmar", "[el cliente tocó el botón: confirmar")
@@ -53,6 +57,10 @@ class ToolCall:
     error: str | None = None
     notes: tuple[str, ...] = ()
     args: dict[str, Any] = field(default_factory=dict)
+    # El texto que el código armó para el cliente con la tarjeta (el mensaje
+    # del formulario de envío, el resumen del pedido, las tarifas): la traza
+    # lo guarda en `card_text` (incidente 2026-10-06, turno 9).
+    card_text: str | None = None
 
     def note(self, prefix: str) -> str | None:
         for n in self.notes:
@@ -112,15 +120,27 @@ class Turn:
         return any(t.name == name for t in self.tools)
 
     @property
+    def card_read_texts(self) -> tuple[str, ...]:
+        """El texto de las tarjetas que salieron en el turno (las que no se
+        negaron), en orden: el que redacta el LLM (`card_texts`) y el que arma
+        el código (`card_text`: el mensaje del formulario, el resumen del
+        pedido, las tarifas)."""
+        return tuple(
+            x
+            for t in self.tools
+            if t.ok is not False
+            for x in (*card_texts(t.name, t.args), *((t.card_text,) if t.card_text else ()))
+        )
+
+    @property
     def read_texts(self) -> tuple[str, ...]:
         """Lo que el cliente LEYÓ en el turno, en el orden en que le llegó: los
-        textos y, después, el texto de las tarjetas que salieron (el flush va
-        después del texto). Con complemento, lo suyo va al final (caso 4567:
-        el saludo iba en el texto de la lista, antes del complemento)."""
+        textos y, después, el texto de las tarjetas (el flush va después del
+        texto). Con complemento, lo suyo va al final (caso 4567: el saludo iba
+        en el texto de la lista, antes del complemento)."""
         if self.read_order is not None:
             return self.read_order
-        cards = (x for t in self.tools if t.ok is not False for x in card_texts(t.name, t.args))
-        return (*self.sent_texts, *cards)
+        return (*self.sent_texts, *self.card_read_texts)
 
     @property
     def is_customer(self) -> bool:
@@ -177,12 +197,14 @@ def _as_int(value: Any) -> int | None:
 
 def _tool_from_trace(raw: dict[str, Any]) -> ToolCall:
     ok = raw.get("ok")
+    card_text = raw.get("card_text")
     return ToolCall(
         name=str(raw.get("name") or ""),
         ok=ok if isinstance(ok, bool) else None,
         error=raw.get("error") if isinstance(raw.get("error"), str) else None,
         notes=tuple(str(n) for n in raw.get("notes") or []),
         args=dict(raw.get("args") or {}) if isinstance(raw.get("args"), dict) else {},
+        card_text=card_text if isinstance(card_text, str) and card_text.strip() else None,
     )
 
 
@@ -210,6 +232,28 @@ def _intents_for(tools: tuple[ToolCall, ...], guards: tuple[str, ...]) -> tuple[
     if "variant_enumeration_guard" in guards and "variant_picker" not in intents:
         intents.append("variant_picker")
     return tuple(intents)
+
+
+#: El envelope de `present_products` empieza por `queued` y `kind`, y la traza
+#: guarda el comienzo del resultado de cada tool (`excerpt`): con el menú de
+#: categorías (PR #394) el `kind` es `categories`.
+_CATEGORY_MENU_ENVELOPE = re.compile(r'"kind"\s*:\s*"categories"')
+
+
+def _with_category_menu(intents: tuple[str, ...], raw_tools: Any) -> tuple[str, ...]:
+    """Si `present_products` mandó el menú de categorías, el cliente vio
+    categorías, no productos con su precio: el componente es `categories`
+    (VAR-07 no cuenta un precio que no se vio). `products_list` queda solo si
+    otra llamada del turno sí mandó productos."""
+    kinds = [
+        "categories" if _CATEGORY_MENU_ENVELOPE.search(str(t.get("excerpt") or "")) else "products_list"
+        for t in raw_tools or []
+        if isinstance(t, dict) and t.get("name") == "present_products" and t.get("ok") is True
+    ]
+    if "categories" not in kinds:
+        return intents
+    out = [i for i in intents if i != "products_list" or "products_list" in kinds]
+    return tuple(out) if "categories" in out else (*out, "categories")
 
 
 def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
@@ -240,7 +284,7 @@ def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
         suppressed_reason=raw.get("suppressed_reason"),
         discarded_narration=tuple(str(x) for x in raw.get("discarded_narration") or []),
         tools=tools,
-        intents=_intents_for(tools, guards),
+        intents=_with_category_menu(_intents_for(tools, guards), raw.get("tools")),
         guards=guards,
         stage_in=raw.get("stage_in"),
         stage_out=raw.get("stage_out"),

@@ -24,6 +24,7 @@ isinstance check).
 """
 from __future__ import annotations
 
+import copy
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
@@ -93,6 +94,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
     LoadOrStartSalesSession,
 )
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
 )
@@ -378,10 +380,26 @@ class IngestInboundMessage:
             )
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
+        # Lo que había en disco al leer (incidente 2026-10-06): cada escritura
+        # de este `execute` lleva SOLO lo que cambió desde acá (o desde su
+        # escritura anterior), no la copia entera. Entre la lectura y la
+        # escritura grande se espera a Jev varios segundos; en ese rato el
+        # flush del turno anterior saca de la cola la foto que ya mandó, y la
+        # copia entera la devolvía (salía otra vez en el turno siguiente).
         try:
-            metadata = self._metadata_store.read(session_id)
-        except Exception:  # noqa: BLE001 — best-effort
+            # Un error pasajero se reintenta (hasta 3 veces, sin frenar el bucle).
+            metadata = await read_retrying_transient_errors(self._metadata_store, session_id)
+            base: dict[str, Any] = copy.deepcopy(metadata)
+        except Exception as exc:  # noqa: BLE001 — best-effort: el mensaje no se pierde
+            # Sigue fallando tras los reintentos (el store lanza: nunca da una
+            # copia vieja ni `{}`). El mensaje sigue al historial y al router,
+            # que relee; lo que el ingest decida sobre `{}` NO se escribe
+            # (pisaba el origen).
+            logger.warning(
+                "ingest_metadata_unreadable", session=session_id, error=repr(exc)[:200]
+            )
             metadata = {}
+            base = _Unread()
 
         # HU web-cart: token `ref:cart_<id>` del texto prellenado que genera
         # la página web. Detección 100% determinista (regex) — jamás del LLM.
@@ -394,6 +412,7 @@ class IngestInboundMessage:
         self._handle_origin(
             session_id=session_id,
             metadata=metadata,
+            base=base,
             referral=parsed.referral,
             inbound_message_id=parsed.message_id,
             cart_ref=cart_ref,
@@ -408,6 +427,7 @@ class IngestInboundMessage:
             referral_already_seen = self._handle_referral(
                 session_id=session_id,
                 metadata=metadata,
+                base=base,
                 referral=parsed.referral,
                 inbound_message_id=parsed.message_id,
             )
@@ -621,6 +641,12 @@ class IngestInboundMessage:
             # Pidió la baja: no se le sigue conversando la campaña.
             campaign_reply_note = None
             campaign_reply_touch = None
+            if isinstance(base, _Unread):
+                # La primera lectura falló: la baja no depende de ella y tiene
+                # que quedar (sticky). Se escribe sobre la lectura FRESCA.
+                self._persist_opt_out_over_fresh(
+                    session_id, (parsed.context or {}).get("id"), now_ms
+                )
             logger.info(
                 "marketing_opt_out_detected",
                 session_id=session_id,
@@ -665,16 +691,31 @@ class IngestInboundMessage:
                 }
             )
 
-        self._safe_write_metadata(session_id, metadata)
+        # Un humano tomó la conversación mientras se esperaba a Jev (revisión
+        # del PR #393): el ciclo del bot que este mensaje iba a mover (episodio
+        # nuevo, etiqueta reiniciada) se descarta. Sin esto el merge dejaba
+        # `tag=NO_ETIQUETADO` y un episodio abierto bajo el humano (la
+        # etiqueta del escritor gana el conflicto). Mismo principio que la
+        # guarda de arriba con la ruta humana ya leída. Se decide con lo que
+        # hay en disco BAJO el candado de la escritura (segunda revisión: una
+        # lectura previa dejaba una ventana para la toma).
+        def _yield_if_a_human_took_over(fresh: dict[str, Any]) -> None:
+            if base.get("active_route") != ROUTE_HUMANO and fresh.get("active_route") == ROUTE_HUMANO:
+                _yield_to_human(metadata, base)
+
+        self._safe_write_metadata(
+            session_id, metadata, base, before_merge=_yield_if_a_human_took_over
+        )
 
         # Punto 2 (escala Window Strategist): mantener el índice liviano de
         # reactivación en el mismo momento del estampado — el snapshot builder
         # shortlistea sin escanear el vault. Best-effort: un índice roto JAMÁS
         # tumba el ingest (el fallback del builder es full scan).
         try:
-            update_reengagement_index_entry(
-                WORKSPACE_VAULT_DIR, session_id, metadata, now_ms=now_ms
-            )
+            if not isinstance(base, _Unread):  # sin leer el documento, nada que indexar
+                update_reengagement_index_entry(
+                    WORKSPACE_VAULT_DIR, session_id, metadata, now_ms=now_ms
+                )
         except Exception:  # noqa: BLE001
             logger.warning(
                 "reengagement_index_update_failed", session_id=session_id
@@ -703,11 +744,12 @@ class IngestInboundMessage:
                 )
                 return fresh if captured["new"] else None
 
-            fresh_after_capture = self._metadata_store.update(
-                session_id, _capture_mutator
+            fresh_after_capture = self._update_best_effort(
+                session_id, _capture_mutator, what="carrito_web"
             )
             if fresh_after_capture is not None:
                 metadata = fresh_after_capture
+                _rebase(base, metadata)
 
             if captured["new"]:
                 episodes = metadata.get("episodes") or []
@@ -744,9 +786,10 @@ class IngestInboundMessage:
                             _declassify_web_cart_origin(fresh, parsed)
                     return fresh
 
-                updated = self._metadata_store.update(session_id, _apply_mutator)
+                updated = self._update_best_effort(session_id, _apply_mutator, what="carrito_web_resuelto")
                 if updated is not None:
                     metadata = updated
+                    _rebase(base, metadata)
                 self._emit_web_cart_events(
                     session_id=session_id, metadata=metadata, cart_id=cart_ref
                 )
@@ -770,9 +813,10 @@ class IngestInboundMessage:
                 )
                 return fresh if appended else None
 
-            logged = self._metadata_store.update(session_id, _referral_mutator)
+            logged = self._update_best_effort(session_id, _referral_mutator, what="ref_de_agente")
             if logged is not None:
                 metadata = logged
+                _rebase(base, metadata)
 
         if product_ref and metadata.get("active_route") != ROUTE_HUMANO:
             captured_ref = {"new": False}
@@ -785,11 +829,12 @@ class IngestInboundMessage:
                 )
                 return fresh if captured_ref["new"] else None
 
-            fresh_after_ref = self._metadata_store.update(
-                session_id, _capture_ref_mutator
+            fresh_after_ref = self._update_best_effort(
+                session_id, _capture_ref_mutator, what="ref_de_producto"
             )
             if fresh_after_ref is not None:
                 metadata = fresh_after_ref
+                _rebase(base, metadata)
 
             if captured_ref["new"]:
                 product, reason = await self._resolve_product_ref(product_ref)
@@ -806,9 +851,10 @@ class IngestInboundMessage:
                         mark_web_product_unresolved(fresh, reason=reason or "unknown")
                     return fresh
 
-                updated_ref = self._metadata_store.update(session_id, _apply_ref_mutator)
+                updated_ref = self._update_best_effort(session_id, _apply_ref_mutator, what="ref_de_producto_resuelto")
                 if updated_ref is not None:
                     metadata = updated_ref
+                    _rebase(base, metadata)
 
         # --- 2f-bis. «Enviar mensaje a la empresa» desde la ficha del catálogo ---
         # Meta manda el producto exacto (`context.referred_product`); hasta el
@@ -828,9 +874,10 @@ class IngestInboundMessage:
                 )
                 return fresh if captured_card["new"] else None
 
-            fresh_after_card = self._metadata_store.update(session_id, _capture_card_mutator)
+            fresh_after_card = self._update_best_effort(session_id, _capture_card_mutator, what="tarjeta_del_catalogo")
             if fresh_after_card is not None:
                 metadata = fresh_after_card
+                _rebase(base, metadata)
 
             if captured_card["new"]:
                 card_lines = await self._catalog_lines([{"product_retailer_id": referred}])
@@ -849,9 +896,10 @@ class IngestInboundMessage:
                         mark_web_product_unresolved(fresh, reason=card_reason)
                     return fresh
 
-                updated_card = self._metadata_store.update(session_id, _apply_card_mutator)
+                updated_card = self._update_best_effort(session_id, _apply_card_mutator, what="tarjeta_del_catalogo_resuelta")
                 if updated_card is not None:
                     metadata = updated_card
+                    _rebase(base, metadata)
 
         # --- 2g. Cupón de la campaña: se aplica solo ---
         # Conversación de prueba del 2026-09-24 (AMOR2026 con cupo por
@@ -881,9 +929,10 @@ class IngestInboundMessage:
                             return None  # ya tiene un cupón: no se pisa
                         return store_coupon_application(fresh, application, now_ms=now_ms)
 
-                    stored = self._metadata_store.update(session_id, _coupon_mutator)
+                    stored = self._update_best_effort(session_id, _coupon_mutator, what="cupon_de_campana")
                     if stored is not None:
                         metadata = stored
+                        _rebase(base, metadata)
                 campaign_reply_note = build_campaign_reply_note(
                     campaign_reply_touch, coupon=application
                 )
@@ -941,7 +990,7 @@ class IngestInboundMessage:
                 "mime_type": (parsed.audio or {}).get("mime_type"),
                 "voice": (parsed.audio or {}).get("voice", False),
             }
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
             # HU-002 / A.5: spawn background transcription task. El HTTP layer
             # tiene permiso de I/O (ya llama Temporal client), así que la
             # transcripción puede correr ahí — más simple que un workflow
@@ -982,7 +1031,7 @@ class IngestInboundMessage:
                 "inbound_message_id": parsed.message_id,
                 "mime_type": effective.image_mime_type,
             }
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
             self._photo_reads.begin(session_id)
             # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
             await self._notify_photo(session_id, parsed.message_id, done=False)
@@ -1005,7 +1054,7 @@ class IngestInboundMessage:
             # indicator pueda referenciar este msg si el cliente reintenta.
             if parsed.message_id:
                 metadata["last_inbound_message_id"] = parsed.message_id
-                self._safe_write_metadata(session_id, metadata)
+                self._safe_write_metadata(session_id, metadata, base)
             return
 
         logger.info(
@@ -1038,20 +1087,23 @@ class IngestInboundMessage:
                 effective.document_mime_type,
             )
             persisted_document_url = persisted_doc[0] if persisted_doc else None
-            metadata_dirty = False
-            if persisted_doc:
-                self._index_persisted_media(
-                    metadata,
-                    media_id=effective.document_media_id,
-                    filename=persisted_doc[1],
-                    kind=KIND_PDF_DOCUMENT,
-                )
-                metadata_dirty = True
-            notify_client = False
-            if metadata.get("active_route", ROUTE_VENTAS) != ROUTE_HUMANO:
-                nombre = effective.document_filename or "sin nombre"
+            nombre = effective.document_filename or "sin nombre"
+            document_media_id = effective.document_media_id
+
+            def _route_pdf(target: dict[str, Any]) -> bool:
+                """Indexa el PDF y pasa la conversación a verificación humana
+                si no lo estaba. True si la pasó."""
+                if persisted_doc:
+                    self._index_persisted_media(
+                        target,
+                        media_id=document_media_id,
+                        filename=persisted_doc[1],
+                        kind=KIND_PDF_DOCUMENT,
+                    )
+                if target.get("active_route", ROUTE_VENTAS) == ROUTE_HUMANO:
+                    return False
                 self._apply_human_route(
-                    metadata,
+                    target,
                     motivo=(
                         f"Cliente envió un documento PDF ({nombre}). Posible "
                         "comprobante de pago — verificar la recepción del pago "
@@ -1060,10 +1112,35 @@ class IngestInboundMessage:
                     ),
                     reason_category="PAYMENT_VERIFICATION_PENDING",
                 )
-                metadata_dirty = True
-                notify_client = True
-            if metadata_dirty:
-                self._safe_write_metadata(session_id, metadata)
+                return True
+
+            if isinstance(base, _Unread):
+                # La primera lectura falló (tras sus reintentos): la ruta
+                # humana no depende de ella y tiene que quedar. Se escribe
+                # sobre la lectura FRESCA (mejor esfuerzo, octava revisión).
+                routed = {"to_human": False}
+
+                def _pdf_over_fresh(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    routed["to_human"] = _route_pdf(fresh)
+                    return fresh if (routed["to_human"] or persisted_doc) else None
+
+                route_written = (
+                    self._update_best_effort(session_id, _pdf_over_fresh, what="ruta_humana_por_pdf")
+                    is not None
+                )
+                notify_client = routed["to_human"] and route_written
+                if notify_client:
+                    _route_pdf(metadata)  # lo que sigue de este ingest también lo ve
+            else:
+                to_human = _route_pdf(metadata)
+                route_written = (
+                    self._safe_write_metadata(session_id, metadata, base)
+                    if (to_human or persisted_doc)
+                    else True
+                )
+                notify_client = to_human and route_written
+            # «Un colega lo revisa» solo si la ruta humana quedó escrita: si
+            # no, nadie tendría el caso (octava revisión).
             if notify_client:
                 try:
                     from src.platform.whatsapp import client as wa_client
@@ -1122,11 +1199,11 @@ class IngestInboundMessage:
         # --- 7. Persistir last_inbound_message_id para typing indicator ---
         if parsed.message_id:
             metadata["last_inbound_message_id"] = parsed.message_id
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
         elif cleared_flow_flag:
             # No hay message_id PERO limpiamos el flag arriba — persistimos
             # el pop para que no quede zombie en metadata.
-            self._safe_write_metadata(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
 
         # Acuse de la despedida (ver 2c): ya quedó en el chat; el agente no
         # tiene nada que contestar.
@@ -1168,6 +1245,7 @@ class IngestInboundMessage:
             reread = await self._reread_coupon_units(session_id, metadata, now_ms)
             if reread is not None:
                 metadata = reread
+                _rebase(base, metadata)
         elif not coupon_talk and applied_coupon(metadata) is not None:
             logger.info("coupon_not_in_play", session_id=session_id)
 
@@ -1475,7 +1553,7 @@ class IngestInboundMessage:
             current["units_checked_at_ms"] = now_ms
             return fresh
 
-        updated = self._metadata_store.update(session_id, _mutator)
+        updated = self._update_best_effort(session_id, _mutator, what="cupos_del_cupon")
         logger.info(
             "coupon_units_reread",
             code=code,
@@ -1484,6 +1562,51 @@ class IngestInboundMessage:
             exhausted=exhausted,
         )
         return updated
+
+    def _persist_opt_out_over_fresh(
+        self, session_id: str, quoted_message_id: str | None, now_ms: int
+    ) -> None:
+        """La baja «NO MÁS» cuando la primera lectura del ingest falló: no
+        depende de esa lectura y es sticky. Se marca sobre la lectura FRESCA
+        (con la campaña citada o la del toque reciente), de mejor esfuerzo."""
+        from src.sdk.messagingkit import OPT_OUT_SOURCE_TEXT, mark_marketing_opt_out
+
+        def _opt_out(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            if fresh.get("marketing_opt_out"):
+                return None
+            quoted = quoted_campaign_touch(fresh, quoted_message_id)
+            campaign_id = (
+                quoted["campaign_id"]
+                if quoted is not None and not quoted.get("test")
+                else opt_out_campaign_id(fresh, now_ms)
+            )
+            mark_marketing_opt_out(
+                fresh, now_ms=now_ms, source=OPT_OUT_SOURCE_TEXT, campaign_id=campaign_id
+            )
+            return fresh
+
+        self._update_best_effort(session_id, _opt_out, what="baja_de_marketing")
+
+    def _update_best_effort(
+        self,
+        session_id: str,
+        mutator: Callable[[dict[str, Any]], dict[str, Any] | None],
+        *,
+        what: str,
+    ) -> dict[str, Any] | None:
+        """Escritura AUXILIAR del ingest (captura del carrito, del ref, de la
+        tarjeta, del cupón): de mejor esfuerzo. Si el disco no deja escribir
+        (un error pasajero, disco lleno), se registra y se sigue: el mensaje
+        del cliente igual queda en el historial y se despacha. El ingest corre
+        después de responder 200 al webhook, así que Meta no lo reintenta.
+        ``None`` = no se escribió (como cuando el mutator aborta)."""
+        try:
+            return self._metadata_store.update(session_id, mutator)
+        except Exception as exc:  # noqa: BLE001 — mejor esfuerzo: el mensaje sigue
+            logger.warning(
+                "ingest_aux_write_failed", session_id=session_id, what=what, error=repr(exc)[:200]
+            )
+            return None
 
     async def _catalog_gap_note(self, session_id: str, text: str) -> str | None:
         """Nota de lo que no existe en el catálogo (`catalog_gap_note_for`)."""
@@ -1649,6 +1772,7 @@ class IngestInboundMessage:
         *,
         session_id: str,
         metadata: dict[str, Any],
+        base: dict[str, Any],
         referral: dict[str, Any] | None,
         inbound_message_id: str | None,
         cart_ref: str | None = None,
@@ -1715,13 +1839,14 @@ class IngestInboundMessage:
         # más writes con `_safe_write_metadata`, pero queremos que
         # origin/last_touch queden grabados aunque el flujo posterior
         # crashee.
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
 
     def _handle_referral(
         self,
         *,
         session_id: str,
         metadata: dict[str, Any],
+        base: dict[str, Any],
         referral: dict[str, Any],
         inbound_message_id: str | None,
     ) -> bool:
@@ -1756,7 +1881,7 @@ class IngestInboundMessage:
         metadata["ctwa_clids_seen"] = clids_seen
 
         # Persistir inmediatamente (el bus es async y puede demorar)
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
 
         # Emitir analytics. Fire-and-forget — si el bus falla, NO bloquea.
         # PREMORTEM #2: spawn safe.
@@ -1841,11 +1966,50 @@ class IngestInboundMessage:
             session_id=None,
         )
 
-    def _safe_write_metadata(self, session_id: str, data: dict[str, Any]) -> None:
+    def _safe_write_metadata(
+        self,
+        session_id: str,
+        data: dict[str, Any],
+        base: dict[str, Any],
+        *,
+        before_merge: Callable[[dict[str, Any]], None] | None = None,
+    ) -> bool:
+        """Escribe SOLO lo que este ingest cambió en `data` desde `base` (lo que
+        leyó, o lo que escribió la vez anterior), sobre lo que hay en disco
+        AHORA (`write_merged`, merge de tres vías). Incidente 2026-10-06: la
+        copia entera, escrita tras esperar a Jev, devolvía a la cola la foto
+        que el flush ya había mandado y borraba su entrega del índice.
+        `before_merge`: ver `FilesystemMetadataStore.write_merged`.
+
+        Solo si escribió, `base` pasa a ser `data`: lo ya escrito deja de
+        contar como cambio en la escritura siguiente. Una escritura que falló
+        (p. ej. un error de lectura pasajero bajo el candado: el store lanza y
+        no toca nada) NO cuenta como hecha: sus cambios siguen pendientes para
+        la siguiente (segunda revisión del PR #393). Best-effort: un fallo se
+        loguea y el mensaje del cliente sigue su camino.
+
+        Si la lectura inicial falló (`base` es `_Unread`), no se escribe: el
+        ingest decidió sobre `{}`, no sobre el documento (sexta revisión).
+        Devuelve si escribió."""
+        if isinstance(base, _Unread):
+            logger.info("metadata_write_skipped_unread", session=session_id)
+            return False
         try:
-            self._metadata_store.write(session_id, data)
-        except Exception:  # noqa: BLE001 — best-effort
-            logger.info("metadata_write_failed_ignored", session=session_id)
+            self._metadata_store.write_merged(
+                session_id,
+                base=base,
+                ours=data,
+                before_merge=before_merge,
+            )
+        except Exception as exc:  # noqa: BLE001 — best-effort
+            logger.info(
+                "metadata_write_failed_ignored",
+                session=session_id,
+                error=f"{type(exc).__name__}: {exc}"[:200],
+            )
+            return False
+        _rebase(base, data)
+        return True
 
     async def _emit_watchdog_events(
         self,
@@ -1896,6 +2060,7 @@ class IngestInboundMessage:
         # Limpiar pending_transcription
         try:
             metadata = self._metadata_store.read(session_id)
+            base = copy.deepcopy(metadata)
             metadata.pop("pending_transcription", None)
             if result.ok and result.text:
                 recent = list(metadata.get("recent_transcriptions") or [])
@@ -1915,7 +2080,7 @@ class IngestInboundMessage:
                     "provider": result.provider,
                 })
                 metadata["transcription_failures"] = errors[-20:]
-            self._metadata_store.write(session_id, metadata)
+            self._safe_write_metadata(session_id, metadata, base)
         except Exception:  # noqa: BLE001
             pass
 
@@ -2067,6 +2232,7 @@ class IngestInboundMessage:
             metadata = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001
             metadata = {}
+        base = copy.deepcopy(metadata)
         metadata.pop("pending_vision", None)
         if result.ok:
             recent = list(metadata.get("recent_image_descriptions") or [])
@@ -2106,7 +2272,7 @@ class IngestInboundMessage:
                 filename=persisted[1],
                 kind=result.kind if result.ok else "unknown",
             )
-        self._safe_write_metadata(session_id, metadata)
+        self._safe_write_metadata(session_id, metadata, base)
         # Lo que costó describirla (también un comprobante) va a la conversación.
         if result.ok:
             self._charge_vision(session_id, result.cost_usd_estimate, calls=1)
@@ -2513,15 +2679,63 @@ class IngestInboundMessage:
             data = self._metadata_store.read(session_id)
         except Exception:  # noqa: BLE001
             data = {}
+        base = copy.deepcopy(data)
         self._apply_human_route(
             data, motivo=motivo, reason_category=reason_category
         )
-        self._safe_write_metadata(session_id, data)
+        self._safe_write_metadata(session_id, data, base)
 
 
 def _now_ms() -> int:
     import time
     return int(time.time() * 1000)
+
+
+class _Unread(dict):
+    """`base` de un ingest que NO pudo leer `metadata.json` (error pasajero):
+    lo que decida sobre `{}` no se escribe (`_safe_write_metadata`). Sigue
+    siendo `_Unread` aunque se rebasee: el ingest no vio el documento al
+    decidir."""
+
+
+def _rebase(base: dict[str, Any], data: dict[str, Any]) -> None:
+    """`base` pasa a ser una copia de `data` (en el lugar: quien la tiene la
+    ve): lo que el ingest ya escribió, o lo que acaba de releer del disco, deja
+    de contar como cambio suyo en la próxima `write_merged`."""
+    base.clear()
+    base.update(copy.deepcopy(data))
+
+
+#: Lo que el ingest mueve del ciclo del bot y un humano que tomó la
+#: conversación manda sobre ello: la etiqueta y su historial.
+_HUMAN_OWNED_KEYS = ("tag", "motivo", "status_history")
+#: Lo que solo se descarta si este mensaje rotó el episodio (cerró el anterior
+#: o abrió uno nuevo): si no rotó, lo que las lecturas escribieron en el
+#: episodio activo se queda.
+_ROTATION_KEYS = ("episodes", "capi_outbox")
+
+
+def _episode_marks(metadata: dict[str, Any]) -> list[tuple[Any, Any]]:
+    return [
+        (episode.get("episode_id"), episode.get("closed_at_ms"))
+        for episode in metadata.get("episodes") or []
+        if isinstance(episode, dict)
+    ]
+
+
+def _yield_to_human(metadata: dict[str, Any], base: dict[str, Any]) -> None:
+    """Un humano tomó la conversación mientras el ingest esperaba: lo que
+    iba a mover del ciclo del bot vuelve a como lo leyó (`base`), así el merge
+    se queda con lo del humano. Rota el episodio (episodio nuevo, cierre del
+    anterior, `CartAbandoned` del cierre por inactividad) → también se descarta."""
+    keys = list(_HUMAN_OWNED_KEYS)
+    if _episode_marks(metadata) != _episode_marks(base):
+        keys.extend(_ROTATION_KEYS)
+    for key in keys:
+        if key in base:
+            metadata[key] = copy.deepcopy(base[key])
+        else:
+            metadata.pop(key, None)
 
 
 def build_episode_boundary_note(prev_episode: dict[str, Any], *, courtesy: bool = False) -> str:

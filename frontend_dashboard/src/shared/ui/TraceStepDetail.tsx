@@ -49,7 +49,12 @@ const CUT_REASON: Record<string, string> = {
   send_reply: "La respuesta salió: el turno termina aquí.",
   tag_closure: "El bot cerró la conversación con una etiqueta.",
   checkpoint_a: "El cliente escribió mientras el modelo pensaba: el turno vuelve a empezar con el mensaje nuevo.",
-  checkpoint_b: "El cliente escribió antes del envío: el turno vuelve a empezar con el mensaje nuevo.",
+  // El turno ya le había mostrado algo al cliente: no vuelve a empezar.
+  checkpoint_b:
+    "El cliente escribió mientras el modelo escribía el cierre: ese texto no se envía y el mensaje nuevo se responde en el turno siguiente.",
+  // Ráfagas sin cortes (2026-10-06): el turno todavía no le había mostrado nada.
+  before_record:
+    "El cliente siguió escribiendo antes de que saliera la respuesta: no se envía y el turno vuelve a empezar con todos sus mensajes.",
 };
 
 /** Qué tipo de burbuja salió. */
@@ -131,6 +136,10 @@ function usd(n: number): string {
   return `US$${n.toFixed(4).replace(".", ",")}`;
 }
 
+function secs(ms: number): string {
+  return `${(ms / 1000).toFixed(1).replace(".", ",")} s`;
+}
+
 export function TraceStepDetail({ step, row, lanes, steps }: Props) {
   const color = STEP_COLOR[row.status];
   const back = row.to < row.from && row.from !== 0;
@@ -169,6 +178,7 @@ function Sections({ step, back, steps, index }: { step: TraceStep; back: boolean
               ["Intento", num(step.attempt)?.toString()],
               ["Mensajes nuevos", num(step.drained)?.toString()],
               ["Esperó la foto", step.photo === true ? "sí: se estaba leyendo una foto del cliente" : null],
+              ["Esperó a que terminara de escribir", num(step.settle_ms) ? secs(num(step.settle_ms) ?? 0) : null],
               ["Motivo", str(step.reason) ? (CUT_REASON[String(step.reason)] ?? String(step.reason)) : null],
             ]}
           />

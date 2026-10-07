@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, Protocol
 
+from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import lost_narration
 from src.plugins.chats.agent.sales_eval.scorecard.claude_judge import PENDING_CRITIQUE, JudgePending
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, SPECS_BY_ID
@@ -43,6 +44,9 @@ from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 SAMPLES = 2
 _CONCURRENCY = 4
 _EVIDENCE_MAX = 280
+#: El texto de cada tarjeta en el transcript del juez (un resumen de pedido
+#: largo no llena el prompt).
+_CARD_TEXT_MAX = 300
 
 # Límite por minuto del proveedor (Gemini): primer informe 9-15 sep, 71 de 76
 # llamadas cayeron en 429 por ráfaga. Se reintenta con espera creciente; un
@@ -288,9 +292,16 @@ def _reply_lines(t: Any, text_limit: int | None) -> list[str]:
     p = f"T{t.turn} ·"
     for s in t.sent_texts:
         lines.extend(_quoted(p, "bot envió", s if text_limit is None else _clip(s, text_limit)))
+    # Lo que el cliente leyó con las tarjetas: el texto de la lista o de los
+    # botones y el que arma el código (el mensaje del formulario, el resumen).
+    for c in t.card_read_texts:
+        card = c if len(c) <= _CARD_TEXT_MAX else c[: _CARD_TEXT_MAX - 1].rstrip() + "…"
+        lines.extend(_quoted(p, "bot envió con la tarjeta", card if text_limit is None else _clip(card, text_limit)))
     if t.suppressed_reason and t.llm_text:
         lines.extend(_quoted(p, f"texto suprimido ({t.suppressed_reason}), el cliente NO lo vio", t.llm_text))
-    for n in t.discarded_narration:
+    # Solo la que el cliente no leyó: la igual a un texto que salió no se
+    # perdió (incidente 2026-10-06, turno 1).
+    for n in lost_narration(t):
         lines.append(f'{p} narración descartada: "{_clip(n, 200)}"')
     if t.intents:
         lines.append(f"{p} componentes enviados: {', '.join(t.intents)}")

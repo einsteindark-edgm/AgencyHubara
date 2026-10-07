@@ -13,7 +13,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.plugins.chats.agent.sales.card_texts import card_texts
+from src.plugins.chats.agent.sales.card_texts import card_texts, envelope_card_text
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES as PERCEPTION_ACTIVITIES,
     perceive_burst_activity as perceive_burst_activity,
@@ -156,7 +156,12 @@ def delivered_card_texts(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
     """③ Lo que el cliente LEE con las tarjetas del turno (el texto de la
     lista, el de los botones…), de las que no se negaron y en su orden. Caso
     4567 del laboratorio: el saludo iba en el texto de la lista y la
-    verificación, que no lo veía, pidió un complemento con otro saludo."""
+    verificación, que no lo veía, pidió un complemento con otro saludo.
+
+    También el texto que arma el código con la tarjeta (`customer_text` del
+    envelope: el mensaje del formulario de envío, el resumen del pedido, las
+    tarifas). Incidente 2026-10-06 (turno 9): el mensaje del formulario no
+    llegaba a la verificación. Viene del resultado grabado de la tool: puro."""
     out: list[str] = []
     for event in tool_events:
         name = str(event.get("name") or "")
@@ -164,4 +169,6 @@ def delivered_card_texts(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
             continue
         args = event.get("args")
         out.extend(card_texts(name, args if isinstance(args, Mapping) else {}))
+        if code_text := envelope_card_text(event.get("result")):
+            out.append(code_text)
     return out

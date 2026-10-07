@@ -344,6 +344,11 @@ builtins:
     input: Inbound
     fields: {context: bool, asked_known: "string?"}
     doc: "Si el cliente vio algo antes y qué se le preguntó cuando lo último fue una tarjeta (confirmar_compra, …)."
+  reply_gap:
+    kind: view
+    input: Inbound
+    fields: {opens_episode: bool, hours_since_store: "int?"}
+    doc: "Si este mensaje abrió el episodio activo y las horas enteras desde el último mensaje de la tienda (por su timestamp; null si nunca escribió)."
   enumeration_found:
     kind: view
     input: TextoCatalogo

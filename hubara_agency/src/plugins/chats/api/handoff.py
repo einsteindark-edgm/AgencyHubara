@@ -317,21 +317,25 @@ async def intervene(
     re-intenta terminar workflows zombies.
     """
     require_valid_session_id(session_id)
-    data = metadata_store.read(session_id)
     motivo = payload.motivo or "Humano tomó el control desde el dashboard"
 
     # 1. Marcar metadata como humano PRIMERO. Esto es lo crítico: si esto
     # falla, el endpoint 500 y el operador reintenta. Si tiene éxito, la
     # próxima webhook del cliente ya queda filtrada por LoadOrStartSalesSession
-    # (route=humano → no dispatch).
-    _append_status(
-        data,
-        tag="HUMANO",
-        motivo=motivo,
-        active_route=ROUTE_HUMANO,
-        extra={"source": "dashboard_intervene"},
-    )
-    metadata_store.write(session_id, data)
+    # (route=humano → no dispatch). Solo la ruta y su historial, sobre la
+    # lectura fresca (incidente 2026-10-06: la copia entera pisaba lo que
+    # otro escritor ponía en medio).
+    def _take_over(fresh: dict) -> dict:
+        _append_status(
+            fresh,
+            tag="HUMANO",
+            motivo=motivo,
+            active_route=ROUTE_HUMANO,
+            extra={"source": "dashboard_intervene"},
+        )
+        return fresh
+
+    data = metadata_store.update(session_id, _take_over) or {}
 
     # 2. Termination de workflows en vuelo: BEST-EFFORT. Si Temporal está caído
     # o devuelve error, NO 500-amos el endpoint — la metadata ya está marcada,
@@ -565,6 +569,23 @@ def _env_phone() -> str:
     return phone
 
 
+def _record_after_send(metadata_store: FilesystemMetadataStore, session_id: str, mutator) -> None:
+    """Anota en metadata.json algo que YA SALIÓ (la marca del
+    `client_message_id`). De mejor esfuerzo (PR #393, octava revisión): si
+    falla (el store ya reintentó los errores pasajeros), se registra y se
+    sigue — el operador no recibe un 500 por un mensaje que el cliente sí
+    recibió, y el historial lo anota igual. Sin la marca, la reserva del cmid
+    vence sola (`_PENDING_SEND_TTL_MS`)."""
+    try:
+        metadata_store.update(session_id, mutator)
+    except Exception as exc:  # noqa: BLE001 — el envío ya ocurrió
+        logger.error(
+            "dashboard: no pude anotar un envío que ya salió",
+            session_id=session_id,
+            error=repr(exc)[:200],
+        )
+
+
 @router.post(
     "/sessions/{session_id}/messages",
     response_model=HumanMessageResponse,
@@ -786,7 +807,7 @@ async def send_human_message(
             fresh["sent_human_message_ids"] = marked[-200:]  # cap
             return fresh
 
-        metadata_store.update(session_id, _mark_sent)
+        _record_after_send(metadata_store, session_id, _mark_sent)
 
     try:
         # `wamid` del adjunto: destino de las citas del cliente ("quiero
@@ -948,7 +969,7 @@ async def send_human_template_message(
             fresh["sent_human_message_ids"] = marked[-200:]  # cap
             return fresh
 
-        metadata_store.update(session_id, _mark_sent)
+        _record_after_send(metadata_store, session_id, _mark_sent)
 
     logger.info(
         "dashboard.send_human_template",
@@ -1045,14 +1066,18 @@ async def return_to_bot(
         tag = "RETOMA_VENTA"
         target = ROUTE_VENTAS
 
-    _append_status(
-        data,
-        tag=tag,
-        motivo=motivo,
-        active_route=target,
-        extra={"source": "dashboard_return_to_bot"},
-    )
-    metadata_store.write(session_id, data)
+    def _return(fresh: dict) -> dict:
+        # Solo la ruta y su historial, sobre la lectura fresca.
+        _append_status(
+            fresh,
+            tag=tag,
+            motivo=motivo,
+            active_route=target,
+            extra={"source": "dashboard_return_to_bot"},
+        )
+        return fresh
+
+    metadata_store.update(session_id, _return)
 
     if payload.target_route == "remarketing":
         client = await get_temporal_client()

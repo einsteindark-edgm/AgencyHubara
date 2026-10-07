@@ -67,10 +67,10 @@ async def test_envelope_shape(tmp_path: Path):
     payload = json.loads(out)
     assert payload["query"] == "lavanda"
     assert payload["count"] == 1
-    assert payload["stale"] is False
     assert payload["truncated"] is False
-    assert "manifest" in payload
-    assert payload["manifest"]["version"] == "v1"
+    # La edad de la copia local es del operador (dashboard y log), no del LLM.
+    assert "stale" not in payload
+    assert "manifest" not in payload
     r = payload["results"][0]
     for k in (
         "id",
