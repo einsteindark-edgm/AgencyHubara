@@ -89,6 +89,21 @@ async def test_persist_turn_trace_writes_enriched_record_chained_to_previous(
     assert traces[1]["trigger"] == "ghost"
 
 
+async def test_each_customer_turn_leaves_a_line_for_the_hole_witness(_isolate_vault_dir: Path) -> None:
+    """Testigo de huecos (2026-10-07): un turno del cliente deja su línea en
+    `_huecos/<día>.jsonl`; un ghosting no (no es un turno del cliente)."""
+    vault = _isolate_vault_dir
+    _write_metadata(vault, {"episodes": [{"episode_id": "ep_003"}]})
+    promise = "Dame un momento y te confirmo"
+    env = ActivityEnvironment()
+
+    await env.run(persist_turn_trace_activity, SESSION, _payload(llm_text=promise, sent_texts=[promise]))
+    await env.run(persist_turn_trace_activity, SESSION, _payload(trigger="ghost"))
+
+    lines = [json.loads(x) for f in sorted((vault / "_huecos").glob("*.jsonl")) for x in f.read_text().splitlines()]
+    assert [(x["episode"], x["turn"], x["huecos"]) for x in lines] == [("ep_003", 1, ["texto_suelto_promete_volver"])]
+
+
 async def test_persist_turn_trace_never_raises_on_bad_payload(_isolate_vault_dir: Path) -> None:
     env = ActivityEnvironment()
 

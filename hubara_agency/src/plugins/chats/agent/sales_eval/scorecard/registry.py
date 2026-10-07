@@ -18,7 +18,11 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 
-REGISTRY_VERSION = 7
+# v8 (2026-10-07): EST-03b ignora las abstenciones (NO_MESSAGE); los turnos
+# que son solo un traspaso de remarketing se leen como traspaso (sin primer
+# contacto); CIE-03 y CIE-04 fallan con el episodio cerrado (modo turno);
+# VAR-07 cuenta el subtotal del mensaje del formulario (PR #392).
+REGISTRY_VERSION = 8
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")

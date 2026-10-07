@@ -88,6 +88,14 @@ def test_est03b_suppressed_by_admin_guard_fails() -> None:
     assert (_run("EST-03b", t).verdict, _run("EST-03b", t).turn) == ("falla", 1)
 
 
+def test_est03b_an_abstention_is_not_a_blocked_admin_text() -> None:
+    # El bot decidió no hablar (NO_MESSAGE, p. ej. al recibir un traspaso): el
+    # detector viejo ve el centinela como etiqueta interna y deja la guarda en
+    # la traza, pero no hubo texto administrativo que frenar.
+    t = traj(T(1, llm="NO_MESSAGE", suppressed="no_message", guards=["admin_text_guard"]))
+    assert _run("EST-03b", t).verdict == "pasa"
+
+
 def test_est03b_legacy_is_unknown() -> None:
     assert _run("EST-03b", traj(T(1, sent=["Claro"]), fidelity="legacy")).verdict == "desconocido"
 

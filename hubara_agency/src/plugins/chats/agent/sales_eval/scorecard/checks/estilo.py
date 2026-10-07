@@ -86,6 +86,10 @@ def check_admin_guard_acted(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if is_legacy(traj):
         return unknown("EST-03b", "legacy sin guardas")
     for turn in judged_turns(traj):
+        # Una abstención (NO_MESSAGE) deja la guarda en la traza: el detector
+        # lee el centinela como etiqueta interna. No hubo texto que frenar.
+        if turn.suppressed_reason == "no_message":
+            continue
         if "admin_text_guard" in turn.guards or turn.suppressed_reason == "admin_text_guard":
             detail = f" {quote(turn.llm_text)}" if turn.llm_text else ""
             return failed("EST-03b", turn.turn, f"turno {turn.turn}: la guarda bloqueó texto administrativo{detail}")

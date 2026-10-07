@@ -157,8 +157,15 @@ def var_07(traj: Trajectory, ctx: CheckContext) -> CheckResult:
         if t.turn > first.turn:
             break
         same_turn_summary = t.turn == first.turn and "order_confirmation" in t.intents
+        # El mensaje del formulario lo arma el código con el subtotal (PR #392):
+        # el precio se ve en la misma tarjeta que pide los datos.
+        same_turn_priced_form = t.turn == first.turn and any(
+            c.card_text and PRICE_RE.search(c.card_text)
+            for c in t.tools_named("request_shipping_details")
+            if c.ok is not False
+        )
         earlier = t.turn < first.turn
-        if same_turn_summary or (
+        if same_turn_summary or same_turn_priced_form or (
             earlier and (any(PRICE_RE.search(x) for x in t.sent_texts) or set(t.intents) & set(_PRICE_INTENTS))
         ):
             return passed("VAR-07", f"precio visible en el turno {t.turn}", first.turn)

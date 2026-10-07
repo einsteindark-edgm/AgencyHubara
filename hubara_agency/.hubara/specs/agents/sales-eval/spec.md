@@ -331,6 +331,44 @@ Límite: es una regla de palabras que falla cerrada; ante la duda pide texto
 - AND con «2», «Siii», «👍» o «Lavanda» ENV-02 pasa
 - AND con «Azul» ENV-02 falla: el formulario no la nombra (el bot no recogió la elección)
 
+### Requirement: El árbitro no inventa ni esconde fallas (registro v8)
+
+Desde el 2026-10-07 (`REGISTRY_VERSION` 8):
+
+- EST-03b NO SHALL fallar en un turno en que el bot se abstuvo (`NO_MESSAGE`,
+  `suppressed_reason: no_message`): la guarda de texto administrativo lee el
+  centinela como etiqueta interna, pero no hubo texto que frenar.
+- Un turno que es SOLO un traspaso de remarketing (la traza trae el encuadre
+  de la plataforma como `inbound_text` y `trigger: customer`) SHALL leerse
+  como traspaso: `trigger: handoff`, el resumen del traspaso como lo que dijo
+  el cliente y sin primer contacto (el bot no saluda a quien viene de
+  remarketing).
+- Con el episodio cerrado, CIE-03 y CIE-04 SHALL juzgarse con el episodio
+  completo también en modo turno y su falla SHALL quedar en el turno que la
+  causó. Con el episodio abierto siguen esperando («sin señal»).
+- VAR-07 SHALL contar como precio visto el subtotal del mensaje del
+  formulario (`card_text`), como el resumen del pedido.
+
+#### Scenario: Orden registrada sin su etiqueta ni su escalación
+
+- GIVEN un episodio cerrado con `register_order` en el turno 2, cerrado como `INTERESADO` y sin escalar `PAYMENT_VERIFICATION_PENDING`
+- WHEN se califica en modo turno
+- THEN CIE-03 y CIE-04 fallan en el turno 2, el turno 2 da `FALLA` y el episodio da `FALLA`
+
+### Requirement: Testigo e informe de huecos
+
+Para decidir con datos qué arreglar (`docs/calidad-llm/cobertura-motor.html`),
+`persist_turn_trace` SHALL dejar una línea por turno del cliente en
+`<vault>/_huecos/<día UTC>.jsonl` con lo que el scorecard no ve (texto suelto
+que se saltó las revisiones de `send_reply`, afirmación sin consultar que Jev
+leyó en sombra), sin textos. Escribirla NUNCA SHALL afectar el turno. El
+informe (`python -m src.plugins.chats.agent.sales_eval.huecos --dias N`) SHALL
+juntar el testigo con los scorecards v8 de la ventana y decir, por propuesta,
+cuántos casos hubo por bot y si vale la pena arreglarla: una regla crítica con
+un caso; una mayor con 2 casos por cada 100 turnos o 3 conversaciones; una
+menor con 5 por cada 100 (con menos de 50 turnos, a lo sumo «quizás»). El
+informe NO SHALL llevar textos ni números completos de clientes.
+
 ## Out of scope
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).
