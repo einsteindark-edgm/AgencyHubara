@@ -22,6 +22,8 @@ import {
   verdictCountsTotal,
   weeklyDelta,
   type MatrixRowView,
+  qualityPercent,
+  stageCompliance,
 } from "./quality-view";
 
 describe("vocabulario de calidad", () => {
@@ -103,5 +105,29 @@ describe("etapas del guion de ventas", () => {
     expect(view[0].color).toBe("var(--color-yellow)");
     expect(qualityStageLabel(null)).toBe("sin etapa");
     expect(QUALITY_STAGE_ORDER[0]).toBe("descubrimiento");
+  });
+});
+
+describe("porcentajes del Resumen (operador, 2026-10-07)", () => {
+  it("qualityPercent da la parte con un decimal y «—» sin total", () => {
+    expect(qualityPercent(18, 42)).toBe("42,9 %");
+    expect(qualityPercent(0, 0)).toBe("—");
+  });
+
+  it("stageCompliance suma por etapa lo que aplicó y lo que pasó, en el orden del guion", () => {
+    const stages: Record<string, string> = { "ENV-02": "envio", "DES-08": "descubrimiento", "DES-05": "descubrimiento" };
+    const rows = stageCompliance(
+      [
+        { check_id: "ENV-02", weeks: [{ applicable: 4, passed: 3 }] },
+        { check_id: "DES-08", weeks: [{ applicable: 2, passed: 2 }, { applicable: 2, passed: 1 }] },
+        { check_id: "DES-05", weeks: [{ applicable: 0, passed: 0 }] },
+        { check_id: "XXX-01", weeks: [{ applicable: 9, passed: 9 }] },
+      ],
+      (id) => stages[id],
+    );
+    expect(rows.map((r) => [r.stage, r.applicable, r.passed])).toEqual([
+      ["descubrimiento", 4, 3],
+      ["envio", 4, 3],
+    ]);
   });
 });

@@ -27,6 +27,7 @@ export { ComplianceMatrixTable, ComplianceMatrixLegend } from "./quality/Complia
 // La vista de una conversación turno por turno (laboratorio + Calidad LLM, 2026-10-02).
 export { Chip, VerdictBadge, LevelPill, type ChipTone } from "./quality/QualityChips";
 export { CheckResults } from "./quality/CheckResults";
+export { CheckInfoDialog } from "./quality/CheckInfoDialog";
 export { EngineDecisions } from "./quality/EngineDecisions";
 export { Bubble, ConversationThread, ReplyBubbles, ThreadRow } from "./quality/ConversationThread";
 export { TurnWindow, type TurnWindowProps } from "./quality/TurnWindow";

@@ -1,17 +1,21 @@
 /**
  * Resumen de Calidad LLM con la vista del laboratorio, sobre producción
- * (decisión del operador, 2026-10-02): las dos gráficas (cumplimiento por
- * check semana a semana; dónde terminan los episodios) y la matriz episodios ×
- * checks con sus filtros, del bot elegido arriba. Una fila abre esa
- * conversación. Debajo, a pedido, cómo le fue a cada bot y cómo anduvo Jev en
- * los turnos reales (el informe de Jev del laboratorio).
+ * (decisión del operador, 2026-10-02). En el orden que pidió el operador
+ * (2026-10-07):
+ *  1. la matriz episodios × checks con sus filtros, del bot elegido arriba:
+ *     una fila abre esa conversación, el código de un check explica qué
+ *     califica y una falla lleva al turno que la tiene;
+ *  2. cómo le fue a cada bot, en porcentajes, y el cumplimiento de cada etapa;
+ *  3. dónde terminan los episodios, con su porcentaje;
+ *  4. el cumplimiento por check semana a semana.
+ * Al final, a pedido, cómo anduvo Jev en los turnos reales.
  */
 
 import { useMemo, useState, type ReactNode } from "react";
 
 import { useCheckStats, type CheckStats } from "@plugins/agents_admin/frontend/entities/check-stats";
 import { BOT_LABEL, useJevReport, type JevReport, type QualityBot } from "@plugins/agents_admin/frontend/entities/production-quality";
-import { useCheckRegistry, useScorecards } from "@plugins/agents_admin/frontend/entities/scorecard";
+import { useCheckRegistry, useScorecards, type CheckDefinition } from "@plugins/agents_admin/frontend/entities/scorecard";
 import {
   capabilityLabel,
   fallbackReasonLabel,
@@ -20,18 +24,30 @@ import {
   matrixFinalStages,
   matrixGroups,
   matrixRowKey,
+  qualityPercent,
   qualityStageLabel,
+  qualityStageRank,
+  stageCompliance,
   toMatrixRowView,
   toQualityFunnel,
+  type CheckInfoView,
   type MatrixVerdictFilter,
+  type QualityVerdict,
 } from "@/shared/lib";
-import { CheckTrend, ComplianceMatrixLegend, ComplianceMatrixTable, StageFunnel } from "@/shared/ui";
+import { CheckInfoDialog, CheckTrend, ComplianceMatrixLegend, ComplianceMatrixTable, StageFunnel } from "@/shared/ui";
 
 interface Props {
   days: number;
   bot: QualityBot | null;
-  /** Abre la pestaña Conversaciones con esa conversación elegida. */
-  onOpenConversation: (sid: string) => void;
+  /** Abre la pestaña Conversaciones con esa conversación elegida y, desde
+   * una falla de la matriz, en el turno de ese check en ese episodio. */
+  onOpenConversation: (sid: string, focus?: ConversationFocus) => void;
+}
+
+/** El turno al que lleva una falla de la matriz: el de ese check en ese episodio. */
+export interface ConversationFocus {
+  episodeId: string;
+  checkId: string;
 }
 
 const CARD = "rounded-lg border border-line p-3";
@@ -57,22 +73,32 @@ function emptyText(bot: QualityBot | null): string {
 
 // ── Las dos gráficas ─────────────────────────────────────────────────────────
 
-function Charts({ stats }: { stats: CheckStats }) {
-  // Dos columnas en pantallas anchas: el embudo es un SVG que escala con el
-  // ancho y a lo ancho de la ventana se ve gigante.
+function Funnel({ stats }: { stats: CheckStats }) {
+  // El embudo es un SVG que escala con el ancho: a lo ancho de la ventana se ve gigante.
   return (
-    <div className="grid items-start gap-3 xl:grid-cols-2">
-      <section className={CARD} aria-labelledby="quality-trend-title">
-        <h3 id="quality-trend-title" className={H3}>Cumplimiento por check, semana a semana</h3>
-        <CheckTrend trend={stats.trend} />
-      </section>
-      <section className={CARD} aria-labelledby="quality-funnel-title">
-        <h3 id="quality-funnel-title" className={H3}>Dónde terminan los episodios</h3>
-        <p className="mb-2 mt-1 text-[11px] text-fg-faint">Etapa final de cada episodio y su veredicto.</p>
+    <section className={CARD} aria-labelledby="quality-funnel-title">
+      <h3 id="quality-funnel-title" className={H3}>Dónde terminan los episodios</h3>
+      <p className="mb-2 mt-1 text-[11px] text-fg-faint">
+        Etapa final de cada episodio y su veredicto; al lado, cuántos terminaron ahí y qué parte del total son.
+      </p>
+      <div className="max-w-[760px]">
         <StageFunnel funnel={toQualityFunnel(stats.funnel)} />
-      </section>
-    </div>
+      </div>
+    </section>
   );
+}
+
+function Trend({ stats }: { stats: CheckStats }) {
+  return (
+    <section className={CARD} aria-labelledby="quality-trend-title">
+      <h3 id="quality-trend-title" className={H3}>Cumplimiento por check, semana a semana</h3>
+      <CheckTrend trend={stats.trend} />
+    </section>
+  );
+}
+
+function checkInfo(c: CheckDefinition): CheckInfoView {
+  return { id: c.id, name: c.name || c.id, level: c.level, kind: c.kind, family: c.family_label, stage: c.stage, applies: c.applies, rule: c.rule };
 }
 
 // ── La matriz ────────────────────────────────────────────────────────────────
@@ -96,7 +122,9 @@ function Matrix({ days, bot, onOpenConversation }: Props) {
   const rows = useMemo(() => filterMatrixRows(all, { verdict, stage }), [all, verdict, stage]);
   const groups = useMemo(() => matrixGroups(registry.data?.checks ?? [], rows, { onlyFailing }), [registry.data, rows, onlyFailing]);
   const stages = useMemo(() => matrixFinalStages(all), [all]);
-  const sessions = useMemo(() => new Map(rows.map((r) => [matrixRowKey(r), r.session_id])), [rows]);
+  const byKey = useMemo(() => new Map(rows.map((r) => [matrixRowKey(r), r])), [rows]);
+  const [explained, setExplained] = useState<string | null>(null);
+  const explainedCheck = registry.data?.checks.find((c) => c.id === explained);
 
   let body: ReactNode;
   if (cards.isPending) body = <p className="text-sm text-fg-muted">Cargando la matriz…</p>;
@@ -110,8 +138,13 @@ function Matrix({ days, bot, onOpenConversation }: Props) {
         rows={rows.map(toMatrixRowView)}
         selectedKey={null}
         onSelectRow={(view) => {
-          const sid = sessions.get(view.key);
-          if (sid) onOpenConversation(sid);
+          const row = byKey.get(view.key);
+          if (row) onOpenConversation(row.session_id);
+        }}
+        onSelectColumn={setExplained}
+        onSelectFailure={(view, checkId) => {
+          const row = byKey.get(view.key);
+          if (row) onOpenConversation(row.session_id, { episodeId: row.episode_id, checkId });
         }}
         rowCap={ROW_CAP}
         resetKey={`${bot ?? "todos"}|${verdict}|${stage ?? ""}`}
@@ -160,50 +193,119 @@ function Matrix({ days, bot, onOpenConversation }: Props) {
         <span className="ml-auto text-fg-faint">{`${rows.length} de ${all.length} episodios`}</span>
       </div>
       {body}
-      <ComplianceMatrixLegend hint="Elige una fila para abrir la conversación." />
+      <ComplianceMatrixLegend hint="Elige una fila para abrir la conversación, una ✗ para ir al turno que falló o el código de un check para ver qué califica." />
+      {explainedCheck ? <CheckInfoDialog check={checkInfo(explainedCheck)} onClose={() => setExplained(null)} /> : null}
     </section>
   );
 }
 
 // ── Cómo le fue a cada bot ───────────────────────────────────────────────────
 
+const VERDICT_COLUMNS: ReadonlyArray<[QualityVerdict, string, string]> = [
+  ["PASA", "Pasan", "text-ok"],
+  ["ALERTA", "En alerta", "text-warn"],
+  ["FALLA", "Fallan", "text-danger"],
+  ["SIN_DATOS", "Sin datos", "text-fg-muted"],
+];
+const BOTS: readonly QualityBot[] = ["actual", "nuevo"];
+
 function ResultsByBot({ days }: { days: number }) {
-  const current = useCheckStats(days, "actual");
-  const jev = useCheckStats(days, "nuevo");
-  const rows: Array<[QualityBot, CheckStats | undefined]> = [
-    ["actual", current.data],
-    ["nuevo", jev.data],
-  ];
+  const stats: Record<QualityBot, CheckStats | undefined> = {
+    actual: useCheckStats(days, "actual").data,
+    nuevo: useCheckStats(days, "nuevo").data,
+  };
+  const registry = useCheckRegistry();
+  const stageOf = useMemo(() => {
+    const map = new Map((registry.data?.checks ?? []).map((c) => [c.id, c.stage]));
+    return (id: string) => map.get(id);
+  }, [registry.data]);
+  // Una fila por etapa con datos en algún bot, en el orden del guion.
+  const perBot = new Map(BOTS.map((b) => [b, new Map(stageCompliance(stats[b]?.trend ?? [], stageOf).map((r) => [r.stage, r]))]));
+  const stageRows = [...new Map([...perBot.values()].flatMap((m) => [...m.values()]).map((r) => [r.stage, r])).values()].sort(
+    (a, b) => qualityStageRank(a.stage) - qualityStageRank(b.stage),
+  );
+
   return (
     <section className={CARD} aria-labelledby="quality-results-title">
       <h3 id="quality-results-title" className={H3}>Cómo le fue a cada bot</h3>
-      <div className="mt-2 overflow-x-auto">
-        <table aria-label="Resultado por bot" className="w-full border-collapse text-[12.5px] tabular-nums">
-          <thead>
-            <tr className="text-left text-[11px] text-fg-faint">
-              {["Bot", "Episodios", "Pasan", "En alerta", "Fallan", "Sin datos"].map((h) => (
-                <th key={h} className="py-1 pr-3 font-medium">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(([bot, s]) => (
-              <tr key={bot} className="border-t border-line">
-                <th scope="row" className="py-1.5 pr-3 text-left font-medium text-fg">{BOT_LABEL[bot]}</th>
-                <td className="py-1.5 pr-3">{s ? s.episodes : "…"}</td>
-                <td className="py-1.5 pr-3 text-ok">{s ? s.verdicts.PASA : ""}</td>
-                <td className="py-1.5 pr-3 text-warn">{s ? s.verdicts.ALERTA : ""}</td>
-                <td className="py-1.5 pr-3 text-danger">{s ? s.verdicts.FALLA : ""}</td>
-                <td className="py-1.5 pr-3 text-fg-muted">{s ? s.verdicts.SIN_DATOS : ""}</td>
+      <div className="mt-2 grid items-start gap-4 min-[1500px]:grid-cols-2">
+        <div className="overflow-x-auto">
+          <table aria-label="Resultado por bot" className="w-full border-collapse text-[12.5px] tabular-nums">
+            <thead>
+              <tr className="text-left text-[11px] text-fg-faint">
+                {["Bot", "Episodios", ...VERDICT_COLUMNS.map(([, label]) => label)].map((h) => (
+                  <th key={h} className="py-1 pr-3 font-medium">{h}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {BOTS.map((bot) => {
+                const s = stats[bot];
+                return (
+                  <tr key={bot} className="border-t border-line">
+                    <th scope="row" className="py-1.5 pr-3 text-left font-medium text-fg">{BOT_LABEL[bot]}</th>
+                    <td className="py-1.5 pr-3">{s ? s.episodes : "…"}</td>
+                    {VERDICT_COLUMNS.map(([v, , tone]) => (
+                      <td key={v} className={"py-1.5 pr-3 " + tone}>
+                        {s ? (
+                          <>
+                            <span className="font-semibold">{qualityPercent(s.verdicts[v], s.episodes)}</span>
+                            <span className="ml-1 text-[11px] text-fg-faint">{`(${s.verdicts[v]})`}</span>
+                          </>
+                        ) : null}
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className={"mt-2 " + NOTE}>
+            Pasa: cumplió todo lo importante · En alerta: falló algo importante (un check mayor) · Falla: falló algo crítico. Son conversaciones distintas:
+            cada una la atendió un solo bot.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table aria-label="Cumplimiento por etapa" className="w-full border-collapse text-[12.5px] tabular-nums">
+            <thead>
+              <tr className="text-left text-[11px] text-fg-faint">
+                <th className="py-1 pr-3 font-medium">Etapa</th>
+                {BOTS.map((bot) => (
+                  <th key={bot} className="py-1 pr-3 font-medium">{BOT_LABEL[bot]}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {stageRows.map((row) => (
+                <tr key={row.stage} className="border-t border-line">
+                  <th scope="row" className="py-1.5 pr-3 text-left font-medium text-fg">
+                    <span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: row.color }} aria-hidden="true" />
+                    {row.label}
+                  </th>
+                  {BOTS.map((bot) => {
+                    const cell = perBot.get(bot)?.get(row.stage);
+                    return (
+                      <td key={bot} className="py-1.5 pr-3 text-fg">
+                        {cell ? (
+                          <>
+                            <span className="font-semibold">{qualityPercent(cell.passed, cell.applicable)}</span>
+                            <span className="ml-1 text-[11px] text-fg-faint">{`(${cell.passed} de ${cell.applicable})`}</span>
+                          </>
+                        ) : (
+                          <span className="text-fg-faint">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className={"mt-2 " + NOTE}>
+            De las veces que un check de la etapa aplicó, cuántas pasó.
+          </p>
+        </div>
       </div>
-      <p className={"mt-2 " + NOTE}>
-        Pasa: cumplió todo lo importante · En alerta: falló algo importante (un check mayor) · Falla: falló algo crítico. Son conversaciones distintas: cada
-        una la atendió un solo bot.
-      </p>
     </section>
   );
 }
@@ -279,30 +381,37 @@ function JevInProduction({ days }: { days: number }) {
 
 export function QualitySummary({ days, bot, onOpenConversation }: Props) {
   const stats = useCheckStats(days, bot);
-  const [more, setMore] = useState(false);
+  const [jevOpen, setJevOpen] = useState(false);
 
   let charts: ReactNode;
   if (stats.isPending) charts = <p className="text-sm text-fg-muted">Cargando las gráficas…</p>;
   else if (stats.isError) charts = <p className="text-sm text-fg-muted">No se pudieron leer las gráficas.</p>;
   else if (stats.data.episodes === 0) charts = <p className="rounded-lg border border-dashed border-line-strong p-4 text-sm text-fg-muted">{emptyText(bot)}</p>;
-  else charts = <Charts stats={stats.data} />;
+  else {
+    charts = (
+      <>
+        <Funnel stats={stats.data} />
+        <Trend stats={stats.data} />
+      </>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">
-      {charts}
       <Matrix days={days} bot={bot} onOpenConversation={onOpenConversation} />
+      <ResultsByBot days={days} />
+      {charts}
       <section className={CARD}>
         <button
           type="button"
-          aria-expanded={more}
-          onClick={() => setMore((v) => !v)}
+          aria-expanded={jevOpen}
+          onClick={() => setJevOpen((v) => !v)}
           className="w-full border-0 bg-transparent p-0 text-left text-sm font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
-          {more ? "▾" : "▸"} Cómo le fue a cada bot y a Jev
+          {jevOpen ? "▾" : "▸"} Jev en producción
         </button>
-        {more ? (
-          <div className="mt-3 grid gap-3 xl:grid-cols-2">
-            <ResultsByBot days={days} />
+        {jevOpen ? (
+          <div className="mt-3">
             <JevInProduction days={days} />
           </div>
         ) : null}

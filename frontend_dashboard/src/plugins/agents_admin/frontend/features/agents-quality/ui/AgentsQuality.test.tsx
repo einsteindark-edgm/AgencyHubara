@@ -96,15 +96,70 @@ describe("Calidad LLM: Resumen como el laboratorio", () => {
     expect(screen.queryByRole("list", { name: /veredictos de los episodios/i })).not.toBeInTheDocument();
   });
 
-  it("dice cómo le fue a cada bot y cómo anduvo Jev en producción", async () => {
+  it("dice cómo anduvo Jev en producción", async () => {
     renderIt();
-    const details = await screen.findByText(/cómo le fue a cada bot y a jev/i);
+    const details = await screen.findByText(/jev en producción/i);
     fireEvent.click(details);
     const jev = await screen.findByRole("region", { name: /jev en producción/i });
     expect(within(jev).getByText(/50 % de las preguntas/i)).toBeInTheDocument();
     expect(within(jev).getByText(/1 de 2 decisiones cayeron a la regla porque jev falló/i)).toBeInTheDocument();
-    expect(await screen.findByRole("table", { name: /resultado por bot/i })).toBeInTheDocument();
     await waitFor(() => expect(called("/api/agents/evals/production/jev?days=56&bot=nuevo")).toBe(true));
+  });
+
+  it("empieza por la matriz y sigue con cada bot, dónde terminan y la semana a semana (operador, 2026-10-07)", async () => {
+    renderIt();
+    const order = [
+      await screen.findByRole("heading", { name: /cada episodio, check por check/i }),
+      await screen.findByRole("heading", { name: /cómo le fue a cada bot/i }),
+      await screen.findByRole("heading", { name: /dónde terminan los episodios/i }),
+      await screen.findByRole("heading", { name: /cumplimiento por check, semana a semana/i }),
+    ];
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
+
+  it("cómo le fue a cada bot va en porcentajes, sin abrir nada", async () => {
+    renderIt();
+    const table = await screen.findByRole("table", { name: /resultado por bot/i });
+    // 18 de 42 episodios pasan; 13 en alerta; 9 fallan (el mismo fixture para los dos bots).
+    await waitFor(() => expect(within(table).getAllByText("42,9 %")).toHaveLength(2));
+    expect(within(table).getAllByText("31 %")).toHaveLength(2);
+    expect(within(table).getAllByText("21,4 %")).toHaveLength(2);
+  });
+
+  it("dice el cumplimiento de cada etapa por bot", async () => {
+    renderIt();
+    const table = await screen.findByRole("table", { name: /cumplimiento por etapa/i });
+    // Descubrimiento: 85 de 102 veces que aplicó, pasó.
+    const row = await within(table).findByRole("row", { name: /descubrimiento/i });
+    expect(within(row).getAllByText("83,3 %")).toHaveLength(2);
+    expect(within(table).getByRole("row", { name: /variantes/i })).toHaveTextContent("86,3 %");
+  });
+
+  it("el código de un check explica qué califica", async () => {
+    renderIt();
+    const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
+    fireEvent.click(await within(table).findByRole("button", { name: /^APE-01/ }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading", { name: /APE-01 · Saludo por hora y marca en el primer contacto/i })).toBeInTheDocument();
+    expect(within(dialog).getByText("Primer contacto de la conversación.")).toBeInTheDocument();
+    expect(within(dialog).getByText(/abre con saludo por hora de Colombia/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/si falla, la conversación queda en alerta/i)).toBeInTheDocument();
+    // Explicar no abre la conversación.
+    expect(screen.getByRole("tab", { name: /resumen/i })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("una falla de la matriz lleva al turno que la tiene", async () => {
+    renderIt();
+    const table = await screen.findByRole("table", { name: /matriz de cumplimiento/i });
+    const firstRow = within(table).getAllByRole("row").filter((r) => r.closest("tbody"))[0];
+    fireEvent.click(within(firstRow).getByRole("button", { name: /DES-05 · falla/i }));
+
+    expect(screen.getByRole("tab", { name: /conversaciones/i })).toHaveAttribute("aria-selected", "true");
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Hilo del turno 3")).toBeInTheDocument();
   });
 
   it("una fila de la matriz abre esa conversación", async () => {

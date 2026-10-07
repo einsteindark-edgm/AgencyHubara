@@ -1,1 +1,1 @@
-export { QualitySummary } from "./ui/QualitySummary";
+export { QualitySummary, type ConversationFocus } from "./ui/QualitySummary";
