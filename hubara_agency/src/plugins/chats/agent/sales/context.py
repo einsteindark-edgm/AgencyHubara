@@ -81,10 +81,12 @@ def greeting_for_hour(hour: int) -> str:
 def build_bogota_context_string(now: datetime | None = None) -> str:
     """Construye el bloque de contexto dinámico con hora y saludo de Colombia.
 
-    El bloque se inyecta en el system prompt (vía `plugin_context`) cada
-    turno donde el cliente mandó un mensaje, para que el LLM use el saludo
-    apropiado según la franja horaria local de Colombia y disponga de la
-    hora actual sin tener que deducirla del runtime context del servidor.
+    El bloque se inyecta en el system prompt (vía `plugin_context`) en cada
+    turno — el mensaje del cliente lo trae desde el ingest; los turnos de
+    sistema (traspaso, abandono, complemento), desde la activity
+    `compute_bogota_context` — para que el LLM use el saludo apropiado según
+    la franja horaria local de Colombia y disponga de la hora actual sin
+    tener que deducirla del runtime context del servidor.
 
     Args:
         now: opcional, datetime con tzinfo. Si es None, se lee

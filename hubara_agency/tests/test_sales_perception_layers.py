@@ -39,7 +39,7 @@ from src.plugins.chats.agent.sales.decisions.policies.turno_v1 import checklist_
 from src.plugins.chats.agent.sales.decisions.questionnaire import load_questionnaire
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 from tests.sales_workflow_versions import sales_workflow_versions
-from tests.test_sales_workflow_debounce import SALES_QUEUE, Tracker, _make_fake_activities
+from tests.test_sales_workflow_debounce import BOGOTA_CLOCK, SALES_QUEUE, Tracker, _make_fake_activities
 
 #: Tests que NO corren contra el workflow V2 (motor de decisiones F4), con su
 #: motivo (ver `tests/sales_workflow_versions.py`).
@@ -404,6 +404,20 @@ async def test_on_a_clear_gap_after_the_reply_becomes_one_complement_bubble(tmp_
     # laboratorio espera ese segundo turno sin adivinar (PR 15).
     verify = next(s for s in _customer_trace(tracker)["steps"] if s["kind"] == "verify")
     assert verify["complement_scheduled"] is True and verify["cost_usd"] == 0.0002
+
+
+@pytest.mark.asyncio
+async def test_the_complement_turn_carries_the_bogota_hour(tmp_path: Path) -> None:
+    """Caso 4567 del laboratorio (caso-fotos-0929-r3): el complemento es un turno
+    de sistema, sin el bloque de hora que el ingest pone en el mensaje del
+    cliente; el LLM solo vio la hora del contenedor (13:55 UTC) y a las 08:55
+    escribió «Buenas tardes 🤍». Lleva la hora de Bogotá, como cualquier turno."""
+    classifier = Classifier(decision="complement", missing=["envio"])
+    llm = LLM([_tool("send_reply", text=CATALOG_REPLY), _tool("send_reply", text="El envío a Bogotá cuesta $X")])
+    tracker = await _run(tmp_path, meta={"perception_mode": "on", "perception_profile": "jev-v1"}, llm=llm, classifier=classifier)
+
+    complement = next(c for c in tracker.build_prompt_calls if "Complemento del turno" in c.message)
+    assert complement.plugin_context == [BOGOTA_CLOCK]
 
 
 @pytest.mark.asyncio

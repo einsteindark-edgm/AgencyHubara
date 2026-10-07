@@ -496,6 +496,41 @@ preguntes en qué más puedes ayudar».
 - WHEN el LLM responde solo texto (sin tools outbound), ej. "¡Buenas tardes! Bienvenido a *Hubara*... ¿Buscas algo para ti o es para regalo?"
 - THEN el texto sale como siempre y no se inyecta nada (caso run a15bb71c)
 
+### Requirement: Todo turno lleva la hora de Bogotá (2026-09-29)
+
+Cada turno que llega al LLM MUST traer en `plugin_context` el bloque «Hora
+actual en Colombia (America/Bogota)» (`context.build_bogota_context_string`):
+la hora local, el saludo de la franja y la regla de no volver a saludar si ya
+hay conversación. El mensaje del cliente lo trae desde el ingest
+(`load_or_start_sales_session`); los turnos de SISTEMA que arma el workflow sin
+mensaje del cliente — el traspaso de remarketing (al arrancar, con la sesión
+dormida o a mitad de sesión), el cierre por abandono y el complemento de la
+capa ③ — lo calculan con la activity `compute_bogota_context` (R-DET; en el
+laboratorio lee la hora del turno original). Si la activity falla, el turno
+sale sin el bloque: nunca tumba la conversación. V1 y V2, los dos gated por
+`workflow.patched("system-turn-bogota-clock-v1")` (ambos tienen sesiones en vuelo). Motivación: caso 4567 del
+laboratorio (corrida caso-fotos-0929-r3) — el complemento dijo «Buenas tardes
+🤍» a las 08:55 porque el LLM solo veía la hora del contenedor, en UTC (13:55).
+
+#### Scenario: complemento de la mañana
+
+- GIVEN un turno del cliente a las 08:55 (Bogotá) cuya verificación agenda un complemento
+- WHEN el workflow arma el turno del complemento
+- THEN su `plugin_context` trae «Hora actual en Colombia (America/Bogota): 08:55…» con el saludo «Buenos días»
+- AND la traza del turno lo nombra `clock` en `context_notes`
+
+#### Scenario: traspaso de remarketing sin mensaje del cliente
+
+- GIVEN un traspaso de remarketing con borrador del pedido y sin mensaje del cliente en la ráfaga
+- WHEN el workflow arma el turno
+- THEN el `plugin_context` trae el traspaso, la hora de Bogotá y la nota del pedido, en ese orden
+
+#### Scenario: la hora no se pudo calcular
+
+- GIVEN la activity `compute_bogota_context` falla
+- WHEN el workflow arma un turno de sistema
+- THEN el turno sale sin el bloque de hora y la respuesta llega igual
+
 ### Requirement: Escalación a humano
 
 El sales-worker MUST tener `escalate_to_human` tool que cierra la

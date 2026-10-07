@@ -31,6 +31,25 @@ sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
 `fixture-worker`. Procedencia en `generate_sales_v2_burst_prepatch_fixture.py`
 (se NIEGA a correr si el código ya trae los gates). Se borra junto con el
 `workflow.deprecate_patch(...)` de los tres gates.
+| `history_sales_system_turns_preclock_v1.json` | `HubaraSalesSessionWorkflow` | sintética, turnos de sistema PRE `system-turn-bogota-clock-v1`, generada con el código de `lab/todo` (f7e38acf) |
+| `history_sales_v2_system_turns_preclock_v1.json` | `HubaraSalesSessionWorkflowV2` | la misma forma en el V2, generada con el código de `main` (f89716ad) |
+
+**`history_sales_system_turns_preclock_v1.json` también está CONGELADA y NO se
+regenera.** Tiene la forma de los turnos de SISTEMA del V1 (los que arma el
+workflow sin mensaje del cliente) ANTES de que llevaran la hora de Bogotá (caso
+4567 del laboratorio): traspaso de remarketing al arrancar (con la nota del
+pedido), traspaso escrito con la sesión dormida (lo lee el chequeo del
+timeout), traspaso del refresco por iteración junto a un mensaje del cliente y
+cierre por abandono. Las sesiones en vuelo al desplegar traen esta forma: la
+activity `compute_bogota_context` en esos caminos sin su gate las rompe (L-9).
+El complemento de la capa ③ lo cubre `history_sales_perception_v1.json`.
+Control negativo automatizado por sitio
+(`test_the_system_turn_histories_break_if_the_clock_skips_its_gate`: con el gate
+en True desde el sitio N → `NondeterminismError`, y el gate se consultó
+exactamente N veces). Sesión sintética `wa_systemturns`, identidad del worker →
+`fixture-worker`; procedencia en `generate_system_turns_preclock_fixture.py`
+(se niega a correr si `sales_session.py` ya trae el gate). Se borra junto con
+`workflow.deprecate_patch("system-turn-bogota-clock-v1")`.
 
 **`history_sales_tag_closure_prepatch_v1.json` también está CONGELADA y NO se
 regenera** (el código que la produjo ya no existe: regenerarla hoy daría la

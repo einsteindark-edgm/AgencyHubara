@@ -15,10 +15,13 @@ de silencio expira.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -38,6 +41,7 @@ from src.platform.contracts import PaymentPendingClosureResult
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.llm_history_reset import ResetLLMHistoryInput
 from src.platform.observability.cost_attribution import RecordEpisodeLLMUsageInput
+from src.plugins.chats.agent.sales.context import build_bogota_context_string
 from src.plugins.chats.agent.sales.contracts import SalesSessionInput
 from src.plugins.chats.agent.sales.decisions.egress_activities import decide_egress_activity
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
@@ -103,6 +107,12 @@ class Tracker:
 FIRST_CONTACT_GREETING = (
     "¡Buenas noches! Bienvenido a *Hubara*, velas artesanales hechas a base "
     "de cera de palma, a mano en Colombia."
+)
+
+# Bloque de hora de Bogotá de un turno de sistema — lo que la activity
+# `compute_bogota_context` devuelve a las 08:55 (caso 4567 del laboratorio).
+BOGOTA_CLOCK = build_bogota_context_string(
+    now=datetime(2026, 9, 29, 8, 55, tzinfo=ZoneInfo("America/Bogota"))
 )
 
 
@@ -337,6 +347,12 @@ def _make_fake_activities(
         tracker.first_contact_greeting_calls += 1
         return FIRST_CONTACT_GREETING
 
+    # Hora de Bogotá de los turnos de sistema: la activity real lee el reloj;
+    # acá, el bloque fijo de las 08:55.
+    @activity.defn(name="compute_bogota_context")
+    async def fake_bogota_clock() -> str:
+        return BOGOTA_CLOCK
+
     # Guarda de enumeración de variantes (run 9bd495be): la activity real
     # detecta 4+ aromas/colores del catálogo en el texto final y encola el
     # picker; acá devolvemos lo que el escenario pida.
@@ -365,6 +381,7 @@ def _make_fake_activities(
         fake_persist_turn_trace,
         fake_variant_guard,
         fake_first_contact_greeting,
+        fake_bogota_clock,
         fake_bootstrap,
         fake_read_handoff,
         fake_read_order_draft_note,
@@ -923,6 +940,132 @@ async def test_idle_timeout_with_pending_handoff_processes_it_not_ghosting(
         f"Ghosting debió correr solo en el 2º ciclo idle. "
         f"ghosting_calls={tracker.ghosting_calls}"
     )
+
+
+# ── La hora de Bogotá en los turnos de sistema ───────────────────────────────
+# Caso 4567 del laboratorio (caso-fotos-0929-r3): el mensaje del cliente trae el
+# bloque «Hora actual en Colombia» desde el ingest; los turnos que arma el
+# workflow sin mensaje del cliente no lo traían y el LLM solo veía la hora del
+# contenedor, en UTC: a las 08:55 dijo «Buenas tardes 🤍». (El complemento de la
+# capa ③ está en `test_sales_perception_layers.py`.)
+
+DRAFT_NOTE = (
+    "[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE, metadata]\n"
+    "Notas: 3× Leo café"
+)
+
+
+async def _run_system_turns(
+    tmp_path: Path, *, replace: tuple = (), **fakes
+) -> Tracker:
+    """Una sesión sin mensajes del cliente: sus turnos salen de los traspasos
+    que lee el workflow y del cierre por abandono. `replace`: activities que
+    reemplazan, por nombre, a las falsas de siempre."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    replaced = {a.__temporal_activity_definition.name for a in replace}
+    activities = [
+        a
+        for a in _make_fake_activities(tracker, workspace_path=str(workspace), **fakes)
+        if a.__temporal_activity_definition.name not in replaced
+    ]
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=[*activities, *replace],
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(
+                    session_id="wa_clock", runtime_workspace_path=str(workspace)
+                ),
+                id="session-wa_clock",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.result()
+    return tracker
+
+
+def _prompt_with(tracker: Tracker, text: str) -> BuildPromptInput:
+    return next(c for c in tracker.build_prompt_calls if text in c.message)
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_turn_carries_the_bogota_hour(tmp_path: Path) -> None:
+    """Traspaso de remarketing leído al arrancar: la hora va antes de la nota
+    del pedido, como el ingest la pone antes de sus notas."""
+    summary = "Usuario respondió: Hola, ¿todavía tienen la vela de Leo?"
+    tracker = await _run_system_turns(
+        tmp_path, pending_handoff=summary, order_draft_note=DRAFT_NOTE
+    )
+
+    handoff = _prompt_with(tracker, summary)
+    assert handoff.plugin_context == [
+        f"[HANDOFF_REMARKETING]: {summary}",
+        BOGOTA_CLOCK,
+        DRAFT_NOTE,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_written_while_the_session_sleeps_carries_the_bogota_hour(
+    tmp_path: Path,
+) -> None:
+    """Traspaso escrito con la sesión dormida: lo lee el chequeo del timeout."""
+    summary = "Usuario respondió: Dame 3"
+    tracker = await _run_system_turns(tmp_path, handoff_sequence=[None, summary])
+
+    handoff = _prompt_with(tracker, summary)
+    assert handoff.plugin_context == [f"[HANDOFF_REMARKETING]: {summary}", BOGOTA_CLOCK]
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_that_arrives_in_the_ghost_window_carries_the_bogota_hour(
+    tmp_path: Path,
+) -> None:
+    """Traspaso que llega entre el aviso de abandono y el turno (lo lee el
+    refresco por iteración): el aviso se descarta con su hora y el turno
+    responde al traspaso con la suya."""
+    summary = "Usuario respondió: Dame 3"
+    tracker = await _run_system_turns(
+        tmp_path, handoff_sequence=[None, None, summary]
+    )
+
+    handoff = _prompt_with(tracker, summary)
+    assert handoff.plugin_context == [f"[HANDOFF_REMARKETING]: {summary}", BOGOTA_CLOCK]
+
+
+@pytest.mark.asyncio
+async def test_the_ghost_close_turn_carries_the_bogota_hour(tmp_path: Path) -> None:
+    """Cierre por abandono: no sale nada al cliente, pero el LLM decide la
+    etiqueta y el resumen con la hora de Colombia, no con la del servidor."""
+    tracker = await _run_system_turns(tmp_path)
+
+    ghost = _prompt_with(tracker, "[GHOST]")
+    assert ghost.plugin_context == [BOGOTA_CLOCK]
+
+
+@pytest.mark.asyncio
+async def test_a_handoff_turn_still_answers_when_the_clock_fails(tmp_path: Path) -> None:
+    """Sin la hora (la activity falló), el turno sale como antes: la respuesta
+    al traspaso llega igual y la conversación no se cae por un dato de apoyo."""
+
+    @activity.defn(name="compute_bogota_context")
+    async def broken_clock() -> str:
+        raise ApplicationError("sin reloj", non_retryable=True)
+
+    summary = "Usuario respondió: Dame 3"
+    tracker = await _run_system_turns(
+        tmp_path, handoff_sequence=[None, summary], replace=(broken_clock,)
+    )
+
+    handoff = _prompt_with(tracker, summary)
+    assert handoff.plugin_context == [f"[HANDOFF_REMARKETING]: {summary}"]
+    sent = [m for (_sid, m) in tracker.send_whatsapp_calls]
+    assert len(sent) == 1 and "combinada del bot" in sent[0], sent
 
 
 @pytest.mark.asyncio
