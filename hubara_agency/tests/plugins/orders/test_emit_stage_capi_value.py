@@ -96,6 +96,23 @@ async def test_stage_event_uses_live_order_total(vault: Path, stage: str, event_
     assert (entry["value"], entry["currency"], entry["contents"]) == (150000, "COP", CONTENTS)
 
 
+async def test_a_stage_event_is_queued_over_a_damaged_chat_from_its_last_good_copy(vault: Path) -> None:
+    """La etapa leía el chat directo y se callaba ante un daño (Meta se
+    quedaba sin el evento): lee con la recuperación del store."""
+    path = _seed(vault, _metadata())
+    path.with_name("metadata.json.prev").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    path.write_text('{"ctwa_referrals": [', encoding="utf-8")
+    _use_facts(InMemoryOrderFacts(available=False))
+
+    await emit_stage._emit_stage_capi(SESSION, ORDER, "shipping")
+
+    try:
+        outbox = json.loads(path.read_text(encoding="utf-8")).get("capi_outbox") or []
+    except ValueError:
+        outbox = []
+    assert [e["event_name"] for e in outbox] == ["OrderShipped"], "no se encoló el evento sobre un chat dañado"
+
+
 async def test_medusa_down_falls_back_to_registered_order(vault: Path) -> None:
     path = _seed(vault, _metadata())
 

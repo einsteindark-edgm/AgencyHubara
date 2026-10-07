@@ -8,6 +8,8 @@ miraba ni la baja ni el aplazamiento: un empujón de venta a quien pidió baja.
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import json
 import time
 from pathlib import Path
@@ -59,7 +61,7 @@ class _FakeLoadOrStart:
         pass
 
 
-class _FakeMetadataStore:
+class _FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self) -> None:
         self.store: dict[str, dict] = {}
 

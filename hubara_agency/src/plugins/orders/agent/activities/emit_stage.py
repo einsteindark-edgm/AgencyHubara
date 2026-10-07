@@ -17,6 +17,7 @@ import time
 from temporalio import activity
 
 from src.platform.config import WORKSPACE_VAULT_DIR
+from src.sdk.runtime import FilesystemMetadataStore
 
 #: Etapa del pedido → evento CAPI post-compra (auditoría 2026-09-08). Las
 #: etapas intermedias (preparing / ready) no tienen evento en Meta.
@@ -73,19 +74,15 @@ async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> Non
     Corre dentro de la activity (durable). Best-effort: nunca bloquea la
     notificación ETA. Dedupe extra contra el cierre humano (cancelación),
     que puede haber encolado ``OrderCanceled`` con el id del draft."""
-    import json
-
     from src.sdk.connectorkit import enqueue_capi_event, flush_capi_outbox
 
     event_name = capi_event_for_stage(to_stage)
     if event_name is None:
         return
-    path = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    try:
-        metadata = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return
-    if not isinstance(metadata, dict):
+    # Por el store: un chat dañado se lee de la última copia buena (decisión
+    # del operador, 2026-10-06), así Meta no se queda sin el evento.
+    metadata = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
+    if not metadata:
         return
     known = [
         *(metadata.get("capi_outbox") or []),
@@ -97,23 +94,32 @@ async def _emit_stage_capi(session_id: str, order_id: str, to_stage: str) -> Non
     if payload is None:
         return
     value, currency, contents = payload
-    try:
-        event_id = enqueue_capi_event(
-            metadata,
-            event_name=event_name,
-            session_id=session_id,
-            order_id=order_id,
-            value=value,
-            currency=currency,
-            contents=contents,
-            source=f"order_stage:{to_stage}",
-            now_ms=int(time.time() * 1000),
-        )
-    except ValueError:
+    now_ms = int(time.time() * 1000)
+    enqueued: dict[str, str | None] = {}
+
+    def _enqueue(fresh: dict) -> dict | None:
+        # Sobre la lectura fresca (la consulta a Medusa de arriba tarda) y
+        # solo el outbox de CAPI (incidente 2026-10-06: la copia entera pisaba
+        # lo que el chat escribió mientras tanto).
+        try:
+            enqueued["event_id"] = enqueue_capi_event(
+                fresh,
+                event_name=event_name,
+                session_id=session_id,
+                order_id=order_id,
+                value=value,
+                currency=currency,
+                contents=contents,
+                source=f"order_stage:{to_stage}",
+                now_ms=now_ms,
+            )
+        except ValueError:
+            return None
+        return fresh if enqueued["event_id"] is not None else None
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _enqueue)
+    if enqueued.get("event_id") is None:
         return
-    if event_id is None:
-        return
-    path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
     await flush_capi_outbox(session_id)
 
 

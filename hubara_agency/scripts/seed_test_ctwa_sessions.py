@@ -48,6 +48,7 @@ from loguru import logger
 
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.logging import setup_logging
+from src.platform.state import FilesystemMetadataStore
 from src.plugins.ads.synthetic_seed import build_seed_sessions, build_won_sessions
 
 setup_logging()
@@ -195,6 +196,30 @@ def _clean(apply: bool) -> None:
         logger.info("DRY-RUN — nada movido. Re-correr con --apply.")
 
 
+def write_seed_session(vault_dir: Path, spec: dict) -> None:
+    """Escribe UNA sesión sintética planeada: su metadata con el store
+    (candado + atómico + copia buena; sembrar es reemplazarla entera; antes
+    `write_text`, a medias y sin candado) y su historial."""
+    key = spec["session_key"]
+    session_dir = vault_dir / key
+    FilesystemMetadataStore(vault_dir).update(key, lambda _fresh: spec["metadata"])
+    if spec["history_msgs"]:
+        sessions_dir = session_dir / "sessions"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        jsonl = sessions_dir / f"{key}.jsonl"
+        lines = [
+            json.dumps({"role": "user" if i % 2 == 0 else "assistant",
+                        "content": f"[seed] mensaje {i}"})
+            for i in range(spec["history_msgs"])
+        ]
+        jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        if spec["last_inbound_ms"]:
+            # el "último mensaje" se deriva del mtime del JSONL — clavarlo
+            # al timestamp del spec (así no_reply/activo clasifican bien).
+            ts = spec["last_inbound_ms"] / 1000
+            os.utime(jsonl, (ts, ts))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ad-id", default="", help="ad id de Meta (atribución de las sesiones)")
@@ -236,26 +261,7 @@ def main() -> None:
         )
         if not args.apply:
             continue
-        session_dir = WORKSPACE_VAULT_DIR / key
-        session_dir.mkdir(parents=True, exist_ok=True)
-        (session_dir / "metadata.json").write_text(
-            json.dumps(spec["metadata"], indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        if spec["history_msgs"]:
-            sessions_dir = session_dir / "sessions"
-            sessions_dir.mkdir(parents=True, exist_ok=True)
-            jsonl = sessions_dir / f"{key}.jsonl"
-            lines = [
-                json.dumps({"role": "user" if i % 2 == 0 else "assistant",
-                            "content": f"[seed] mensaje {i}"})
-                for i in range(spec["history_msgs"])
-            ]
-            jsonl.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            if spec["last_inbound_ms"]:
-                # el "último mensaje" se deriva del mtime del JSONL — clavarlo
-                # al timestamp del spec (así no_reply/activo clasifican bien).
-                ts = spec["last_inbound_ms"] / 1000
-                os.utime(jsonl, (ts, ts))
+        write_seed_session(WORKSPACE_VAULT_DIR, spec)
     logger.info("{} sesiones sintéticas {}", len(specs), "ESCRITAS" if args.apply else "(dry-run)")
     if not args.apply:
         logger.info("DRY-RUN — nada escrito. Re-correr con --apply.")

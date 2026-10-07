@@ -13,6 +13,8 @@ refería. Estos tests exigen:
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from dataclasses import replace
 from typing import Any
 from unittest.mock import patch
@@ -43,7 +45,7 @@ class _NoopLoadOrStart:
         return None
 
 
-class _MetadataStore:
+class _MetadataStore(MergingMetadataStoreMixin):
     def __init__(self, seed: dict) -> None:
         self.store = dict(seed)
 

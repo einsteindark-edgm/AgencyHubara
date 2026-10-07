@@ -7,6 +7,8 @@ roto JAMÁS tumba el ingest (el fallback del builder es full scan).
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from pathlib import Path
 from typing import Any
 
@@ -29,7 +31,7 @@ class FakeLoadOrStart:
         pass
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self) -> None:
         self.store: dict[str, dict] = {}
 

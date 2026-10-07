@@ -107,7 +107,19 @@ async def build_reengagement_snapshot_activity() -> dict[str, Any]:
                 return None  # cambió bajo nuestros pies → abortar sin escribir
             return mark_unresponsive(data, now_ms=now_ms)
 
-        updated = store.update(session_id, _mutate)
+        # Una sesión que no se puede escribir (un error del disco que el store
+        # ya reintentó) no corta el ciclo: se registra y se sigue con las
+        # demás (octava revisión del PR #393).
+        try:
+            updated = store.update(session_id, _mutate)
+        except Exception as exc:  # noqa: BLE001 — por sesión; el resto sigue
+            activity.logger.warning(
+                "reengagement: no pude marcar SIN_RESPUESTA en %s (%s: %s); sigo con las demás.",
+                session_id,
+                type(exc).__name__,
+                exc,
+            )
+            continue
         if isinstance(updated, dict) and updated.get("tag") == "SIN_RESPUESTA":
             marked += 1
     if marked:

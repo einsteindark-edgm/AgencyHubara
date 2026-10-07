@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.constants import ROUTE_HUMANO, ROUTE_VENTAS
 from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.orders import display_id_cache
-from src.platform.state import is_vault_session_id
+from src.platform.state import FilesystemMetadataStore, is_vault_session_id
 from src.platform.whatsapp.capi_outbox import enqueue_capi_event, schedule_capi_flush
 from src.platform.orders.command_port import (
     CancelOrderCommand,
@@ -472,6 +473,24 @@ def _chat_metadata_file(
     return WORKSPACE_VAULT_DIR / session_key / "metadata.json"
 
 
+def _apply_to_chat_metadata(
+    chat_meta_file: Path, apply: Callable[[dict[str, Any]], bool]
+) -> bool:
+    """Aplica `apply` (muta el dict y dice si cambió algo) sobre la lectura
+    FRESCA del metadata del chat, bajo el candado del store, y escribe solo
+    si cambió: lo que el chat escribió mientras tanto no se pisa (incidente
+    2026-10-06). Sin metadata legible no escribe nada (no crea una sesión
+    fantasma). Devuelve si escribió."""
+
+    def _mutate(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        if not fresh:
+            return None
+        return fresh if apply(fresh) else None
+
+    store = FilesystemMetadataStore(chat_meta_file.parent.parent)
+    return store.update(chat_meta_file.parent.name, _mutate) is not None
+
+
 class MedusaOrderCommand:
     """Adapter live — escribe metadata a Medusa via merge-patch."""
 
@@ -797,19 +816,19 @@ class MedusaOrderCommand:
             chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
             if not isinstance(chat_data, dict):
                 return
-            changed = apply_payment_confirmation_to_chat_metadata(
-                chat_data,
-                now_ms=int(time.time() * 1000),
-                by=by,
-                session_id=session_key,
-                order_id=order_id,
-                is_test_order=is_test_order,
+            now_ms = int(time.time() * 1000)
+            changed = _apply_to_chat_metadata(
+                chat_meta_file,
+                lambda fresh: apply_payment_confirmation_to_chat_metadata(
+                    fresh,
+                    now_ms=now_ms,
+                    by=by,
+                    session_id=session_key,
+                    order_id=order_id,
+                    is_test_order=is_test_order,
+                ),
             )
             if changed:
-                chat_meta_file.write_text(
-                    json.dumps(chat_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
                 # Purchase a Meta: flush best-effort ahora; si el proceso
                 # muere, el outbox persiste y lo manda el próximo flush
                 # durable (cambio de etapa / turno del bot).
@@ -862,19 +881,19 @@ class MedusaOrderCommand:
             chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
             if not isinstance(chat_data, dict):
                 return
-            changed = apply_order_cancellation_to_chat_metadata(
-                chat_data,
-                now_ms=int(time.time() * 1000),
-                reason=reason,
-                by=by,
-                session_id=session_key,
-                order_id=order_id,
+            now_ms = int(time.time() * 1000)
+            changed = _apply_to_chat_metadata(
+                chat_meta_file,
+                lambda fresh: apply_order_cancellation_to_chat_metadata(
+                    fresh,
+                    now_ms=now_ms,
+                    reason=reason,
+                    by=by,
+                    session_id=session_key,
+                    order_id=order_id,
+                ),
             )
             if changed:
-                chat_meta_file.write_text(
-                    json.dumps(chat_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
                 schedule_capi_flush(session_key)
                 log.info(
                     "cancel_order: chat metadata synced to RECHAZO",
@@ -1022,19 +1041,19 @@ class MedusaOrderCommand:
             chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
             if not isinstance(chat_data, dict):
                 return
-            changed = apply_payment_reversal_to_chat_metadata(
-                chat_data,
-                now_ms=int(time.time() * 1000),
-                by=by,
-                reason=reason,
-                order_id=order_id,
-                order_aliases=order_aliases,
+            now_ms = int(time.time() * 1000)
+            changed = _apply_to_chat_metadata(
+                chat_meta_file,
+                lambda fresh: apply_payment_reversal_to_chat_metadata(
+                    fresh,
+                    now_ms=now_ms,
+                    by=by,
+                    reason=reason,
+                    order_id=order_id,
+                    order_aliases=order_aliases,
+                ),
             )
             if changed:
-                chat_meta_file.write_text(
-                    json.dumps(chat_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
                 log.info(
                     "reverse_payment: chat metadata back to payment pending",
                     extra={"order_id": order_id, "session_key": session_key},
@@ -1206,13 +1225,12 @@ class MedusaOrderCommand:
             chat_data = json.loads(chat_meta_file.read_text(encoding="utf-8"))
             if not isinstance(chat_data, dict):
                 return
-            if apply_test_order_to_chat_metadata(
-                chat_data, order_id=order_id, order_aliases=aliases
-            ):
-                chat_meta_file.write_text(
-                    json.dumps(chat_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
+            _apply_to_chat_metadata(
+                chat_meta_file,
+                lambda fresh: apply_test_order_to_chat_metadata(
+                    fresh, order_id=order_id, order_aliases=aliases
+                ),
+            )
         except (OSError, json.JSONDecodeError) as exc:
             log.warning(
                 "set_test_order: failed to sync chat metadata "

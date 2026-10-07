@@ -80,25 +80,28 @@ async def claim_conversation_routing(session_id: str, new_route: str) -> None:
     via `WORKSPACE_VAULT_DIR + session_id + metadata.json`. Los callers
     (RemarketingSessionWorkflow) deben pasar `session_id`, no `ws_path`.
     """
-    metadata_file = WORKSPACE_VAULT_DIR / session_id / "metadata.json"
-    metadata_file.parent.mkdir(parents=True, exist_ok=True)
-    data: dict = {}
-    if metadata_file.exists():
-        data = json.loads(metadata_file.read_text(encoding="utf-8"))
+    from src.platform.state import FilesystemMetadataStore
 
-    data["active_route"] = new_route
+    # Un metadata dañado se recupera con la última copia buena dentro del
+    # store (decisión del operador, 2026-10-06); un error pasajero de lectura
+    # falla la activity y Temporal reintenta.
+    def _claim(data: dict) -> dict:
+        # Sobre la lectura fresca y solo la ruta + su historial (incidente
+        # 2026-10-06: la copia entera pisaba otras escrituras).
+        data["active_route"] = new_route
 
-    if "status_history" not in data:
-        data["status_history"] = []
+        if "status_history" not in data:
+            data["status_history"] = []
 
-    data["status_history"].append({
-        "tag": data.get("tag", "NO_ETIQUETADO"),
-        "motivo": data.get("motivo", f"Transferencia de ruta a {new_route}"),
-        "active_route": new_route,
-        "timestamp": time.time()
-    })
+        data["status_history"].append({
+            "tag": data.get("tag", "NO_ETIQUETADO"),
+            "motivo": data.get("motivo", f"Transferencia de ruta a {new_route}"),
+            "active_route": new_route,
+            "timestamp": time.time()
+        })
+        return data
 
-    metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _claim)
 
 
 @activity.defn(name="check_remarketing_eligibility")

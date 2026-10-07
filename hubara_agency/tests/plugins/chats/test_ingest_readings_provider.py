@@ -10,6 +10,8 @@ decisiones F2, enchufe 1) y escribe los mismos campos de hoy.
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 import time
 from typing import Any
 
@@ -38,7 +40,7 @@ class _Loader:
         pass
 
 
-class _Store:
+class _Store(MergingMetadataStoreMixin):
     def __init__(self, seed: dict[str, dict] | None = None) -> None:
         self.store: dict[str, dict] = dict(seed or {})
 

@@ -9,6 +9,8 @@ cliente vía `extra_context` (mismo patrón que la nota del order_draft).
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from dataclasses import dataclass
 
 import pytest
@@ -54,7 +56,7 @@ class FakeLoadOrStart:
         )
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self, seed: dict | None = None) -> None:
         self.store: dict[str, dict] = dict(seed or {})
 

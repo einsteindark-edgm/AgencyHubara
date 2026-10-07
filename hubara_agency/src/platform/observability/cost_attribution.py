@@ -165,16 +165,19 @@ async def record_episode_llm_usage_activity(
     except RuntimeError:
         dedup_key = ""  # fuera de contexto activity (tests directos)
 
-    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    metadata = store.read(input.session_id)
-    applied = _apply_episode_llm_usage(
-        metadata,
-        episode_id=input.episode_id,
-        prompt_tokens=input.prompt_tokens,
-        completion_tokens=input.completion_tokens,
-        model=input.model,
-        dedup_key=dedup_key,
-        pricing_table=load_pricing_table(),
-    )
-    if applied:
-        store.write(input.session_id, metadata)
+    pricing_table = load_pricing_table()
+
+    def _apply(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        # Sobre la lectura fresca, bajo el candado: solo el uso del episodio.
+        applied = _apply_episode_llm_usage(
+            fresh,
+            episode_id=input.episode_id,
+            prompt_tokens=input.prompt_tokens,
+            completion_tokens=input.completion_tokens,
+            model=input.model,
+            dedup_key=dedup_key,
+            pricing_table=pricing_table,
+        )
+        return fresh if applied else None
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(input.session_id, _apply)

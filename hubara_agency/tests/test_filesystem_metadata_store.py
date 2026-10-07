@@ -70,12 +70,16 @@ def test_write_keeps_accents_literal_on_disk(tmp_path):
 
 
 def test_write_leaves_no_temp_files(tmp_path):
-    """El write atomico limpia su temp file (no deja `.metadata.json.*.tmp`)."""
+    """El write atomico limpia su temp file (no deja `.metadata.json.*.tmp`).
+    El sidecar del candado (`metadata.json.lock`) no es temporal: desde el
+    incidente 2026-10-06 toda escritura lo toma, como `update()`."""
     store = FilesystemMetadataStore(tmp_path)
     store.write("wa_tmp", {"a": 1})
     session_dir = tmp_path / "wa_tmp"
     leftovers = [
-        p.name for p in session_dir.iterdir() if p.name != "metadata.json"
+        p.name
+        for p in session_dir.iterdir()
+        if p.name not in ("metadata.json", "metadata.json.lock")
     ]
     assert leftovers == []
 

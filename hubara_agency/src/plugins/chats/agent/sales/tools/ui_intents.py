@@ -35,9 +35,11 @@ Cada tool devuelve un envelope JSON con:
   * `summary` — texto para el LLM
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import json
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -150,21 +152,28 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> None:
     a integrar en follow-up).
 
     Cada intent lleva:
-      * id: uuid (para idempotencia en delivery + analytics correlation)
+      * id: uuid (el del caller si trae uno) — el flush lo anota al entregarlo
+        y no lo vuelve a mandar aunque una escritura vieja lo devuelva a la
+        cola (incidente 2026-10-06); también correlaciona analytics
       * kind: discriminador
       * payload: serializable JSON con los args del send_*
       * queued_at_ms
       * analytics: metadata para emitir wa_outbound event tras send_*
+
+    Agrega con `update()` sobre la lectura fresca (candado del store): solo
+    toca la cola, nunca el resto de `metadata.json`.
     """
-    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
-    data = store.read(session_key)
-    intents = list(data.get("pending_ui_intents") or [])
-    intents.append({
+    queued = {
         **intent,
+        "id": intent.get("id") or uuid.uuid4().hex,
         "queued_at_ms": int(time.time() * 1000),
-    })
-    data["pending_ui_intents"] = intents
-    store.write(session_key, data)
+    }
+
+    def _enqueue(fresh: dict[str, Any]) -> dict[str, Any]:
+        fresh["pending_ui_intents"] = [*(fresh.get("pending_ui_intents") or []), queued]
+        return fresh
+
+    FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_key, _enqueue)
 
 
 def _meta_retailer_id(product) -> str:
@@ -613,7 +622,7 @@ def _shipping_precondition_rejection(
         has_purchase_confirmation,
     )
 
-    data = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_key)
+    data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
     signal = current_signal(data)
     if signal and signal.get("kind") == "deferral":
         quoted = str(signal.get("text") or "").strip()
@@ -1151,7 +1160,7 @@ class PresentOrderConfirmationTool(ToolBase):
             split_lines_mismatch,
         )
 
-        metadata_now = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key)
+        metadata_now = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), ctx.session_key)
         # Color y aroma de cada ítem: en un producto con cupo lo que manda el
         # LLM tiene que existir en las listas del producto; si no, NO hay monto
         # (se corrige primero). Sin cupón no se valida (se acepta como antes).

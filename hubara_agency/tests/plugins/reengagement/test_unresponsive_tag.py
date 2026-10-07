@@ -118,3 +118,33 @@ async def test_el_ciclo_escribe_el_tag_en_el_vault(_isolate_vault_dir: Path):
     assert data["status_history"][-1]["source"] == "reengagement:ladder"
     assert snapshot["marked_unresponsive"] == 1
     assert snapshot["conversations"] == []
+
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_cannot_be_written_does_not_stop_the_cycle(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Octava revisión (M4): si marcar una sesión falla (un error del disco),
+    se registra y el ciclo sigue con las demás."""
+    from src.platform.state import FilesystemMetadataStore
+
+    now = int(time.time() * 1000)
+    for sid in ("wa_573001234567", "wa_573009876543"):
+        d = _isolate_vault_dir / sid
+        d.mkdir(parents=True)
+        (d / "metadata.json").write_text(json.dumps(_exhausted(7, now=now)), encoding="utf-8")
+    real_update = FilesystemMetadataStore.update
+
+    def update(self, session_id, mutator):
+        if session_id == "wa_573001234567":
+            raise OSError(5, "Input/output error")
+        return real_update(self, session_id, mutator)
+
+    monkeypatch.setattr(FilesystemMetadataStore, "update", update)
+
+    snapshot = await ActivityEnvironment().run(build_reengagement_snapshot_activity)
+
+    marked = json.loads((_isolate_vault_dir / "wa_573009876543" / "metadata.json").read_text(encoding="utf-8"))
+    assert marked["tag"] == "SIN_RESPUESTA"
+    assert snapshot["marked_unresponsive"] == 1

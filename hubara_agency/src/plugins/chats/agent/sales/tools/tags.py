@@ -32,6 +32,7 @@ cliente abrirá un episodio nuevo automáticamente.
 
 from __future__ import annotations
 
+import copy
 import json
 import time
 from pathlib import Path
@@ -189,6 +190,10 @@ class ManageConversationTagTool(ToolBase):
         data: dict[str, Any] = {}
         if metadata_file.exists():
             data = json.loads(metadata_file.read_text(encoding="utf-8"))
+        # Lo leído: la escritura de abajo lleva SOLO lo que esta tool cambió
+        # (tag, historial, cierre del episodio, CAPI), no la copia entera
+        # (incidente 2026-10-06: una copia vieja devolvió una foto a la cola).
+        base = copy.deepcopy(data)
 
         # Premortem FIX #1: CONFIRMADO_PAGO_PENDIENTE requiere que el LLM
         # haya llamado `register_order` con éxito previamente. Sin esa
@@ -292,7 +297,13 @@ class ManageConversationTagTool(ToolBase):
                 # ya cerró antes; el watchdog ya fue señalado en su momento).
                 closed_episode_id = closed_ep.get("episode_id")
 
-        metadata_file.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        # El shim de ventas (no `src.sdk.runtime`: arrastra temporalio y las
+        # tools no lo importan, R-DIP #7).
+        from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+
+        FilesystemMetadataStore(self._vault_dir).write_merged(
+            ctx.session_key, base=base, ours=data
+        )
 
         # ADR-001: la tool no abre temporal_client. NO emite decisión de
         # remarketing: el envelope `schedule_remarketing` era un no-op desde

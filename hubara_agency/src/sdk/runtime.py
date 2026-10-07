@@ -19,9 +19,29 @@ Uso canónico::
 
 Notas de diseño:
 - ``FilesystemMetadataStore`` es el acceso al metadata de sesión del vault.
+  Se escribe SOLO con ``update(session_id, mutator)`` (tus llaves, sobre la
+  lectura fresca y con el candado de la sesión) o, si acumulas cambios entre
+  esperas, ``write_merged(session_id, base=<copia de lo leído>, ours=<tu
+  dict>)`` (merge de tres vías). Nunca ``write`` ni ``atomic_write_json`` sobre
+  ``metadata.json``: una copia vieja escrita entera devolvió a la cola una foto
+  ya entregada (incidente 2026-10-06; gate
+  ``tests/platform/test_metadata_json_single_writer.py``, sobre ``src/`` y
+  ``scripts/``). Un ``metadata.json`` dañado se recupera solo, sin que el
+  llamador haga nada: el que LEE (``read()``: un intento, sin esperas) recibe
+  la última copia buena (``metadata.json.prev``, rotada después de cada
+  escritura sana; a lo sumo una escritura atrás: lo que cambió la última
+  escritura antes del daño se pierde) con una alerta por episodio, y NUNCA
+  escribe; el que ESCRIBE (``update``/``write_merged``) aparta el dañado una
+  vez (``metadata.json.damaged-<ms>``) y repara sobre esa copia. Nada pasa al
+  equipo humano por eso. Un error PASAJERO (EMFILE, EIO…) no es daño: ``read()``
+  LANZA (nunca una copia vieja ni ``{}``); quien escribe lo reintenta bajo el
+  candado (3 veces, esperas cortas) y recién después lanza. Lo que registra
+  algo que YA SALIÓ (un envío) es de mejor esfuerzo: nunca un reenvío por no
+  poder anotarlo. Lee siempre con ``read()``, nunca el archivo directo.
   Estado process-wide NUEVO exige ``clear()`` + fixture autouse (lección L-2).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
-  vault (write-rename, sin archivos a medio escribir).
+  vault (write-rename, sin archivos a medio escribir) — para los demás
+  archivos; ``metadata.json`` va por el store.
 - ``is_vault_session_id`` es el PISO anti path-traversal de todo id de sesión
   que llega de afuera (URL, body) y termina en un ``Path`` bajo el vault: un
   router lo chequea ANTES de tocar el filesystem y responde 400. ``..`` es el

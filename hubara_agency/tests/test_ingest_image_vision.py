@@ -12,6 +12,8 @@ marcador en el ``media_id`` — sin red.
 """
 from __future__ import annotations
 
+from tests.metadata_store_fakes import MergingMetadataStoreMixin
+
 from dataclasses import dataclass
 
 import pytest
@@ -61,7 +63,7 @@ class FakeLoadOrStart:
         self.calls.append(_Call(session_id, message, phone_number_id, extra_context))
 
 
-class FakeMetadataStore:
+class FakeMetadataStore(MergingMetadataStoreMixin):
     def __init__(self, seed: dict | None = None) -> None:
         self.store: dict[str, dict] = {}
         if seed:
