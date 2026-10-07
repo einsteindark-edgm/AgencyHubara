@@ -537,7 +537,7 @@
    }
   },
   "ui_intents.RequestShippingDetailsTool": {
-   "description": "Pide al cliente los datos de envío (ciudad, barrio, dirección, teléfono, nombre de quien recibe, cédula opcional, método de pago). Llámala UNA SOLA VEZ por sesión, después de que el cliente confirmó qué quiere comprar. Pasa los `items` del pedido (handle EXACTO visto en search_products / get_product_by_handle + cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula el total y decide las formas de pago — tú NUNCA mandas montos. El sistema le manda un mensaje de texto enumerando los campos — el cliente responde libremente por chat y tú vas armando los datos hasta tenerlos completos. NO repitas la lista en tu propio texto: la tool ya manda el mensaje formateado.",
+   "description": "Pide al cliente los datos de envío (ciudad, barrio, dirección, teléfono, nombre de quien recibe, cédula opcional, método de pago) con el formulario de WhatsApp. Llámala UNA SOLA VEZ por sesión, después de que el cliente confirmó qué quiere comprar. Pasa los `items` del pedido (handle EXACTO visto en search_products / get_product_by_handle + cantidad): el sistema toma precio y nombre del CATÁLOGO, calcula el total y decide las formas de pago; tú NUNCA mandas montos. El formulario sale con un mensaje que arma el sistema: producto, variantes del pedido, cantidad, subtotal en productos y que el envío va aparte. NO repitas ese mensaje ni la lista de campos en tu texto. Si el cliente además preguntó otra cosa, respóndela con `send_reply` junto con esta tool, en la misma respuesta: la tool termina tu turno.",
    "name": "request_shipping_details",
    "parameters": {
     "properties": {

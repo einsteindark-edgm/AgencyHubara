@@ -6,7 +6,7 @@ import json
 
 from src.plugins.chats.agent.sales_eval.scorecard import judge_checks as jc
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext
-from tests.evals.scorecard.dsl import T, traj
+from tests.evals.scorecard.dsl import T, tool, traj
 from tests.evals.scorecard.incidents import CATALOG_CTX, pr281_before_fix
 
 
@@ -35,6 +35,44 @@ def test_transcript_shows_what_the_old_judge_could_not_see() -> None:
     assert "T9 · narración descartada:" in text
     assert "T9 · señal del cliente: aplazamiento" in text
     assert "T10 · estado: HUMANO" in text
+
+
+def test_transcript_does_not_call_discarded_a_narration_the_customer_read() -> None:
+    """Incidente 2026-10-06 (turno 1): «Buenos días 🤍» quedó como narración
+    descartada y también salió por `send_reply`; el juez leía que el cliente
+    no lo había visto."""
+    t = traj(T(1, inbound="hola", sent=["Buenos días 🤍"], narration=["Buenos días 🤍", "Busco el catálogo."]))
+
+    text = jc.render_transcript(t)
+
+    assert 'T1 · narración descartada: "Busco el catálogo."' in text
+    assert 'narración descartada: "Buenos días' not in text
+
+
+def test_transcript_shows_what_the_customer_read_with_the_cards() -> None:
+    """El juez veía solo los textos sueltos: el mensaje del formulario (lo
+    arma el código) y el texto de los botones no llegaban al transcript."""
+    form = "Tu pedido 🤍\n• *2× Velón Koala* (Blanco, Lavanda)"
+    t = traj(T(1, inbound="2", tools=[tool("request_shipping_details", card_text=form),
+                                       tool("send_quick_replies", body="¿Seguimos?")]))
+
+    lines = jc.render_transcript(t).splitlines()
+
+    assert 'T1 · bot envió con la tarjeta: "Tu pedido 🤍' in lines
+    assert 'T1 ·   • *2× Velón Koala* (Blanco, Lavanda)"' in lines
+    assert 'T1 · bot envió con la tarjeta: "¿Seguimos?"' in lines
+
+
+def test_transcript_clips_a_long_card_text() -> None:
+    """Un resumen de pedido largo no llena el prompt del juez: cada tarjeta va
+    recortada (~300 caracteres)."""
+    card = "Resumen de tu pedido " + "x" * 2000
+    t = traj(T(1, inbound="sí", tools=[tool("request_shipping_details", card_text=card)]))
+
+    [line] = [x for x in jc.render_transcript(t).splitlines() if "bot envió con la tarjeta" in x]
+
+    assert len(line) <= 360
+    assert line.endswith('…"')
 
 
 def test_prompt_is_isolated_per_check_and_distrusts_system_state() -> None:

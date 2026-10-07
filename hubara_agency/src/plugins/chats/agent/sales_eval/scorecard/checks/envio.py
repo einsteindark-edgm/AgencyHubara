@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
@@ -11,6 +12,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     is_legacy,
     judged,
     judged_turns,
+    lost_narration,
     not_applicable,
     not_judged,
     passed,
@@ -20,6 +22,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
 )
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
+from src.plugins.chats.agent.sales.card_messages import named_in_form
 
 _SHIPPING_FLOW = "shipping_flow"
 _FORM_DATA_MARKER = "[datos de envío recibidos]"
@@ -82,18 +85,150 @@ def _answers_written_message(turn: Turn) -> bool:
     return turn.trigger == "customer" and not turn.inbound_text.startswith("[")
 
 
+# ── ENV-02: ¿el mensaje del formulario le responde al cliente? ─────────────
+# El formulario sale con un mensaje que arma el código (producto, variantes,
+# cantidad y subtotal; sin Flow, la lista de campos) y la traza lo trae en
+# `card_text`. La regla FALLA CERRADA (revisión del PR #392: las preguntas
+# después de un «sí» o en otro mensaje de la ráfaga pasaban): ese mensaje
+# cuenta como respuesta solo si, por CADA mensaje del cliente en el turno, al
+# quitar lo que el formulario cubre no queda nada:
+#   * un sí («sí», «dale», «listo», «de una», «hágale», 👍 ❤️ 🤍…), con las
+#     letras repetidas normalizadas («Siii», «Sii») y «Okis» como «ok»;
+#   * una cantidad («2», «dos», «uno», «solo uno», «x2», «2 und», «2 de
+#     esas», «2 velas»);
+#   * el producto y las variantes que nombra el PROPIO mensaje del formulario
+#     (`named_in_form`, no el catálogo: «Azul» no pasa si dice «(Blanco,
+#     Lavanda)»), también en otro género o número («2 blancas»);
+#   * cortesías y relleno («por favor», «gracias», artículos).
+# Cualquier resto (una pregunta, una condición, un dato que el formulario no
+# menciona, un emoji que no es de sí) pide un texto del bot. Límite: es una
+# regla de palabras; ante la duda pide texto (un sí poco común falla de más).
+_INGEST_NOTE_RE = re.compile(r"^\s*\[[^\]]*\]\s*\n")
+#: Selectores de variación, unión de emojis, el marco de tecla (U+20E3) y tonos de piel.
+_EMOJI_NOISE_RE = re.compile("[\ufe0e\ufe0f\u200d\u20e3\U0001f3fb-\U0001f3ff]")
+_REPEATED_LETTER_RE = re.compile(r"([^\W\d_])\1+")
+_TOKEN_RE = re.compile(r"[^\W_]+|[^\w\s]")
+_QUANTITY_TOKEN_RE = re.compile(r"x?\d{1,3}x?|\d{1,3}(?:und|unds|u|unid|unidad|unidades)")
+#: Emojis de sí o de cariño: no dicen nada que el formulario no responda.
+_YES_EMOJIS = frozenset("👍👌❤♥🤍💕💖💗💓💜💙💚🧡💛🙌🙏✨😊🥰😍☺🤗✅✔💯🫶👏🎉😁😀😃😄🙂😉😘🌿🕯")
+_COVERED_WORDS_RAW = (
+    # sí
+    "si sip yes dale listo hagale hagamosle claro perfecto perfect vale ok oki okis okey okay okei va bueno "
+    "buenisimo confirmo confirmado correcto exacto eso asi quiero encanta gusta llevo senor senora obvio "
+    "genial excelente super chevere bien ya pues "
+    # cortesías y relleno
+    "porfa porfavor plis please gracias hola buenas jaja jajaja jeje "
+    # artículos, pronombres y enlaces
+    "y e de del el la los las lo le me un una uno unos unas en con que sea ese esa esos esas este esta "
+    "estos estas esto solo solamente mismo misma cada "
+    # cantidades y unidades
+    "dos tres cuatro cinco seis siete ocho nueve diez once doce par unidad unidades und unds pieza piezas "
+    "vela velas velon velones producto productos"
+)
+_COVERED_PHRASES_RAW = (
+    "por favor", "muchas gracias", "mil gracias", "de una", "claro que si", "por supuesto", "de acuerdo",
+    "esta bien", "asi esta bien", "nada mas", "buenos dias", "buenas tardes", "buenas noches", "buen dia",
+    "me lo llevo", "me la llevo", "me los llevo", "me las llevo",
+)
+
+
+def _normal(text: str) -> str:
+    """NFKC, minúsculas, sin tildes, sin modificadores de emoji y con las
+    letras repetidas una sola vez («Siii» → «si»)."""
+    text = _EMOJI_NOISE_RE.sub("", unicodedata.normalize("NFKC", text)).casefold()
+    text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    return _REPEATED_LETTER_RE.sub(r"\1", text)
+
+
+def _tokens(text: str) -> list[str]:
+    """Palabras, números y símbolos (¿ ? y emojis); la puntuación se va."""
+    return [
+        t
+        for t in _TOKEN_RE.findall(_normal(text))
+        if t.isalnum() or t in "?¿" or not unicodedata.category(t).startswith("P")
+    ]
+
+
+def _stem(word: str) -> str:
+    """Sin plural ni género, para «blancas» = «Blanco» y «velones» = «Velón»."""
+    if len(word) > 4 and word.endswith("es"):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s"):
+        word = word[:-1]
+    return word[:-1] if len(word) > 3 and word[-1] in "oa" else word
+
+
+_COVERED_WORDS = frozenset(t for t in _tokens(_COVERED_WORDS_RAW))
+_COVERED_PHRASES = tuple(sorted((tuple(_tokens(p)) for p in _COVERED_PHRASES_RAW), key=len, reverse=True))
+
+
+def _customer_messages(turn: Turn) -> list[str]:
+    """Cada mensaje que escribió el cliente en el turno, sin las notas que
+    antepone el ingest. En una traza sin la ráfaga, el texto del turno."""
+    texts = [m.text for m in turn.inbound if m.text.strip()] if turn.inbound else [turn.inbound_text]
+    out = []
+    for text in texts:
+        while m := _INGEST_NOTE_RE.match(text):
+            text = text[m.end():]
+        if text.strip():
+            out.append(text)
+    return out
+
+
+def _leftover(message: str, named: frozenset[str]) -> list[str]:
+    """Lo que queda del mensaje al quitar lo que el formulario cubre."""
+    tokens = _tokens(message)
+    rest: list[str] = []
+    i = 0
+    while i < len(tokens):
+        phrase = next((p for p in _COVERED_PHRASES if tuple(tokens[i:i + len(p)]) == p), None)
+        if phrase:
+            i += len(phrase)
+            continue
+        token = tokens[i]
+        covered = (
+            token in _COVERED_WORDS
+            or token in _YES_EMOJIS
+            or bool(_QUANTITY_TOKEN_RE.fullmatch(token))
+            or _stem(token) in named
+        )
+        if not covered:
+            rest.append(token)
+        i += 1
+    return rest
+
+
+def _form_message_answers(turn: Turn) -> bool:
+    """¿El mensaje que arma el código con el formulario le responde al cliente?
+    Solo si a ningún mensaje suyo del turno le queda nada al quitarle lo que
+    el formulario cubre (ver arriba). Un traspaso o un aplazamiento piden un
+    texto del bot."""
+    if turn.trigger != "customer" or turn.signal == "deferral":
+        return False
+    messages = _customer_messages(turn)
+    named = frozenset(
+        _stem(t) for card in turn.card_read_texts for name in named_in_form(card) for t in _tokens(name)
+    )
+    return bool(messages) and not any(_leftover(m, named) for m in messages)
+
+
 @code_check("ENV-02")
 def check_form_with_reply(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     applicable = [t for t in _form_turns(traj) if judged(traj, t) and _answers_written_message(t)]
     if not applicable:
         return not_judged("ENV-02", traj, "ningún formulario respondió a un mensaje escrito del cliente")
     for turn in applicable:
-        if not turn.sent_texts:
-            detail = f"; narración descartada {quote(turn.discarded_narration[0])}" if turn.discarded_narration else ""
-            return failed(
-                "ENV-02", turn.turn,
-                f"turno {turn.turn}: formulario sin texto ante {quote(turn.inbound_text)}{detail}",
-            )
+        # Un texto del bot siempre responde. El mensaje del formulario (lo que
+        # el cliente leyó con la tarjeta) responde solo una cantidad, un sí o
+        # una variante elegida.
+        if turn.sent_texts or (turn.card_read_texts and _form_message_answers(turn)):
+            continue
+        lost = lost_narration(turn)
+        detail = f"; narración descartada {quote(lost[0])}" if lost else ""
+        what = "solo el mensaje del formulario" if turn.card_read_texts else "formulario sin texto"
+        return failed(
+            "ENV-02", turn.turn, f"turno {turn.turn}: {what} ante {quote(turn.inbound_text)}{detail}"
+        )
     return passed("ENV-02")
 
 

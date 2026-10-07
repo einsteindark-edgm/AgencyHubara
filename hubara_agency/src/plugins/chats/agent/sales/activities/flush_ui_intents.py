@@ -37,16 +37,19 @@ from temporalio import activity
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
+from src.plugins.chats.agent.sales.card_messages import (
+    order_card_record,
+    order_card_text,
+    shipping_fields_text,
+)
 from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
     get_nequi_number,
 )
 from src.plugins.chats.agent.sales.config.shipping import (
-    ORDER_SUMMARY_SHIPPING_LINE,
-    ORDER_SUMMARY_SHIPPING_NOTE,
     SHIPPING_RATES_MESSAGE,
-    cash_on_delivery_available,
+    shipping_flow_id,
 )
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
@@ -90,6 +93,11 @@ _INTENT_TEXT_NEUTRAL: dict[str, str | None] = {
     "footer": None,
 }
 
+#: Intents cuyos textos arma el CÓDIGO, no el LLM (el mensaje y el encabezado
+#: del formulario de envío): no pasan por el saneador ni le preguntan a Jev.
+#: Salen tal cual, el mismo `customer_text` que leen la traza y la ③.
+_CODE_TEXT_KINDS = frozenset({"shipping_flow"})
+
 
 async def _sanitize_intent_client_text(
     kind: str, params: dict[str, Any], *, session_id: str | None = None
@@ -108,6 +116,8 @@ async def _sanitize_intent_client_text(
     from src.sdk.agentkit import looks_like_admin_leak, sanitize_llm_text
 
     out = dict(params)
+    if kind in _CODE_TEXT_KINDS:
+        return out
     for key, neutral in _INTENT_TEXT_NEUTRAL.items():
         value = out.get(key)
         if not isinstance(value, str) or not value.strip():
@@ -135,10 +145,6 @@ async def _sanitize_intent_client_text(
         else:
             out[key] = cleaned
     return out
-
-
-#: Máximo del cuerpo de un mensaje con botones en WhatsApp.
-_MAX_ORDER_BODY = 1024
 
 
 def _format_cop(amount: int, currency: str) -> str:
@@ -452,6 +458,9 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # Páginas de la lista de respaldo que no llegaron aunque el intent sí
         # salió (la primera página llegó): van a `ui_intents_failures`.
         page_failures: list[dict[str, Any]] = []
+        # Lo que de verdad salió cuando no es lo de `params` (la lista de
+        # campos si el formulario no salió como Flow): el marcador lleva eso.
+        sent: dict[str, Any] = {}
         try:
             # Motor de decisiones (`destinatario`, F5): los textos del LLM se
             # deciden UNA vez, acá. Lo que sale y lo que muestra el panel
@@ -469,6 +478,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
                 to_number=to_number,
                 last_inbound_message_id=last_inbound_msg_id,
                 media_log=media_log,
+                sent=sent,
                 session_id=session_id,
                 client_text_decided=True,
                 failures=page_failures,
@@ -544,7 +554,7 @@ async def flush_pending_ui_intents_report(session_id: str) -> list[dict[str, Any
         # Marker al histórico del dashboard (post-pop, post-write —
         # best-effort: si crashea, el intent NO se reenvía y el flush sigue).
         try:
-            history_event = _build_history_event(kind, params)
+            history_event = _build_history_event(kind, params, sent_text=sent.get("text"))
             if history_event is not None:
                 # `wamid`: destino de las citas del cliente ("este" citando
                 # los botones / el catálogo / la foto). Sin él el dashboard
@@ -600,6 +610,7 @@ async def _dispatch_intent(
     to_number: str,
     last_inbound_message_id: str | None,
     media_log: list[dict[str, Any]] | None = None,
+    sent: dict[str, Any] | None = None,
     session_id: str | None = None,
     client_text_decided: bool = False,
     failures: list[dict[str, Any]] | None = None,
@@ -624,6 +635,11 @@ async def _dispatch_intent(
     send exitoso — `{wa_message_id, handle, title, image_url, label}` — para
     que el caller persista `outbound_media_index` (resolver replies del
     cliente que citan una foto; caso wa_573125671604).
+
+    `sent`: dict mutable donde se anota lo que de verdad salió cuando no es
+    lo de `params` — `{"text": ...}` si el formulario de envío cayó a la
+    lista de campos por texto — para que el marcador del historial no
+    muestre un mensaje que el cliente no recibió.
 
     Devuelve `OutboundResult` o None si el kind es desconocido / intent
     invalido sin posibilidad de envío.
@@ -879,15 +895,11 @@ async def _dispatch_intent(
         #   3. Placeholder → caemos al fallback de texto plano.
         # El env-first hace que cambiar el Flow en Meta (re-publicar →
         # nuevo flow_id) sea un re-deploy del worker SIN tocar código.
-        env_flow_id = (os.environ.get("META_FLOW_ID_SHIPPING") or "").strip()
-        flow_id = (
-            env_flow_id
-            if env_flow_id and env_flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER"
-            else params.get("flow_id")
-        )
-        use_native_flow = bool(flow_id and flow_id != "FLOW_ID_SHIPPING_PLACEHOLDER")
+        # La misma regla que usa la tool para decir en `customer_text` qué va
+        # a leer el cliente (`config/shipping.shipping_flow_id`).
+        flow_id = shipping_flow_id(params.get("flow_id"))
 
-        if use_native_flow:
+        if flow_id is not None:
             # Defensa en profundidad (post-mortem run bc54cb93, 2026-05-25):
             # ANTES el send_flow estaba sin try/except. Si Meta rechazaba o
             # `_mark_flow_awaiting_reply` lanzaba NameError, el cliente se
@@ -948,38 +960,9 @@ async def _dispatch_intent(
         # (anti-patrón sesión adc6400c — la opción "Compartir ubicación" no
         # funciona y el cliente abandona). Las formas de pago se informan
         # con sus condiciones (requisito 2026-08-31).
-        order_total_cop = int(params.get("order_total_cop") or 0)
-        nequi = get_nequi_number()
-        payment_lines = []
-        if cash_on_delivery_available(order_total_cop):
-            payment_lines.append(
-                "  • Contra entrega — el valor se calcula con la "
-                "transportadora"
-            )
-        payment_lines.append(
-            f"  • Pago anticipado — Nequi o llave {nequi}"
-            if nequi
-            else "  • Pago anticipado (Nequi)"
-        )
-        payment_lines.append(
-            "  • Link de pago — recargo adicional de "
-            f"{PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA} con Nequi o "
-            f"Bancolombia, {PAYMENT_LINK_SURCHARGE_OTHER_BANKS} con otros "
-            "bancos"
-        )
-        payment_block = "\n".join(payment_lines)
-        text = (
-            "Para coordinar el envío necesito estos datos, puedes "
-            "enviármelos en un solo mensaje o uno por uno:\n\n"
-            "🏙️ *Ciudad*\n"
-            "📍 *Barrio*\n"
-            "🏠 *Dirección* (calle, número, apartamento)\n"
-            "📞 *Teléfono* de contacto\n"
-            "🙋 *Nombre de quien recibe* el pedido\n"
-            "🪪 *Cédula* de quien recibe (opcional)\n"
-            "💳 *Método de pago*, elige entre:\n"
-            f"{payment_block}"
-        )
+        text = shipping_fields_text(int(params.get("order_total_cop") or 0), get_nequi_number())
+        if sent is not None:
+            sent["text"] = text
         return await wa_client.send_text(
             phone_number_id,
             to_number,
@@ -989,73 +972,10 @@ async def _dispatch_intent(
     if kind == "order_confirmation":
         # Por ahora: fallback transparente a interactive.buttons con resumen
         # textual completo. A.12 nativo (interactive.order_details) requiere
-        # Meta Catalog + gateway approved — se activará por feature flag.
-        items = params.get("items") or []
-        # La variante va cuando el producto se repite en varias líneas
-        # («1× Velón Gorrión (Lila · Lavanda)»); si no, la línea de siempre.
-        lines = [
-            (
-                f"• {it.get('quantity', 1)}× {it.get('title') or it.get('handle')}"
-                + (f" ({it['variant']})" if it.get("variant") else "")
-                + f" — ${it.get('unit_price_cop', 0):,}"
-            ).replace(",", ".")
-            for it in items
-        ]
-        items_summary = "\n".join(lines)
-        subtotal = int(params.get("subtotal_cop", 0))
-        shipping = int(params.get("shipping_cop", 0))
-        total = int(params.get("total_cop", 0))
-        currency = params.get("currency", "COP")
-        payment_method = params.get("payment_method")
-        body_lines = [
-            "*Resumen de tu pedido*",
-            items_summary,
-            "",
-            f"Subtotal productos: {_format_cop(subtotal, currency)}",
-        ]
-        discount_cop = params.get("discount_cop")
-        if isinstance(discount_cop, int) and discount_cop > 0:
-            coupon = params.get("coupon_code")
-            body_lines.append(
-                f"Descuento{f' ({coupon})' if coupon else ''}: −{_format_cop(discount_cop, currency)}"
-            )
-        if payment_method == "cash_on_delivery":
-            # Regla del operador (2026-09-07, `config/shipping.py`): con
-            # contra entrega el envío se paga al recibir y la transportadora
-            # lo recalcula antes de despachar → NO se muestra valor de envío
-            # ni total (sería subtotal + un envío que no es definitivo); va
-            # "Por confirmar" + la nota. `shipping_cop`/`total_cop` siguen en
-            # el intent (analytics), no se renderizan.
-            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_LINE])
-        else:
-            # Pago anticipado / link: el cliente paga el envío AHORA con la
-            # tarifa mínima (misma que valida SEC-07 en register_order y que
-            # muestra payment_instructions, #236) → se aclara que es mínima y
-            # se da el total. Envío 0 = "sin costo", nunca se inventa reparto.
-            shipping_line = (
-                f"Envío (tarifa mínima): {_format_cop(shipping, currency)}"
-                if shipping > 0
-                else "Envío: sin costo"
-            )
-            body_lines.extend([shipping_line, f"Total: {_format_cop(total, currency)}"])
-        body_lines.extend([
-            "",
-            f"📍 Dirección: {params.get('shipping_address_summary', '')}",
-            "",
-            f"💳 Medio de pago: {_humanize_payment(payment_method)}",
-        ])
-        if payment_method == "cash_on_delivery":
-            body_lines.extend(["", ORDER_SUMMARY_SHIPPING_NOTE])
-        body = "\n".join(body_lines)
-        # Cupo por unidad (premortem B4): qué unidades llevan el descuento, o
-        # por qué no — la tarjeta termina el turno del bot, así que el cliente
-        # lo lee acá. Va al final y cabe en el cuerpo (máx. de WhatsApp).
-        note = params.get("coupon_note")
-        if isinstance(note, str) and note.strip():
-            room = _MAX_ORDER_BODY - len(body) - len("\n\n🎟️ ")
-            if room >= 40:
-                text = note.strip()
-                body += "\n\n🎟️ " + (text if len(text) <= room else text[: room - 1].rstrip() + "…")
+        # Meta Catalog + gateway approved — se activará por feature flag. El
+        # texto lo arma `card_messages.order_card_text`: el mismo que devuelve
+        # la tool en `customer_text` y que lleva el marcador del historial.
+        body = order_card_text(params)
         ref = params.get("reference_id", "HUB")
         return await wa_client.send_interactive_buttons(
             phone_number_id,
@@ -1427,8 +1347,22 @@ def _trunc(text: str, limit: int = _NOTE_TEXT_LIMIT) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def _card_marker(head: str, text: str) -> str:
+    """«<head> — con el mensaje: «<texto>»» para una tarjeta cuyo texto arma el
+    código. El texto se recorta ADENTRO del marcador para que el marcador
+    entero quepa en una línea de la ventana de Jev, que corta los mensajes
+    largos por el PRINCIPIO: lo primero que se lee es qué mandó el bot."""
+    from src.plugins.chats.agent.sales.decisions.context import MAX_LINE_CHARS
+
+    text = text.strip()
+    if not text:
+        return head
+    prefix = f"{head} — con el mensaje: «"
+    return f"{prefix}{_trunc(text, MAX_LINE_CHARS - len(prefix) - 1)}»"
+
+
 def _build_history_event(
-    kind: str | None, params: dict[str, Any]
+    kind: str | None, params: dict[str, Any], *, sent_text: str | None = None
 ) -> dict[str, Any] | None:
     """Marker human-readable del intent enviado, para el JSONL del dashboard.
 
@@ -1483,9 +1417,21 @@ def _build_history_event(
     elif kind == "categories":
         content = _categories_note(params)
     elif kind == "shipping_flow":
-        content = "📋 El bot pidió los datos de envío (formulario)"
+        # El mensaje del formulario y el resumen del pedido los arma el
+        # código: van como los leyó el cliente (incidente 2026-10-06: el
+        # operador, Jev y Calidad LLM no los veían). Si el Flow no salió, la
+        # lista de campos que se mandó por texto (`sent_text`).
+        if sent_text:
+            content = _card_marker("📋 El bot pidió los datos de envío por texto", sent_text)
+        else:
+            content = _card_marker(
+                "📋 El bot pidió los datos de envío (formulario)", str(params.get("body") or "")
+            )
     elif kind == "order_confirmation":
-        content = "🧾 El bot envió el resumen del pedido con botones para confirmar"
+        # Sin la dirección del cliente: el registro no la necesita.
+        content = _card_marker(
+            "🧾 El bot envió el resumen del pedido con botones para confirmar", order_card_record(params)
+        )
     elif kind == "reaction":
         content = f"El bot reaccionó con {params.get('emoji', '🤍')} a un mensaje del cliente"
     elif kind == "contact_card":
@@ -1650,14 +1596,3 @@ def _mark_flow_awaiting_reply(to_number: str) -> None:
 
     data["shipping_flow_awaiting_reply_since_ms"] = ts_ms
     _safe_write_metadata(metadata_file, data)
-
-
-def _humanize_payment(code: str | None) -> str:
-    # `card` es legacy (órdenes registradas antes del requisito 2026-08-31);
-    # las 3 formas vigentes son transfer / payment_link / cash_on_delivery.
-    return {
-        "card": "Tarjeta",
-        "transfer": "Pago anticipado (Nequi)",
-        "payment_link": "Link de pago",
-        "cash_on_delivery": "Contra entrega",
-    }.get(code or "", code or "Por confirmar")

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterator
 
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckResult
@@ -63,6 +64,22 @@ def all_read_texts(traj: Trajectory) -> Iterator[tuple[Turn, str]]:
 
 def quote(text: str, limit: int = 120) -> str:
     return f"«{clip(text, limit)}»"
+
+
+def _normalized(text: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", text).split()).casefold()
+
+
+def lost_narration(turn: Turn) -> tuple[str, ...]:
+    """La narración descartada que el cliente NO leyó: la que no es igual (sin
+    contar espacios, mayúsculas ni la forma Unicode) a ningún texto que sí le
+    llegó en el turno (`read_texts`), ni a los textos enviados unidos (el envío
+    parte un texto en burbujas). Incidente 2026-10-06 (turno 1): «Buenos días
+    🤍» quedó como narración descartada y ese mismo texto salió por
+    `send_reply`."""
+    read = {_normalized(text) for text in turn.read_texts}
+    read |= {_normalized(" ".join(turn.sent_texts)), _normalized(" ".join(turn.read_texts))}
+    return tuple(n for n in turn.discarded_narration if _normalized(n) not in read)
 
 
 # ── Modo turno (laboratorio, plan §5.2) ─────────────────────────────────────

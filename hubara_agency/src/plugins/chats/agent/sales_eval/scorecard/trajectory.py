@@ -57,6 +57,10 @@ class ToolCall:
     error: str | None = None
     notes: tuple[str, ...] = ()
     args: dict[str, Any] = field(default_factory=dict)
+    # El texto que el código armó para el cliente con la tarjeta (el mensaje
+    # del formulario de envío, el resumen del pedido, las tarifas): la traza
+    # lo guarda en `card_text` (incidente 2026-10-06, turno 9).
+    card_text: str | None = None
 
     def note(self, prefix: str) -> str | None:
         for n in self.notes:
@@ -116,15 +120,27 @@ class Turn:
         return any(t.name == name for t in self.tools)
 
     @property
+    def card_read_texts(self) -> tuple[str, ...]:
+        """El texto de las tarjetas que salieron en el turno (las que no se
+        negaron), en orden: el que redacta el LLM (`card_texts`) y el que arma
+        el código (`card_text`: el mensaje del formulario, el resumen del
+        pedido, las tarifas)."""
+        return tuple(
+            x
+            for t in self.tools
+            if t.ok is not False
+            for x in (*card_texts(t.name, t.args), *((t.card_text,) if t.card_text else ()))
+        )
+
+    @property
     def read_texts(self) -> tuple[str, ...]:
         """Lo que el cliente LEYÓ en el turno, en el orden en que le llegó: los
-        textos y, después, el texto de las tarjetas que salieron (el flush va
-        después del texto). Con complemento, lo suyo va al final (caso 4567:
-        el saludo iba en el texto de la lista, antes del complemento)."""
+        textos y, después, el texto de las tarjetas (el flush va después del
+        texto). Con complemento, lo suyo va al final (caso 4567: el saludo iba
+        en el texto de la lista, antes del complemento)."""
         if self.read_order is not None:
             return self.read_order
-        cards = (x for t in self.tools if t.ok is not False for x in card_texts(t.name, t.args))
-        return (*self.sent_texts, *cards)
+        return (*self.sent_texts, *self.card_read_texts)
 
     @property
     def is_customer(self) -> bool:
@@ -181,12 +197,14 @@ def _as_int(value: Any) -> int | None:
 
 def _tool_from_trace(raw: dict[str, Any]) -> ToolCall:
     ok = raw.get("ok")
+    card_text = raw.get("card_text")
     return ToolCall(
         name=str(raw.get("name") or ""),
         ok=ok if isinstance(ok, bool) else None,
         error=raw.get("error") if isinstance(raw.get("error"), str) else None,
         notes=tuple(str(n) for n in raw.get("notes") or []),
         args=dict(raw.get("args") or {}) if isinstance(raw.get("args"), dict) else {},
+        card_text=card_text if isinstance(card_text, str) and card_text.strip() else None,
     )
 
 
