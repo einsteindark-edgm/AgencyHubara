@@ -551,6 +551,18 @@ en canary/on, y el techo de producción es `off`.
     recibe un clon). Entra con el `terraform apply` de platform y el redeploy
     (render del `.env` desde SSM); volver atrás = `"ventas"`. `ventas-2` no
     viaja a un clon de forge (`deletes`).
+    **`ventas-3@3`** (#390, 2026-10-07) es `ventas-2` con los arreglos de la
+    conversación de prueba del 2026-10-06: cortesía (un saludo que abre la
+    conversación no es cortesía; vista `reply_gap`), compra (un «sí» que no
+    responde a una propuesta de compra no confirma), afirmación por opciones,
+    cantidad explícita no preguntada y el asunto `gusto`. Solo cambia lo que
+    decide Jev (hoy, los números de prueba con `prueba-jev si`); con las
+    capacidades apagadas para clientes, decide la regla igual que antes.
+    **Promovido** en tfvars el 2026-10-07 (`lab.decisions_bundle =
+    "ventas-3"`): entra con el `terraform apply` de platform y el dispatch
+    de Backend deploy, y se verifica con `decisions.bundle_ready
+    bundle=ventas-3@3` en el log; volver atrás = `"ventas-2"`. Tampoco viaja
+    a un clon de forge (`deletes`).
 
 **App Operador (2026-10-05).**
 - La app nativa del operador (PR #385) tiene su paquete,
