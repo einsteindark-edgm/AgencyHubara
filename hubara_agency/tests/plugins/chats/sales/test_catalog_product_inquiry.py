@@ -175,6 +175,25 @@ async def test_the_dashboard_quotes_the_product() -> None:
     assert event["reply_to"] == {"id": "wamid.INQUIRY", "author": "catalog", "text": "Luz Serena"}
 
 
+async def test_the_product_is_quoted_even_when_meta_sends_no_quoted_id() -> None:
+    """Conversación de prueba del 2026-10-07 (···1604, turno 3): el cliente
+    abrió la Calabaza desde la lista de productos y tocó «Enviar mensaje a la
+    empresa». Meta mandó el producto sin `context.id`, el evento quedó sin
+    cita y ni el dashboard ni Jev (que lee la cita del historial) supieron de
+    qué ficha escribía."""
+    use_case, _loader, history, _metadata = _use_case()
+    inquiry = _inquiry("HUB-SERENA", text="Me gusta esta")
+    inquiry.context.pop("id")
+
+    await use_case.execute(inquiry)
+
+    [event] = history.events
+    reply_to = event.get("reply_to") or {}
+    assert (reply_to.get("author"), reply_to.get("text")) == ("catalog", "Luz Serena")
+    # El dashboard exige un id de texto en cada cita.
+    assert isinstance(reply_to.get("id"), str) and reply_to["id"]
+
+
 async def test_a_conversation_a_person_owns_is_left_alone() -> None:
     use_case, _loader, _history, metadata = _use_case()
     metadata.store[SESSION] = {"active_route": "humano", "tag": "HUMANO"}

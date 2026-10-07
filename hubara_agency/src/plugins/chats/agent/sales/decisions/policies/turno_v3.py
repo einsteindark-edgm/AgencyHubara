@@ -26,7 +26,7 @@ más:
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -40,6 +40,9 @@ POLICY_ID = "turno-v3"
 DEFAULT_THRESHOLDS: dict[str, float] = {**turno_v2.DEFAULT_THRESHOLDS, "given": 0.85}
 
 STAGNANT_TURNS = 3
+
+#: El siguiente paso de la guía: (etapa, falta, dio, respuestas, umbrales, *, chose, tables) → texto.
+NextStep = Callable[..., str]
 
 _SLOT_LABELS: dict[str, str] = {
     "ciudad": "ciudad",
@@ -209,7 +212,8 @@ def _next_step(
 
 
 def _guide(
-    result: Any, context: Any, th: dict[str, float], *, chosen: Sequence[str] = (), tables: TurnTables | None = None
+    result: Any, context: Any, th: dict[str, float], *, chosen: Sequence[str] = (), tables: TurnTables | None = None,
+    next_step: NextStep | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     stage = getattr(context, "stage", None)
     if not stage:
@@ -225,7 +229,7 @@ def _guide(
     # sin venta en curso, el que solo agradece no se lleva al catálogo.
     no_sale = _NO_SALE_STAGES if tables is None else tables.no_sale_stages
     courtesy = bool(getattr(context, "courtesy", False)) and stage in no_sale
-    step = "" if courtesy else _next_step(stage, missing, given, result, th, chose=chose, tables=tables)
+    step = "" if courtesy else (next_step or _next_step)(stage, missing, given, result, th, chose=chose, tables=tables)
     label = STAGE_LABELS.get(stage, stage)
     parts = [f"[ETAPA] {label[:1].upper() + label[1:]}."]
     if given:
@@ -256,6 +260,24 @@ def decide_turn(
     thresholds: dict[str, float] | None = None,
     tables: TurnTables | None = None,
 ) -> TurnOutcome:
+    return decide_turn_with(
+        result, questionnaire=questionnaire, context=context, n_messages=n_messages, thresholds=thresholds,
+        tables=tables,
+    )
+
+
+def decide_turn_with(
+    result: Any,
+    *,
+    questionnaire: Any,
+    context: Any = None,
+    n_messages: int,
+    thresholds: dict[str, float] | None = None,
+    tables: TurnTables | None = None,
+    next_step: NextStep | None = None,
+) -> TurnOutcome:
+    """`decide_turn` con otro siguiente paso de la guía (`turno-v4`); sin él,
+    el de esta política."""
     th = {**DEFAULT_THRESHOLDS, **(thresholds or {})}
     base = turno_v2.decide_turn(
         result, questionnaire=questionnaire, context=context, n_messages=n_messages, thresholds=th, tables=tables
@@ -270,7 +292,7 @@ def decide_turn(
         note = turno_v2.reading_note(plan, base.reading, questionnaire, th, tables)
         topics = topic_rows(plan, questionnaire)
         coverage = coverage_rules(plan, tables)
-    guide, stage_note = _guide(result, context, th, chosen=chosen, tables=tables)
+    guide, stage_note = _guide(result, context, th, chosen=chosen, tables=tables, next_step=next_step)
     required = _required([t.topic for t in plan.topics], result, stage, list(guide.get("given_now") or []), th, tables)
     note_parts = [p for p in (note, stage_note) if p]
     if not note and stage_note:

@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
+#
+# Paquete de decisión de Hubara (velas), ventas, versión 4. PAQUETES_DE_DECISION.md.
+# Es `ventas-3@3` con la política del turno `turno-v4` y nada más (una prueba lo
+# exige: test_decisions_ventas_4.py). Conversación de prueba del 2026-10-07
+# (···1604, turno 3): el cliente escribió «Me gusta esta» desde la ficha de la
+# Calabaza en el catálogo de WhatsApp; la nota del ingest llegó, pero la guía de
+# `turno-v3` (etapa calculada con el borrador vacío) le pidió al LLM «ayúdale a
+# escoger un producto» y el bot preguntó «¿Cuál de las cuatro te gustó?». Con
+# `turno-v4` el paso de descubrimiento usa el producto desde el que escribe el
+# cliente (la ficha del catálogo o la página de la web).
+# Se promueve nombrándolo en Terraform (`tenants.<t>.lab.decisions_bundle =
+# "ventas-4"`), después de medirlo en el laboratorio (`B@ventas-4`).
+# Inmutable: otra pregunta u otro umbral = otra versión. Certificar:
+#   cd hubara_agency && uv run python -m src.sdk.cli decisions check
+id: ventas-4
+version: 4
+engine_contract: 1
+oracle: jev-1.13
+capabilities:
+  - acuse
+  - afirmacion
+  - baja
+  - cantidad
+  - categoria
+  - cierre
+  - compra
+  - contactar
+  - cortesia
+  - cupon
+  - datos
+  - destinatario
+  - destinatario_oracion
+  - destinatario_plantilla
+  - enumeracion
+  - familia_de_color
+  - fuera_de_catalogo
+  - item_del_pedido
+  - monto
+  - persona
+  - portavelas
+  - preambulo
+  - producto_nombrado
+  - relevo
+  - rescate
+  - retoma
+  - saludo
+  - selector
+  - zona_de_envio

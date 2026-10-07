@@ -106,7 +106,7 @@ def _tenant_bundles(text: str) -> dict[str, str]:
 
 def test_every_bundle_a_tenant_names_exists() -> None:
     """Promover un paquete = nombrarlo en el tenant (PAQUETES_DE_DECISION.md §9;
-    Hubara corre `ventas-3` desde el 2026-10-07). El que se nombra tiene que
+    Hubara corre `ventas-4` desde el 2026-10-07, #402). El que se nombra tiene que
     estar en el repo: si no, la API y el worker de ventas no arrancarían. Cuál
     corre cada tenant es dato del tfvars (volver atrás no toca esta prueba), y
     un clon de forge, sin bloque `lab`, corre el default de la variable."""

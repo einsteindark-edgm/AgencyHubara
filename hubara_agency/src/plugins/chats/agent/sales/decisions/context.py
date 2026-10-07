@@ -75,6 +75,18 @@ class Window:
 
 
 @dataclass(frozen=True)
+class ViewedProduct:
+    """El producto desde el que escribe el cliente, ya resuelto contra el
+    catálogo por el ingest: la ficha del catálogo de WhatsApp («Enviar mensaje
+    a la empresa», `from_catalog`) o la página de la web (`ref: HUB-…`)."""
+
+    title: str
+    handle: str
+    from_catalog: bool
+    variant: str | None = None
+
+
+@dataclass(frozen=True)
 class TurnContext:
     """Lo que el motor le da a Jev además de la ráfaga."""
 
@@ -86,6 +98,10 @@ class TurnContext:
     missing: tuple[str, ...] = ()
     stagnant: int = 0
     courtesy: bool = False
+    # El producto desde el que escribe el cliente (2026-10-07: sin él, la
+    # guía de descubrimiento le pedía al LLM «ayúdale a escoger un producto»
+    # al cliente que acababa de escribir desde la ficha de la Calabaza).
+    viewed_product: ViewedProduct | None = None
 
     def when_facts(self) -> dict[str, Any]:
         """Los hechos con que se filtran las preguntas (`when` del cuestionario)."""

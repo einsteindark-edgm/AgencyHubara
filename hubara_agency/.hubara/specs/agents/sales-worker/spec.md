@@ -1139,6 +1139,22 @@ por ella.
 - THEN el bot recibe la nota de que escribió desde la ficha de la Luz Serena (handle `luz-serena`)
 - AND el operador ve en Chats la cita «Ficha del catálogo · Luz Serena»
 
+#### Scenario: Meta manda la ficha sin `context.id` (2026-10-07)
+
+- GIVEN el cliente abrió la Calabaza desde la lista de productos y tocó «Enviar mensaje a la empresa»
+- WHEN el webhook trae `referred_product` pero no `context.id`
+- THEN el evento del cliente SHALL llevar igual la cita de la ficha (autor `catalog`, el nombre del producto y el código como id)
+- AND Jev lee esa cita en el contexto del turno
+
+#### Scenario: El bot nuevo no le pide escoger un producto al que escribe desde uno (2026-10-07)
+
+- GIVEN el paquete de decisión de la tienda usa la política `turno-v4` (`ventas-4`) y el borrador del pedido está vacío (etapa descubrimiento)
+- AND el cliente escribió «Me gusta esta» desde la ficha de la Calabaza
+- WHEN el motor arma la guía de la etapa
+- THEN el siguiente paso SHALL nombrar la Calabaza (responderle sobre ese producto y, si lo quiere, anotarlo con `set_order_slot`)
+- AND MUST NOT decir «ayúdale a escoger un producto» (con `turno-v3` lo decía y el bot preguntó «¿Cuál de las cuatro te gustó?»)
+- AND la traza nombra la nota `catalog_card` (o `web_product` si viene de la web) y la guía guarda `viewed_product`
+
 ### Requirement: El formulario de envío extiende el ghosting
 
 Tras enviar el Flow nativo de datos de envío, el flag

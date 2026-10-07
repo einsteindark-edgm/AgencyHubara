@@ -125,9 +125,10 @@ _NOTE_HEADER = (
 )
 
 
-def build_web_product_note(metadata: dict) -> str | None:
-    """Projects the note for `plugin_context`, only for a resolved ref in the
-    episode where it was captured and while that episode has no order."""
+def viewed_product(metadata: dict) -> dict | None:
+    """The product the customer is writing from (`web_product_ref`), only for
+    a resolved ref in the episode where it was captured and while that episode
+    has no order. The note and the decision engine read the same one."""
     state = metadata.get("web_product_ref")
     if not isinstance(state, dict) or state.get("status") != "resolved":
         return None
@@ -137,6 +138,14 @@ def build_web_product_note(metadata: dict) -> str | None:
         return None
     captured_in = state.get("episode_id")
     if captured_in and (episode or {}).get("episode_id") != captured_in:
+        return None
+    return state
+
+
+def build_web_product_note(metadata: dict) -> str | None:
+    """Projects the note for `plugin_context` (see `viewed_product`)."""
+    state = viewed_product(metadata)
+    if state is None:
         return None
 
     if state.get("origin") == CATALOG_ORIGIN:
