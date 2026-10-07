@@ -64,6 +64,28 @@ def test_build_trajectory_orders_turns_and_derives_intents_from_ok_tools() -> No
     assert traj.first_contact is True
 
 
+def test_a_handoff_from_remarketing_is_read_as_a_handoff_not_as_the_customer() -> None:
+    # La plataforma ya no marca el traspaso en `trigger` (siempre «customer»):
+    # el turno que es SOLO un traspaso trae el encuadre de la plataforma como
+    # `inbound_text`. Leído como mensaje del cliente, los checks le exigían el
+    # saludo de un primer contacto y leían «catálogo» en las instrucciones.
+    from src.platform.workflow_helpers import _handoff_takeover_framing
+
+    framing = _handoff_takeover_framing("Usuario respondió: Hola, sí quiero ver")
+    traj = build_trajectory(
+        [_trace(1, inbound_text=framing, first_contact=True)],
+        session_id="wa_100000000001",
+        episode={"episode_id": "ep_007"},
+    )
+
+    turn = traj.turns[0]
+    assert (turn.trigger, turn.inbound_text, turn.first_contact) == (
+        "handoff",
+        "Usuario respondió: Hola, sí quiero ver",
+        False,
+    )
+
+
 _FORM_MESSAGE = "Para enviarte tu pedido necesito unos datos 🤍\n\n• *2× Velón Koala* (Blanco · Lavanda)"
 
 
