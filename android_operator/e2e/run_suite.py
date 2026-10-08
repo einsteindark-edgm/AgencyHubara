@@ -39,7 +39,9 @@ import yaml
 from devicekit import Device, Node
 
 HERE = Path(__file__).resolve().parent
-PACKAGE = "com.hubara.operator"
+#: El `applicationId` de la app (pm, am). Sus clases siguen en `com.hubara.operator` (el namespace del código).
+PACKAGE = "com.acktos.operator"
+CODE = "com.hubara.operator"
 DRIVERS = ("script", "artemis")
 
 
@@ -101,7 +103,7 @@ class Run:
             time.sleep(1)
         for push in pushes:
             extras = " ".join(f"--es {key} {value}" for key, value in push["data"].items())
-            self.dev.sh(f"am broadcast -n {PACKAGE}/{PACKAGE}.E2eWakeReceiver -a {PACKAGE}.E2E_PUSH {extras}")
+            self.dev.sh(f"am broadcast -n {PACKAGE}/{CODE}.E2eWakeReceiver -a {CODE}.E2E_PUSH {extras}")
 
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".

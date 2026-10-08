@@ -150,11 +150,11 @@ class Device:
     def back(self) -> None:
         self.sh("input keyevent KEYCODE_BACK")
 
-    def launch(self, component: str = "com.hubara.operator/.MainActivity") -> None:
+    def launch(self, component: str = "com.acktos.operator/com.hubara.operator.MainActivity") -> None:
         self.sh(f"am start -W -n {component}")
 
     def open_link(self, uri: str) -> None:
-        self.sh(f"am start -W -n com.hubara.operator/.MainActivity -a android.intent.action.VIEW -d '{uri}'")
+        self.sh(f"am start -W -n com.acktos.operator/com.hubara.operator.MainActivity -a android.intent.action.VIEW -d '{uri}'")
 
 
 def _attr(node: str, name: str) -> str:

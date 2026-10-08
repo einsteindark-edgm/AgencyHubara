@@ -46,7 +46,7 @@ GOOGLE_SERVICES = {
         {
             "client_info": {
                 "mobilesdk_app_id": "1:000111:android:abc",
-                "android_client_info": {"package_name": "com.hubara.operator"},
+                "android_client_info": {"package_name": "com.acktos.operator"},
             },
             "api_key": [{"current_key": "llave-prueba"}],
         },
@@ -238,11 +238,11 @@ async def test_fcm_without_an_access_token_fails_without_raising() -> None:
 
 
 def test_the_phone_options_come_from_the_client_of_this_app_in_google_services() -> None:
-    assert android_client_options(json.dumps(GOOGLE_SERVICES), package="com.hubara.operator") == OPTIONS
+    assert android_client_options(json.dumps(GOOGLE_SERVICES), package="com.acktos.operator") == OPTIONS
     assert android_client_options(json.dumps(GOOGLE_SERVICES), package="com.no.existe") is None
 
 
 @pytest.mark.parametrize("raw", [None, "", "PLACEHOLDER_set_out_of_band", "{no es json", json.dumps({"type": "otro"})])
 def test_a_missing_or_placeholder_credential_is_not_a_credential(raw: str | None) -> None:
     assert service_account(raw) is None
-    assert android_client_options(raw, package="com.hubara.operator") is None
+    assert android_client_options(raw, package="com.acktos.operator") is None

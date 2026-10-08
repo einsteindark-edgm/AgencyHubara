@@ -8,7 +8,7 @@
 
 Llaves (SSM → `.env`): `FCM_SERVICE_ACCOUNT_JSON` y `FIREBASE_ANDROID_CONFIG_JSON`
 (ver `adapters/fcm_v1.py`). `MOBILE_ANDROID_PACKAGE` (por defecto
-`com.hubara.operator`) elige el cliente Android dentro de `google-services.json`.
+`com.acktos.operator`, el `applicationId` de la app) elige el cliente Android dentro de `google-services.json`.
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ from src.platform.push.ports import PushPort
 
 logger = structlog.get_logger()
 
-DEFAULT_ANDROID_PACKAGE = "com.hubara.operator"
+DEFAULT_ANDROID_PACKAGE = "com.acktos.operator"
 
 
 @lru_cache(maxsize=1)
