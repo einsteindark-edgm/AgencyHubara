@@ -3,7 +3,7 @@
  * producción (decisión del operador, 2026-10-02). Se parece a Chats, sin
  * compositor:
  *  - izquierda: las conversaciones reales calificadas, con su resultado y el
- *    bot que las atendió (el actual o el bot Jev, el workflow nuevo);
+ *    bot que las atendió (Botsito, el workflow actual, o Colossus, el nuevo con Jev);
  *  - centro: el hilo real con el botón «Ver hilo del turno» de cada turno,
  *    del color de su resultado;
  *  - derecha: cómo le fue en cada episodio y qué falló, por nombre.
@@ -14,6 +14,7 @@
 import { useMemo, useState } from "react";
 
 import {
+  BOT_LABEL,
   engineDecisionsOf,
   useQualityConversations,
   useQualityEvaluations,
@@ -59,7 +60,7 @@ const VERDICT_HELP: Array<[QualityVerdict, string]> = [
 ];
 
 /** El bot de un episodio en palabras. */
-const BOT_NAME: Record<string, string> = { actual: "Bot actual", nuevo: "Bot Jev", mixto: "Los dos bots" };
+const BOT_NAME: Record<string, string> = { ...BOT_LABEL, mixto: "Los dos bots" };
 
 function rowVerdict(row: QualityConversationRow): QualityVerdict {
   return worstVerdict(Object.values(row.verdicts));
@@ -357,7 +358,7 @@ function TurnWindowFor({
     <TurnWindow
       idPrefix="quality-turn"
       turn={turn}
-      botLabel={bot === "nuevo" ? "el bot Jev" : "el bot"}
+      botLabel={bot === "nuevo" || bot === "actual" ? BOT_LABEL[bot] : "el bot"}
       replies={replies}
       repliesPending={false}
       evaluation={{ pending: evals.isPending, error: evals.isError, results: turnResults(evals.data, turn) }}

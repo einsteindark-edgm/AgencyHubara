@@ -24,5 +24,5 @@ export type QualityEpisodeEvaluation = z.infer<typeof episodeEvaluationSchema>;
 export type QualityEvaluations = z.infer<typeof evaluationsSchema>;
 export type JevReport = z.infer<typeof jevReportSchema>;
 
-/** El bot que respondió: `nuevo` es el workflow nuevo (el bot Jev). */
+/** El bot que respondió: `actual` es Botsito; `nuevo`, Colossus (el workflow nuevo, con Jev). */
 export type QualityBot = "actual" | "nuevo";

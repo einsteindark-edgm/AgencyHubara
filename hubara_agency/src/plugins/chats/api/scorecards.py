@@ -23,6 +23,7 @@ veredictos de una etiqueta se validan contra el registro.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -149,30 +150,39 @@ def scorecard_checks() -> dict[str, Any]:
     }
 
 
-_BOT_PATTERN = "^(actual|nuevo)$"
+BOT_PATTERN = "^(actual|nuevo)$"
+
+
+def episodes_of_bot(bot: str) -> Callable[[str, str], bool]:
+    """¿El episodio `(session_id, episode_id)` lo respondió `bot`? Las trazas
+    de cada sesión se leen UNA vez (la lista va a 56 días y el cast corta a
+    los 15 s); un episodio "mixto" no es de ninguno. Lo comparten la matriz,
+    las gráficas y la tendencia del eval por promedio (`api/evals.py`)."""
+    vault = get_vault_dir()
+    by_session: dict[str, list[dict[str, Any]]] = {}
+
+    def answered_by(sid: str, ep: str) -> bool:
+        if sid not in by_session:
+            by_session[sid] = turn_traces.read_traces(vault, sid) if _SESSION_ID_RE.fullmatch(sid) else []
+        return episode_bot(t for t in by_session[sid] if t.get("episode_id") == ep) == bot
+
+    return answered_by
 
 
 def _with_bot(rows: list[dict[str, Any]], bot: str) -> list[dict[str, Any]]:
-    """Solo las filas del bot pedido, con su `bot`. Las trazas de cada sesión se
-    leen UNA vez (la lista va a 56 días y el cast corta a los 15 s); un
-    episodio "mixto" no es de ninguno."""
-    vault = get_vault_dir()
-    by_session: dict[str, list[dict[str, Any]]] = {}
-    out = []
-    for row in rows:
-        sid, ep = str(row.get("session_id") or ""), str(row.get("episode_id") or "")
-        if sid not in by_session:
-            by_session[sid] = turn_traces.read_traces(vault, sid) if _SESSION_ID_RE.fullmatch(sid) else []
-        answered_by = episode_bot(t for t in by_session[sid] if t.get("episode_id") == ep)
-        if answered_by == bot:
-            out.append({**row, "bot": answered_by})
-    return out
+    """Solo las filas del bot pedido, con su `bot`."""
+    of_bot = episodes_of_bot(bot)
+    return [
+        {**row, "bot": bot}
+        for row in rows
+        if of_bot(str(row.get("session_id") or ""), str(row.get("episode_id") or ""))
+    ]
 
 
 @router.get("/evals/scorecards")
 def list_scorecards(
     days: int = Query(default=30, ge=1, le=180),
-    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+    bot: str | None = Query(default=None, pattern=BOT_PATTERN),
 ) -> dict[str, Any]:
     dates = _dates(days)
     rows = store.list_scorecards(store.scorecards_dir(get_vault_dir()), dates=dates, episode_since=dates[-1])
@@ -260,7 +270,7 @@ async def rescore(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str
 @router.get("/evals/checks/stats")
 def check_stats(
     days: int = Query(default=56, ge=7, le=365),
-    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
+    bot: str | None = Query(default=None, pattern=BOT_PATTERN),
 ) -> dict[str, Any]:
     dates = _dates(days)
     rows = store.list_scorecards(

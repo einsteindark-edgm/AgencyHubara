@@ -9,12 +9,11 @@ import type { ConversationEvals, EvalTranscript } from "./model";
 async function fetchConversations(
   days: number,
   suite: string,
+  bot: "actual" | "nuevo" | null,
   signal?: AbortSignal,
 ): Promise<ConversationEvals> {
-  const raw = await apiClient.get<unknown>(
-    `/api/agents/evals/conversations?days=${days}&suite=${encodeURIComponent(suite)}`,
-    { signal },
-  );
+  const query = `days=${days}&suite=${encodeURIComponent(suite)}${bot ? `&bot=${bot}` : ""}`;
+  const raw = await apiClient.get<unknown>(`/api/agents/evals/conversations?${query}`, { signal });
   return conversationEvalsSchema.parse(raw);
 }
 
@@ -34,11 +33,12 @@ async function fetchTranscript(
   return evalTranscriptSchema.parse(raw);
 }
 
-/** Evaluaciones agrupadas por conversación (sesión + episodio), últimos `days` días. */
-export function useConversationEvals(days = 7, suite = "online") {
+/** Evaluaciones agrupadas por conversación (sesión + episodio), últimos `days`
+ *  días; `bot` deja solo los episodios de ese bot. */
+export function useConversationEvals(days = 7, suite = "online", bot: "actual" | "nuevo" | null = null) {
   return useQuery({
-    queryKey: episodeEvalKeys.list(days, suite),
-    queryFn: ({ signal }) => fetchConversations(days, suite, signal),
+    queryKey: episodeEvalKeys.list(days, suite, bot),
+    queryFn: ({ signal }) => fetchConversations(days, suite, bot, signal),
   });
 }
 
