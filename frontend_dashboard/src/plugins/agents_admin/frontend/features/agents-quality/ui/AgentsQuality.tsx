@@ -1,14 +1,17 @@
 import { useState, type ReactNode } from "react";
 
-import { BOT_LABEL, type QualityBot } from "@plugins/agents_admin/frontend/entities/production-quality";
+import { useQualityConversations, type QualityBot } from "@plugins/agents_admin/frontend/entities/production-quality";
 import { useScorecards } from "@plugins/agents_admin/frontend/entities/scorecard";
 import { DecisionEngineView } from "@plugins/agents_admin/frontend/features/decision-engine";
-import { EpisodeEvals } from "@plugins/agents_admin/frontend/features/episode-evals";
-import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import { GoldenEvalCuration } from "@plugins/agents_admin/frontend/features/golden-eval-curation";
 import { JudgeCalibration } from "@plugins/agents_admin/frontend/features/judge-calibration";
 import { QualityConversations } from "@plugins/agents_admin/frontend/features/quality-conversations";
-import { QualitySummary, type ConversationFocus } from "@plugins/agents_admin/frontend/features/quality-summary";
+import {
+  BotPicker,
+  BotQuality,
+  QualitySummary,
+  type ConversationFocus,
+} from "@plugins/agents_admin/frontend/features/quality-summary";
 import type { QualityVerdict } from "@/shared/lib";
 import { Icon } from "@/shared/ui";
 
@@ -17,25 +20,19 @@ import { Icon } from "@/shared/ui";
  *  ventana evita que el resumen diga "10 en FALLA" y la matriz muestre 7. */
 const WINDOW_DAYS = 56;
 const STATS_DAYS = WINDOW_DAYS;
-/** Ventana de las métricas legadas (sin cambios respecto de la vista anterior). */
-const LEGACY_WINDOW_DAYS = 30;
 
-type Tab = "resumen" | "conversaciones" | "motor" | "calibracion" | "legado" | "goldens";
+type Tab = "resumen" | "botsito" | "colossus" | "conversaciones" | "motor" | "calibracion" | "goldens";
 
-/** Las mismas vistas separan los episodios de cada bot: el actual o el bot
- *  Jev (el workflow nuevo, decisión del operador del 2026-10-02). */
-const BOT_OPTIONS: ReadonlyArray<{ value: QualityBot | null; label: string }> = [
-  { value: null, label: "Todos" },
-  { value: "actual", label: BOT_LABEL.actual },
-  { value: "nuevo", label: BOT_LABEL.nuevo },
-];
+/** La sección propia de cada bot (operador, 2026-10-08). */
+const BOT_OF_TAB: Partial<Record<Tab, QualityBot>> = { botsito: "actual", colossus: "nuevo" };
 
 const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
   { id: "resumen", label: "Resumen", icon: Icon.spark },
+  { id: "botsito", label: "Botsito", icon: Icon.bot },
+  { id: "colossus", label: "Colossus", icon: Icon.bolt },
   { id: "conversaciones", label: "Conversaciones", icon: Icon.timeline },
   { id: "motor", label: "Motor de decisiones", icon: Icon.wand },
   { id: "calibracion", label: "Calibración", icon: Icon.tag },
-  { id: "legado", label: "Métricas legadas", icon: Icon.archive },
   { id: "goldens", label: "Goldens", icon: Icon.shield },
 ];
 
@@ -46,62 +43,63 @@ const TABS: ReadonlyArray<{ id: Tab; label: string; icon: () => ReactNode }> = [
  * episodio real se califica turno por turno, como el laboratorio califica su
  * bot de producción. Todas las superficies leen `/api/agents/evals/*`.
  *
- *   * **Resumen** — cumplimiento por check semana a semana, dónde terminan
- *     los episodios y la matriz episodios × checks; a pedido, cómo le fue a
- *     cada bot y cómo anduvo Jev en los turnos reales.
+ * Desde el 2026-10-08 (operador) cada bot es una sección propia en vez de un
+ * filtro de las demás: Botsito (el workflow actual, sin Jev) y Colossus (el
+ * workflow nuevo, con Jev y el motor de decisiones).
+ *
+ *   * **Resumen** — los dos bots comparados: cómo le fue a cada uno, dónde
+ *     terminan sus episodios (lado a lado), el cumplimiento por check semana a
+ *     semana y la tendencia de calidad, estas dos con su selector de bot.
+ *   * **Botsito / Colossus** — las mismas gráficas solo con ese bot, la matriz
+ *     episodios × checks y, a la derecha, su ficha técnica (Colossus: la
+ *     versión del motor de decisiones y cómo se versiona; también cómo anduvo
+ *     Jev en los turnos reales).
  *   * **Conversaciones** — cada conversación real como un hilo con cada turno
- *     calificado; la ventana del turno trae el resultado, el paso a paso y
- *     las decisiones de Jev.
+ *     calificado, con su propio filtro por bot; la ventana del turno trae el
+ *     resultado, el paso a paso y las decisiones de Jev.
  *   * **Motor de decisiones** — la versión del motor que corre la tienda y
  *     cada decisión que toma, por la parte del software donde actúa, con lo
  *     que resuelve y quién la decide hoy.
  *   * **Calibración** — confiabilidad del juez contra etiquetas humanas + cola.
- *   * **Métricas legadas** — la tendencia y los episodios del eval por promedio.
  *   * **Goldens** — curación de candidatos.
  *
  * Nota FSD: composición intra-plugin (feature → feature del MISMO plugin), que
- * `dependency-cruiser` permite. El estado compartido entre superficies (bot,
- * conversación elegida, filtro de la alerta) vive ACÁ, lifted: las features
- * hermanas no se hablan entre sí, reciben callbacks.
+ * `dependency-cruiser` permite. El estado compartido entre superficies (bot
+ * de Conversaciones, conversación elegida, filtro de la alerta) vive ACÁ,
+ * lifted: las features hermanas no se hablan entre sí, reciben callbacks.
  */
 export function AgentsQuality() {
   const [tab, setTab] = useState<Tab>("resumen");
 
-  // Conversaciones: la elegida desde el Resumen y el filtro de la alerta.
+  // Conversaciones: su filtro por bot, la elegida desde la matriz de un bot y el filtro de la alerta.
+  const [conversationsBot, setConversationsBot] = useState<QualityBot | null>(null);
   const [openSid, setOpenSid] = useState<string | null>(null);
   // Desde una falla de la matriz: el turno de ese check en ese episodio.
   const [openFocus, setOpenFocus] = useState<ConversationFocus | null>(null);
   const [verdictFilter, setVerdictFilter] = useState<QualityVerdict | null>(null);
 
-  // Legado (sin cambios de comportamiento)
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [selectedEpisodeKey, setSelectedEpisodeKey] = useState<string | null>(null);
-  const [goldenToOpen, setGoldenToOpen] = useState<string | null>(null);
-  const [onlyFailing, setOnlyFailing] = useState(false);
-
-  // Alerta: episodios con veredicto FALLA (cayó al menos un check crítico).
-  // Mismo query que la matriz del Resumen (cache compartido).
-  const [bot, setBot] = useState<QualityBot | null>(null);
-  const { data: list } = useScorecards(WINDOW_DAYS, bot);
+  // Alerta: episodios con veredicto FALLA (cayó al menos un check crítico), de los dos bots.
+  const { data: list } = useScorecards(WINDOW_DAYS, null);
   const failingCount = (list?.scorecards ?? []).filter((s) => s.verdict === "FALLA").length;
-  // El filtro de bot solo aplica a Resumen y Conversaciones. Si la API todavía
-  // no lo soporta, ignora `?bot=` y devuelve todos: se avisa.
-  const botFilterShown = tab === "resumen" || tab === "conversaciones";
-  const serverIgnoredBot = bot !== null && list !== undefined && list.bot !== bot;
-  const chooseBot = (value: QualityBot | null) => {
-    setBot(value);
+  // Si la API todavía no filtra Conversaciones, ignora `?bot=` y devuelve todas: se avisa.
+  const { data: conversations } = useQualityConversations(WINDOW_DAYS, conversationsBot);
+  const serverIgnoredBot = conversationsBot !== null && conversations !== undefined && conversations.bot !== conversationsBot;
+
+  const chooseConversationsBot = (value: QualityBot | null) => {
+    setConversationsBot(value);
     // La conversación abierta puede no ser de ese bot.
     setOpenSid(null);
     setOpenFocus(null);
   };
-
-  const openConversation = (sid: string, focus?: ConversationFocus) => {
+  const openConversation = (bot: QualityBot) => (sid: string, focus?: ConversationFocus) => {
+    setConversationsBot(bot);
     setOpenSid(sid);
     setOpenFocus(focus ?? null);
     setVerdictFilter(null);
     setTab("conversaciones");
   };
   const showFailing = () => {
+    setConversationsBot(null);
     setOpenSid(null);
     setOpenFocus(null);
     setVerdictFilter("FALLA");
@@ -113,19 +111,7 @@ export function AgentsQuality() {
     setTab(next);
   };
 
-  // Legado: día y episodio son filtros mutuamente excluyentes de la misma vista.
-  const selectDate = (date: string | null) => {
-    setSelectedDate(date);
-    if (date) setSelectedEpisodeKey(null);
-  };
-  const selectLegacyEpisode = (key: string | null) => {
-    setSelectedEpisodeKey(key);
-    if (key) setSelectedDate(null);
-  };
-  const openCandidate = (candidateId: string) => {
-    setGoldenToOpen(candidateId);
-    setTab("goldens");
-  };
+  const sectionBot = BOT_OF_TAB[tab];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden text-fg">
@@ -153,33 +139,6 @@ export function AgentsQuality() {
             );
           })}
         </div>
-        {botFilterShown && (
-          <div role="radiogroup" aria-label="Bot que respondió" className="flex items-center gap-1">
-            {BOT_OPTIONS.map((o) => (
-              <label
-                key={o.label}
-                className={
-                  "cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium transition " +
-                  (bot === o.value ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
-                }
-              >
-                <input
-                  type="radio"
-                  name="quality-bot"
-                  className="sr-only"
-                  checked={bot === o.value}
-                  onChange={() => chooseBot(o.value)}
-                />
-                {o.label}
-              </label>
-            ))}
-          </div>
-        )}
-        {botFilterShown && serverIgnoredBot && (
-          <p role="status" className="text-xs text-yellow">
-            El servidor no filtró por bot: lo que ves son todos los episodios.
-          </p>
-        )}
         {failingCount > 0 && (
           <button
             type="button"
@@ -192,62 +151,56 @@ export function AgentsQuality() {
         )}
       </nav>
 
+      {/* Una por pestaña: cada vista abre arriba, no en el scroll de la anterior. */}
       <div
+        key={tab}
         role="tabpanel"
         id={`quality-panel-${tab}`}
         aria-labelledby={`quality-tab-${tab}`}
         className={
-          tab === "legado" || tab === "goldens"
-            ? "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3"
-            : "min-h-0 flex-1 overflow-y-auto p-3"
+          tab === "goldens" ? "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3" : "min-h-0 flex-1 overflow-y-auto p-3"
         }
       >
-        {tab === "resumen" && <QualitySummary days={STATS_DAYS} bot={bot} onOpenConversation={openConversation} />}
+        {tab === "resumen" && <QualitySummary days={STATS_DAYS} />}
+
+        {sectionBot && (
+          <BotQuality
+            key={sectionBot}
+            days={STATS_DAYS}
+            bot={sectionBot}
+            onOpenConversation={openConversation(sectionBot)}
+            onOpenEngine={() => setTab("motor")}
+          />
+        )}
 
         {tab === "conversaciones" && (
-          <QualityConversations
-            key={`${bot ?? "todos"}|${verdictFilter ?? ""}|${openSid ?? ""}|${openFocus ? `${openFocus.episodeId}:${openFocus.checkId}` : ""}`}
-            days={WINDOW_DAYS}
-            bot={bot}
-            verdictFilter={verdictFilter}
-            initialSid={openSid}
-            initialFocus={openFocus}
-          />
+          <div className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <BotPicker label="Bot de las conversaciones" value={conversationsBot} onChange={chooseConversationsBot} />
+              {serverIgnoredBot && (
+                <p role="status" className="m-0 text-xs text-yellow">
+                  El servidor no filtró por bot: lo que ves son todas las conversaciones.
+                </p>
+              )}
+            </div>
+            <QualityConversations
+              key={`${conversationsBot ?? "todos"}|${verdictFilter ?? ""}|${openSid ?? ""}|${openFocus ? `${openFocus.episodeId}:${openFocus.checkId}` : ""}`}
+              days={WINDOW_DAYS}
+              bot={conversationsBot}
+              verdictFilter={verdictFilter}
+              initialSid={openSid}
+              initialFocus={openFocus}
+            />
+          </div>
         )}
 
         {tab === "motor" && <DecisionEngineView />}
 
         {tab === "calibracion" && <JudgeCalibration days={WINDOW_DAYS} />}
 
-        {tab === "legado" && (
-          <>
-            <div className="shrink-0">
-              <EvalTrendChart
-                windowDays={LEGACY_WINDOW_DAYS}
-                selectedDate={selectedDate}
-                onSelectDate={selectDate}
-                selectedEpisodeKey={selectedEpisodeKey}
-                onSelectEpisode={selectLegacyEpisode}
-              />
-            </div>
-            <div className="flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-lg border border-line">
-              <EpisodeEvals
-                windowDays={LEGACY_WINDOW_DAYS}
-                dateFilter={selectedDate}
-                onClearDateFilter={() => setSelectedDate(null)}
-                selectedKey={selectedEpisodeKey}
-                onSelectKey={selectLegacyEpisode}
-                onlyFailing={onlyFailing}
-                onOnlyFailingChange={setOnlyFailing}
-                onOpenCandidate={openCandidate}
-              />
-            </div>
-          </>
-        )}
-
         {tab === "goldens" && (
           <div className="flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-lg border border-line">
-            <GoldenEvalCuration initialSelectedId={goldenToOpen} />
+            <GoldenEvalCuration />
           </div>
         )}
       </div>

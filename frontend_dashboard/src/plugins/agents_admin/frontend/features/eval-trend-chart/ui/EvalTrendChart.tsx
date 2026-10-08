@@ -1,10 +1,10 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 
 import {
   episodeUnitKey,
   useConversationEvals,
 } from "@plugins/agents_admin/frontend/entities/episode-eval";
-import { useEvalTrend } from "@plugins/agents_admin/frontend/entities/eval-trend";
+import { useEvalTrend, type TrendBot } from "@plugins/agents_admin/frontend/entities/eval-trend";
 
 import {
   lineFromAggregate,
@@ -18,15 +18,12 @@ const H = 34;
 const PAD = 4;
 
 interface Props {
-  /** Día seleccionado en modo agregado (filtra la lista de episodios). */
-  selectedDate?: string | null;
-  onSelectDate?: (date: string | null) => void;
-  /** Episodio "actual" de la comparativa (`<session>::<episode>`), lifted: lo
-   *  comparte la lista de episodios. null = promedio de todos los clientes. */
-  selectedEpisodeKey?: string | null;
-  onSelectEpisode?: (key: string | null) => void;
-  /** Ventana (días) de conversaciones — compartida con la lista de episodios. */
+  /** Ventana (días) de la tendencia y de los episodios de cada cliente. */
   windowDays?: number;
+  /** Solo los episodios de ese bot (Botsito `actual`, Colossus `nuevo`); null = los dos. */
+  bot?: TrendBot | null;
+  /** Lo que va junto al título (el selector de bot del Resumen). */
+  controls?: ReactNode;
 }
 
 function sessionLabel(sessionId: string): string {
@@ -34,17 +31,7 @@ function sessionLabel(sessionId: string): string {
 }
 
 /** Sparkline SVG sin dependencias: línea + umbral + puntos bajos en rojo. */
-function Sparkline({
-  points,
-  threshold,
-  selectedDate,
-  onSelectDate,
-}: {
-  points: TrendLinePoint[];
-  threshold: number;
-  selectedDate?: string | null;
-  onSelectDate?: (date: string | null) => void;
-}) {
+function Sparkline({ points, threshold }: { points: TrendLinePoint[]; threshold: number }) {
   if (points.length === 0) return <span className="w-[150px] shrink-0 text-xs text-fg-faint">sin datos</span>;
 
   const xs = (i: number) =>
@@ -71,14 +58,8 @@ function Sparkline({
           key={p.key}
           cx={xs(i)}
           cy={ys(p.value)}
-          r={p.date === selectedDate ? 3.2 : p.below ? 2.6 : 1.8}
+          r={p.below ? 2.6 : 1.8}
           fill={p.below ? "var(--color-red)" : "var(--color-accent-fg)"}
-          stroke={p.date === selectedDate ? "var(--color-fg)" : "none"}
-          strokeWidth={p.date === selectedDate ? 1 : 0}
-          className={onSelectDate ? "cursor-pointer" : undefined}
-          onClick={
-            onSelectDate ? () => onSelectDate(p.date === selectedDate ? null : p.date) : undefined
-          }
         >
           <title>{p.hint}</title>
         </circle>
@@ -101,19 +82,7 @@ function Endpoint({ caption, point }: { caption: string; point?: TrendLinePoint 
   );
 }
 
-function MetricRow({
-  line,
-  threshold,
-  mode,
-  selectedDate,
-  onSelectDate,
-}: {
-  line: TrendLine;
-  threshold: number;
-  mode: "aggregate" | "episodes";
-  selectedDate?: string | null;
-  onSelectDate?: (date: string | null) => void;
-}) {
+function MetricRow({ line, threshold, mode }: { line: TrendLine; threshold: number; mode: "aggregate" | "episodes" }) {
   const pts = line.points;
   const first = pts[0];
   const last = pts.at(-1);
@@ -129,12 +98,7 @@ function MetricRow({
         {line.metric}
       </div>
       <Endpoint caption="inicio" point={first} />
-      <Sparkline
-        points={pts}
-        threshold={threshold}
-        selectedDate={mode === "aggregate" ? selectedDate : null}
-        onSelectDate={mode === "aggregate" ? onSelectDate : undefined}
-      />
+      <Sparkline points={pts} threshold={threshold} />
       <Endpoint caption="actual" point={last} />
       <div
         className={"w-5 shrink-0 text-center text-sm " + dirColor}
@@ -149,27 +113,12 @@ function MetricRow({
           ) : (
             <span title={lowDates.join(", ")}>
               <span className="font-semibold text-red">{lowCount}</span> día
-              {lowCount > 1 ? "s" : ""} bajo {threshold}:{" "}
-              {lowDates.slice(-3).map((d, i, arr) => (
-                <button
-                  key={d}
-                  type="button"
-                  onClick={() => onSelectDate?.(d === selectedDate ? null : d)}
-                  className={
-                    "underline decoration-dotted underline-offset-2 hover:text-fg " +
-                    (d === selectedDate ? "font-semibold text-fg" : "")
-                  }
-                  title="Ver las conversaciones evaluadas ese día"
-                >
-                  {d}
-                  {i < arr.length - 1 ? ", " : ""}
-                </button>
-              ))}
+              {lowCount > 1 ? "s" : ""} bajo {threshold}: {lowDates.slice(-3).join(", ")}
               {lowCount > 3 ? "…" : ""}
             </span>
           )
         ) : pts.length < 2 ? (
-          <span className="text-fg-faint">un solo episodio — elegí un rango para comparar</span>
+          <span className="text-fg-faint">un solo episodio — elige un rango para comparar</span>
         ) : lowCount === 0 ? (
           <span className="text-green/70">todos los episodios sobre el umbral</span>
         ) : (
@@ -188,24 +137,23 @@ function MetricRow({
  * en CI y sus resultados viven en SigNoz, no en esta API). Cada línea de métrica
  * muestra su valor INICIAL (con etiqueta) y el ACTUAL flanqueando el sparkline.
  *
+ * Vive en el Resumen (con su selector de bot) y en la sección de cada bot, ya
+ * filtrada (operador, 2026-10-08; antes, en la pestaña «Métricas legadas»).
+ *
  * Dos modos (selector "cliente" en el header):
- *   - **Todos**: promedio diario de TODOS los episodios (salud global del agente);
- *     los días bajos son clickeables → filtran la lista de episodios.
+ *   - **Todos**: promedio diario de TODOS los episodios (salud global del agente).
  *   - **Un cliente**: la evolución ENTRE sus episodios (un punto por episodio).
  *     El operador elige el episodio de **inicio** y el de **actual** para ver,
  *     métrica por métrica, si mejoró o empeoró de una conversación a la otra
  *     (cada episodio se evalúa una sola vez, así que comparar SUS re-evals no
  *     dice nada — la señal está ENTRE episodios).
  */
-export function EvalTrendChart({
-  selectedDate,
-  onSelectDate,
-  selectedEpisodeKey = null,
-  onSelectEpisode = () => {},
-  windowDays = 30,
-}: Props) {
-  const { data: aggData, isLoading: aggLoading, isError: aggError } = useEvalTrend(30, "online");
-  const { data: convData, isLoading: convLoading } = useConversationEvals(windowDays, "online");
+export function EvalTrendChart({ windowDays = 30, bot = null, controls }: Props) {
+  const titleId = useId();
+  const { data: aggData, isLoading: aggLoading, isError: aggError } = useEvalTrend(windowDays, "online", bot);
+  const { data: convData, isLoading: convLoading } = useConversationEvals(windowDays, "online", bot);
+  // Episodio "actual" de la comparativa (`<session>::<episode>`); null = promedio de todos.
+  const [selectedEpisodeKey, onSelectEpisode] = useState<string | null>(null);
   const threshold = aggData?.threshold ?? 0.7;
 
   const conversations = convData?.conversations ?? [];
@@ -285,9 +233,10 @@ export function EvalTrendChart({
   };
 
   return (
-    <section className="rounded-lg border border-line p-4 text-fg">
+    <section aria-labelledby={titleId} className="rounded-lg border border-line p-4 text-fg">
       <header className="mb-2 flex flex-wrap items-center gap-2">
-        <h3 className="text-sm font-semibold">Tendencia de calidad</h3>
+        <h3 id={titleId} className="text-sm font-semibold">Tendencia de calidad</h3>
+        {controls}
 
         <div className="flex flex-wrap items-center gap-2 text-xs text-fg-muted">
           <label className="flex items-center gap-1">
@@ -372,7 +321,7 @@ export function EvalTrendChart({
         </p>
       ) : (
         <p className="mb-3 text-xs text-fg-faint">
-          últimos 30 días · umbral {threshold} · promedio de TODOS los episodios por día — elegí un
+          últimos {windowDays} días · umbral {threshold} · promedio de todos los episodios por día — elige un
           cliente arriba para comparar la evolución entre sus episodios.
         </p>
       )}
@@ -409,14 +358,7 @@ export function EvalTrendChart({
         // las métricas que no entran se alcanzan scrolleando ACÁ.
         <div className="max-h-[15rem] overflow-y-auto">
           {lines.map((l) => (
-            <MetricRow
-              key={l.metric}
-              line={l}
-              threshold={threshold}
-              mode={mode}
-              selectedDate={selectedDate}
-              onSelectDate={onSelectDate}
-            />
+            <MetricRow key={l.metric} line={l} threshold={threshold} mode={mode} />
           ))}
         </div>
       )}

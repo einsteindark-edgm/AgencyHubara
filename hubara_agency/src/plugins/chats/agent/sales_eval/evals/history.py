@@ -14,6 +14,7 @@ Solo stdlib (json/pathlib) — sin deepeval, así que la API lo importa sin el e
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,19 @@ def append_history_record(
         pass
 
 
+#: ¿Entra el episodio `(session_id, episode_id)`? (p. ej. solo los de un bot).
+EpisodeFilter = Callable[[str, str], bool]
+
+
+def _suite_records(
+    history_dir: Path, *, dates: list[str], suite: str, keep: EpisodeFilter | None
+) -> list[dict[str, Any]]:
+    records = [r for r in _read_records(history_dir, dates=dates) if r.get("suite") == suite]
+    if keep is None:
+        return records
+    return [r for r in records if keep(str(r.get("session_id", "")), str(r.get("episode_id", "") or ""))]
+
+
 def _read_records(history_dir: Path, *, dates: list[str]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for d in dates:
@@ -120,17 +134,19 @@ def read_trend(
     dates: list[str],
     suite: str = "online",
     threshold: float = DEFAULT_THRESHOLD,
+    keep: EpisodeFilter | None = None,
 ) -> dict[str, Any]:
     """Agrega el histórico en una serie por métrica por día.
 
     `dates` = lista de fechas (YYYY-MM-DD) a incluir (las calcula el caller; lo
     dejamos inyectable para que sea determinista y testeable, sin `now()` acá).
+    `keep` = qué episodios entran (la API pasa los de un bot); None = todos.
 
     Devuelve:
         {threshold, suite, metrics: [...], series: [
             {metric, points: [{date, avg, min, n, n_below}, ...]}, ...]}
     """
-    records = [r for r in _read_records(history_dir, dates=dates) if r.get("suite") == suite]
+    records = _suite_records(history_dir, dates=dates, suite=suite, keep=keep)
 
     # acumular: (metric, date) -> [scores]
     bucket: dict[str, dict[str, list[float]]] = {}
@@ -214,6 +230,7 @@ def read_conversation_evals(
     dates: list[str],
     suite: str = "online",
     threshold: float = DEFAULT_THRESHOLD,
+    keep: EpisodeFilter | None = None,
 ) -> dict[str, Any]:
     """Las evaluaciones agrupadas POR CONVERSACIÓN (sesión + episodio).
 
@@ -225,7 +242,7 @@ def read_conversation_evals(
     Tolerante a registros legacy (sin episode_id/avg/failed): episodio "" se
     presenta como sesión entera; `passed` se deriva de avg vs threshold.
     """
-    records = [r for r in _read_records(history_dir, dates=dates) if r.get("suite") == suite]
+    records = _suite_records(history_dir, dates=dates, suite=suite, keep=keep)
 
     groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for r in records:

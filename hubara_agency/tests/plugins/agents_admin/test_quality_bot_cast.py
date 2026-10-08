@@ -37,6 +37,22 @@ def test_the_bot_filter_reaches_the_chats_contract(monkeypatch, path: str, provi
     assert capture["params"] == {"days": 14, "bot": "nuevo"}
 
 
+@pytest.mark.parametrize(
+    ("path", "provider"),
+    [("/api/agents/evals/history", "/api/chats/evals/history"), ("/api/agents/evals/conversations", "/api/chats/evals/conversations")],
+)
+def test_the_quality_trend_of_each_bot_reaches_the_chats_contract(monkeypatch, path: str, provider: str) -> None:
+    """La «Tendencia de calidad» de Botsito y de Colossus (operador, 2026-10-08)."""
+    capture: dict[str, Any] = {}
+    client = _client(monkeypatch, capture)
+
+    res = client.get(path, params={"days": 7, "suite": "online", "bot": "nuevo"})
+
+    assert res.status_code == 200
+    assert capture["url"].endswith(provider)
+    assert capture["params"] == {"days": 7, "suite": "online", "bot": "nuevo"}
+
+
 def test_without_bot_the_param_does_not_travel(monkeypatch) -> None:
     capture: dict[str, Any] = {}
     _client(monkeypatch, capture).get("/api/agents/evals/checks/stats", params={"days": 14})

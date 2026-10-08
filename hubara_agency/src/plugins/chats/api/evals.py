@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
 
@@ -37,6 +37,7 @@ from src.plugins.chats.agent.sales_eval.evals.composition import (
     get_eval_history_dir,
     get_vault_dir,
 )
+from src.plugins.chats.api.scorecards import BOT_PATTERN, episodes_of_bot
 
 router = APIRouter()
 
@@ -89,19 +90,25 @@ def _summary(path: Path, data: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/evals/history")
-def eval_history(days: int = 30, suite: str = "online") -> dict[str, Any]:
+def eval_history(
+    days: int = 30,
+    suite: str = "online",
+    bot: Annotated[str | None, Query(pattern=BOT_PATTERN)] = None,
+) -> dict[str, Any]:
     """Tendencia de scores por métrica en el tiempo (para el frontend Calidad LLM).
 
     Agrega el histórico (un JSONL por día que escribe el eval) en una serie por
     métrica: por cada día, avg/min/n/n_below(0.7). Así el front dibuja "tal fecha
     la métrica estuvo bajo, tal otra fecha mejoró/empeoró". `suite` = online|golden.
+    `bot` = solo los episodios de ese bot (Botsito `actual`, Colossus `nuevo`).
     """
     from datetime import datetime, timedelta, timezone
 
     days = max(1, min(days, 180))
     today = datetime.now(timezone.utc).date()
     dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
-    return history.read_trend(get_eval_history_dir(), dates=dates, suite=suite)
+    keep = episodes_of_bot(bot) if bot else None
+    return {"bot": bot, **history.read_trend(get_eval_history_dir(), dates=dates, suite=suite, keep=keep)}
 
 
 def _candidate_index() -> dict[tuple[str, str], dict[str, str]]:
@@ -136,6 +143,7 @@ def _candidate_index() -> dict[tuple[str, str], dict[str, str]]:
 def eval_conversations(
     days: int = Query(default=7, ge=1, le=90),
     suite: str = Query(default="online"),
+    bot: Annotated[str | None, Query(pattern=BOT_PATTERN)] = None,
 ) -> dict[str, Any]:
     """Evaluaciones agrupadas por conversación (sesión + episodio).
 
@@ -148,9 +156,10 @@ def eval_conversations(
 
     today = datetime.now(timezone.utc).date()
     dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
-    out = history.read_conversation_evals(
-        get_eval_history_dir(), dates=dates, suite=suite
-    )
+    keep = episodes_of_bot(bot) if bot else None
+    out = {"bot": bot, **history.read_conversation_evals(
+        get_eval_history_dir(), dates=dates, suite=suite, keep=keep
+    )}
 
     candidates = _candidate_index()
     vault = get_vault_dir()

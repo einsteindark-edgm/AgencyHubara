@@ -65,16 +65,25 @@ async def _forward(
     )
 
 
+#: Filtro de Calidad LLM durante el encendido del bot nuevo (lab PR 18).
+_BOT_PATTERN = "^(actual|nuevo)$"
+
+
+def _with_bot(params: dict[str, Any], bot: str | None) -> dict[str, Any]:
+    return {**params, "bot": bot} if bot else params
+
+
 @router.get("/evals/history")
 async def eval_history(
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
     suite: str = Query(default="online"),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     """Serie de scores del eval del agente (hoy: sales; mañana: agregado)."""
     return await _forward(
         request, "GET", "/api/chats/evals/history",
-        params={"days": days, "suite": suite},
+        params=_with_bot({"days": days, "suite": suite}, bot),
     )
 
 
@@ -83,11 +92,12 @@ async def eval_conversations(
     request: Request,
     days: int = Query(default=7, ge=1, le=90),
     suite: str = Query(default="online"),
+    bot: str | None = Query(default=None, pattern=_BOT_PATTERN),
 ) -> dict[str, Any]:
     """Evaluaciones por conversación (sesión + episodio) con timeline + curación."""
     return await _forward(
         request, "GET", "/api/chats/evals/conversations",
-        params={"days": days, "suite": suite},
+        params=_with_bot({"days": days, "suite": suite}, bot),
     )
 
 
@@ -153,14 +163,6 @@ async def discard_candidate(
 async def scorecard_checks(request: Request) -> dict[str, Any]:
     """Registro de checks del scorecard (taxonomía de fallos)."""
     return await _forward(request, "GET", "/api/chats/evals/checks")
-
-
-#: Filtro de Calidad LLM durante el encendido del bot nuevo (lab PR 18).
-_BOT_PATTERN = "^(actual|nuevo)$"
-
-
-def _with_bot(params: dict[str, Any], bot: str | None) -> dict[str, Any]:
-    return {**params, "bot": bot} if bot else params
 
 
 @router.get("/evals/scorecards")

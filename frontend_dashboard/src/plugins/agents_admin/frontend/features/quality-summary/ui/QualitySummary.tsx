@@ -1,21 +1,26 @@
 /**
  * Resumen de Calidad LLM con la vista del laboratorio, sobre producción
- * (decisión del operador, 2026-10-02). En el orden que pidió el operador
- * (2026-10-07):
- *  1. la matriz episodios × checks con sus filtros, del bot elegido arriba:
- *     una fila abre esa conversación, el código de un check explica qué
- *     califica y una falla lleva al turno que la tiene;
- *  2. cómo le fue a cada bot, en porcentajes, y el cumplimiento de cada etapa;
- *  3. dónde terminan los episodios, con su porcentaje;
- *  4. el cumplimiento por check semana a semana.
- * Al final, a pedido, cómo anduvo Jev en los turnos reales.
+ * (decisión del operador, 2026-10-02), y la sección de cada bot. Desde el
+ * 2026-10-08 (operador) los bots se llaman Botsito (el workflow actual, sin
+ * Jev) y Colossus (el workflow nuevo, con Jev y el motor de decisiones).
+ *
+ * El Resumen compara a los dos, en este orden:
+ *  1. cómo le fue a cada bot, en porcentajes, y el cumplimiento de cada etapa;
+ *  2. dónde terminan los episodios: Botsito y, al lado, Colossus;
+ *  3. el cumplimiento por check semana a semana, con su selector de bot;
+ *  4. la tendencia de calidad (el eval por promedio), con su selector de bot.
+ *
+ * La sección de un bot trae las mismas gráficas solo con ese bot, la matriz
+ * episodios × checks (una fila abre la conversación, una falla lleva al turno
+ * que la tiene) y, a la derecha, su ficha técnica.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 
 import { useCheckStats, type CheckStats } from "@plugins/agents_admin/frontend/entities/check-stats";
 import { BOT_LABEL, useJevReport, type JevReport, type QualityBot } from "@plugins/agents_admin/frontend/entities/production-quality";
 import { useCheckRegistry, useScorecards, type CheckDefinition } from "@plugins/agents_admin/frontend/entities/scorecard";
+import { EvalTrendChart } from "@plugins/agents_admin/frontend/features/eval-trend-chart";
 import {
   capabilityLabel,
   fallbackReasonLabel,
@@ -36,9 +41,11 @@ import {
 } from "@/shared/lib";
 import { CheckInfoDialog, CheckTrend, ComplianceMatrixLegend, ComplianceMatrixTable, StageFunnel } from "@/shared/ui";
 
-interface Props {
+import { BotSpecs } from "./BotSpecs";
+
+interface MatrixProps {
   days: number;
-  bot: QualityBot | null;
+  bot: QualityBot;
   /** Abre la pestaña Conversaciones con esa conversación elegida y, desde
    * una falla de la matriz, en el turno de ese check en ese episodio. */
   onOpenConversation: (sid: string, focus?: ConversationFocus) => void;
@@ -54,6 +61,9 @@ const CARD = "rounded-lg border border-line p-3";
 const H3 = "m-0 text-sm font-semibold text-fg";
 const NOTE = "m-0 text-[11.5px] text-fg-muted";
 
+/** Ventana (días) de la tendencia de calidad: la de la vista legada, sin cambios. */
+const TREND_WINDOW_DAYS = 30;
+
 
 function pct(rate: number | null): string {
   return rate === null ? "—" : `${(rate * 100).toLocaleString("es-CO", { maximumFractionDigits: 1 })} %`;
@@ -63,37 +73,110 @@ function seconds(ms: number | null): string {
   return ms === null ? "—" : `${(ms / 1000).toLocaleString("es-CO", { maximumFractionDigits: 1 })} s`;
 }
 
-const OF_BOT: Record<QualityBot, string> = { actual: "del bot actual", nuevo: "del bot Jev" };
-
 function emptyText(bot: QualityBot | null): string {
   return bot
-    ? `Aún no hay episodios ${OF_BOT[bot]} en esta ventana.`
+    ? `Aún no hay episodios de ${BOT_LABEL[bot]} en esta ventana.`
     : "Aún no hay episodios calificados: se califican, turno por turno, al cerrar cada episodio.";
 }
 
-// ── Las dos gráficas ─────────────────────────────────────────────────────────
+/** Una gráfica de `useCheckStats`, con su carga, su error y su vacío. */
+function StatsBody({ days, bot, children }: { days: number; bot: QualityBot | null; children: (stats: CheckStats) => ReactNode }) {
+  const stats = useCheckStats(days, bot);
+  if (stats.isPending) return <p className={NOTE}>Cargando la gráfica…</p>;
+  if (stats.isError) return <p className={NOTE}>No se pudo leer la gráfica.</p>;
+  if (stats.data.episodes === 0) return <p className="m-0 rounded-lg border border-dashed border-line-strong p-4 text-sm text-fg-muted">{emptyText(bot)}</p>;
+  return <>{children(stats.data)}</>;
+}
 
-function Funnel({ stats }: { stats: CheckStats }) {
-  // El embudo es un SVG que escala con el ancho: a lo ancho de la ventana se ve gigante.
+// ── El selector de bot ───────────────────────────────────────────────────────
+
+const BOT_CHOICES: ReadonlyArray<{ value: QualityBot | null; label: string }> = [
+  { value: null, label: "Los dos" },
+  { value: "actual", label: BOT_LABEL.actual },
+  { value: "nuevo", label: BOT_LABEL.nuevo },
+];
+
+/** Botsito, Colossus o los dos: el filtro de una gráfica del Resumen o de Conversaciones. */
+export function BotPicker({ label, value, onChange }: { label: string; value: QualityBot | null; onChange: (bot: QualityBot | null) => void }) {
+  const name = useId();
   return (
-    <section className={CARD} aria-labelledby="quality-funnel-title">
-      <h3 id="quality-funnel-title" className={H3}>Dónde terminan los episodios</h3>
-      <p className="mb-2 mt-1 text-[11px] text-fg-faint">
-        Etapa final de cada episodio y su veredicto; al lado, cuántos terminaron ahí y qué parte del total son.
-      </p>
-      <div className="max-w-[760px]">
-        <StageFunnel funnel={toQualityFunnel(stats.funnel)} />
+    <div role="radiogroup" aria-label={label} className="flex items-center gap-1">
+      {BOT_CHOICES.map((o) => (
+        <label
+          key={o.label}
+          className={
+            "cursor-pointer rounded-md px-2.5 py-1 text-xs font-medium transition " +
+            (value === o.value ? "bg-white/10 text-fg" : "text-fg-muted hover:bg-white/5")
+          }
+        >
+          <input type="radio" name={name} className="sr-only" checked={value === o.value} onChange={() => onChange(o.value)} />
+          {o.label}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function whoseEpisodes(bot: QualityBot | null): string {
+  return bot ? `Solo los episodios de ${BOT_LABEL[bot]}.` : "Los episodios de los dos bots.";
+}
+
+// ── Las gráficas ─────────────────────────────────────────────────────────────
+
+const FUNNEL_NOTE = "Etapa final de cada episodio y su veredicto; al lado, cuántos terminaron ahí y qué parte del total son.";
+
+/** Dónde terminan los episodios: de un bot o, en el Resumen, de cada uno lado a lado. */
+function Funnels({ days, bots }: { days: number; bots: readonly QualityBot[] }) {
+  const titleId = useId();
+  const single = bots.length === 1;
+  return (
+    <section className={CARD} aria-labelledby={titleId}>
+      <h3 id={titleId} className={H3}>Dónde terminan los episodios</h3>
+      <p className="mb-2 mt-1 text-[11px] text-fg-faint">{FUNNEL_NOTE}</p>
+      <div className={single ? "max-w-[760px]" : "grid items-start gap-4 min-[1100px]:grid-cols-2"}>
+        {bots.map((bot) => (
+          <div key={bot} className="min-w-0">
+            {single ? null : <h4 className="m-0 mb-1.5 text-[12.5px] font-semibold text-fg">{BOT_LABEL[bot]}</h4>}
+            <StatsBody days={days} bot={bot}>
+              {(stats) => <StageFunnel funnel={toQualityFunnel(stats.funnel)} />}
+            </StatsBody>
+          </div>
+        ))}
       </div>
     </section>
   );
 }
 
-function Trend({ stats }: { stats: CheckStats }) {
+/** El cumplimiento por check semana a semana: de un bot o, con `pickable`, con su selector. */
+function Trend({ days, bot: fixed, pickable = false }: { days: number; bot: QualityBot | null; pickable?: boolean }) {
+  const titleId = useId();
+  const [picked, setPicked] = useState<QualityBot | null>(fixed);
+  const bot = pickable ? picked : fixed;
   return (
-    <section className={CARD} aria-labelledby="quality-trend-title">
-      <h3 id="quality-trend-title" className={H3}>Cumplimiento por check, semana a semana</h3>
-      <CheckTrend trend={stats.trend} />
+    <section className={CARD} aria-labelledby={titleId}>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 id={titleId} className={H3}>Cumplimiento por check, semana a semana</h3>
+        {pickable ? <BotPicker label="Bot del cumplimiento por check" value={picked} onChange={setPicked} /> : null}
+      </div>
+      {pickable ? <p className={"mt-1 " + NOTE}>{whoseEpisodes(bot)}</p> : null}
+      <StatsBody days={days} bot={bot}>
+        {(stats) => <CheckTrend trend={stats.trend} />}
+      </StatsBody>
     </section>
+  );
+}
+
+/** La tendencia de calidad del eval por promedio (antes, «Métricas legadas»). */
+function QualityTrend({ bot: fixed, pickable = false }: { bot: QualityBot | null; pickable?: boolean }) {
+  const [picked, setPicked] = useState<QualityBot | null>(fixed);
+  const bot = pickable ? picked : fixed;
+  return (
+    <EvalTrendChart
+      key={bot ?? "todos"}
+      windowDays={TREND_WINDOW_DAYS}
+      bot={bot}
+      controls={pickable ? <BotPicker label="Bot de la tendencia de calidad" value={picked} onChange={setPicked} /> : null}
+    />
   );
 }
 
@@ -112,7 +195,7 @@ const VERDICT_OPTIONS: ReadonlyArray<{ value: MatrixVerdictFilter; label: string
 
 const ROW_CAP = 120;
 
-function Matrix({ days, bot, onOpenConversation }: Props) {
+function Matrix({ days, bot, onOpenConversation }: MatrixProps) {
   const cards = useScorecards(days, bot);
   const registry = useCheckRegistry();
   const [verdict, setVerdict] = useState<MatrixVerdictFilter>("todos");
@@ -147,7 +230,7 @@ function Matrix({ days, bot, onOpenConversation }: Props) {
           if (row) onOpenConversation(row.session_id, { episodeId: row.episode_id, checkId });
         }}
         rowCap={ROW_CAP}
-        resetKey={`${bot ?? "todos"}|${verdict}|${stage ?? ""}`}
+        resetKey={`${bot}|${verdict}|${stage ?? ""}`}
       />
     );
   }
@@ -209,7 +292,10 @@ const VERDICT_COLUMNS: ReadonlyArray<[QualityVerdict, string, string]> = [
 ];
 const BOTS: readonly QualityBot[] = ["actual", "nuevo"];
 
-function ResultsByBot({ days }: { days: number }) {
+/** Cómo le fue a cada bot de `bots`: en el Resumen, a los dos; en la sección de un bot, solo a ese. */
+function ResultsByBot({ days, bots }: { days: number; bots: readonly QualityBot[] }) {
+  const titleId = useId();
+  // Siempre los dos hooks (reglas de hooks): el que no se muestra sale del caché.
   const stats: Record<QualityBot, CheckStats | undefined> = {
     actual: useCheckStats(days, "actual").data,
     nuevo: useCheckStats(days, "nuevo").data,
@@ -220,15 +306,16 @@ function ResultsByBot({ days }: { days: number }) {
     return (id: string) => map.get(id);
   }, [registry.data]);
   // Una fila por etapa con datos en algún bot, en el orden del guion.
-  const perBot = new Map(BOTS.map((b) => [b, new Map(stageCompliance(stats[b]?.trend ?? [], stageOf).map((r) => [r.stage, r]))]));
+  const perBot = new Map(bots.map((b) => [b, new Map(stageCompliance(stats[b]?.trend ?? [], stageOf).map((r) => [r.stage, r]))]));
   const stageRows = [...new Map([...perBot.values()].flatMap((m) => [...m.values()]).map((r) => [r.stage, r])).values()].sort(
     (a, b) => qualityStageRank(a.stage) - qualityStageRank(b.stage),
   );
 
   return (
-    <section className={CARD} aria-labelledby="quality-results-title">
-      <h3 id="quality-results-title" className={H3}>Cómo le fue a cada bot</h3>
-      <div className="mt-2 grid items-start gap-4 min-[1500px]:grid-cols-2">
+    <section className={CARD} aria-labelledby={titleId}>
+      <h3 id={titleId} className={H3}>{bots.length === 1 ? `Cómo le fue a ${BOT_LABEL[bots[0]]}` : "Cómo le fue a cada bot"}</h3>
+      {/* Con un solo bot la sección comparte el ancho con la ficha técnica: las tablas van una debajo de la otra. */}
+      <div className={"mt-2 grid items-start gap-4 " + (bots.length > 1 ? "min-[1500px]:grid-cols-2" : "min-[1800px]:grid-cols-2")}>
         <div className="overflow-x-auto">
           <table aria-label="Resultado por bot" className="w-full border-collapse text-[12.5px] tabular-nums">
             <thead>
@@ -239,7 +326,7 @@ function ResultsByBot({ days }: { days: number }) {
               </tr>
             </thead>
             <tbody>
-              {BOTS.map((bot) => {
+              {bots.map((bot) => {
                 const s = stats[bot];
                 return (
                   <tr key={bot} className="border-t border-line">
@@ -261,8 +348,8 @@ function ResultsByBot({ days }: { days: number }) {
             </tbody>
           </table>
           <p className={"mt-2 " + NOTE}>
-            Pasa: cumplió todo lo importante · En alerta: falló algo importante (un check mayor) · Falla: falló algo crítico. Son conversaciones distintas:
-            cada una la atendió un solo bot.
+            Pasa: cumplió todo lo importante · En alerta: falló algo importante (un check mayor) · Falla: falló algo crítico.
+            {bots.length > 1 ? " Son conversaciones distintas: cada una la atendió un solo bot." : ""}
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -270,7 +357,7 @@ function ResultsByBot({ days }: { days: number }) {
             <thead>
               <tr className="text-left text-[11px] text-fg-faint">
                 <th className="py-1 pr-3 font-medium">Etapa</th>
-                {BOTS.map((bot) => (
+                {bots.map((bot) => (
                   <th key={bot} className="py-1 pr-3 font-medium">{BOT_LABEL[bot]}</th>
                 ))}
               </tr>
@@ -282,7 +369,7 @@ function ResultsByBot({ days }: { days: number }) {
                     <span className="mr-1.5 inline-block h-2.5 w-2.5 rounded-sm align-middle" style={{ background: row.color }} aria-hidden="true" />
                     {row.label}
                   </th>
-                  {BOTS.map((bot) => {
+                  {bots.map((bot) => {
                     const cell = perBot.get(bot)?.get(row.stage);
                     return (
                       <td key={bot} className="py-1.5 pr-3 text-fg">
@@ -329,7 +416,7 @@ function JevInProduction({ days }: { days: number }) {
   let body: ReactNode;
   if (report.isPending) body = <p className={NOTE}>Cargando lo que hizo Jev…</p>;
   else if (report.isError) body = <p className={NOTE}>No se pudo leer el informe de Jev.</p>;
-  else if (report.data.turns === 0) body = <p className={NOTE}>Todavía no hay conversaciones del bot Jev en esta ventana.</p>;
+  else if (report.data.turns === 0) body = <p className={NOTE}>Todavía no hay conversaciones de Colossus en esta ventana.</p>;
   else {
     const r = report.data;
     const d = r.decisions;
@@ -371,51 +458,59 @@ function JevInProduction({ days }: { days: number }) {
   return (
     <section aria-label="Jev en producción" className={CARD}>
       <h3 className={H3}>Jev en producción</h3>
-      <p className={"mt-1 " + NOTE}>Los turnos reales del bot Jev: cómo respondió Jev, cuándo decidió la regla de hoy y cuánto costó.</p>
+      <p className={"mt-1 " + NOTE}>Los turnos reales de Colossus: cómo respondió Jev, cuándo decidió la regla de hoy y cuánto costó.</p>
       {body}
     </section>
   );
 }
 
-// ── La pestaña ───────────────────────────────────────────────────────────────
+// ── El Resumen ───────────────────────────────────────────────────────────────
 
-export function QualitySummary({ days, bot, onOpenConversation }: Props) {
-  const stats = useCheckStats(days, bot);
-  const [jevOpen, setJevOpen] = useState(false);
-
-  let charts: ReactNode;
-  if (stats.isPending) charts = <p className="text-sm text-fg-muted">Cargando las gráficas…</p>;
-  else if (stats.isError) charts = <p className="text-sm text-fg-muted">No se pudieron leer las gráficas.</p>;
-  else if (stats.data.episodes === 0) charts = <p className="rounded-lg border border-dashed border-line-strong p-4 text-sm text-fg-muted">{emptyText(bot)}</p>;
-  else {
-    charts = (
-      <>
-        <Funnel stats={stats.data} />
-        <Trend stats={stats.data} />
-      </>
-    );
-  }
-
+/** El Resumen: los dos bots, comparados (operador, 2026-10-08). */
+export function QualitySummary({ days }: { days: number }) {
   return (
     <div className="flex flex-col gap-3">
-      <Matrix days={days} bot={bot} onOpenConversation={onOpenConversation} />
-      <ResultsByBot days={days} />
-      {charts}
-      <section className={CARD}>
-        <button
-          type="button"
-          aria-expanded={jevOpen}
-          onClick={() => setJevOpen((v) => !v)}
-          className="w-full border-0 bg-transparent p-0 text-left text-sm font-semibold text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          {jevOpen ? "▾" : "▸"} Jev en producción
-        </button>
-        {jevOpen ? (
-          <div className="mt-3">
-            <JevInProduction days={days} />
-          </div>
+      <ResultsByBot days={days} bots={BOTS} />
+      <Funnels days={days} bots={BOTS} />
+      <Trend days={days} bot={null} pickable />
+      <QualityTrend bot={null} pickable />
+    </div>
+  );
+}
+
+// ── La sección de un bot ─────────────────────────────────────────────────────
+
+/** La sección de Botsito o de Colossus: sus gráficas, ya filtradas, y a la
+ *  derecha su ficha técnica. */
+export function BotQuality({
+  days,
+  bot,
+  onOpenConversation,
+  onOpenEngine,
+}: MatrixProps & {
+  /** Abre la pestaña «Motor de decisiones» (desde la ficha de Colossus). */
+  onOpenEngine: () => void;
+}) {
+  const cards = useScorecards(days, bot);
+  // Si la API todavía no filtra, ignora `?bot=` y devuelve todos: se avisa.
+  const serverIgnoredBot = cards.data !== undefined && cards.data.bot !== bot;
+  const only: readonly QualityBot[] = [bot];
+  return (
+    <div className="grid items-start gap-3 min-[1200px]:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
+      <div className="flex min-w-0 flex-col gap-3">
+        {serverIgnoredBot ? (
+          <p role="status" className="m-0 text-xs text-yellow">
+            El servidor no filtró por bot: lo que ves son todos los episodios.
+          </p>
         ) : null}
-      </section>
+        <ResultsByBot days={days} bots={only} />
+        <Funnels days={days} bots={only} />
+        <Trend days={days} bot={bot} />
+        <QualityTrend bot={bot} />
+        {bot === "nuevo" ? <JevInProduction days={days} /> : null}
+        <Matrix days={days} bot={bot} onOpenConversation={onOpenConversation} />
+      </div>
+      <BotSpecs bot={bot} onOpenEngine={onOpenEngine} />
     </div>
   );
 }
