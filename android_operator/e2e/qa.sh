@@ -58,10 +58,12 @@ done
 # Si el emulador ya trae la app firmada con otra llave de debug (en CI: el disco del AVD en caché guarda la que
 # instaló otro runner, y cada runner genera su propia llave), `install -r` falla con INSTALL_FAILED_UPDATE_INCOMPATIBLE:
 # se desinstala y se instala limpia. Los escenarios borran los datos de la app igual (clear_app).
+# La app se llamó com.hubara.operator hasta el 2026-10-07: un AVD en caché con esa copia la tendría dos veces.
+"$ADB" -s "$SERIAL" uninstall com.hubara.operator >/dev/null 2>&1 || true
 if ! "$ADB" -s "$SERIAL" install -r "$APK" >"$OUT/install.log" 2>&1; then
   if grep -q INSTALL_FAILED_UPDATE_INCOMPATIBLE "$OUT/install.log"; then
     echo "▶ la app instalada tiene otra firma: se desinstala y se instala de nuevo" >&2
-    "$ADB" -s "$SERIAL" uninstall com.hubara.operator >/dev/null
+    "$ADB" -s "$SERIAL" uninstall com.acktos.operator >/dev/null
     "$ADB" -s "$SERIAL" install "$APK" >/dev/null
   else
     cat "$OUT/install.log" >&2

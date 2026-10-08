@@ -119,7 +119,8 @@ cd android_operator && ./gradlew :app:bundleRelease \
 10. **Sin esperas escondidas antes del radar**: nada de `debounce` en la recarga de incendios; `refreshOnSignal`
     recarga con la primera señal y junta las siguientes (una recarga cada 1,5 s como mucho).
 11. **Hojas largas abren completas** (`bottomSheet(expanded = true)`): a media altura la acción quedaba escondida.
-12. **Emulador**: los enlaces `hubara://` van con intent explícito (`am start -n …/.MainActivity -d …`); el manifest
+12. **Emulador**: los enlaces `hubara://` van con intent explícito
+    (`am start -n com.acktos.operator/com.hubara.operator.MainActivity -d …`); el manifest
     no tiene filtro VIEW. El vigía (periódico) no se adelanta con `cmd jobscheduler run -f`: corre al arrancar el
     proceso: se despierta con un broadcast explícito a `E2eWakeReceiver`, que solo existe en el build debug
     (el receptor del widget no está exportado y APPWIDGET_UPDATE es protegido).
@@ -191,6 +192,12 @@ cd android_operator && ./gradlew :app:bundleRelease \
     servidor cambia de proyecto, vale desde el próximo arranque. En el emulador de CI no hay Firebase: el backend de
     prueba usa el avisador falso (`PUSH_PROVIDER=fake`, deja cada push en `sandbox/data/pushes.jsonl`) y el paso
     `relay_push` lo entrega a la app por `E2eWakeReceiver` (`E2E_PUSH`), el mismo `PushHandler` de un push real (S20).
+
+28. **La app es `com.acktos.operator`; el código, `com.hubara.operator`** (2026-10-07, decisión del operador: así se
+    llama en Firebase y en Google Play). `applicationId` ≠ `namespace`: `pm`/`am` usan el primero y las clases
+    el segundo, así que un componente se escribe COMPLETO (`com.acktos.operator/com.hubara.operator.E2eWakeReceiver`;
+    `…/.MainActivity` apuntaría a `com.acktos.operator.MainActivity`, que no existe). El backend elige ese cliente
+    de `google-services.json` (`DEFAULT_ANDROID_PACKAGE`; `MOBILE_ANDROID_PACKAGE` lo cambia).
 
 ## Endpoints
 

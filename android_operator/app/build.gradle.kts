@@ -24,7 +24,10 @@ val uploadKeyPassword = providers.gradleProperty("hubara.upload.keyPassword").or
 android {
     namespace = "com.hubara.operator"
     defaultConfig {
-        applicationId = "com.hubara.operator"
+        // La identidad de la app (Google Play, Firebase, el teléfono). El código Kotlin sigue en `com.hubara.operator`
+        // (`namespace`): son independientes, y por eso los componentes se nombran completos en el arnés E2E
+        // (`com.acktos.operator/com.hubara.operator.MainActivity`). Cambiarlo después de publicar = otra app en Play.
+        applicationId = "com.acktos.operator"
         // Cada .aab que se sube a Google Play necesita un versionCode MAYOR que el anterior (nunca se reutiliza).
         // versionName es lo que ve el operador. Se suben juntos en cada release.
         versionCode = 1
