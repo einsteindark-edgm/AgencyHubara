@@ -341,9 +341,9 @@ scenarios:
       - screen_has: "000000000107"
 
   - id: S13_widget_ventas_calientes
-    title: Widget de la pantalla de inicio (ventas, incendios y humano)
-    resumen: "El widget se agrega desde el launcher, se desliza entre sus tres páginas y tocar una fila abre su chat."
-    # Agregar un widget al launcher no se guioniza: lo explora Artemis. Lo mismo con guion, sin launcher: S24.
+    title: Widget de la pantalla de inicio (incendios, humano y ventas)
+    resumen: "El widget se agrega desde el launcher, cambia de pestaña, tocar una fila abre su chat y achicado a 2×2 muestra los contadores."
+    # Agregar un widget al launcher no se guioniza: lo explora Artemis. Lo mismo con guion, sin launcher: S24 y S25.
     profile: pro
     timeout_s: 1500
     setup: [reset, clear_app, launch, {wait: 10}, home, {wait: 2}]
@@ -352,9 +352,9 @@ scenarios:
       Estás en la pantalla de inicio de Android (launcher de Pixel).
       1. Agrega el widget de la app «Operador»: mantén presionado un espacio vacío del fondo, toca «Widgets», busca
          «Operador» y arrastra su widget a la pantalla de inicio.
-      2. El widget tiene tres páginas apiladas: «Ventas calientes», «Incendios» y «Humano». Desliza la pila con el
-         dedo (hacia arriba o hacia abajo) y anota qué filas muestra cada página.
-      3. En la página «Ventas calientes», toca la venta de Camilo y confirma que se abre la app en su chat.
+      2. Arriba tiene las pestañas «Incendios», «Humano» y «Ventas» con su total. Toca cada una y anota sus filas.
+      3. En «Ventas», toca la venta de Camilo y confirma que se abre la app en su chat.
+      4. Achica el widget a 2×2 (mantenlo presionado y arrastra el borde) y di qué muestra.
       Reporta cada paso con lo que viste.
     checks:
       - screen_has: "000000000103"
@@ -593,31 +593,62 @@ scenarios:
       - screen_has: "#42 · Daniela Prueba"
       - screen_lacks: "No se pudieron cargar los datos"
 
-  - id: S24_widget_tres_paginas
-    title: El widget se desliza entre ventas calientes, incendios y humano
-    resumen: "El widget de la pantalla de inicio (hospedado por el arnés, igual que lo haría el launcher en el Android 11 del operador) tiene tres páginas apiladas: ventas calientes (Camilo), incendios con los graves primero (Sofía) y los chats que atiende una persona. Se desliza con el dedo hacia abajo y tocar a Daniela en «Humano» abre su chat."
+  - id: S24_widget_pestanas
+    title: El widget grande muestra Incendios, Humano y Ventas en pestañas
+    resumen: "El widget de la pantalla de inicio (hospedado por el arnés, como lo haría el launcher en el Android 11 del operador) muestra arriba las pestañas Incendios, Humano y Ventas con su total; abre en Incendios con los graves primero (Sofía). Tocar «Humano» cambia la lista y tocar a Daniela abre su chat."
     # El launcher no se guioniza (S13 lo explora con Artemis). E2eWidgetHostActivity (solo debug) hospeda el widget
-    # real con AppWidgetHost; adb le da el permiso de enlazar widgets. La actividad corre una vuelta del vigía.
-    # uiautomator ve TAMBIÉN las tarjetas de atrás de la pila: lo que prueba que «Humano» quedó adelante es el toque
-    # final (Daniela está solo en esa página; en la misma altura, Incendios tiene a Andrés y Ventas nada).
+    # real con AppWidgetHost y le dice su tamaño; adb le da el permiso de enlazar widgets. Corre una vuelta del vigía.
     setup: [reset, clear_app, launch, {expect: "000000000101"}, {wait: 2},
             {adb: "appwidget grantbind --package com.acktos.operator"},
             {adb: "am start -n com.acktos.operator/com.hubara.operator.E2eWidgetHostActivity"}]
     locked_app: false
     script:
-      - {expect: {text: "Ventas calientes", timeout: 30}}
-      - {expect: "Camilo"}
-      - {shot: ventas}
-      - {swipe: {at: "Ventas calientes", dy: 500}}
-      - {expect: "Sofía pide un humano"}
+      - {expect: {text: "Sofía pide un humano", timeout: 30}}
+      - {expect_all: ["Incendios", "Humano", "Ventas", "Grave", "Actualizado"]}
       - {shot: incendios}
-      - {swipe: {at: "Incendios", dy: 500}}
-      - {expect: "Daniela · al día"}
+      - {tap: "Humano"}
+      - {expect: "Daniela"}
+      - {expect_gone: "Sofía pide un humano"}
       - {shot: humano}
-      - {tap: "Daniela · al día"}
+      - {tap: "Daniela"}
       - {expect: "000000000106"}
     goal: |
-      Hay un widget en pantalla con páginas apiladas. Anota el título y las filas de la página de adelante; desliza
-      la pila hacia abajo y anota la siguiente; repite. En la página «Humano», toca la fila de Daniela y di qué se abre.
+      Hay un widget en pantalla con pestañas arriba. Anota el texto de cada pestaña y las filas que se ven. Toca la
+      pestaña «Humano», anota las filas, toca la de Daniela y di qué se abre.
     checks:
       - screen_has: "000000000106"
+
+  - id: S25_widget_compacto
+    title: El widget en 2×2 muestra solo los contadores y abre la pestaña tocada
+    resumen: "Achicado a 2×2, el widget muestra solo los tres contadores (Incendios en rojo si hay). Tocar «Incendios» abre la app en esa pestaña."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {wait: 2},
+            {adb: "appwidget grantbind --package com.acktos.operator"},
+            {adb: "am start -n com.acktos.operator/com.hubara.operator.E2eWidgetHostActivity --es size compact"}]
+    locked_app: false
+    script:
+      - {expect_all: {texts: ["Incendios", "Humano", "Ventas"], in_order: true, timeout: 30}}
+      - {expect_gone: "Sofía pide un humano"}
+      - {shot: compacto}
+      - {tap: "Incendios"}
+      - {expect: "Verificar el pago de Daniela"}
+    goal: |
+      Hay un widget pequeño en pantalla. Di qué contadores muestra y sus números. Toca «Incendios» y di qué se abre.
+    checks:
+      - screen_has: "Verificar el pago de Daniela"
+
+  - id: S26_widget_cambia_de_tamano
+    title: Agrandar el widget de 2×2 a grande muestra la lista
+    resumen: "El operador estira el widget de 2×2 a grande: en Android 11 el launcher reaplica sobre lo que ya pintó y, si la estructura cambia, la lista queda vacía. Aquí pasa de los contadores a las pestañas con las filas de Incendios."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {wait: 2},
+            {adb: "appwidget grantbind --package com.acktos.operator"},
+            {adb: "am start -n com.acktos.operator/com.hubara.operator.E2eWidgetHostActivity --es size compact --es then large"}]
+    locked_app: false
+    script:
+      - {expect: {text: "Sofía pide un humano", timeout: 40}}
+      - {expect: "Incendios 3"}
+      - {shot: agrandado}
+    goal: |
+      Hay un widget pequeño que se agranda solo a los pocos segundos. Di qué muestra antes y después.
+    checks:
+      - screen_has: "Sofía pide un humano"
+

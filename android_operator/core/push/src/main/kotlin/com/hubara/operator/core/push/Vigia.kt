@@ -22,6 +22,7 @@ import androidx.work.WorkerParameters
 import com.hubara.operator.core.data.auth.AuthRepository
 import com.hubara.operator.core.data.config.ServerConfigStore
 import com.hubara.operator.core.data.auth.AuthState
+import com.hubara.operator.core.data.repo.ConversationRepository
 import com.hubara.operator.core.data.repo.FireRepository
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.network.OperatorJson
@@ -84,6 +85,7 @@ class Vigia @Inject constructor(
     @ApplicationContext private val context: Context,
     private val auth: AuthRepository,
     private val fires: FireRepository,
+    private val conversations: ConversationRepository,
     private val api: OperatorApi,
     private val store: AmbientStore,
     private val widget: HotWidgetUpdater,
@@ -99,11 +101,12 @@ class Vigia @Inject constructor(
         val state = auth.state.value
         if (state != AuthState.SignedIn && state != AuthState.DevMode) return true
 
+        val now = System.currentTimeMillis()
         // Cada página por su lado: la que no llegó se queda con lo último que trajo.
-        runCatching { store.savePage(WidgetPageKind.HOT, hotPage(api.hot().hot)) }
-        runCatching { store.savePage(WidgetPageKind.HUMAN, humanPage(api.human())) }
+        runCatching { store.savePage(WidgetPageKind.HOT, hotPage(api.hot().hot, now)) }
+        runCatching { store.savePage(WidgetPageKind.HUMAN, humanPage(api.human(), now)) }
         val firesOk = fires.refresh().isSuccess
-        store.savePage(WidgetPageKind.FIRES, firesPage(fires.observeFeed().first()))
+        store.savePage(WidgetPageKind.FIRES, firesPage(fires.observeFeed().first(), conversations.observeInbox().first().associate { it.sessionId.raw to it.customerName }, now))
         widget.update(context)
 
         if (!firesOk) return false

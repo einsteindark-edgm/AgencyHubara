@@ -61,7 +61,7 @@ cd android_operator && ./gradlew :app:bundleRelease \
 | `:feature:chat` | La pieza nativa `chat` (`ChatIsland`: lo que entendió el bot, historial, deshacer, burbujas, composer) con su `ChatViewModel`. Sin entradas de navegación. |
 | `:feature:screens` | **Todas las pantallas**: UN `ScreenViewModel` (MVI), el render de cada componente (`Components.kt`) y las entradas de TODAS las claves (`ScreensNavigation`: cada clave se arma con su pantalla según `ScreenRoutes`). `RealScreensTest` prueba los archivos reales del repo. |
 | `:core:push` | Fuera de la app: notificaciones, el vigía (`Vigia` + `VigiaWorker`), cerrar sesión, los **avisos push** (`PushRegistrar`, `PushHandler`, `OperatorMessagingService`, `FirebasePushTransport`) y las páginas del widget (`WidgetPages.kt` + `AmbientStore`). |
-| `:widget:hot` | El widget de la pantalla de inicio: `AppWidgetProvider` con una `StackView` de tres páginas (ventas calientes, incendios, humano). Solo pinta lo que dejó el vigía. |
+| `:widget:hot` | El widget de la pantalla de inicio (Glance): grande con pestañas Incendios · Humano · Ventas y su lista; 2×2 con los tres contadores. Solo pinta lo que dejó el vigía. |
 | `:app` | `MainActivity`, `OperatorApp` (login o shell; las pestañas y sus números salen de `app.json`), radar, `AppNativeActions` (outbox, sesión, incendios). |
 
 ## Reglas
@@ -216,15 +216,19 @@ cd android_operator && ./gradlew :app:bundleRelease \
     nativa marca `busy` + `working` (el `origin` del botón que la lanzó: ese muestra `WorkingIndicator`; las del menú,
     la línea de `BusyBar`) y un doble toque no sale dos veces. El chat: `HistoryView` (cargando / error / mensajes). S22–S23.
 
-31. **El widget es `AppWidgetProvider` + `StackView`, no Glance** (2026-10-08): Glance 1.2 no tiene páginas que se
-    deslicen. Las páginas van ADENTRO del RemoteViews con `RemoteViewsCompat.setRemoteAdapter(RemoteCollectionItems)`:
-    en Android 12+ la API nativa y en el Android 11 del operador el `RemoteViewsCompatService` de `core-remoteviews`
-    (protegido con `BIND_REMOTEVIEWS`), sin servicio ni fábrica propios. La clase se sigue llamando
-    `HotSalesWidgetReceiver` para que los widgets ya puestos no se rompan. Trampas que vio S24: StackView mide cada
-    tarjeta con AT_MOST (sin `minWidth`/`minHeight` grandes una página de filas cortas queda angosta y asoma la de
-    atrás), las filas que faltan van INVISIBLE (no GONE) y deslizar HACIA ABAJO avanza. Solo `home_screen` (nunca la
-    pantalla bloqueada); filas sin mensajes ni esperas que se pongan viejas; cada fila abre `hubara://chat/<sesión>`
-    (un pedido sin chat, su ficha) con una plantilla `PendingIntent` explícita y MUTABLE solo para el fill-in.
+31. **El widget: pestañas en Glance, no páginas que se deslizan** (2026-10-08, decisión del operador tras ver la pila
+    `StackView` de #407): grande = pestañas Incendios · Humano · Ventas con su total + la lista de la elegida (hasta 10
+    filas, se desplaza) con iniciales, etiqueta Grave/Hoy/Riesgo y una hora FIJA («desde 10:42», `listTimeLabel` al
+    pintar; nunca «hace N min», que se pondría vieja); 2×2 (`LocalSize` < 200×160 dp) = solo los tres contadores, y
+    cada uno abre su pestaña con `hubara://tab/{incendios|chats}`. La pestaña elegida es estado de Glance por widget
+    (`SelectTabAction`); «Actualizar» encola el vigía. Android 11 no tiene Material You: va la paleta de la marca
+    (`OperatorPalette`); 12+ usa los colores del fondo. Glance solo redondea en 12+: las formas son drawables teñidos.
+    **Trampa (S24/S26, Android 11):** el launcher REAPLICA sobre las vistas que ya pintó; si donde iba un aviso ahora va
+    la `LazyColumn`, la lista no se conecta y queda vacía para siempre («Cannot setRemoteViewsAdapter on a view which is
+    not an AbsListView»). La lista existe SIEMPRE (el aviso va como su único renglón) y «Actualizado» también. La clase
+    sigue llamándose `HotSalesWidgetReceiver` (los widgets puestos no se rompen); solo `home_screen`; filas sin mensajes.
+    El arnés `E2eWidgetHostActivity` (debug) hospeda el widget real: escucha ANTES de crear la vista, le dice su tamaño
+    (`--es size compact`, `--es then large|compact`) y corre el vigía (S24 pestañas, S25 2×2, S26 cambio de tamaño).
 
 ## Endpoints
 

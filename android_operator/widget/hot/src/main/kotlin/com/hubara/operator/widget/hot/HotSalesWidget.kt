@@ -1,31 +1,76 @@
 package com.hubara.operator.widget.hot
 
-import android.app.PendingIntent
-import android.appwidget.AppWidgetManager
-import android.appwidget.AppWidgetProvider
-import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.view.View
-import android.widget.RemoteViews
+import android.os.Build
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
-import androidx.core.widget.RemoteViewsCompat
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.glance.ColorFilter
+import androidx.glance.GlanceId
+import androidx.glance.GlanceModifier
+import androidx.glance.GlanceTheme
+import androidx.glance.Image
+import androidx.glance.ImageProvider
+import androidx.glance.LocalContext
+import androidx.glance.LocalSize
+import androidx.glance.action.ActionParameters
+import androidx.glance.action.actionParametersOf
+import androidx.glance.action.clickable
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.action.ActionCallback
+import androidx.glance.appwidget.action.actionRunCallback
+import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.appwidget.appWidgetBackground
+import androidx.glance.appwidget.lazy.LazyColumn
+import androidx.glance.appwidget.lazy.items
+import androidx.glance.appwidget.provideContent
+import androidx.glance.appwidget.state.updateAppWidgetState
+import androidx.glance.appwidget.updateAll
+import androidx.glance.background
+import androidx.glance.color.ColorProvider
+import androidx.glance.color.DynamicThemeColorProviders
+import androidx.glance.currentState
+import androidx.glance.layout.Alignment
+import androidx.glance.layout.Box
+import androidx.glance.layout.Column
+import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
+import androidx.glance.layout.fillMaxSize
+import androidx.glance.layout.fillMaxWidth
+import androidx.glance.layout.height
+import androidx.glance.layout.padding
+import androidx.glance.layout.size
+import androidx.glance.layout.width
+import androidx.glance.material3.ColorProviders
+import androidx.glance.text.FontWeight
+import androidx.glance.text.Text
+import androidx.glance.text.TextStyle
+import androidx.glance.unit.ColorProvider
+import com.hubara.operator.core.designsystem.OperatorPalette
 import com.hubara.operator.core.push.AmbientStore
 import com.hubara.operator.core.push.HotWidgetUpdater
+import com.hubara.operator.core.push.VigiaWorker
 import com.hubara.operator.core.push.WidgetPage
 import com.hubara.operator.core.push.WidgetPageKind
 import com.hubara.operator.core.push.WidgetPages
 import com.hubara.operator.core.push.WidgetRow
+import com.hubara.operator.core.push.WidgetTone
+import com.hubara.operator.core.ui.listTimeLabel
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
 import dagger.hilt.components.SingletonComponent
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
+import java.time.ZoneId
 
 @EntryPoint
 @InstallIn(SingletonComponent::class)
@@ -33,101 +78,247 @@ interface WidgetEntryPoint {
     fun ambientStore(): AmbientStore
 }
 
-private val ROWS = intArrayOf(R.id.row_0, R.id.row_1, R.id.row_2)
+/** La pestaña elegida en cada widget (estado de Glance, uno por widget puesto). */
+private val TAB_KEY = stringPreferencesKey("tab")
 
-/** Las páginas en el orden en que se deslizan. */
-fun pageOrder(pages: WidgetPages): List<Pair<WidgetPageKind, WidgetPage?>> = WidgetPageKind.entries.map { it to pages[it] }
-
-/** El enlace de una fila: la plantilla de la pila (explícita a la app) solo recibe el `hubara://` de esa fila. */
-fun rowFillIn(row: WidgetRow): Intent = Intent().apply { row.link?.let { data = it.toUri() } }
+/** El parámetro de [SelectTabAction]: el nombre de la [WidgetPageKind]. */
+val TAB_PARAM = ActionParameters.Key<String>("tab")
 
 /**
- * El intent base de todas las filas: explícito a la actividad de inicio de la app, nunca implícito (skill
- * android-intent-security). El enlace llega por la fila y la app lo vuelve a validar (`DeepLinks.parse`).
+ * Intent explícito a la actividad de inicio con un enlace `hubara://`, que la app vuelve a validar (`DeepLinks.parse`).
+ * Nunca un intent implícito que otra app pudiera atender (skill android-intent-security).
  */
-fun openTemplate(context: Context): Intent {
+fun openIntent(context: Context, link: String): Intent {
     val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: Intent(Intent.ACTION_MAIN)
-    return Intent(launch).setPackage(context.packageName)
+    return Intent(launch).setPackage(context.packageName).setData(link.toUri())
         .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
 }
 
+/** Debajo de esto el widget es compacto (2×2): solo los contadores. */
+private val COMPACT_WIDTH = 200.dp
+private val COMPACT_HEIGHT = 160.dp
+
+/** La marca en Android 11 (sin colores dinámicos); en Android 12+, los del fondo de pantalla (Material You). */
+private val BrandColors = ColorProviders(light = OperatorPalette.light, dark = OperatorPalette.dark)
+
+private val DangerContainer = ColorProvider(OperatorPalette.lightStatus.graveContainer, OperatorPalette.darkStatus.graveContainer)
+private val OnDangerContainer = ColorProvider(OperatorPalette.lightStatus.onGraveContainer, OperatorPalette.darkStatus.onGraveContainer)
+private val WarningContainer = ColorProvider(OperatorPalette.lightStatus.hoyContainer, OperatorPalette.darkStatus.hoyContainer)
+private val OnWarningContainer = ColorProvider(OperatorPalette.lightStatus.onHoyContainer, OperatorPalette.darkStatus.onHoyContainer)
+
 /**
- * Una página: título con cuántas hay, hasta 3 filas (sin mensajes) y en cuál de las 3 va. Una página null nunca
- * cargó: pide abrir la app (recién instalada o tras cerrar sesión).
+ * El widget entero, según el tamaño: compacto (2×2) con los tres contadores, o grande con las pestañas Incendios ·
+ * Humano · Ventas y la lista de la elegida. Sin mensajes: va en la pantalla de inicio.
  */
-fun pageViews(context: Context, kind: WidgetPageKind, page: WidgetPage?): RemoteViews {
-    val views = RemoteViews(context.packageName, R.layout.widget_page)
-    val count = page?.total?.takeIf { it > 0 }
-    views.setTextViewText(R.id.page_title, if (count != null) "${kind.title} · $count" else kind.title)
-    views.setTextViewText(R.id.page_position, "${kind.ordinal + 1} de ${WidgetPageKind.entries.size}")
-    val rows = page?.rows.orEmpty()
-    val empty = when {
-        page == null -> context.getString(R.string.widget_open_app)
-        rows.isEmpty() -> kind.empty
-        else -> null
-    }
-    views.setViewVisibility(R.id.page_empty, if (empty != null) View.VISIBLE else View.GONE)
-    views.setTextViewText(R.id.page_empty, empty.orEmpty())
-    ROWS.forEachIndexed { i, id ->
-        val row = rows.getOrNull(i)
-        // Invisible y no fuera: la tarjeta mide lo mismo con 0 o 3 filas.
-        views.setViewVisibility(id, if (row != null) View.VISIBLE else View.INVISIBLE)
-        if (row != null) {
-            views.setTextViewText(id, row.line)
-            views.setTextColor(id, context.getColor(if (row.urgent) R.color.widget_urgent else R.color.widget_on_surface))
-            if (row.link != null) views.setOnClickFillInIntent(id, rowFillIn(row))
+@Composable
+fun WidgetContent(pages: WidgetPages, selected: WidgetPageKind, nowMs: Long, zone: ZoneId) {
+    val colors = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) DynamicThemeColorProviders else BrandColors
+    GlanceTheme(colors = colors) {
+        val size = LocalSize.current
+        val root = GlanceModifier.fillMaxSize().appWidgetBackground()
+            .background(ImageProvider(R.drawable.widget_shape_card), colorFilter = ColorFilter.tint(GlanceTheme.colors.widgetBackground))
+        if (size.width < COMPACT_WIDTH || size.height < COMPACT_HEIGHT) {
+            Compact(pages, root.padding(8.dp))
+        } else {
+            Large(pages, selected, nowMs, zone, root.padding(12.dp))
         }
     }
-    return views
 }
 
-/** El widget entero: la pila con las tres páginas adentro (sin servicio propio) y la plantilla de los toques. */
-fun widgetViews(context: Context, appWidgetId: Int, pages: WidgetPages): RemoteViews {
-    val root = RemoteViews(context.packageName, R.layout.widget_pages)
-    val items = RemoteViewsCompat.RemoteCollectionItems.Builder()
-        .setHasStableIds(true)
-        .setViewTypeCount(1)
-        .apply { pageOrder(pages).forEach { (kind, page) -> addItem(kind.ordinal.toLong(), pageViews(context, kind, page)) } }
-        .build()
-    RemoteViewsCompat.setRemoteAdapter(context, root, appWidgetId, R.id.pages, items)
-    root.setEmptyView(R.id.pages, R.id.pages_empty)
-    // MUTABLE solo para que cada fila ponga su enlace (fill-in); el destino es explícito y no se puede cambiar.
-    val template = PendingIntent.getActivity(
-        context, 0, openTemplate(context), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-    )
-    root.setPendingIntentTemplate(R.id.pages, template)
-    return root
-}
+// ── Compacto (2×2) ────────────────────────────────────────────────────────────────────────────────
 
-/** Pinta todos los widgets puestos con lo último que dejó el vigía (o nada, tras cerrar sesión). */
-suspend fun renderAll(context: Context) {
-    val manager = AppWidgetManager.getInstance(context)
-    val ids = manager.getAppWidgetIds(ComponentName(context, HotSalesWidgetReceiver::class.java))
-    if (ids.isEmpty()) return
-    val pages = EntryPointAccessors.fromApplication(context, WidgetEntryPoint::class.java).ambientStore().pages.first()
-    ids.forEach { id -> manager.updateAppWidget(id, widgetViews(context, id, pages)) }
-}
-
-/**
- * El widget «Operador»: ventas calientes, incendios y humano en una pila que se desliza. Se llama como antes para que
- * los widgets ya puestos sigan andando. Sin exportar (`ManifestSecurityTest`): el sistema igual le entrega
- * APPWIDGET_UPDATE. Los datos los trae el vigía (y los pushes) a `AmbientStore`; acá solo se pintan.
- */
-class HotSalesWidgetReceiver : AppWidgetProvider() {
-    override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
-        val pending = goAsync()
-        CoroutineScope(Dispatchers.Default).launch {
-            try {
-                renderAll(context.applicationContext)
-            } finally {
-                pending.finish()
+@Composable
+private fun Compact(pages: WidgetPages, modifier: GlanceModifier) {
+    val context = LocalContext.current
+    Column(modifier) {
+        WidgetPageKind.entries.forEachIndexed { i, kind ->
+            if (i > 0) Spacer(GlanceModifier.height(6.dp))
+            val total = pages[kind]?.total
+            val burning = kind == WidgetPageKind.FIRES && (total ?: 0) > 0
+            val bg = if (burning) DangerContainer else GlanceTheme.colors.surfaceVariant
+            val fg = if (burning) OnDangerContainer else GlanceTheme.colors.onSurfaceVariant
+            Row(
+                GlanceModifier.fillMaxWidth().defaultWeight()
+                    .background(ImageProvider(R.drawable.widget_shape_pill), colorFilter = ColorFilter.tint(bg))
+                    .padding(horizontal = 10.dp)
+                    .clickable(actionStartActivity(openIntent(context, kind.link))),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Image(ImageProvider(kind.icon), contentDescription = null, modifier = GlanceModifier.size(16.dp), colorFilter = ColorFilter.tint(fg))
+                Spacer(GlanceModifier.width(6.dp))
+                Text(kind.title, style = TextStyle(color = fg, fontSize = 13.sp), maxLines = 1, modifier = GlanceModifier.defaultWeight())
+                Text(total?.toString() ?: "–", style = TextStyle(color = fg, fontSize = 20.sp, fontWeight = FontWeight.Medium))
             }
         }
     }
 }
 
+// ── Grande: pestañas + lista ──────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun Large(pages: WidgetPages, selected: WidgetPageKind, nowMs: Long, zone: ZoneId, modifier: GlanceModifier) {
+    val page = pages[selected]
+    Column(modifier) {
+        Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            WidgetPageKind.entries.forEach { kind ->
+                Tab(kind, pages[kind], kind == selected)
+                Spacer(GlanceModifier.width(6.dp))
+            }
+            Spacer(GlanceModifier.defaultWeight())
+            Image(
+                ImageProvider(R.drawable.widget_ic_refresh), contentDescription = "Actualizar",
+                colorFilter = ColorFilter.tint(GlanceTheme.colors.onSurfaceVariant),
+                modifier = GlanceModifier.size(36.dp).padding(6.dp).clickable(actionRunCallback<RefreshAction>()),
+            )
+        }
+        Spacer(GlanceModifier.height(6.dp))
+        // La MISMA estructura siempre (la lista existe aunque esté vacía y el aviso va como su único renglón): en
+        // Android 11 el launcher reaplica sobre las vistas que ya tiene, y si donde iba un aviso ahora va la lista,
+        // la lista no se conecta y queda vacía («Cannot setRemoteViewsAdapter…», lo vio S24).
+        val rows = page?.rows.orEmpty()
+        val note = when {
+            page == null -> "Abre la app para cargar el widget."
+            rows.isEmpty() -> selected.empty
+            else -> null
+        }
+        LazyColumn(GlanceModifier.fillMaxWidth().defaultWeight()) {
+            if (note != null) item { Note(note) } else items(rows) { row -> RowItem(row, nowMs, zone) }
+        }
+        Text(
+            page?.updatedMs?.takeIf { it > 0 }?.let { "Actualizado ${listTimeLabel(it, nowMs, zone)}" }.orEmpty(),
+            style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 11.sp),
+            modifier = GlanceModifier.padding(start = 4.dp, top = 4.dp),
+        )
+    }
+}
+
+/** Una pestaña: el nombre y su total (sin total si nunca cargó). Tocarla la elige en ESTE widget. */
+@Composable
+private fun Tab(kind: WidgetPageKind, page: WidgetPage?, selected: Boolean) {
+    val label = page?.total?.let { "${kind.title} $it" } ?: kind.title
+    val bg = if (selected) GlanceTheme.colors.secondaryContainer else GlanceTheme.colors.surfaceVariant
+    val fg = if (selected) GlanceTheme.colors.onSecondaryContainer else GlanceTheme.colors.onSurfaceVariant
+    Text(
+        label,
+        maxLines = 1,
+        style = TextStyle(color = fg, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal),
+        modifier = GlanceModifier
+            .background(ImageProvider(R.drawable.widget_shape_pill), colorFilter = ColorFilter.tint(bg))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+            .clickable(actionRunCallback<SelectTabAction>(actionParametersOf(TAB_PARAM to kind.name))),
+    )
+}
+
+/** Una fila: iniciales (o un ícono), título, detalle con la hora fija y la etiqueta de color. Abre su chat. */
+@Composable
+private fun RowItem(row: WidgetRow, nowMs: Long, zone: ZoneId) {
+    val context = LocalContext.current
+    val (container, onContainer) = toneColors(row.tone)
+    val detail = listOfNotNull(
+        row.detail.takeIf { it.isNotBlank() },
+        row.since?.let { "${it.label} ${listTimeLabel(it.ms, nowMs, zone)}" },
+    ).joinToString(" · ")
+    var modifier = GlanceModifier.fillMaxWidth().padding(vertical = 6.dp, horizontal = 4.dp)
+    row.link?.let { modifier = modifier.clickable(actionStartActivity(openIntent(context, it))) }
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            GlanceModifier.size(32.dp).background(ImageProvider(R.drawable.widget_shape_circle), colorFilter = ColorFilter.tint(container)),
+            contentAlignment = Alignment.Center,
+        ) {
+            val initials = row.initials
+            if (initials != null) {
+                Text(initials, style = TextStyle(color = onContainer, fontSize = 12.sp, fontWeight = FontWeight.Medium))
+            } else {
+                Image(ImageProvider(R.drawable.widget_ic_order), contentDescription = null, modifier = GlanceModifier.size(16.dp), colorFilter = ColorFilter.tint(onContainer))
+            }
+        }
+        Spacer(GlanceModifier.width(10.dp))
+        Column(GlanceModifier.defaultWeight()) {
+            Text(row.title, maxLines = 1, style = TextStyle(color = GlanceTheme.colors.onSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium))
+            if (detail.isNotBlank()) {
+                Text(detail, maxLines = 1, style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp))
+            }
+        }
+        row.tag?.let { tag ->
+            Spacer(GlanceModifier.width(6.dp))
+            Text(
+                tag, maxLines = 1,
+                style = TextStyle(color = onContainer, fontSize = 11.sp),
+                modifier = GlanceModifier
+                    .background(ImageProvider(R.drawable.widget_shape_pill), colorFilter = ColorFilter.tint(container))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun Note(text: String) {
+    Box(GlanceModifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+        Text(text, style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 13.sp))
+    }
+}
+
+@Composable
+private fun toneColors(tone: WidgetTone): Pair<ColorProvider, ColorProvider> = when (tone) {
+    WidgetTone.DANGER -> DangerContainer to OnDangerContainer
+    WidgetTone.WARNING -> WarningContainer to OnWarningContainer
+    WidgetTone.NEUTRAL -> GlanceTheme.colors.secondaryContainer to GlanceTheme.colors.onSecondaryContainer
+}
+
+private val WidgetPageKind.icon: Int
+    get() = when (this) {
+        WidgetPageKind.FIRES -> R.drawable.widget_ic_fire
+        WidgetPageKind.HUMAN -> R.drawable.widget_ic_person
+        WidgetPageKind.HOT -> R.drawable.widget_ic_cart
+    }
+
+// ── Glance ────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * El widget «Operador». Lee lo que dejó el vigía en `AmbientStore` (los pushes y el vigía lo mantienen al día) y la
+ * pestaña elegida de cada widget. El tamaño exacto decide compacto o grande.
+ */
+class OperatorWidget : GlanceAppWidget() {
+    override val sizeMode: SizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        val store = EntryPointAccessors.fromApplication(context, WidgetEntryPoint::class.java).ambientStore()
+        provideContent {
+            val pages by store.pages.collectAsState(initial = WidgetPages())
+            val tab = currentState<Preferences>()[TAB_KEY]
+            val selected = WidgetPageKind.entries.firstOrNull { it.name == tab } ?: WidgetPageKind.FIRES
+            WidgetContent(pages, selected, System.currentTimeMillis(), ZoneId.systemDefault())
+        }
+    }
+}
+
+/** Tocar una pestaña: queda elegida en ESE widget y se repinta. */
+class SelectTabAction : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        val tab = parameters[TAB_PARAM]?.takeIf { name -> WidgetPageKind.entries.any { it.name == name } } ?: return
+        updateAppWidgetState(context, glanceId) { it[TAB_KEY] = tab }
+        OperatorWidget().update(context, glanceId)
+    }
+}
+
+/** «Actualizar»: una vuelta del vigía apenas haya red (repinta el widget al terminar). */
+class RefreshAction : ActionCallback {
+    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        VigiaWorker.runSoon(context)
+    }
+}
+
+/**
+ * Se sigue llamando como la primera versión para que los widgets ya puestos no se rompan. Sin exportar
+ * (`ManifestSecurityTest`): el sistema igual le entrega APPWIDGET_UPDATE.
+ */
+class HotSalesWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = OperatorWidget()
+}
+
 @Module
 @InstallIn(SingletonComponent::class)
 object WidgetModule {
-    @Provides fun updater(): HotWidgetUpdater = HotWidgetUpdater { context -> renderAll(context) }
+    @Provides fun updater(): HotWidgetUpdater = HotWidgetUpdater { context -> OperatorWidget().updateAll(context) }
 }
