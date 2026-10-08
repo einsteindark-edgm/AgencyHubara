@@ -44,10 +44,10 @@ class SignOutTest {
     @Test fun cerrar_sesion_no_deja_datos_de_clientes_en_el_telefono() = runTest {
         db.conversations().upsert(listOf(ConversationEntity("wa_000000000101", "000000000101", "", "ventas", 1, null, 2, null, null, null, 0)))
         val ambient = AmbientStore(context)
-        ambient.savePage(WidgetPageKind.HOT, hotPage(listOf(HotSaleDto(sessionId = "wa_000000000101", name = "Laura Prueba"))))
+        ambient.savePage(WidgetPageKind.HOT, hotPage(listOf(HotSaleDto(sessionId = "wa_000000000101", name = "Laura Prueba")), nowMs = 0L))
         // Las otras dos páginas del widget también tienen nombres de clientes.
-        ambient.savePage(WidgetPageKind.FIRES, WidgetPage(listOf(WidgetRow("Laura pide un humano", "grave", "hubara://chat/wa_000000000101")), 1))
-        ambient.savePage(WidgetPageKind.HUMAN, WidgetPage(listOf(WidgetRow("Laura", "2 sin responder", "hubara://chat/wa_000000000101")), 1))
+        ambient.savePage(WidgetPageKind.FIRES, WidgetPage(listOf(WidgetRow("Laura pide un humano", "grave", "hubara://chat/wa_000000000101", initials = "LP")), 1))
+        ambient.savePage(WidgetPageKind.HUMAN, WidgetPage(listOf(WidgetRow("Laura", "2 sin responder", "hubara://chat/wa_000000000101", initials = "L")), 1))
         assertThat(ambient.pages.first().human).isNotNull()
         val seen = SeenRepository(context, db.conversations())
         seen.update { SeenCounts(baseline = true, seen = mapOf("wa_000000000101" to 2)) }

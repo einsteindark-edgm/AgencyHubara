@@ -2,10 +2,14 @@ package com.hubara.operator.widget.hot
 
 import android.appwidget.AppWidgetProviderInfo
 import android.content.Context
-import android.view.View
-import android.widget.FrameLayout
-import android.widget.StackView
-import android.widget.TextView
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
+import androidx.glance.action.actionParametersOf
+import androidx.glance.appwidget.testing.unit.assertHasRunCallbackClickAction
+import androidx.glance.appwidget.testing.unit.hasStartActivityClickAction
+import androidx.glance.appwidget.testing.unit.runGlanceAppWidgetUnitTest
+import androidx.glance.testing.unit.hasContentDescription
+import androidx.glance.testing.unit.hasText
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
@@ -13,61 +17,87 @@ import com.hubara.operator.core.push.WidgetPage
 import com.hubara.operator.core.push.WidgetPageKind
 import com.hubara.operator.core.push.WidgetPages
 import com.hubara.operator.core.push.WidgetRow
+import com.hubara.operator.core.push.WidgetSince
+import com.hubara.operator.core.push.WidgetTone
+import java.time.ZoneId
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.xmlpull.v1.XmlPullParser
 
 /**
- * El widget de la pantalla de inicio con tres páginas que se deslizan: ventas calientes, incendios y humano.
- * Lo que se ve de cada página, a dónde lleva cada fila y dónde puede ir (nunca la pantalla bloqueada).
+ * El widget de la pantalla de inicio (segunda versión, 2026-10-08): grande, pestañas Incendios · Humano · Ventas con
+ * su total y la lista de la elegida; compacto (2×2), solo los tres contadores. Cada fila abre su chat y cada contador
+ * su pestaña de la app.
  */
 @RunWith(AndroidJUnit4::class)
 class OperatorWidgetTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
-    private val fires = WidgetPage(
-        rows = listOf(
-            WidgetRow("Sofía pide un humano", "grave · empeora", "hubara://chat/wa_000000000102", urgent = true),
-            WidgetRow("El pedido #41 de Andrés va retrasado", "grave", "hubara://order/order_41", urgent = true),
-        ),
-        total = 5,
+    private val sofia = WidgetRow(
+        "Sofía pide un humano", "4 mensajes · empeora", "hubara://chat/wa_000000000102",
+        initials = "SP", tone = WidgetTone.DANGER, tag = "Grave", since = WidgetSince("último", NOW - 120_000),
+    )
+    private val andres = WidgetRow(
+        "El pedido #41 de Andrés va retrasado", "4 días de retraso", "hubara://order/order_41",
+        tone = WidgetTone.DANGER, tag = "Grave",
+    )
+    private val daniela = WidgetRow("Daniela", "Al día", "hubara://chat/wa_000000000106", initials = "D")
+    private val pages = WidgetPages(
+        fires = WidgetPage(listOf(sofia, andres), total = 3, updatedMs = NOW),
+        human = WidgetPage(listOf(daniela), total = 3, updatedMs = NOW),
     )
 
-    private fun View.text(id: Int) = findViewById<TextView>(id)
+    @Test fun grande_las_pestanas_dicen_cuantos_hay_y_la_elegida_muestra_sus_filas() = runGlanceAppWidgetUnitTest {
+        setAppWidgetSize(DpSize(320.dp, 240.dp))
+        setContext(context)
+        provideComposable { WidgetContent(pages, WidgetPageKind.FIRES, NOW, ZONE) }
 
-    @Test fun cada_pagina_dice_que_es_cuantas_hay_y_en_cual_vas() {
-        val view = pageViews(context, WidgetPageKind.FIRES, fires).apply(context, FrameLayout(context))
-        assertThat(view.text(R.id.page_title).text.toString()).isEqualTo("Incendios · 5")
-        assertThat(view.text(R.id.page_position).text.toString()).isEqualTo("2 de 3")
-        assertThat(view.text(R.id.row_0).text.toString()).isEqualTo("Sofía pide un humano · grave · empeora")
-        assertThat(view.text(R.id.row_1).visibility).isEqualTo(View.VISIBLE)
-        assertThat(view.text(R.id.row_2).visibility).isEqualTo(View.INVISIBLE)
-        assertThat(view.text(R.id.page_empty).visibility).isEqualTo(View.GONE)
+        onNode(hasText("Incendios 3")).assertExists()
+        onNode(hasText("Humano 3")).assertHasRunCallbackClickAction<SelectTabAction>(actionParametersOf(TAB_PARAM to "HUMAN"))
+        onNode(hasText("Ventas")).assertExists()  // nunca cargó: sin número
+        onNode(hasText("Sofía pide un humano")).assertExists()
+        onNode(hasText("SP")).assertExists()
+        onNode(hasText("4 mensajes · empeora · último 9:11 a. m.")).assertExists()
+        onAllNodes(hasText("Grave")).assertCountEquals(2)
+        onNode(hasText("Daniela")).assertDoesNotExist()  // es de otra pestaña
+        onNode(hasText("Actualizado 9:13 a. m.")).assertExists()
+        onNode(hasContentDescription("Actualizar")).assertHasRunCallbackClickAction<RefreshAction>()
     }
 
-    @Test fun una_pagina_vacia_lo_dice_y_una_que_nunca_cargo_pide_abrir_la_app() {
-        val empty = pageViews(context, WidgetPageKind.HUMAN, WidgetPage()).apply(context, FrameLayout(context))
-        assertThat(empty.text(R.id.page_title).text.toString()).isEqualTo("Humano")
-        assertThat(empty.text(R.id.page_empty).text.toString()).isEqualTo("Nadie atiende un chat ahora.")
-        assertThat(empty.text(R.id.row_0).visibility).isEqualTo(View.INVISIBLE)
+    @Test fun cada_fila_abre_su_chat_y_un_pedido_sin_chat_su_ficha() = runGlanceAppWidgetUnitTest {
+        setAppWidgetSize(DpSize(320.dp, 240.dp))
+        setContext(context)
+        provideComposable { WidgetContent(pages, WidgetPageKind.FIRES, NOW, ZONE) }
 
-        val never = pageViews(context, WidgetPageKind.HOT, null).apply(context, FrameLayout(context))
-        assertThat(never.text(R.id.page_empty).text.toString()).isEqualTo("Abre la app para cargar el widget.")
+        onAllNodes(hasStartActivityClickAction(openIntent(context, "hubara://chat/wa_000000000102"))).assertCountEquals(1)
+        onAllNodes(hasStartActivityClickAction(openIntent(context, "hubara://order/order_41"))).assertCountEquals(1)
     }
 
-    @Test fun cada_fila_abre_su_chat_con_el_enlace_que_la_app_valida() {
-        val intent = rowFillIn(fires.rows.first())
-        assertThat(intent.dataString).isEqualTo("hubara://chat/wa_000000000102")
-        // La plantilla es explícita a la actividad de la app: la fila solo pone el enlace.
-        val template = openTemplate(context)
-        assertThat(template.`package`).isEqualTo(context.packageName)
+    @Test fun una_pestana_vacia_lo_dice_y_una_que_nunca_cargo_pide_abrir_la_app() = runGlanceAppWidgetUnitTest {
+        setAppWidgetSize(DpSize(320.dp, 240.dp))
+        setContext(context)
+        provideComposable { WidgetContent(WidgetPages(human = WidgetPage(updatedMs = NOW)), WidgetPageKind.HUMAN, NOW, ZONE) }
+        onNode(hasText("Nadie atiende un chat ahora.")).assertExists()
     }
 
-    @Test fun el_widget_es_una_pila_de_tres_paginas_que_se_desliza() {
-        assertThat(pageOrder(WidgetPages(fires = fires)).map { it.first })
-            .containsExactly(WidgetPageKind.HOT, WidgetPageKind.FIRES, WidgetPageKind.HUMAN).inOrder()
-        val root = widgetViews(context, appWidgetId = 7, WidgetPages(fires = fires)).apply(context, FrameLayout(context))
-        assertThat(root.findViewById<View>(R.id.pages)).isInstanceOf(StackView::class.java)
+    @Test fun nunca_cargo_pide_abrir_la_app() = runGlanceAppWidgetUnitTest {
+        setAppWidgetSize(DpSize(320.dp, 240.dp))
+        setContext(context)
+        provideComposable { WidgetContent(WidgetPages(), WidgetPageKind.FIRES, NOW, ZONE) }
+        onNode(hasText("Abre la app para cargar el widget.")).assertExists()
+    }
+
+    @Test fun compacto_2x2_solo_los_contadores_y_cada_uno_abre_su_pestana() = runGlanceAppWidgetUnitTest {
+        setAppWidgetSize(DpSize(150.dp, 150.dp))
+        setContext(context)
+        provideComposable { WidgetContent(pages, WidgetPageKind.FIRES, NOW, ZONE) }
+
+        onNode(hasText("Incendios")).assertExists()
+        onNode(hasText("Humano")).assertExists()
+        onAllNodes(hasText("3")).assertCountEquals(2)
+        onNode(hasText("Sofía pide un humano")).assertDoesNotExist()
+        onAllNodes(hasStartActivityClickAction(openIntent(context, "hubara://tab/incendios"))).assertCountEquals(1)
+        onAllNodes(hasStartActivityClickAction(openIntent(context, "hubara://tab/chats"))).assertCountEquals(2)
     }
 
     @Test fun solo_va_en_la_pantalla_de_inicio_nunca_en_la_bloqueada() {
@@ -75,5 +105,10 @@ class OperatorWidgetTest {
         while (xml.next() != XmlPullParser.START_TAG) Unit
         val category = xml.getAttributeIntValue("http://schemas.android.com/apk/res/android", "widgetCategory", -1)
         assertThat(category).isEqualTo(AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN)
+    }
+
+    private companion object {
+        const val NOW = 1_790_000_000_000L  // 21-sep-2026 9:13 a. m. en Bogotá
+        val ZONE: ZoneId = ZoneId.of("America/Bogota")
     }
 }

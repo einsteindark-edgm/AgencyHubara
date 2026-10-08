@@ -24,7 +24,7 @@ kotlinx-serialization = "1.11.0"
 kotlinx-coroutines = "1.11.0"
 kotlinx-collections-immutable = "0.5.2"
 coil = "3.6.3"
-core-remoteviews = "1.1.0"
+glance = "1.2.0"
 # Firebase Cloud Messaging (avisos push). Sin el plugin google-services: las opciones llegan del backend
 # (`GET /api/chats/mobile/push`), así nada del proyecto de Firebase va en el repo (es público).
 firebase-bom = "34.19.0"
@@ -81,7 +81,9 @@ androidx-test-ext-junit = { module = "androidx.test.ext:junit", version.ref = "a
 firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebase-bom" }
 firebase-messaging = { module = "com.google.firebase:firebase-messaging" }
 
-androidx-core-remoteviews = { module = "androidx.core:core-remoteviews", version.ref = "core-remoteviews" }
+androidx-glance-appwidget = { module = "androidx.glance:glance-appwidget", version.ref = "glance" }
+androidx-glance-material3 = { module = "androidx.glance:glance-material3", version.ref = "glance" }
+androidx-glance-appwidget-testing = { module = "androidx.glance:glance-appwidget-testing", version.ref = "glance" }
 
 # Terceros
 hilt-android = { module = "com.google.dagger:hilt-android", version.ref = "hilt" }

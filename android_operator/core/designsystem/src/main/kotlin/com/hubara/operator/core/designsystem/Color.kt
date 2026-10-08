@@ -136,3 +136,15 @@ internal val DarkOperator = OperatorColors(
     bubbleOperator = Color(0xFF00468D), onBubbleOperator = Color(0xFFD6E3FF),
     bubbleBot = Color(0xFF5E3671), onBubbleBot = Color(0xFFF6D9FF),
 )
+
+/**
+ * La paleta de la marca para lo que no ve `MaterialTheme`: el widget de la pantalla de inicio (Glance) la usa en Android
+ * 11, que no tiene colores dinámicos. Los mismos valores de la app.
+ */
+object OperatorPalette {
+    val light: androidx.compose.material3.ColorScheme get() = LightScheme
+    val dark: androidx.compose.material3.ColorScheme get() = DarkScheme
+    val lightStatus: OperatorColors get() = LightOperator
+    val darkStatus: OperatorColors get() = DarkOperator
+}
+

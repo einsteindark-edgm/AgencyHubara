@@ -21,71 +21,104 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * El widget de la pantalla de inicio pasa de «Ventas calientes» a tres páginas deslizables (2026-10-08): ventas
- * calientes, incendios (los graves primero) y los chats que atiende una persona. Máximo 3 filas por página, cada una
- * abre su chat y ninguna lleva mensajes.
+ * Lo que muestra el widget de la pantalla de inicio (2026-10-08, segunda versión): pestañas Incendios · Humano · Ventas
+ * con su total, y filas con iniciales, una etiqueta de color y una hora FIJA («desde 10:42»), que no se pone vieja como
+ * «hace 12 min». Hasta 10 filas por página (la lista se desplaza); ninguna lleva mensajes.
  */
 @RunWith(AndroidJUnit4::class)
 class WidgetPagesTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 
-    @Test fun ventas_calientes_dicen_quien_etapa_producto_y_riesgo_y_abren_su_chat() {
-        val page = hotPage(List(5) { i -> HotSaleDto("wa_00000000010$i", name = "Cliente $i", stage = "etapa_datos_envio") }
-            .let { listOf(HotSaleDto("wa_000000000103", name = "Camilo", stage = "etapa_cierre", product = "Duo Zodiacal azul × 2", risk = true)) + it })
-        assertThat(page.total).isEqualTo(6)
-        assertThat(page.rows).hasSize(3)
-        assertThat(page.rows.first()).isEqualTo(
-            WidgetRow("Camilo", "cierre · Duo Zodiacal azul × 2 · RIESGO", "hubara://chat/wa_000000000103", urgent = true),
-        )
-        assertThat(hotPage(listOf(HotSaleDto("wa_test_x", stage = "etapa_datos_envio"))).rows.single().line).isEqualTo("Cliente · datos de envío")
+    @Test fun las_pestanas_van_incendios_humano_ventas_y_cada_una_abre_su_lugar_en_la_app() {
+        assertThat(WidgetPageKind.entries.map { it.title }).containsExactly("Incendios", "Humano", "Ventas").inOrder()
+        assertThat(WidgetPageKind.FIRES.link).isEqualTo("hubara://tab/incendios")
+        assertThat(WidgetPageKind.HUMAN.link).isEqualTo("hubara://tab/chats")
     }
 
-    @Test fun incendios_van_graves_primero_sin_la_espera_que_se_vuelve_vieja() {
-        val page = firesPage(listOf(
-            fire("order:o41", Severity.HOY, "Verificar el pago de Daniela", FireSubject.Order(OrderId.parse("order_42"), SessionId.parse("wa_000000000106"))),
-            fire("chat:wa_000000000102", Severity.GRAVE, "Sofía pide un humano", FireSubject.Chat(SessionId.parse("wa_000000000102")!!), worse = true),
-            fire("order:o40", Severity.GRAVE, "El pedido #41 de Andrés va retrasado", FireSubject.Order(OrderId.parse("order_41"), null)),
-        ))
+    @Test fun incendios_graves_primero_con_el_nombre_del_cliente_y_sin_la_espera_relativa() {
+        val page = firesPage(
+            listOf(
+                fire("order:o42", Severity.HOY, "Verificar el pago de Daniela", "Pedido #42 · $95.000",
+                    FireSubject.Order(OrderId.parse("order_42"), SessionId.parse("wa_000000000106"))),
+                fire("chat:wa_000000000102", Severity.GRAVE, "Sofía pide un humano", "12 min sin respuesta · 4 mensajes",
+                    FireSubject.Chat(SessionId.parse("wa_000000000102")!!), worse = true),
+                fire("order:o41", Severity.GRAVE, "El pedido #41 de Andrés va retrasado", "4 días de retraso",
+                    FireSubject.Order(OrderId.parse("order_41"), null)),
+            ),
+            names = mapOf("wa_000000000102" to "Sofía Prueba", "wa_000000000106" to "Daniela Prueba"),
+            nowMs = NOW,
+        )
+        assertThat(page.total).isEqualTo(3)
+        assertThat(page.updatedMs).isEqualTo(NOW)
         assertThat(page.rows.map { it.title }).containsExactly(
             "Sofía pide un humano", "El pedido #41 de Andrés va retrasado", "Verificar el pago de Daniela",
         ).inOrder()
-        assertThat(page.rows[0]).isEqualTo(WidgetRow("Sofía pide un humano", "grave · empeora", "hubara://chat/wa_000000000102", urgent = true))
-        // Sin chat conocido, abre el pedido; con chat, el chat.
+        assertThat(page.rows[0]).isEqualTo(WidgetRow(
+            title = "Sofía pide un humano", detail = "4 mensajes · empeora", link = "hubara://chat/wa_000000000102",
+            initials = "SP", tone = WidgetTone.DANGER, tag = "Grave", since = WidgetSince("último", UPDATED),
+        ))
+        // Un pedido sin chat conocido abre su ficha y no tiene a quién poner iniciales.
         assertThat(page.rows[1].link).isEqualTo("hubara://order/order_41")
-        assertThat(page.rows[2].link).isEqualTo("hubara://chat/wa_000000000106")
-        assertThat(page.rows.joinToString { it.line }).doesNotContain("sin respuesta")
+        assertThat(page.rows[1].initials).isNull()
+        assertThat(page.rows[2].tone).isEqualTo(WidgetTone.WARNING)
+        assertThat(page.rows[2].tag).isEqualTo("Hoy")
+        assertThat(page.rows.joinToString { it.detail }).doesNotContain("sin respuesta")
     }
 
-    @Test fun humano_pone_primero_a_quien_espera_y_cuenta_sin_responder() {
-        val page = humanPage(HumanDto(total = 4, human = listOf(
-            HumanChatDto("wa_000000000102", name = "Sofía", unanswered = 2),
-            HumanChatDto("wa_000000000105", name = null, unanswered = 1),
-            HumanChatDto("wa_000000000101", name = "Laura", unanswered = 0),
-            HumanChatDto("wa_000000000109", name = "Otra", unanswered = 0),
-        )))
-        assertThat(page.total).isEqualTo(4)
-        assertThat(page.rows.map { it.line }).containsExactly("Sofía · 2 sin responder", "Cliente · 1 sin responder", "Laura · al día").inOrder()
-        assertThat(page.rows.map { it.urgent }).containsExactly(true, true, false).inOrder()
-        assertThat(page.rows.first().link).isEqualTo("hubara://chat/wa_000000000102")
+    @Test fun humano_pone_primero_a_quien_espera_con_la_hora_desde_que_espera() {
+        val page = humanPage(
+            HumanDto(total = 12, human = listOf(
+                HumanChatDto("wa_000000000102", name = "Sofía", unanswered = 2, waitingSinceMs = NOW - 600_000, lastInboundMs = NOW - 60_000),
+                HumanChatDto("wa_000000000101", name = null, unanswered = 0, lastInboundMs = NOW - 3_600_000),
+            )),
+            nowMs = NOW,
+        )
+        assertThat(page.total).isEqualTo(12)
+        assertThat(page.rows[0]).isEqualTo(WidgetRow(
+            title = "Sofía", detail = "2 sin responder", link = "hubara://chat/wa_000000000102",
+            initials = "S", tone = WidgetTone.DANGER, tag = "Espera", since = WidgetSince("desde", NOW - 600_000),
+        ))
+        assertThat(page.rows[1]).isEqualTo(WidgetRow(
+            title = "Cliente", detail = "Al día", link = "hubara://chat/wa_000000000101",
+            initials = null, since = WidgetSince("último", NOW - 3_600_000),
+        ))
+    }
+
+    @Test fun ventas_dicen_etapa_producto_y_riesgo_y_la_lista_llega_hasta_diez() {
+        val many = List(14) { i -> HotSaleDto("wa_0000000002%02d".format(i), name = "Cliente $i", stage = "etapa_datos_envio", updatedMs = NOW) }
+        val page = hotPage(listOf(HotSaleDto("wa_000000000103", name = "Camilo", stage = "etapa_cierre", product = "Duo Zodiacal azul × 2", risk = true, updatedMs = NOW)) + many, nowMs = NOW)
+        assertThat(page.total).isEqualTo(15)
+        assertThat(page.rows).hasSize(MAX_WIDGET_ROWS)
+        assertThat(MAX_WIDGET_ROWS).isEqualTo(10)
+        assertThat(page.rows.first()).isEqualTo(WidgetRow(
+            title = "Camilo", detail = "cierre · Duo Zodiacal azul × 2", link = "hubara://chat/wa_000000000103",
+            initials = "C", tone = WidgetTone.WARNING, tag = "Riesgo", since = WidgetSince("último", NOW),
+        ))
+        assertThat(page.rows[1].detail).isEqualTo("datos de envío")
+        assertThat(page.rows[1].tag).isNull()
     }
 
     @Test fun el_almacen_guarda_cada_pagina_por_separado_y_cerrar_sesion_las_borra() = runTest {
         val store = AmbientStore(context)
         store.clear()
         assertThat(store.pages.first()).isEqualTo(WidgetPages())  // nunca cargó: el widget pide abrir la app
-        store.savePage(WidgetPageKind.HOT, hotPage(listOf(HotSaleDto("wa_000000000103", name = "Camilo", stage = "etapa_cierre"))))
-        store.savePage(WidgetPageKind.HUMAN, humanPage(HumanDto(total = 1, human = listOf(HumanChatDto("wa_000000000102", name = "Sofía", unanswered = 2)))))
+        store.savePage(WidgetPageKind.HOT, hotPage(listOf(HotSaleDto("wa_000000000103", name = "Camilo", stage = "etapa_cierre")), NOW))
+        store.savePage(WidgetPageKind.HUMAN, humanPage(HumanDto(total = 1, human = listOf(HumanChatDto("wa_000000000102", name = "Sofía", unanswered = 2))), NOW))
         val pages = store.pages.first()
         assertThat(pages.hot?.rows?.single()?.title).isEqualTo("Camilo")
-        assertThat(pages.human?.rows?.single()?.title).isEqualTo("Sofía")
+        assertThat(pages[WidgetPageKind.HUMAN]?.rows?.single()?.title).isEqualTo("Sofía")
         assertThat(pages.fires).isNull()
         store.clear()
         assertThat(store.pages.first()).isEqualTo(WidgetPages())
     }
 
-    private fun fire(id: String, severity: Severity, title: String, subject: FireSubject, worse: Boolean = false) = Fire(
+    private fun fire(id: String, severity: Severity, title: String, subtitle: String, subject: FireSubject, worse: Boolean = false) = Fire(
         id = FireId.parse(id)!!, subject = subject, severity = severity, kind = FireKind.OTHER, gettingWorse = worse,
-        title = title, subtitle = "12 min sin respuesta · 4 mensajes", primaryAction = ActionRef("open_chat"),
-        decidedBy = "rules", updatedMs = 1_790_000_000_000L,
+        title = title, subtitle = subtitle, primaryAction = ActionRef("open_chat"), decidedBy = "rules", updatedMs = UPDATED,
     )
+
+    private companion object {
+        const val NOW = 1_790_000_000_000L
+        const val UPDATED = NOW - 120_000
+    }
 }

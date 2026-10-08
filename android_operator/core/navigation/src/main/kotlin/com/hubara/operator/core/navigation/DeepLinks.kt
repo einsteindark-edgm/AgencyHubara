@@ -2,6 +2,7 @@ package com.hubara.operator.core.navigation
 
 import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.SessionId
+import androidx.navigation3.runtime.NavKey
 import java.net.URI
 import java.net.URISyntaxException
 import java.net.URLDecoder
@@ -10,9 +11,12 @@ import java.net.URLEncoder
 /** Ids de las pantallas del servidor: los mismos que acepta `ScreenStore` (minúsculas, números, guion bajo). */
 private val SCREEN_ID = Regex("^[a-z0-9_]{1,64}$")
 
+/** Las pestañas que abre `hubara://tab/{nombre}` (el widget compacto), en su raíz. */
+private val TABS: Map<String, NavKey> = mapOf("chats" to InboxKey, "incendios" to FiresKey, "ordenes" to OrdersKey)
+
 /**
  * Los links que abren la notificación y el widget: `hubara://live/{id}`, `hubara://chat/{id}`,
- * `hubara://order/{id}` y `hubara://screen/{pantalla}?param=valor` (una pantalla del servidor). Llegan siempre en un intent explícito; igual se validan (MainActivity está
+ * `hubara://order/{id}`, `hubara://tab/{chats|incendios|ordenes}` y `hubara://screen/{pantalla}?param=valor` (una pantalla del servidor). Llegan siempre en un intent explícito; igual se validan (MainActivity está
  * exportada por ser el launcher). Un link inválido no navega.
  */
 object DeepLinks {
@@ -30,6 +34,7 @@ object DeepLinks {
             "live" -> SessionId.parse(id)?.let { SyntheticStack(FiresKey, listOf(LiveKey(it))) }
             "chat" -> SessionId.parse(id)?.let { SyntheticStack(InboxKey, listOf(ChatKey(it))) }
             "order" -> OrderId.parse(id)?.let { SyntheticStack(OrdersKey, listOf(OrderSheetKey(it))) }
+            "tab" -> TABS[id]?.let { SyntheticStack(it, emptyList()) }
             "screen" -> id.takeIf { SCREEN_ID.matches(it) }?.let { SyntheticStack(InboxKey, listOf(ScreenKey(it, query(uri.rawQuery)))) }
             else -> null
         }
@@ -38,6 +43,7 @@ object DeepLinks {
     fun live(session: SessionId) = "hubara://live/${session.raw}"
     fun chat(session: SessionId) = "hubara://chat/${session.raw}"
     fun order(order: OrderId) = "hubara://order/${order.raw}"
+    fun tab(root: NavKey): String = "hubara://tab/" + requireNotNull(TABS.entries.firstOrNull { it.value == root }?.key) { "no es una pestaña: $root" }
 
     fun screen(id: String, params: Map<String, String> = emptyMap()): String =
         "hubara://screen/$id" + if (params.isEmpty()) "" else "?" + params.entries.joinToString("&") { (k, v) ->

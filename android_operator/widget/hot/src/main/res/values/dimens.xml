@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <dimen name="widget_radius">24dp</dimen>
-    <dimen name="widget_padding">12dp</dimen>
-    <!-- Más que cualquier widget: la pila lo recorta a su espacio y así cada tarjeta lo llena entero. -->
-    <dimen name="widget_page_fill">2000dp</dimen>
-</resources>

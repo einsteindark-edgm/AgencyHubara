@@ -27,6 +27,15 @@ class DeepLinksTest {
         assertThat(DeepLinks.parse("hubara://screen/..")).isNull()
     }
 
+    // El widget compacto (2×2): tocar un contador abre esa pestaña, en su raíz.
+    @Test fun una_pestana() {
+        assertThat(DeepLinks.parse("hubara://tab/incendios")).isEqualTo(SyntheticStack(FiresKey, emptyList()))
+        assertThat(DeepLinks.parse("hubara://tab/chats")).isEqualTo(SyntheticStack(InboxKey, emptyList()))
+        assertThat(DeepLinks.parse("hubara://tab/ordenes")).isEqualTo(SyntheticStack(OrdersKey, emptyList()))
+        assertThat(DeepLinks.tab(FiresKey)).isEqualTo("hubara://tab/incendios")
+        assertThat(DeepLinks.parse("hubara://tab/borrar")).isNull()
+    }
+
     @Test fun un_link_invalido_no_navega() {
         assertThat(DeepLinks.parse(null)).isNull()
         assertThat(DeepLinks.parse("https://live/wa_test_x")).isNull()
