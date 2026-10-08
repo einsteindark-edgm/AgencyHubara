@@ -228,6 +228,25 @@ async def test_the_real_fires_of_the_vault_reach_the_push(h: _Harness) -> None:
     assert _reasons(port) == [("tok-ana", "fire", True)]
 
 
+async def test_the_moment_the_bot_hands_off_the_phones_get_an_urgent_push(h: _Harness) -> None:
+    """Prueba del operador (2026-10-07): «necesito hablar con alguien urgente», el bot responde «te comunico…» y
+    pasa a humano. Sin otro mensaje del cliente y a los pocos segundos, el aviso ya tiene que salir."""
+    h.seed("wa_test_urgente", {
+        "active_route": "humano", "escalation_reason": "EXPLICIT_REQUEST", "profile": {"name": "Valeria"},
+        "last_inbound_at_ms": NOW - 20_000,
+    }, events=[
+        {"role": "user", "content": "necesito hablar con alguien urgente", "timestamp": _iso(NOW - 20_000)},
+        {"role": "assistant", "content": "Te comunico con una persona del equipo 🙏",
+         "tools_used": ["escalate_to_human"], "timestamp": _iso(NOW - 15_000)},
+    ])
+    register_token(h.vault, "ana@equipo.test", "tok-ana", app_version="1.0.0", now_ms=NOW)
+    port = FakePushAdapter()
+
+    await mobile.push_dispatcher(h.deps, port).tick()
+
+    assert _reasons(port) == [("tok-ana", "fire", True)]
+
+
 # ── Lo que pide la app ───────────────────────────────────────────────────────
 
 

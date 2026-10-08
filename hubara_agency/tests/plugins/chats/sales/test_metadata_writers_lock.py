@@ -25,7 +25,6 @@ from exoclaw.agent.tools import ToolContext
 
 from src.platform.orders.port import OrderItem, OrderRegistrationResult, OrderShipping
 from src.platform.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.tools import order_registration
 from src.plugins.chats.agent.sales.tools.order_registration import RegisterOrderTool
 from src.plugins.chats.agent.sales.tools.ui_intents import SendShippingRatesTool
 
@@ -125,16 +124,19 @@ async def test_register_order_keeps_what_the_ingest_saved_while_it_wrote_the_ord
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     vault = _isolate_vault_dir
-    _seed(vault, episodes=[{"episode_id": "ep_001", "started_at_ms": _T0 - 60_000, "closed_at_ms": None}])
+    # El cliente ya confirmó la compra (sin eso `register_order` no registra nada).
+    _seed(vault, episodes=[{"episode_id": "ep_001", "started_at_ms": _T0 - 60_000, "closed_at_ms": None,
+                            "order_draft": {"confirmed_at_ms": _T0 - 30_000}}])
     other = _OtherProcess(vault, _customer_writes)
-    real_attach = order_registration.attach_order_to_active_episode
+    # El hueco: la lectura fresca de `update()` (bajo el candado) con la que la tool escribe el pedido.
+    real_fresh = FilesystemMetadataStore._fresh_locked
 
-    def attach_while_the_ingest_writes(data: dict[str, Any], **kwargs: Any) -> Any:
+    def read_then_the_ingest_writes(self: FilesystemMetadataStore, path: Path) -> Any:
+        snapshot = real_fresh(self, path)
         other.strike()
-        return real_attach(data, **kwargs)
+        return snapshot
 
-    # Entre leer el metadata y escribir el pedido, la tool anota la orden en el episodio: ahí cae el ingest.
-    monkeypatch.setattr(order_registration, "attach_order_to_active_episode", attach_while_the_ingest_writes)
+    monkeypatch.setattr(FilesystemMetadataStore, "_fresh_locked", read_then_the_ingest_writes)
     tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=_Port())
 
     result = json.loads(await tool.execute_with_context(

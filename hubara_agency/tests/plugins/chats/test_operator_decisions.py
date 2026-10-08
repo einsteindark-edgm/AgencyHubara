@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,12 @@ from src.plugins.chats.shared.mobile_rules import (
     suggest_actions,
 )
 from src.sdk import connectorkit
-from src.sdk.connectorkit import FakePerceptionAdapter, PerceptionResult, TypedAnswer, TypedQuestion
+from src.sdk.connectorkit import (
+    FakePerceptionAdapter,
+    PerceptionResult,
+    TypedAnswer,
+    TypedQuestion,
+)
 
 NOW = 1_800_000_000_000
 _MIN = 60_000
@@ -196,7 +202,7 @@ async def test_in_shadow_the_engine_records_everything_and_the_app_sees_the_rule
     # La conversación (Calidad LLM), la cola de desacuerdos, las métricas (la vara para subir) y el costo: el motor oficial.
     [row] = _rows(vault / LAURA / "evals" / "decisions.jsonl")
     assert (row["stage"], row["capability"], row["provider"], row["jev"], row["bundle"]) == (
-        "operador", "burbuja", "sombra", "1", "operador@1"
+        "operador", "burbuja", "sombra", "1", "operador-2@2"
     )
     assert [d["capability"] for d in _rows(vault / "_decisions" / "disagreements.jsonl")] == ["burbuja"]
     metrics = [r for path in (vault / "_decisions" / "metrics").glob("*.jsonl") for r in _rows(path)]
@@ -282,6 +288,52 @@ async def test_a_health_topic_stays_grave_whatever_jev_says(vault: Path, monkeyp
     cards, _used = await _fires(engine, [_chat_fire(reason="HEALTH_SAFETY")], _ANGRY)
 
     assert (cards[0]["severity"], cards[0]["kind"]) == ("grave", "health")
+
+
+async def test_a_customer_waiting_for_hours_stays_grave_even_if_jev_reads_it_as_today(
+    vault: Path, monkeypatch
+) -> None:
+    """Caso del 8440 (2026-10-07): 48 h sin respuesta; las reglas decían grave y Jev «hoy», y la tarjeta bajó de
+    categoría (fuera del radar, sin aviso). Jev puede bajar la gravedad de una espera corta, no la de horas."""
+    bots.write_capability_modes(vault, {"incendio": "on"})
+    _jev(monkeypatch, {
+        "incendio.gravedad": _choice("incendio.gravedad", "hoy", 0.9),
+        "incendio.tipo": _choice("incendio.tipo", "otro", 0.9),
+    })
+    _seed(vault, SOFIA, _ANGRY)
+    engine = _engine(vault)
+    two_days = _chat_fire(last_ms=NOW - 48 * 60 * _MIN)
+
+    await _fires(engine, [two_days], _ANGRY)
+    await engine.drain()
+    cards, used = await _fires(engine, [two_days], _ANGRY)
+
+    assert (cards[0]["severity"], cards[0]["kind"], used) == ("grave", "other", True)
+
+    # Una espera corta sí la puede bajar Jev (12 min, el cliente no pide nada urgente).
+    short = _chat_fire(last_ms=NOW - 12 * _MIN)
+    await _fires(engine, [short], _ANGRY)
+    await engine.drain()
+    cards, _used = await _fires(engine, [short], _ANGRY)
+    assert cards[0]["severity"] == "hoy"
+
+
+async def test_a_pending_handoff_stays_grave_whatever_jev_says(vault: Path, monkeypatch) -> None:
+    """Aviso inmediato en todo traspaso (2026-10-07): Jev no lo baja aunque lea «puede esperar»."""
+    bots.write_capability_modes(vault, {"incendio": "on"})
+    _jev(monkeypatch, {
+        "incendio.gravedad": _choice("incendio.gravedad", "puede_esperar", 0.95),
+        "incendio.tipo": _choice("incendio.tipo", "pide_humano", 0.9),
+    })
+    _seed(vault, SOFIA, _ANGRY)
+    engine = _engine(vault)
+    handed_off = replace(_chat_fire(last_ms=NOW - _MIN), handoff_pending=True)
+
+    await _fires(engine, [handed_off], _ANGRY)
+    await engine.drain()
+    cards, _used = await _fires(engine, [handed_off], _ANGRY)
+
+    assert (cards[0]["severity"], cards[0]["kind"]) == ("grave", "wants_human")
 
 
 async def test_jev_compares_with_its_previous_reading_to_say_it_gets_worse(vault: Path, monkeypatch) -> None:

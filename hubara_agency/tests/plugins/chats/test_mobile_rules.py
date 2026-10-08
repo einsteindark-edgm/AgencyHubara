@@ -487,6 +487,41 @@ def test_waiting_count_is_what_the_customer_wrote_since_the_last_reply() -> None
     assert unanswered_since(events)[1] == NOW - 7 * MIN
 
 
+def test_the_bot_handing_off_is_not_an_answer_the_customer_waits_for_a_person() -> None:
+    """Prueba del operador (2026-10-07): «necesito hablar con alguien urgente» → el bot respondió «te comunico…» y
+    pasó a humano. Ese mensaje contaba como respuesta: cero sin responder, sin incendio y sin aviso."""
+    from src.plugins.chats.shared.mobile_rules import handoff_pending, unanswered_since
+
+    events = [
+        {"role": "user", "content": "hola", "timestamp": _ts(NOW - 3 * MIN)},
+        {"role": "assistant", "content": "¡Hola! ¿En qué te ayudo?", "timestamp": _ts(NOW - 3 * MIN)},
+        {"role": "user", "content": "necesito hablar con alguien urgente", "timestamp": _ts(NOW - MIN)},
+        {"role": "assistant", "content": "Te comunico con una persona del equipo 🙏",
+         "tools_used": ["escalate_to_human"], "timestamp": _ts(NOW - MIN + 5_000)},
+    ]
+    assert unanswered_since(events) == (1, NOW - MIN)
+    assert handoff_pending(events) is True
+
+    # El operador respondió: ya no espera el traspaso.
+    reply = {"role": "assistant", "sender": "human", "content": "Hola, soy Ana", "timestamp": _ts(NOW)}
+    assert unanswered_since([*events, reply]) == (0, None)
+    assert handoff_pending([*events, reply]) is False
+    # Vuelve a escribir después de la respuesta del operador: espera normal, no un traspaso nuevo.
+    again = {"role": "user", "content": "?", "timestamp": _ts(NOW)}
+    assert handoff_pending([*events, reply, again]) is False
+    # Un bot que contestó sin traspasar sí es respuesta.
+    assert handoff_pending(events[:2]) is False
+
+
+def test_a_handoff_is_a_grave_fire_from_the_first_second() -> None:
+    """Decisión del operador (2026-10-07): aviso inmediato en TODO traspaso a humano, sin esperar los 10 min."""
+    just_handed_off = _chat(unanswered_count=1, waiting_since_ms=NOW - MIN // 2, last_inbound_ms=NOW - MIN // 2,
+                            escalation_reason=None, handoff_pending=True)
+    assert _fires([just_handed_off])[0]["severity"] == "grave"
+    # El mismo chat sin traspaso pendiente (el operador ya contestó y el cliente volvió a escribir): por tiempo.
+    assert _fires([replace(just_handed_off, handoff_pending=False)])[0]["severity"] == "espera"
+
+
 def test_display_name_is_a_real_first_name_or_nothing() -> None:
     from src.plugins.chats.shared.mobile_rules import display_name
 

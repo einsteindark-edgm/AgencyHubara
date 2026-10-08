@@ -71,6 +71,7 @@ from src.plugins.chats.shared.mobile_rules import (
     SuggestionFacts,
     detect_fires,
     display_name,
+    handoff_pending,
     hot_sales,
     last_sent_action,
     suggest_actions,
@@ -425,6 +426,7 @@ def _chat_fire_facts(deps: MobileDeps, session_id: str, metadata: dict[str, Any]
         unanswered_count=count,
         waiting_since_ms=since,
         last_inbound_ms=last_inbound if isinstance(last_inbound, int) else since,
+        handoff_pending=handoff_pending(events),
     )
 
 

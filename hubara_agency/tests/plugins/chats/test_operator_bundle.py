@@ -38,7 +38,7 @@ def test_the_operator_bundle_is_certified() -> None:
 
     assert check_bundle(decisions.BUNDLES_DIR / decisions.BUNDLE_ID, decisions.CATALOG_PATH) == []
     bundle = decisions.active_bundle()
-    assert (bundle.ref, sorted(bundle.capabilities)) == ("operador@1", ["burbuja", "incendio"])
+    assert (bundle.ref, sorted(bundle.capabilities)) == ("operador-2@2", ["burbuja", "incendio"])
     assert bundle.oracle == "jev-1.13"
 
 

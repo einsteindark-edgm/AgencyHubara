@@ -511,3 +511,28 @@ scenarios:
       Reporta los tres puntos. Si no hay notificación, dilo.
     checks:
       - screen_has: "000000000110"
+
+  - id: S21_aviso_al_traspasar
+    title: Un traspaso a humano avisa al instante, aunque el cliente no vuelva a escribir
+    resumen: "El cliente pide hablar con una persona, el bot le responde «te comunico…» y pasa a humano, y el cliente no escribe más. Ese mensaje del bot no cuenta como respuesta: en segundos llega el aviso de incendio grave con la app cerrada, y tocarlo abre el chat de Simón."
+    # Prueba del operador (2026-10-07): así no llegaba nada, porque el «te comunico…» del bot contaba como respuesta
+    # (cero mensajes sin responder) y además el aviso esperaba 10 minutos de espera. Mismo camino que S20.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1},
+            {expect_gone: "· GRAVE"}, home, {wait: 2},
+            {inject: "push-device e2e-emulador"},
+            {inject: "fire --name 'Simón Prueba' --session wa_000000000111 --just-handed-off"},
+            {relay_push: 40}, {wait: 6}]
+    locked_app: false
+    script:
+      - notifications
+      - {expect: "Simón pide un humano"}
+      - {shot: aviso}
+      - {tap: "Simón pide un humano"}
+      - {expect: "000000000111"}
+    goal: |
+      Estás en la pantalla de inicio de Android y la app «Operador» quedó en segundo plano.
+      1. Abre la cortina de notificaciones y busca un aviso de la app sobre Simón.
+      2. Tócalo y confirma que abre el chat de Simón (000000000111).
+      Reporta los dos puntos. Si no hay aviso, dilo.
+    checks:
+      - screen_has: "000000000111"

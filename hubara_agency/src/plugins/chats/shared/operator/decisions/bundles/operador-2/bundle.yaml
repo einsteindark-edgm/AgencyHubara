@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-bundle.schema.json
+#
+# El paquete de la App Operador: qué burbuja va primero en el chat y cómo se
+# clasifica cada incendio de chat, sobre el mismo motor de las capacidades de
+# ventas (`BundledCapability` + `decide_for_session`). Cada capacidad se
+# enciende por comando (`decisions/control.py`: off | shadow | canary | on),
+# dentro del techo de Terraform `SALES_CAPABILITIES_CEILING`.
+#
+# v2 (2026-10-07) = operador@1 con dos pisos en `incendio`: un traspaso a
+# humano que nadie ha respondido y una espera de una hora o más siguen graves
+# aunque Jev lea otra cosa (caso del 8440: 48 h sin respuesta, Jev «hoy», la
+# tarjeta salió del radar y no avisó). `burbuja` no cambia.
+id: operador-2
+version: 2
+engine_contract: 1
+oracle: jev-1.13
+capabilities: [burbuja, incendio]

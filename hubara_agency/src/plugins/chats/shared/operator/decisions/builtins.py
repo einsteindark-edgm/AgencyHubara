@@ -88,6 +88,10 @@ class FireInput:
     events: tuple[Mapping[str, Any], ...] = field(default=())
     #: Lo que Jev leyó la vez anterior («hoy, pregunta por su pedido»), o None.
     previous: str | None = None
+    #: El bot pasó la conversación a humano y nadie de la tienda ha respondido (v2: sigue grave).
+    handoff: bool = False
+    #: Minutos que lleva esperando (v2: una hora o más sigue grave si las reglas dicen grave).
+    waited_min: int = 0
 
 
 def _one_line(text: Any, max_chars: int) -> str:

@@ -581,6 +581,13 @@ en canary/on, y el techo de producción es `off`.
   muestra el paquete junto al de la tienda (`bundles`). Lo único propio de
   la app es la latencia: la burbuja espera 2,5 s como mucho, los incendios
   nada (caché por versión del chat y modo).
+- **`operador-2@2`** (2026-10-07, la activa: `decisions.BUNDLE_ID`) es
+  `operador@1` con dos pisos en `incendio`: lo que las reglas ven grave por un
+  traspaso a humano que nadie ha respondido (`inp.handoff`) o por una hora o
+  más de espera (`inp.waited_min`) Jev no lo baja. Caso del 8440: 48 h sin
+  respuesta, las reglas «grave», Jev «hoy» (canary) → la tarjeta salió del
+  radar y no avisó. La hora de espera entra en la llave de la caché: Jev
+  relee un chat callado una vez por hora.
 
 **F8 hecho (2026-10-02).**
 - El lector de Jev del Order Sentinel tiene su paquete,

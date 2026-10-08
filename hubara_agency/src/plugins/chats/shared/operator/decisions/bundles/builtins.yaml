@@ -16,8 +16,10 @@ engine_contract: 1
 inputs:
   # Un chat con sus burbujas legales (en el orden de las reglas).
   Burbujas: {stage: string}
-  # Un incendio de chat: lo que Jev leyó la vez anterior y el motivo del relevo.
-  Incendio: {previous: "string?", reason: "string?"}
+  # Un incendio de chat: lo que Jev leyó la vez anterior, el motivo del relevo,
+  # si el bot pasó a humano y nadie ha respondido (v2) y cuántos minutos lleva
+  # esperando (v2). Opcionales: operador@1 no los lee.
+  Incendio: {previous: "string?", reason: "string?", handoff: "bool?", waited_min: "int?"}
 
 # Las capacidades que pide el código de la app (`chats/api/mobile_decisions.py`): todas en el paquete (DB003).
 capabilities: [burbuja, incendio]
