@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -49,7 +50,25 @@ data class ChatUiState(
     val pending: ImmutableList<PendingAction> = persistentListOf(),
     val busy: Boolean = false,
     val error: String? = null,
+    /** Qué va donde va el historial: los mensajes, «Cargando…» o el error con reintentar. */
+    val history: HistoryView = HistoryView.MESSAGES,
 )
+
+/** Cómo va la carga del historial desde el backend. */
+enum class HistoryLoad { LOADING, LOADED, FAILED }
+
+enum class HistoryView { LOADING, FAILED, MESSAGES }
+
+/**
+ * Con mensajes guardados en Room se ven al instante (la recarga va callada); sin nada guardado, «Cargando…» mientras
+ * llega el historial, y si no llega, el error con reintentar: nunca un chat vacío que parece no tener mensajes.
+ */
+fun historyLoad(load: HistoryLoad, hasMessages: Boolean): HistoryView = when {
+    hasMessages -> HistoryView.MESSAGES
+    load == HistoryLoad.LOADING -> HistoryView.LOADING
+    load == HistoryLoad.FAILED -> HistoryView.FAILED
+    else -> HistoryView.MESSAGES
+}
 
 @OptIn(FlowPreview::class)
 @HiltViewModel(assistedFactory = ChatViewModel.Factory::class)
@@ -70,11 +89,12 @@ class ChatViewModel @AssistedInject constructor(
 
     private val busy = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
+    private val load = MutableStateFlow(HistoryLoad.LOADING)
     private val watch = sync.watch(sessionId)
 
     val state: StateFlow<ChatUiState> = combine(
-        chats.observeChat(sessionId), suggestions.observe(sessionId), busy, error,
-    ) { chat, set, b, e ->
+        chats.observeChat(sessionId), suggestions.observe(sessionId), busy, error, load,
+    ) { chat, set, b, e, l ->
         val human = chat.route == Route.HUMAN
         ChatUiState(
             phone = chat.phone,
@@ -90,8 +110,9 @@ class ChatViewModel @AssistedInject constructor(
             pending = chat.pendingActions.toImmutableList(),
             busy = b,
             error = e,
+            history = historyLoad(l, hasMessages = chat.messages.isNotEmpty()),
         )
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(history = HistoryView.LOADING))
 
     init {
         viewModelScope.launch {
@@ -113,9 +134,12 @@ class ChatViewModel @AssistedInject constructor(
 
     fun refresh() {
         viewModelScope.launch {
+            load.value = HistoryLoad.LOADING
             val failed = chats.refresh(sessionId).isFailure
+            load.value = if (failed) HistoryLoad.FAILED else HistoryLoad.LOADED
+            // Sin nada guardado, el error con reintentar ya lo dice; con mensajes, el aviso de que son los guardados.
+            if (failed && chats.observeChat(sessionId).first().messages.isNotEmpty()) error.value = "Sin conexión: mostrando lo último guardado."
             suggestions.refresh(sessionId)
-            if (failed) error.value = "Sin conexión: mostrando lo último guardado."
         }
     }
 

@@ -4,6 +4,7 @@ import com.hubara.operator.core.network.dto.DeviceRequest
 import com.hubara.operator.core.network.dto.FiresDto
 import com.hubara.operator.core.network.dto.HandoffResponseDto
 import com.hubara.operator.core.network.dto.HotDto
+import com.hubara.operator.core.network.dto.HumanDto
 import com.hubara.operator.core.network.dto.HumanMessageRequest
 import com.hubara.operator.core.network.dto.HumanMessageResponseDto
 import com.hubara.operator.core.network.dto.InterveneRequest
@@ -66,6 +67,10 @@ interface OperatorApi {
 
     @GET("api/chats/mobile/hot")
     suspend fun hot(): HotDto
+
+    /** Los chats que atiende una persona (página «Humano» del widget). */
+    @GET("api/chats/mobile/human")
+    suspend fun human(): HumanDto
 
     @GET("api/orders/orders")
     suspend fun orders(@Query("limit") limit: Int = 50): OrderListDto

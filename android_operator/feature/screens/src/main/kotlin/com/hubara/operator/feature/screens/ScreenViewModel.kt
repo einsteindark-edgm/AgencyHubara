@@ -48,7 +48,9 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -81,6 +83,10 @@ data class ScreenUi(
     val form: Map<String, JsonElement> = emptyMap(),
     /** Hay una llamada en curso (los botones esperan). */
     val busy: Boolean = false,
+    /** Qué componente la lanzó (su `origin`): ese botón muestra que está trabajando. */
+    val working: String? = null,
+    /** El operador pidió recargar (tirar para actualizar o una acción `refresh`): se le muestra hasta que termina. */
+    val manualRefresh: Boolean = false,
     val confirm: PendingConfirm? = null,
 ) {
     private val required: List<DataSource> get() = doc?.data?.values?.filterNot { it.optional }.orEmpty()
@@ -91,8 +97,11 @@ data class ScreenUi(
     /** Un dato obligatorio falló y no hay nada que mostrar. */
     val broken: Boolean get() = phase == ScreenPhase.READY && required.any { it.id !in data && it.id in failed }
 
-    /** Recargando con algo ya en pantalla (el indicador de «tirar para actualizar»). */
+    /** Recargando con algo ya en pantalla. */
     val refreshing: Boolean get() = loading.isNotEmpty() && !waiting
+
+    /** El indicador de «tirar para actualizar»: solo si lo pidió el operador; las recargas por eventos son calladas. */
+    val pullIndicator: Boolean get() = manualRefresh && refreshing
 
     /** El estado de cada fuente para las plantillas: `{{status.chats.failed}}` (sin red, mostrando lo guardado). */
     private val status: JsonObject
@@ -154,10 +163,18 @@ class ScreenViewModel @AssistedInject constructor(
     private val requested = mutableMapOf<String, String>()
 
     /** Lo que se hace si el operador acepta la confirmación abierta (una llamada con `confirm` o el `then` de `confirm`). */
-    private var pendingAction: Pair<Action, Scope>? = null
+    private var pendingAction: Triple<Action, Scope, String?>? = null
 
     /** La fuente del teléfono que se está mirando por fuente de la pantalla (cambia si cambian sus parámetros). */
     private val watching = mutableMapOf<String, Pair<AppRequest, Job>>()
+
+    /**
+     * Fuentes del teléfono que ya cargaron bien una vez. Hasta entonces un valor vacío de Room (recién instalada, o
+     * tras cerrar sesión) no se muestra: sería «No hay chats» mientras llegan. Se guarda aparte por si la carga trae
+     * justo eso.
+     */
+    private val settled = mutableSetOf<String>()
+    private val heldEmpty = mutableMapOf<String, JsonElement>()
     private var typingJob: Job? = null
     private var pollers: List<Job> = emptyList()
     private var visible = false
@@ -182,12 +199,18 @@ class ScreenViewModel @AssistedInject constructor(
 
     /** Tirar para actualizar: todas las fuentes. */
     fun refresh() {
-        _state.value.doc?.data?.values?.forEach { fetch(it) }
+        val sources = _state.value.doc?.data?.values.orEmpty()
+        if (sources.isNotEmpty()) _state.update { it.copy(manualRefresh = true) }
+        sources.forEach { fetch(it) }
     }
 
-    fun onAction(action: Action, scope: Scope) {
+    /** [origin]: quién la lanzó (un botón), para que ese muestre que está trabajando mientras espera al backend. */
+    fun onAction(action: Action, scope: Scope, origin: String? = null) {
         viewModelScope.launch {
-            safeCall { execute(action, scope) }.onFailure { message("No se pudo completar.") }
+            safeCall { execute(action, scope, origin) }.onFailure {
+                _state.update { it.copy(busy = false, working = null) }
+                message("No se pudo completar.")
+            }
         }
     }
 
@@ -221,10 +244,10 @@ class ScreenViewModel @AssistedInject constructor(
         if (accepted && pending != null) {
             viewModelScope.launch {
                 safeCall {
-                    val (action, scope) = pending
-                    if (action is Action.Call) call(action, scope) else execute(action, scope)
+                    val (action, scope, origin) = pending
+                    if (action is Action.Call) call(action, scope, origin) else execute(action, scope, origin)
                 }.onFailure {
-                    _state.update { it.copy(busy = false) }
+                    _state.update { it.copy(busy = false, working = null) }
                     message("No se pudo completar.")
                 }
             }
@@ -301,20 +324,45 @@ class ScreenViewModel @AssistedInject constructor(
         }
         if (watching[source.id]?.first != request) {
             watching.remove(source.id)?.second?.cancel()
+            settled -= source.id
+            heldEmpty -= source.id
             watching[source.id] = request to viewModelScope.launch {
                 safeCall {
-                    app.observe(request.params).collect { value -> _state.update { it.copy(data = it.data + (source.id to value)) } }
+                    app.observe(request.params).collect { value ->
+                        if (source.id in settled || !value.isEmptyValue()) {
+                            heldEmpty -= source.id
+                            _state.update { it.copy(data = it.data + (source.id to value)) }
+                        } else {
+                            heldEmpty[source.id] = value
+                        }
+                    }
                 }
             }
         }
         fetches[source.id]?.cancel()
         fetches[source.id] = viewModelScope.launch {
-            _state.update { it.copy(loading = it.loading + source.id) }
+            starting(source.id)
             val ok = safeCall { app.refresh(request.params).getOrThrow() }.isSuccess
-            _state.update { ui ->
-                ui.copy(failed = if (ok) ui.failed - source.id else ui.failed + source.id, loading = ui.loading - source.id)
-            }
+            if (ok) settled += source.id
+            val held = if (ok) heldEmpty.remove(source.id) else null
+            finished(source.id, ok) { ui -> if (held != null && source.id !in ui.data) ui.data + (source.id to held) else ui.data }
         }
+    }
+
+    /** Empieza a pedir una fuente. Sin nada en pantalla, un error anterior deja lugar al indicador (reintentar). */
+    private fun starting(id: String) = _state.update { ui ->
+        ui.copy(loading = ui.loading + id, failed = if (id in ui.data) ui.failed else ui.failed - id)
+    }
+
+    /** Terminó de pedir una fuente; con la última, se apaga el indicador de la recarga que pidió el operador. */
+    private fun finished(id: String, ok: Boolean, data: (ScreenUi) -> Map<String, JsonElement> = { it.data }) = _state.update { ui ->
+        val loading = ui.loading - id
+        ui.copy(
+            data = data(ui),
+            failed = if (ok) ui.failed - id else ui.failed + id,
+            loading = loading,
+            manualRefresh = ui.manualRefresh && loading.isNotEmpty(),
+        )
     }
 
     private fun fetch(source: DataSource) {
@@ -331,24 +379,14 @@ class ScreenViewModel @AssistedInject constructor(
         fetches[source.id] = viewModelScope.launch {
             // Mientras llega, lo que se guardó la vez anterior con esta misma ruta.
             val saved = cache.read(key)
-            _state.update { ui ->
-                ui.copy(
-                    loading = ui.loading + source.id,
-                    data = if (saved != null && source.id !in ui.data) ui.data + (source.id to saved) else ui.data,
-                )
-            }
+            if (saved != null) _state.update { ui -> if (source.id !in ui.data) ui.copy(data = ui.data + (source.id to saved)) else ui }
+            starting(source.id)
             val result = safeCall { data.execute(call).getOrThrow() }
             result.onSuccess { value ->
                 cache.write(key, value)
-                _state.update { it.copy(data = it.data + (source.id to value), failed = it.failed - source.id, loading = it.loading - source.id) }
+                finished(source.id, ok = true) { it.data + (source.id to value) }
             }.onFailure {
-                _state.update { ui ->
-                    ui.copy(
-                        data = if (saved != null) ui.data + (source.id to saved) else ui.data,
-                        failed = ui.failed + source.id,
-                        loading = ui.loading - source.id,
-                    )
-                }
+                finished(source.id, ok = false) { ui -> if (saved != null) ui.data + (source.id to saved) else ui.data }
             }
         }
     }
@@ -368,7 +406,7 @@ class ScreenViewModel @AssistedInject constructor(
 
     // ── Acciones ─────────────────────────────────────────────────────────────────────────────────
 
-    private suspend fun execute(action: Action, scope: Scope) {
+    private suspend fun execute(action: Action, scope: Scope, origin: String? = null) {
         when (action) {
             is Action.Navigate -> {
                 val values = action.params.mapValues { it.value.text(scope, env) }
@@ -385,8 +423,9 @@ class ScreenViewModel @AssistedInject constructor(
             }
             Action.Back -> _effects.send(ScreenEffect.Back)
             is Action.Refresh -> {
-                val sources = _state.value.doc?.data?.values.orEmpty()
-                sources.filter { action.sources.isEmpty() || it.id in action.sources }.forEach { fetch(it) }
+                val sources = _state.value.doc?.data?.values.orEmpty().filter { action.sources.isEmpty() || it.id in action.sources }
+                if (sources.isNotEmpty()) _state.update { it.copy(manualRefresh = true) }
+                sources.forEach { fetch(it) }
             }
             is Action.SetState -> {
                 val values = (resolveJson(JsonObject(action.values), scope, env) as JsonObject)
@@ -395,13 +434,20 @@ class ScreenViewModel @AssistedInject constructor(
             }
             is Action.Call -> {
                 val confirm = action.confirm
-                if (confirm == null) call(action, scope) else ask(confirm, action, scope)
+                if (confirm == null) call(action, scope, origin) else ask(confirm, action, scope, origin)
             }
-            is Action.AskFirst -> action.then?.let { ask(action.confirm, it, scope) }
-            is Action.If -> (if (action.condition.evaluate(scope, env).truthy) action.then else action.otherwise)?.let { execute(it, scope) }
+            is Action.AskFirst -> action.then?.let { ask(action.confirm, it, scope, origin) }
+            is Action.If -> (if (action.condition.evaluate(scope, env).truthy) action.then else action.otherwise)?.let { execute(it, scope, origin) }
             is Action.Native -> {
                 val args = action.args?.let { resolveJson(it, scope, env) } as? JsonObject ?: JsonObject(emptyMap())
-                when (val outcome = native.run(action.name, args)) {
+                // Tomar, devolver, cerrar sesión… esperan al backend: ocupado mientras tanto y sin doble toque.
+                if (!startWorking(origin)) return
+                val outcome = try {
+                    native.run(action.name, args)
+                } finally {
+                    _state.update { it.copy(busy = false, working = null) }
+                }
+                when (outcome) {
                     NativeOutcome.Done -> Unit
                     is NativeOutcome.Message -> message(outcome.text)
                     is NativeOutcome.OpenUrl -> _effects.send(ScreenEffect.OpenUrl(outcome.url))
@@ -410,14 +456,14 @@ class ScreenViewModel @AssistedInject constructor(
             }
             is Action.Message -> message(action.text.text(scope, env))
             is Action.Copy -> _effects.send(ScreenEffect.Copy(action.text.text(scope, env)))
-            is Action.Sequence -> action.actions.forEach { execute(it, scope) }
+            is Action.Sequence -> action.actions.forEach { execute(it, scope, origin) }
             is Action.Unknown -> Unit // Una acción de un catálogo más nuevo: no hace nada (la CI ya la habría rechazado).
         }
     }
 
     /** Abre el diálogo de confirmación; si el operador acepta, [onConfirm] hace [then]. */
-    private fun ask(confirm: Confirm, then: Action, scope: Scope) {
-        pendingAction = then to scope
+    private fun ask(confirm: Confirm, then: Action, scope: Scope, origin: String?) {
+        pendingAction = Triple(then, scope, origin)
         _state.update {
             it.copy(
                 confirm = PendingConfirm(
@@ -430,15 +476,24 @@ class ScreenViewModel @AssistedInject constructor(
         }
     }
 
-    private suspend fun call(action: Action.Call, scope: Scope) {
+    /** Ocupa la pantalla para una llamada; false si ya hay otra en curso (un doble toque no sale dos veces). */
+    private fun startWorking(origin: String?): Boolean {
+        var started = false
+        _state.update { ui ->
+            if (ui.busy) ui else ui.copy(busy = true, working = origin).also { started = true }
+        }
+        return started
+    }
+
+    private suspend fun call(action: Action.Call, scope: Scope, origin: String?) {
         val http = action.resolve(scope, env)
         if (http == null) {
             message("Esa acción no se puede hacer desde la app.")
             return
         }
-        _state.update { it.copy(busy = true) }
+        if (!startWorking(origin)) return
         val result = safeCall { data.execute(http).getOrThrow() }
-        _state.update { it.copy(busy = false) }
+        _state.update { it.copy(busy = false, working = null) }
         result.onSuccess {
             action.success?.text(scope, env)?.takeIf { it.isNotBlank() }?.let { message(it) }
             action.then.forEach { execute(it, scope) }
@@ -449,4 +504,12 @@ class ScreenViewModel @AssistedInject constructor(
     }
 
     private suspend fun message(text: String) = _effects.send(ScreenEffect.Message(text))
+}
+
+/** Lo que una fuente del teléfono da antes de tener nada: lista u objeto vacíos, o nada. */
+private fun JsonElement.isEmptyValue(): Boolean = when (this) {
+    is JsonArray -> isEmpty()
+    is JsonObject -> isEmpty()
+    is JsonNull -> true
+    else -> false
 }

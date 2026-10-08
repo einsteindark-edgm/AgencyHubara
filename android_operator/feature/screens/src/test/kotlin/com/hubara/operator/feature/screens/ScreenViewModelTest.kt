@@ -23,6 +23,7 @@ import com.hubara.operator.core.sdui.HttpCall
 import com.hubara.operator.core.sdui.ScreenDoc
 import com.hubara.operator.core.sdui.Template
 import com.hubara.operator.core.sdui.parseScreen
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -55,19 +56,30 @@ class ScreenViewModelTest {
     private val effects = mutableListOf<ScreenEffect>()
     private val chatsFlow = MutableStateFlow<JsonElement>(json("""[{"session_id": "wa_000000000101", "title": "Laura"}]"""))
     private var chatsRefresh: Result<Unit> = Result.success(Unit)
+    /** Si no es null, la recarga de la bandeja espera a que el test la suelte (la red tarda). */
+    private var chatsGate: CompletableDeferred<Unit>? = null
+    private var nativeGate: CompletableDeferred<Unit>? = null
     private var refreshes = 0
     private val nativeCalls = mutableListOf<Pair<String, JsonObject>>()
     private var nativeOutcome: NativeOutcome = NativeOutcome.Done
     private val appSources: Map<String, AppSource> = mapOf(
         "conversations" to object : AppSource {
             override fun observe(params: Map<String, String>) = chatsFlow
-            override suspend fun refresh(params: Map<String, String>): Result<Unit> { refreshes++; return chatsRefresh }
+            override suspend fun refresh(params: Map<String, String>): Result<Unit> {
+                refreshes++
+                chatsGate?.await()
+                return chatsRefresh
+            }
         },
         "chat" to object : AppSource {
             override fun observe(params: Map<String, String>) = flowOf(json("""{"title": "chat de ${params["session"]}"}"""))
         },
     )
-    private val native = NativeActions { name, args -> nativeCalls += name to args; nativeOutcome }
+    private val native = NativeActions { name, args ->
+        nativeCalls += name to args
+        nativeGate?.await()
+        nativeOutcome
+    }
 
     private fun TestScope.vm(id: String = "ventas", params: Map<String, String> = emptyMap()): ScreenViewModel {
         Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
@@ -337,6 +349,107 @@ class ScreenViewModelTest {
         assertThat(data.calls).hasSize(2)
     }
 
+    // ── Cargando (2026-10-08): el indicador solo cuando no hay nada que mostrar, nunca eterno ──────────
+
+    @Test fun una_fuente_del_telefono_vacia_espera_la_primera_carga_en_vez_de_decir_que_no_hay_nada() = runTest {
+        // Recién instalada, Room está vacío: la bandeja decía «No hay chats» mientras llegaban.
+        chatsFlow.value = json("[]")
+        chatsGate = CompletableDeferred()
+        docs.fresh["chats"] = CHATS
+        val vm = vm("chats")
+        assertThat(vm.state.value.waiting).isTrue()
+        chatsGate!!.complete(Unit)
+        assertThat(vm.state.value.waiting).isFalse()
+        assertThat(vm.state.value.data["chats"]).isEqualTo(json("[]"))  // ya cargó: ahora sí, vacía de verdad
+    }
+
+    @Test fun una_fuente_del_telefono_vacia_que_no_carga_ofrece_reintentar() = runTest {
+        chatsFlow.value = json("[]")
+        chatsRefresh = Result.failure(ScreenCallError(0, "Sin conexión con el servidor."))
+        docs.fresh["chats"] = CHATS
+        val vm = vm("chats")
+        assertThat(vm.state.value.waiting).isFalse()
+        assertThat(vm.state.value.broken).isTrue()
+        chatsRefresh = Result.success(Unit)
+        vm.retry()
+        assertThat(vm.state.value.broken).isFalse()
+        assertThat(vm.state.value.data["chats"]).isEqualTo(json("[]"))
+    }
+
+    @Test fun con_algo_guardado_se_ve_al_instante_y_la_recarga_va_callada() = runTest {
+        chatsGate = CompletableDeferred()
+        docs.fresh["chats"] = CHATS
+        val vm = vm("chats")
+        assertThat(vm.state.value.waiting).isFalse()
+        assertThat(vm.state.value.data["chats"]).isNotNull()
+        assertThat(vm.state.value.refreshing).isTrue()
+        assertThat(vm.state.value.pullIndicator).isFalse()  // lo guardado no parpadea ni se tapa
+    }
+
+    @Test fun recargar_a_mano_muestra_el_indicador_hasta_que_llega_y_un_aviso_del_servidor_no() = runTest {
+        docs.fresh["ventas"] = FILTRADA
+        val vm = vm()
+        data.hold = CompletableDeferred()
+        changes.flow.emit("marketing")
+        assertThat(vm.state.value.refreshing).isTrue()
+        assertThat(vm.state.value.pullIndicator).isFalse()
+        data.hold!!.complete(Unit)
+
+        data.hold = CompletableDeferred()
+        vm.onAction(Action.Refresh(emptyList()), vm.state.value.scope(NOW))
+        assertThat(vm.state.value.pullIndicator).isTrue()
+        data.hold!!.complete(Unit)
+        assertThat(vm.state.value.pullIndicator).isFalse()
+
+        data.hold = CompletableDeferred()
+        vm.refresh()  // tirar para actualizar
+        assertThat(vm.state.value.pullIndicator).isTrue()
+        data.hold!!.complete(Unit)
+        assertThat(vm.state.value.pullIndicator).isFalse()
+    }
+
+    @Test fun una_llamada_marca_trabajando_el_boton_que_la_lanzo_y_no_sale_dos_veces() = runTest {
+        docs.fresh["ventas"] = VENTAS.replace(""""confirm": { "title": "¿Confirmar el pago de {{item.id}}?", "accept": "Confirmar" },""", "")
+        val vm = vm()
+        val call = vm.state.value.doc!!.body.single { it.type == "button" }.action!!
+        val scope = vm.state.value.scope(NOW).with("item", json("""{"id": "order_01"}"""))
+        data.hold = CompletableDeferred()
+        vm.onAction(call, scope, origin = "boton-41")
+        vm.onAction(call, scope, origin = "boton-41")  // el doble toque
+        assertThat(data.calls.count { it.method == "PATCH" }).isEqualTo(1)
+        assertThat(vm.state.value.busy).isTrue()
+        assertThat(vm.state.value.working).isEqualTo("boton-41")
+        data.hold!!.complete(Unit)
+        assertThat(vm.state.value.busy).isFalse()
+        assertThat(vm.state.value.working).isNull()
+    }
+
+    @Test fun una_llamada_con_confirmacion_marca_el_boton_que_la_pidio() = runTest {
+        docs.fresh["ventas"] = VENTAS
+        val vm = vm()
+        val call = vm.state.value.doc!!.body.single { it.type == "button" }.action!!
+        data.hold = CompletableDeferred()
+        vm.onAction(call, vm.state.value.scope(NOW).with("item", json("""{"id": "order_01"}""")), origin = "boton-41")
+        assertThat(vm.state.value.busy).isFalse()  // todavía pregunta
+        vm.onConfirm(accepted = true)
+        assertThat(vm.state.value.working).isEqualTo("boton-41")
+        data.hold!!.complete(Unit)
+        assertThat(vm.state.value.busy).isFalse()
+    }
+
+    @Test fun una_accion_nativa_que_espera_tambien_marca_trabajando_y_no_se_repite() = runTest {
+        docs.fresh["chats"] = CHATS
+        val vm = vm("chats")
+        nativeGate = CompletableDeferred()
+        val back = Action.Native("return_to_bot", json("""{"session": "wa_000000000101"}"""))
+        vm.onAction(back, vm.state.value.scope(NOW), origin = "menu")
+        vm.onAction(back, vm.state.value.scope(NOW), origin = "menu")
+        assertThat(nativeCalls).hasSize(1)
+        assertThat(vm.state.value.busy).isTrue()
+        nativeGate!!.complete(Unit)
+        assertThat(vm.state.value.busy).isFalse()
+    }
+
     companion object {
         const val NOW = 1_790_000_000_000L
 
@@ -394,8 +507,12 @@ class FakeData : ScreenData {
     fun fail(path: String) { failing += path }
     fun paths() = calls.filter { it.method == "GET" }.map { it.path }
 
+    /** Si no es null, cada pedido espera a que el test lo suelte (la red tarda). */
+    var hold: CompletableDeferred<Unit>? = null
+
     override suspend fun execute(call: HttpCall): Result<JsonElement> {
         calls += call
+        hold?.await()
         return responder(call)
     }
 }

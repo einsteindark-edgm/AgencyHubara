@@ -108,7 +108,8 @@ class Run:
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".
         Con argumento: {"link": uri}, {"wait": s}, {"inject": "fire …"}, {"adb": "shell cmd"},
-        {"tap": "texto"}, {"type": "ascii"}, {"expect": "texto"}, {"expect_gone": "texto"},
+        {"tap": "texto"}, {"type": "ascii"}, {"swipe": {"at": "texto", "dx": px, "dy": px}},
+        {"expect": "texto"}, {"expect_gone": "texto"},
         {"expect_all": [...] | {texts, in_order, above_focused}}, {"assert": {<chequeo>}},
         {"shot": "nombre"} (captura a mitad del escenario, la que muestra el comentario del PR),
         {"relay_push": s} (espera hasta s segundos el push que mandó el backend y se lo entrega a la app).
@@ -146,6 +147,16 @@ class Run:
             dev.tap(node)
         elif kind == "type":
             dev.type_ascii(arg)
+        elif kind == "swipe":
+            # Deslizar sobre un texto (p. ej. la pila de páginas del widget): {"at": texto, "dx": px, "dy": px}.
+            # «at» y no «on»: YAML lee `on` como verdadero.
+            text, timeout = _text_and_timeout(arg["at"], 20)
+            node, _ = dev.wait_for(text, timeout=timeout)
+            if not node:
+                raise StepFailed(f"no apareció «{text}» para deslizar")
+            x, y = node.center
+            dev.sh(f"input swipe {x} {y} {x + int(arg.get('dx', 0))} {y + int(arg.get('dy', 0))} {int(arg.get('ms', 250))}")
+            time.sleep(1.5)  # la animación de la pila termina antes de mirar
         elif kind == "expect":
             text, timeout = _text_and_timeout(arg, 20)
             if not dev.wait_for(text, timeout=timeout)[0]:

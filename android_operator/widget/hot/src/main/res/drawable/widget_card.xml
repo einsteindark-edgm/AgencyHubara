@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Una página de la pila: opaca y con su propio tono, para que la de atrás no se transparente. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/widget_card" />
+    <corners android:radius="16dp" />
+</shape>

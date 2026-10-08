@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Los colores del widget salen de la paleta de la app (core/designsystem/Color.kt: surfaceContainer, onSurface,
+     onSurfaceVariant, error, primary). Un RemoteViews no ve MaterialTheme: van como recursos, con su versión nocturna. -->
+<resources>
+    <color name="widget_background">#FFEEEDF3</color>
+    <color name="widget_card">#FFF9F9FE</color>
+    <color name="widget_on_surface">#FF1A1C1F</color>
+    <color name="widget_on_surface_variant">#FF424751</color>
+    <color name="widget_urgent">#FFBA1A1A</color>
+    <color name="widget_accent">#FF005DB8</color>
+</resources>

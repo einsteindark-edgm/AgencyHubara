@@ -26,7 +26,6 @@ import com.hubara.operator.core.data.repo.FireRepository
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.network.OperatorJson
 import com.hubara.operator.core.network.api.OperatorApi
-import com.hubara.operator.core.network.dto.HotSaleDto
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -36,27 +35,31 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.builtins.ListSerializer
 
 val Context.ambientStore: DataStore<Preferences> by preferencesDataStore(name = "ambient")
 
-/** Estado de «fuera de la app»: las ventas calientes del widget y los incendios ya avisados. */
+/** Estado de «fuera de la app»: las páginas del widget y los incendios ya avisados. */
 @Singleton
 class AmbientStore @Inject constructor(@ApplicationContext private val context: Context) {
-    private val hotKey = stringPreferencesKey("hot_json")
     private val notifiedKey = stringSetPreferencesKey("notified_fires")
 
-    val hot: Flow<List<HotSaleDto>> = context.ambientStore.data.map { prefs ->
-        prefs[hotKey]?.let { runCatching { OperatorJson.decodeFromString(HOT_LIST, it) }.getOrNull() }.orEmpty()
+    /** Cada página por separado: si una no se pudo renovar, las otras siguen al día. */
+    private fun pageKey(kind: WidgetPageKind) = stringPreferencesKey("widget_${kind.name.lowercase()}")
+
+    val pages: Flow<WidgetPages> = context.ambientStore.data.map { prefs ->
+        fun read(kind: WidgetPageKind) = prefs[pageKey(kind)]?.let { runCatching { OperatorJson.decodeFromString(WidgetPage.serializer(), it) }.getOrNull() }
+        WidgetPages(read(WidgetPageKind.HOT), read(WidgetPageKind.FIRES), read(WidgetPageKind.HUMAN))
     }
 
-    suspend fun saveHot(list: List<HotSaleDto>) {
-        context.ambientStore.edit { it[hotKey] = OperatorJson.encodeToString(HOT_LIST, list.take(MAX_WIDGET_ROWS)) }
+    /** Guarda una página con [MAX_WIDGET_ROWS] filas como mucho. */
+    suspend fun savePage(kind: WidgetPageKind, page: WidgetPage) {
+        val bounded = page.copy(rows = page.rows.take(MAX_WIDGET_ROWS))
+        context.ambientStore.edit { it[pageKey(kind)] = OperatorJson.encodeToString(WidgetPage.serializer(), bounded) }
     }
 
     suspend fun notified(): Set<String> = context.ambientStore.data.first()[notifiedKey].orEmpty()
 
-    /** Al cerrar sesión: ni ventas calientes ni avisados quedan en el teléfono. */
+    /** Al cerrar sesión: ni las páginas del widget (nombres de clientes) ni los avisados quedan en el teléfono. */
     suspend fun clear() {
         context.ambientStore.edit { it.clear() }
     }
@@ -66,10 +69,6 @@ class AmbientStore @Inject constructor(@ApplicationContext private val context: 
         context.ambientStore.edit { it[notifiedKey] = ids }
     }
 
-    companion object {
-        const val MAX_WIDGET_ROWS = 3
-        private val HOT_LIST = ListSerializer(HotSaleDto.serializer())
-    }
 }
 
 /** Qué incendios graves hay que avisar ahora: los nuevos, no los que ya se avisaron. */
@@ -77,7 +76,7 @@ fun firesToNotify(graves: List<Fire>, alreadyNotified: Set<String>): List<Fire> 
     graves.filter { it.id.raw !in alreadyNotified }
 
 /**
- * Una vuelta del vigía: refresca los incendios y las ventas calientes, actualiza el widget y, con la app en segundo
+ * Una vuelta del vigía: refresca los incendios, las ventas calientes y los chats con humano, actualiza el widget y, con la app en segundo
  * plano, avisa los incendios graves nuevos (con la app abierta no avisa: el radar ya lo muestra). La corren el push
  * (`PushHandler`, en segundos) y [VigiaWorker] (cada 15 minutos, de respaldo si un push no llega).
  */
@@ -100,10 +99,14 @@ class Vigia @Inject constructor(
         val state = auth.state.value
         if (state != AuthState.SignedIn && state != AuthState.DevMode) return true
 
-        runCatching { store.saveHot(api.hot().hot) }
+        // Cada página por su lado: la que no llegó se queda con lo último que trajo.
+        runCatching { store.savePage(WidgetPageKind.HOT, hotPage(api.hot().hot)) }
+        runCatching { store.savePage(WidgetPageKind.HUMAN, humanPage(api.human())) }
+        val firesOk = fires.refresh().isSuccess
+        store.savePage(WidgetPageKind.FIRES, firesPage(fires.observeFeed().first()))
         widget.update(context)
 
-        if (fires.refresh().isFailure) return false
+        if (!firesOk) return false
         val graves = fires.observeRadar().first()
         val notified = store.notified()
         val foreground = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)

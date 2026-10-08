@@ -341,18 +341,20 @@ scenarios:
       - screen_has: "000000000107"
 
   - id: S13_widget_ventas_calientes
-    title: Widget de ventas calientes en la pantalla de inicio
-    resumen: "El widget de ventas calientes muestra una venta y tocarla abre su chat."
+    title: Widget de la pantalla de inicio (ventas, incendios y humano)
+    resumen: "El widget se agrega desde el launcher, se desliza entre sus tres páginas y tocar una fila abre su chat."
+    # Agregar un widget al launcher no se guioniza: lo explora Artemis. Lo mismo con guion, sin launcher: S24.
     profile: pro
     timeout_s: 1500
     setup: [reset, clear_app, launch, {wait: 10}, home, {wait: 2}]
     locked_app: false
     goal: |
       Estás en la pantalla de inicio de Android (launcher de Pixel).
-      1. Agrega el widget «Ventas calientes» de la app «Operador»: mantén presionado un espacio vacío del
-         fondo, toca «Widgets», busca «Operador» y arrastra el widget «Ventas calientes» a la pantalla de inicio.
-      2. Confirma que el widget muestra al menos una venta (por ejemplo de Camilo o el producto «Plegaria de Luz»).
-      3. Toca esa venta dentro del widget y confirma que se abre la app en un chat.
+      1. Agrega el widget de la app «Operador»: mantén presionado un espacio vacío del fondo, toca «Widgets», busca
+         «Operador» y arrastra su widget a la pantalla de inicio.
+      2. El widget tiene tres páginas apiladas: «Ventas calientes», «Incendios» y «Humano». Desliza la pila con el
+         dedo (hacia arriba o hacia abajo) y anota qué filas muestra cada página.
+      3. En la página «Ventas calientes», toca la venta de Camilo y confirma que se abre la app en su chat.
       Reporta cada paso con lo que viste.
     checks:
       - screen_has: "000000000103"
@@ -536,3 +538,86 @@ scenarios:
       Reporta los dos puntos. Si no hay aviso, dilo.
     checks:
       - screen_has: "000000000111"
+
+  - id: S22_cargando_y_trabajando
+    title: «Cargando…» mientras llegan los datos y el botón que espera al backend
+    resumen: "Con la red lenta, «Resumen de ventas» y un chat que el teléfono no tiene guardado muestran el indicador «Cargando…» (no una pantalla vacía) hasta que llegan sus datos, y «Tomar la conversación» muestra que está trabajando y no se puede tocar dos veces."
+    # `inject.py network` hace lenta una ruta del backend de prueba (un middleware solo del sandbox).
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {inject: "network --path /api/orders/orders --delay 6"},
+            {inject: "network --path /api/dashboard/sessions/wa_000000000105 --delay 6"},
+            {inject: "network --path /api/dashboard/sessions/wa_000000000101/intervene --delay 8"}]
+    script:
+      - {tap: "=Más"}
+      - {tap: "Resumen de ventas"}
+      - {expect: "Cargando…"}
+      - {shot: cargando}
+      - {expect: {text: "#42 · Daniela Prueba", timeout: 20}}
+      - {expect_gone: "Cargando…"}
+      - {tap: "=Chats"}
+      - {tap: "000000000105"}
+      - {expect: "Cargando…"}
+      - {expect: {text: "Reactivar con plantilla", timeout: 20}}
+      - {expect_gone: "Cargando…"}
+      - back
+      - {tap: "000000000101"}
+      - {tap: "Tomar la conversación"}
+      - {expect: "Trabajando…"}
+      - {shot: trabajando}
+      - {expect: {text: "Tú atiendes", timeout: 20}}
+    goal: |
+      La red está lenta. Abre la pestaña «Más» y entra a «Resumen de ventas»: di qué ves mientras cargan las cifras
+      y qué aparece después. Vuelve a «Chats», abre el chat 000000000105 y di lo mismo. Después abre el chat
+      000000000101, toca «Tomar la conversación» y di cómo se ve el botón mientras espera.
+    checks:
+      - screen_has: "Tú atiendes"
+      - screen_lacks: "Cargando…"
+
+  - id: S23_error_y_reintentar
+    title: Si los datos no llegan, error con «Reintentar» (nunca cargando para siempre)
+    resumen: "«Por cobrar» se abre con el backend caído: en vez de quedarse cargando, dice que no se pudieron cargar los datos y ofrece «Reintentar»; cuando vuelve la red, «Reintentar» trae los pedidos."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {inject: "network --path /api/orders/orders --fail"}]
+    script:
+      - {tap: "=Más"}
+      - {tap: "Por cobrar"}
+      - {expect: "No se pudieron cargar los datos"}
+      - {expect: "=Reintentar"}
+      - {shot: error}
+      - {inject: "network --clear"}
+      - {tap: "=Reintentar"}
+      - {expect: "#42 · Daniela Prueba"}
+    goal: |
+      Abre la pestaña «Más» y entra a «Por cobrar». Di qué aparece. Si hay un botón para reintentar, tócalo y di qué pasa.
+    checks:
+      - screen_has: "#42 · Daniela Prueba"
+      - screen_lacks: "No se pudieron cargar los datos"
+
+  - id: S24_widget_tres_paginas
+    title: El widget se desliza entre ventas calientes, incendios y humano
+    resumen: "El widget de la pantalla de inicio (hospedado por el arnés, igual que lo haría el launcher en el Android 11 del operador) tiene tres páginas apiladas: ventas calientes (Camilo), incendios con los graves primero (Sofía) y los chats que atiende una persona. Se desliza con el dedo hacia abajo y tocar a Daniela en «Humano» abre su chat."
+    # El launcher no se guioniza (S13 lo explora con Artemis). E2eWidgetHostActivity (solo debug) hospeda el widget
+    # real con AppWidgetHost; adb le da el permiso de enlazar widgets. La actividad corre una vuelta del vigía.
+    # uiautomator ve TAMBIÉN las tarjetas de atrás de la pila: lo que prueba que «Humano» quedó adelante es el toque
+    # final (Daniela está solo en esa página; en la misma altura, Incendios tiene a Andrés y Ventas nada).
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {wait: 2},
+            {adb: "appwidget grantbind --package com.acktos.operator"},
+            {adb: "am start -n com.acktos.operator/com.hubara.operator.E2eWidgetHostActivity"}]
+    locked_app: false
+    script:
+      - {expect: {text: "Ventas calientes", timeout: 30}}
+      - {expect: "Camilo"}
+      - {shot: ventas}
+      - {swipe: {at: "Ventas calientes", dy: 500}}
+      - {expect: "Sofía pide un humano"}
+      - {shot: incendios}
+      - {swipe: {at: "Incendios", dy: 500}}
+      - {expect: "Daniela · al día"}
+      - {shot: humano}
+      - {tap: "Daniela · al día"}
+      - {expect: "000000000106"}
+    goal: |
+      Hay un widget en pantalla con páginas apiladas. Anota el título y las filas de la página de adelante; desliza
+      la pila hacia abajo y anota la siguiente; repite. En la página «Humano», toca la fila de Daniela y di qué se abre.
+    checks:
+      - screen_has: "000000000106"

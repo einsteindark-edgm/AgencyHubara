@@ -500,6 +500,35 @@ def test_hot_lists_bot_sales_closing_now_with_catalog_names_and_cart_value(h: _H
     }]}
 
 
+# ── GET /mobile/human (página «Humano» del widget) ───────────────────────────
+
+
+def test_human_lists_the_chats_a_person_attends_waiting_first_without_messages(h: _Harness) -> None:
+    h.seed("wa_test_sofia", {
+        "active_route": "humano", "escalation_reason": "EXPLICIT_REQUEST", "profile": {"name": "Sofía Pérez"},
+        "last_inbound_at_ms": NOW - 5 * _MIN,
+    }, events=[
+        {"role": "assistant", "sender": "human", "content": "¡Hola! Ya te ayudo", "timestamp": _iso(NOW - 30 * _MIN)},
+        *({"role": "user", "content": "¿hola?", "timestamp": _iso(NOW - m * _MIN)} for m in (12, 5)),
+    ])
+    # Carla: ya le respondieron (sigue con una persona, al día)
+    h.seed("wa_test_carla", {"active_route": "humano", "profile": {"name": "Carla"}, "last_inbound_at_ms": NOW - 40 * _MIN},
+           events=[{"role": "user", "content": "gracias", "timestamp": _iso(NOW - 40 * _MIN)},
+                   {"role": "assistant", "sender": "human", "content": "Con gusto", "timestamp": _iso(NOW - 39 * _MIN)}])
+    h.seed("wa_test_bot", {"active_route": "ventas", "last_inbound_at_ms": NOW - _MIN})
+
+    r = h.client.get("/api/chats/mobile/human")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"total": 2, "human": [
+        {"session_id": "wa_test_sofia", "name": "Sofía", "unanswered": 2,
+         "waiting_since_ms": NOW - 12 * _MIN, "last_inbound_ms": NOW - 5 * _MIN},
+        {"session_id": "wa_test_carla", "name": "Carla", "unanswered": 0,
+         "waiting_since_ms": None, "last_inbound_ms": NOW - 40 * _MIN},
+    ]}
+    assert "hola" not in r.text  # ni un mensaje: va a la pantalla de inicio
+
+
 # ── POST/DELETE /mobile/devices (registro de tokens FCM) ─────────────────────
 
 

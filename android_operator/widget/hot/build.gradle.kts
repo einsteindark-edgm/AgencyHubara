@@ -1,16 +1,17 @@
 plugins {
     id("hubara.android.library")
     id("hubara.android.hilt")
-    alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "com.hubara.operator.widget.hot"
-    buildFeatures { compose = true }
 }
 
 dependencies {
     implementation(project(":core:push"))
-    implementation(libs.androidx.glance.appwidget)
-    implementation(libs.androidx.glance.material3)
+    implementation(libs.androidx.core.ktx)
+    // Colecciones de RemoteViews con los datos adentro (RemoteCollectionItems): en Android 12+ las nativas; en el
+    // Android 11 del operador, por el RemoteViewsService de la librería. Sin servicio ni fábrica propios.
+    implementation(libs.androidx.core.remoteviews)
+    implementation(libs.kotlinx.coroutines.android)
 }

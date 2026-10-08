@@ -48,6 +48,9 @@ MOBILE_SCREENS = DATA_DIR / "mobile_screens"
 # broadcast a E2eWakeReceiver (E2E_PUSH), el mismo camino que un push de verdad dentro de la app (escenario S20).
 PUSH_OUTBOX = DATA_DIR / "pushes.jsonl"
 PUSH_CURSOR = DATA_DIR / "pushes.cursor"
+# Red lenta o caída para una ruta (escenarios de «Cargando…» y de reintentar): `inject.py network` la escribe y un
+# middleware del backend de prueba la aplica. Nunca existe fuera del sandbox.
+NETWORK_RULES = DATA_DIR / "network_rules.json"
 
 PORT = int(os.environ.get("SANDBOX_PORT") or 8010)  # run_api.sh lo exporta (SANDBOX_PORT=8020 si 8010 está ocupado)
 #: Catalog photo URLs. The REAL WhatsApp outbound builder only accepts

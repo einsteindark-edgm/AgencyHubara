@@ -44,6 +44,7 @@ from sandbox_common import (  # noqa: E402
     MEDUSA_STORE,
     MOBILE_CONFIG,
     MOBILE_SCREENS,
+    NETWORK_RULES,
     REPO_SCREENS,
     PHONE_NUMBER_ID,
     PORT,
@@ -315,6 +316,22 @@ def _mount_sandbox_extras(app, main_mod, swept: list[str]) -> None:  # noqa: ANN
     from fastapi.staticfiles import StaticFiles
 
     app.mount("/__sandbox/static", StaticFiles(directory=str(STATIC_DIR)), name="sandbox-static")
+
+    # Red lenta o caída para una ruta (`inject.py network`): así un escenario VE «Cargando…» mientras llega una
+    # pantalla y el error con «Reintentar» cuando no llega. Solo rutas de la API; lo de /__sandbox nunca se toca.
+    @app.middleware("http")
+    async def sandbox_network_rules(request, call_next):  # noqa: ANN001, ANN202
+        from fastapi.responses import JSONResponse
+
+        path = request.url.path
+        if not path.startswith("/__sandbox"):
+            for rule in read_json(NETWORK_RULES, []) or []:
+                if path.startswith(str(rule.get("path") or "\0")):
+                    await asyncio.sleep(float(rule.get("delay_s") or 0))
+                    if rule.get("fail"):
+                        return JSONResponse(status_code=503, content={"detail": "Sin conexión con el servidor (prueba)."})
+                    break
+        return await call_next(request)
 
     # La configuración del servidor de la App Operador (en producción, <cloudfront>/mobile/config.json que publica
     # frontend-deploy). El APK de prueba trae una dirección muerta de respaldo: si la app llega a la bandeja es porque

@@ -62,6 +62,7 @@ from src.plugins.chats.api.mobile_push import TEST_MESSAGE, PushDispatcher
 from src.plugins.chats.api.order_intake import _read_events
 from src.plugins.chats.shared.draft_items import draft_items, product_key
 from src.plugins.chats.shared.mobile_rules import (
+    MAX_HUMAN,
     ChatFireFacts,
     DraftItemFacts,
     HotFacts,
@@ -73,6 +74,7 @@ from src.plugins.chats.shared.mobile_rules import (
     display_name,
     handoff_pending,
     hot_sales,
+    human_chats,
     last_sent_action,
     suggest_actions,
     unanswered_since,
@@ -410,12 +412,16 @@ async def _facts_for(deps: MobileDeps, order_ids: set[str]) -> Any:
 
 
 def _chat_fire_facts(deps: MobileDeps, session_id: str, metadata: dict[str, Any]) -> ChatFireFacts | None:
+    facts = _human_facts(deps, session_id, metadata)
+    return facts if facts is not None and facts.unanswered_count else None
+
+
+def _human_facts(deps: MobileDeps, session_id: str, metadata: dict[str, Any]) -> ChatFireFacts | None:
+    """La conversación vista por la bandeja de incendios y la página «Humano», si la atiende una persona."""
     if metadata.get("active_route") != ROUTE_HUMANO:
         return None
     events = _read_events(deps.vault_dir, session_id)
     count, since = unanswered_since(events)
-    if not count:
-        return None
     last_inbound = metadata.get("last_inbound_at_ms")
     reason = metadata.get("escalation_reason")
     return ChatFireFacts(
@@ -479,6 +485,17 @@ async def fires(deps: Deps) -> dict[str, Any]:
             events_for=lambda sid: _read_events(deps.vault_dir, sid),
         )
     return {"decided_by": "jev" if used_jev else "rules", "fires": cards}
+
+
+# ── GET /mobile/human ────────────────────────────────────────────────────────
+
+
+@router.get("/mobile/human")
+async def human(deps: Deps) -> dict[str, Any]:
+    """Las conversaciones que hoy atiende una persona (página «Humano» del widget): las que esperan respuesta primero."""
+    chats = [c for sid, md in _vault_sessions(deps.vault_dir) if (c := _human_facts(deps, sid, md)) is not None]
+    rows = human_chats(chats)
+    return {"total": len(rows), "human": rows[:MAX_HUMAN]}
 
 
 # ── GET /mobile/hot ──────────────────────────────────────────────────────────

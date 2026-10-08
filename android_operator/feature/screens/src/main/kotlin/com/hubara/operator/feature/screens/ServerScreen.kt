@@ -26,13 +26,11 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.ui.layout.WindowInsetsRulers
 import com.hubara.operator.core.designsystem.Avatar
 import com.hubara.operator.core.sdui.truthy
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -44,20 +42,20 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.hubara.operator.core.designsystem.EmptyState
+import com.hubara.operator.core.designsystem.LoadError
+import com.hubara.operator.core.designsystem.LoadingState
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.Spacing
@@ -73,9 +71,13 @@ import kotlinx.serialization.json.JsonElement
 /** Para los tests: la lista de la pantalla (se desliza hasta un componente con `performScrollToNode`). */
 const val SCREEN_LIST_TAG = "server_screen_list"
 
+/** Para los tests: la barra que dice que la pantalla espera al backend. */
+const val BUSY_BAR_TAG = "server_screen_busy"
+
 /** Lo que la pantalla le pide al ViewModel (y a la navegación). */
 data class ScreenCallbacks(
-    val onAction: (Action, Scope) -> Unit = { _, _ -> },
+    /** La acción, con qué datos y quién la lanzó (un botón: muestra que trabaja mientras espera al backend). */
+    val onAction: (Action, Scope, String?) -> Unit = { _, _, _ -> },
     /** `bind` (`state.x` / `form.x`), el valor y si viene de un campo de texto (se espera a que pare de escribir). */
     val onBind: (String, JsonElement, Boolean) -> Unit = { _, _, _ -> },
     val onRefresh: () -> Unit = {},
@@ -108,6 +110,7 @@ fun ServerScreen(
         env = env,
         busy = ui.busy,
         bound = { bind -> bound(ui, bind) },
+        working = ui.working,
         onAction = callbacks.onAction,
         onBind = callbacks.onBind,
     )
@@ -135,6 +138,7 @@ fun ServerScreen(
                     Body(ui, doc, scope, callbacks, PaddingValues(bottom = Spacing.xl))
                 }
                 SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+                if (ui.busy) BusyBar(Modifier.align(Alignment.TopCenter))
             }
             return@CompositionLocalProvider
         }
@@ -147,7 +151,7 @@ fun ServerScreen(
                 val fab = doc?.fab
                 if (ui.phase == ScreenPhase.READY && fab != null && fab.action != null) {
                     // Con contenido propio y no `icon =`/`text =`: esa variante llega a accesibilidad sin texto (gotcha 18).
-                    ExtendedFloatingActionButton(onClick = { fab.action?.let { callbacks.onAction(it, scope) } }) {
+                    ExtendedFloatingActionButton(onClick = { fab.action?.let { callbacks.onAction(it, scope, null) } }) {
                         OperatorIcons.named(fab.icon)?.let {
                             Icon(it, contentDescription = null)
                             Spacer(Modifier.width(Spacing.md))
@@ -166,6 +170,7 @@ fun ServerScreen(
                     Body(ui, doc, scope, callbacks, PaddingValues(bottom = inner.calculateBottomPadding() + if (doc?.fab != null) 88.dp else Spacing.xl))
                 }
             }
+            if (ui.busy) BusyBar(Modifier.padding(top = inner.calculateTopPadding()))
         }
     }
 }
@@ -207,13 +212,13 @@ private fun ScreenTopBar(doc: ScreenDoc?, title: String, scope: Scope, callbacks
         actions = {
             RadarIndicator()
             actions.filter { it.style == "icon" }.forEach { top ->
-                IconButton(onClick = { top.action?.let { callbacks.onAction(it, scope) } }) {
+                IconButton(onClick = { top.action?.let { callbacks.onAction(it, scope, null) } }) {
                     Icon(OperatorIcons.named(top.icon) ?: OperatorIcons.MoreVert, contentDescription = top.label.text(scope, env))
                 }
             }
             actions.filter { it.style == "chip" }.forEach { top ->
                 AssistChip(
-                    onClick = { top.action?.let { callbacks.onAction(it, scope) } },
+                    onClick = { top.action?.let { callbacks.onAction(it, scope, null) } },
                     label = { Text(top.label.text(scope, env)) },
                     leadingIcon = OperatorIcons.named(top.icon)?.let { icon ->
                         { Icon(icon, contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize)) }
@@ -231,7 +236,7 @@ private fun ScreenTopBar(doc: ScreenDoc?, title: String, scope: Scope, callbacks
                             text = { Text(top.label.text(scope, env)) },
                             onClick = {
                                 open = false
-                                top.action?.let { callbacks.onAction(it, scope) }
+                                top.action?.let { callbacks.onAction(it, scope, null) }
                             },
                             leadingIcon = OperatorIcons.named(top.icon)?.let { icon -> { Icon(icon, contentDescription = null) } },
                         )
@@ -258,28 +263,22 @@ private fun FillBody(doc: ScreenDoc, scope: Scope, modifier: Modifier) {
 @Composable
 private fun Body(ui: ScreenUi, doc: ScreenDoc?, scope: Scope, callbacks: ScreenCallbacks, padding: PaddingValues) {
     when {
-        ui.phase == ScreenPhase.MISSING -> Problem(
-            "No se pudo abrir esta pantalla", "Revisa la conexión y vuelve a intentar.", "Reintentar", callbacks.onRetry,
+        ui.phase == ScreenPhase.MISSING -> LoadError(
+            callbacks.onRetry, title = "No se pudo abrir esta pantalla",
         )
-        ui.phase == ScreenPhase.OUTDATED -> Problem(
-            "Actualiza la app", "Esta pantalla necesita una versión más nueva de la app.", "Actualizar", callbacks.onUpdateApp,
+        ui.phase == ScreenPhase.OUTDATED -> LoadError(
+            callbacks.onUpdateApp, title = "Actualiza la app", body = "Esta pantalla necesita una versión más nueva de la app.", button = "Actualizar",
         )
-        ui.phase == ScreenPhase.LOADING || doc == null || ui.waiting -> Box(Modifier.fillMaxSize().padding(Spacing.xxl), contentAlignment = Alignment.Center) {
-            LoadingIndicator()
-        }
-        ui.broken -> Problem("No se pudieron cargar los datos", "Revisa la conexión y vuelve a intentar.", "Reintentar", callbacks.onRetry)
+        // Sin NADA que mostrar todavía; con algo guardado se ve eso y la recarga va callada.
+        ui.phase == ScreenPhase.LOADING || doc == null || ui.waiting -> LoadingState(Modifier.fillMaxSize())
+        ui.broken -> LoadError(callbacks.onRetry)
         else -> {
-            // El indicador de «tirar para actualizar» solo cuando lo pidió el operador; las recargas por eventos son calladas.
-            var pulling by rememberSaveable { mutableStateOf(false) }
-            LaunchedEffect(ui.refreshing) { if (!ui.refreshing) pulling = false }
             val host = LocalScreenHost.current
             val rows = screenRows(doc.body, scope, host.env)
             PullToRefreshBox(
-                isRefreshing = pulling && ui.refreshing,
-                onRefresh = {
-                    pulling = true
-                    callbacks.onRefresh()
-                },
+                // Solo la recarga que pidió el operador (tirar o un botón «Actualizar»); las de eventos son calladas.
+                isRefreshing = ui.pullIndicator,
+                onRefresh = callbacks.onRefresh,
                 modifier = Modifier.fillMaxSize(),
             ) {
                 LazyColumn(
@@ -296,12 +295,13 @@ private fun Body(ui: ScreenUi, doc: ScreenDoc?, scope: Scope, callbacks: ScreenC
     }
 }
 
+/**
+ * Esperando al backend (una llamada o una acción nativa, también las del menú): una línea ondulada bajo el encabezado.
+ * Decorativa para TalkBack: el botón que la lanzó ya dice «Trabajando…» y el resultado llega como aviso.
+ */
 @Composable
-private fun Problem(title: String, body: String, button: String, onClick: () -> Unit) {
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        EmptyState(OperatorIcons.Error, title, body)
-        Button(onClick = onClick, shapes = ButtonDefaults.shapes()) { Text(button) }
-    }
+private fun BusyBar(modifier: Modifier = Modifier) {
+    LinearWavyProgressIndicator(modifier.fillMaxWidth().testTag(BUSY_BAR_TAG).clearAndSetSemantics {})
 }
 
 /** El valor guardado en `state.x` o `form.x`. */

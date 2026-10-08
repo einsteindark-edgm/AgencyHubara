@@ -189,6 +189,20 @@ data class HotSaleDto(
 @Serializable
 data class HotDto(val hot: List<HotSaleDto> = emptyList())
 
+/** Una conversación que atiende una persona (`GET /api/chats/mobile/human`): sin mensajes, va a la pantalla de inicio. */
+@Serializable
+data class HumanChatDto(
+    @SerialName("session_id") val sessionId: String,
+    val name: String? = null,
+    /** Mensajes del cliente sin respuesta (0 = al día). */
+    val unanswered: Int = 0,
+    @SerialName("waiting_since_ms") val waitingSinceMs: Long? = null,
+    @SerialName("last_inbound_ms") val lastInboundMs: Long? = null,
+)
+
+@Serializable
+data class HumanDto(val total: Int = 0, val human: List<HumanChatDto> = emptyList())
+
 // ── Órdenes (`/api/orders/orders`) ─────────────────────────────────────────────────────────────
 
 @Serializable

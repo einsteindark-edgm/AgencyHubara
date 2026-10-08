@@ -9,6 +9,8 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.designsystem.OperatorIcons
@@ -39,12 +41,16 @@ class ServerScreenTest {
     @get:Rule val compose = createComposeRule()
 
     private val actions = mutableListOf<Pair<Action, Scope>>()
+    private val origins = mutableListOf<String?>()
     private val binds = mutableListOf<Triple<String, JsonElement, Boolean>>()
     private var retried = 0
     private var confirmed: Boolean? = null
 
     private val callbacks = ScreenCallbacks(
-        onAction = { a, s -> actions += a to s },
+        onAction = { a, s, o ->
+            actions += a to s
+            origins += o
+        },
         onBind = { b, v, t -> binds += Triple(b, v, t) },
         onRetry = { retried++ },
         onConfirm = { confirmed = it },
@@ -150,6 +156,37 @@ class ServerScreenTest {
         compose.onNodeWithText("Se le avisa al cliente.").assertExists()
         compose.onNodeWithText("Despachar ya").performClick()
         assertThat(confirmed).isTrue()
+    }
+
+    @Test fun mientras_llegan_sus_datos_muestra_cargando_con_descripcion_para_talkback() {
+        show(ready(VENTAS))  // sin datos todavía
+        compose.mainClock.advanceTimeBy(1_000)
+        compose.onNodeWithContentDescription("Cargando…").assertExists()
+        show(ready(VENTAS, mapOf("pedidos" to PEDIDOS)))
+        compose.onNodeWithContentDescription("Cargando…").assertDoesNotExist()
+        compose.onNodeWithText("#41 · Laura").assertExists()
+    }
+
+    @Test fun un_boton_que_espera_al_backend_muestra_que_trabaja_y_los_demas_esperan() {
+        show(ready(BOTONES))
+        compose.onNodeWithText("Confirmar pago").performClick()
+        val origin = origins.single()
+        assertThat(origin).isNotNull()
+        show(ready(BOTONES).copy(busy = true, working = origin))
+        compose.onAllNodesWithContentDescription("Trabajando…").assertCountEquals(1)
+        compose.onNodeWithText("Confirmar pago").assertIsNotEnabled()
+        compose.onNodeWithText("Despachar").assertIsNotEnabled().performClick()
+        assertThat(actions).hasSize(1)
+        show(ready(BOTONES))
+        compose.onAllNodesWithContentDescription("Trabajando…").assertCountEquals(0)
+    }
+
+    @Test fun una_accion_del_menu_que_espera_al_backend_se_nota_arriba() {
+        // «Devolver al bot» va en el menú del chat: no tiene botón donde mostrar que trabaja.
+        show(ready(BOTONES))
+        compose.onNodeWithTag(BUSY_BAR_TAG).assertDoesNotExist()
+        show(ready(BOTONES).copy(busy = true, working = "menu"))
+        compose.onNodeWithTag(BUSY_BAR_TAG).assertExists()
     }
 
     @Test fun sin_pantalla_sin_datos_o_con_una_app_vieja_dice_que_hacer() {
@@ -283,6 +320,18 @@ class ServerScreenTest {
                         "tag": "{{p.status | map:'new=Nuevo;ready=Listo'}}", "trailing": "{{p.total_cop | money}}",
                         "action": { "type": "open_order", "order": "{{p.id}}" } },
               "empty": { "type": "empty", "title": "Todavía no hay pedidos" } }
+          ]
+        }
+        """.trimIndent()
+
+        val BOTONES = """
+        {
+          "schema": 1, "id": "botones",
+          "body": [
+            { "type": "button", "text": "Confirmar pago", "icon": "payments",
+              "action": { "type": "call", "method": "PATCH", "path": "/api/orders/orders/o1/confirm-payment" } },
+            { "type": "button", "text": "Despachar", "style": "tonal",
+              "action": { "type": "call", "method": "PATCH", "path": "/api/orders/orders/o1/stage" } }
           ]
         }
         """.trimIndent()
