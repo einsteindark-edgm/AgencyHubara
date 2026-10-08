@@ -69,7 +69,7 @@ cd android_operator && ./gradlew :app:bundleRelease \
   app solo pinta (`decided_by`, orden, `prominence`, gravedad, tipo) y ejecuta lo que el operador toca. En el backend:
   las reglas (`chats/shared/mobile_rules.py`) arman lo legal y son la regla de cada capacidad; qué burbuja va
   primero (`burbuja`) y cómo se clasifica un incendio de chat (`incendio`) lo decide el **motor de decisiones
-  oficial** (PR #372) con el paquete `operador` (`chats/shared/operator/decisions/`): el resolutor
+  oficial** (PR #372) con el paquete `operador-2` (`chats/shared/operator/decisions/`; la v1 `operador` queda publicada): el resolutor
   `registry.foreign_capability` (`BundledCapability` con los builtins del paquete) + `decide_for_session`
   (`chats/api/mobile_decisions.py`). Se encienden como las de ventas: POR COMANDO (`infra/scripts/bot_control.sh`
   → `decisions/control.py capacidad burbuja shadow`; off | shadow | canary | on dentro del techo
@@ -198,6 +198,13 @@ cd android_operator && ./gradlew :app:bundleRelease \
     el segundo, así que un componente se escribe COMPLETO (`com.acktos.operator/com.hubara.operator.E2eWakeReceiver`;
     `…/.MainActivity` apuntaría a `com.acktos.operator.MainActivity`, que no existe). El backend elige ese cliente
     de `google-services.json` (`DEFAULT_ANDROID_PACKAGE`; `MOBILE_ANDROID_PACKAGE` lo cambia).
+
+29. **El traspaso del bot no es una respuesta** (prueba del operador, 2026-10-07): «necesito hablar con alguien» →
+    el bot responde «te comunico…» (`tools_used: ["escalate_to_human"]`) y pasa a humano. Ese mensaje contaba como
+    respuesta: cero sin responder, sin incendio y sin aviso. Ahora `_is_reply` lo excluye y `handoff_pending` lo
+    marca: el chat es incendio GRAVE al instante y sale el push (decisión del operador: aviso inmediato en todo
+    traspaso). Cuando el operador responde, vuelve la regla por tiempo (2 min «hoy», 10 min grave). El paquete
+    `operador-2@2` no deja que Jev lo baje (ni una espera de horas). S21 en el emulador.
 
 ## Endpoints
 

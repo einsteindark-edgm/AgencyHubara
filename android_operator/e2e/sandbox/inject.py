@@ -79,7 +79,7 @@ def _status(tag: str, motivo: str, route: str, at: int, **extra: Any) -> dict[st
 # ── fire ─────────────────────────────────────────────────────────────────────
 
 
-def fire_new(session_id: str, name: str, waiting_min: int) -> None:
+def fire_new(session_id: str, name: str, waiting_min: int, *, just_handed_off: bool = False) -> None:
     if not _SESSION_RE.fullmatch(session_id):
         sys.exit(f"invalid session id {session_id!r}")
     t = now_ms()
@@ -98,6 +98,16 @@ def fire_new(session_id: str, name: str, waiting_min: int) -> None:
         {"role": "user", "content": "Por favor respóndanme, es un regalo para mañana 🙏",
          "timestamp": iso_utc(last_inbound), "wamid": last_wamid},
     ]
+    if just_handed_off:
+        # El bot acaba de pasar a humano y el cliente NO volvió a escribir (prueba del operador, 2026-10-07): el
+        # traspaso del bot no es respuesta; es un incendio grave al instante.
+        first_unanswered = last_inbound = t - 30_000
+        events = [
+            {"role": "user", "content": "Necesito hablar con alguien urgente por favor",
+             "timestamp": iso_utc(last_inbound), "wamid": last_wamid},
+            {"role": "assistant", "content": f"¡Claro, {first}! Te comunico con una persona del equipo 🙏",
+             "timestamp": iso_utc(last_inbound + 5_000), "tools_used": ["escalate_to_human"]},
+        ]
     motivo = f"{first} pidió hablar con una persona: su vela llegó partida"
     metadata = {
         "phone_number_id": PHONE_NUMBER_ID,
@@ -253,6 +263,8 @@ def main() -> None:
     p_fire.add_argument("--session", default="wa_000000000107")
     p_fire.add_argument("--waiting-min", type=int, default=11)
     p_fire.add_argument("--flip", metavar="SESSION", help="flip an existing session instead of creating one")
+    p_fire.add_argument("--just-handed-off", action="store_true",
+                        help="the bot just handed off and the customer did not write again")
     p_reply = sub.add_parser("reply", help="append a customer message")
     p_reply.add_argument("session")
     p_reply.add_argument("text")
@@ -272,7 +284,7 @@ def main() -> None:
         if args.flip:
             fire_flip(args.flip, args.waiting_min)
         else:
-            fire_new(args.session, args.name, args.waiting_min)
+            fire_new(args.session, args.name, args.waiting_min, just_handed_off=args.just_handed_off)
     elif args.cmd == "reply":
         reply(args.session, args.text)
     elif args.cmd == "config":

@@ -294,6 +294,8 @@ class ChatFireFacts:
     #: Primer mensaje del cliente que sigue sin respuesta (epoch ms).
     waiting_since_ms: int | None
     last_inbound_ms: int | None
+    #: El bot pasó la conversación a humano y nadie de la tienda ha respondido (`handoff_pending`).
+    handoff_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -361,7 +363,8 @@ def _chat_fire(chat: ChatFireFacts, now_ms: int) -> tuple[dict[str, Any], int] |
         return None
     since = chat.waiting_since_ms or chat.last_inbound_ms or now_ms
     wait_ms = now_ms - since
-    if wait_ms >= _GRAVE_WAIT_MS or chat.escalation_reason in _ALWAYS_GRAVE:
+    # Un traspaso a humano avisa al instante (decisión del operador, 2026-10-07): grave desde el primer segundo.
+    if chat.handoff_pending or wait_ms >= _GRAVE_WAIT_MS or chat.escalation_reason in _ALWAYS_GRAVE:
         severity = "grave"
     elif wait_ms >= _TODAY_WAIT_MS:
         severity = "hoy"
@@ -496,9 +499,10 @@ def detect_fires(
 
 def _is_reply(event: dict[str, Any]) -> bool:
     """Lo que el cliente VIO como respuesta: texto del bot/operador o un envío
-    no textual (`ui_component`). Un turno con `tool_calls` no (su texto no sale).
+    no textual (`ui_component`). Un turno con `tool_calls` no (su texto no sale), y el traspaso del bot
+    («te comunico con…») tampoco: el cliente sigue esperando a una persona.
     Es el criterio del «sin respuesta» del incendio; la bandeja cuenta no leídos (#384)."""
-    if event.get("role") != "assistant" or event.get("tool_calls"):
+    if event.get("role") != "assistant" or event.get("tool_calls") or _is_handoff(event):
         return False
     return bool(event.get("content")) or event.get("kind") == "ui_component"
 
@@ -511,6 +515,29 @@ def _event_ms(event: dict[str, Any]) -> int | None:
         return int(datetime.fromisoformat(raw).timestamp() * 1000)
     except ValueError:
         return None
+
+
+#: Tools con las que el bot pasa la conversación a una persona: su mensaje («te comunico con…») no responde nada.
+HANDOFF_TOOLS = frozenset({"escalate_to_human"})
+
+
+def _is_handoff(event: dict[str, Any]) -> bool:
+    """El mensaje del bot del turno en que pasó la conversación a humano."""
+    tools = event.get("tools_used")
+    return event.get("role") == "assistant" and isinstance(tools, list) and bool(HANDOFF_TOOLS & set(tools))
+
+
+def handoff_pending(events: list[dict[str, Any]]) -> bool:
+    """¿El cliente espera a la persona que le prometió el bot? Lo último que vio antes de sus mensajes sin
+    responder fue el traspaso del bot, y nadie de la tienda ha contestado desde entonces."""
+    for event in reversed(events):
+        if not isinstance(event, dict) or event.get("role") == "user":
+            continue
+        if _is_handoff(event):
+            return True
+        if _is_reply(event):
+            return False
+    return False
 
 
 def unanswered_since(events: list[dict[str, Any]]) -> tuple[int, int | None]:

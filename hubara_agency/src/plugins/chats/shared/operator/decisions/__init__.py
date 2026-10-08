@@ -1,6 +1,6 @@
 """El paquete de decisión de la App Operador (`operador`).
 
-`bundles/operador/` trae «¿qué burbuja va primero?» (`burbuja`) y «¿qué tan
+`bundles/operador-2/` (la activa; `operador/` es la v1) trae «¿qué burbuja va primero?» (`burbuja`) y «¿qué tan
 grave es este incendio, de qué tipo y si empeora?» (`incendio`): preguntas,
 opciones, la certeza que se pide y cómo se arma el valor. Es el motor genérico
 de las capacidades de ventas (`src.sdk.decisionkit`), con su propio catálogo
@@ -25,7 +25,8 @@ from src.sdk.decisionkit import CompiledBundle, load_bundle
 
 BUNDLES_DIR = Path(__file__).with_name("bundles")
 CATALOG_PATH = BUNDLES_DIR / "builtins.yaml"
-BUNDLE_ID = "operador"
+#: La versión activa. `operador@1` queda en el repo (una versión publicada no se edita ni se borra: la traza la nombra).
+BUNDLE_ID = "operador-2"
 
 #: nombre → (clase, función): lo que el catálogo dice que existe.
 BUILTINS: dict[str, tuple[str, Callable[..., Any]]] = {

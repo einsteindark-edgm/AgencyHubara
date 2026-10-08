@@ -54,7 +54,7 @@ def test_every_decision_says_where_it_acts_and_what_it_solves(client: TestClient
     decisions = {d["capability"]: d for d in body["decisions"]}
     # Las de la tienda y las de la App Operador (paquete `operador`), cada una con su paquete.
     assert set(decisions) == set(registry.active_bundle().capabilities) | {"burbuja", "incendio"}
-    assert {d["bundle"] for d in body["decisions"]} == {"ventas@1", "operador@1"}
+    assert {d["bundle"] for d in body["decisions"]} == {"ventas@1", "operador-2@2"}
     for d in decisions.values():
         assert d["name"] and len(d["solves"]) > 40 and d["where"] and set(d["where"]) <= set(places), d
     assert decisions["compra"]["where"] == ["ingest"]
@@ -98,7 +98,7 @@ def test_the_operator_app_decisions_show_up_with_their_own_bundle(client: TestCl
 
     body = client.get("/api/chats/perception/engine").json()
 
-    assert [b["ref"] for b in body["bundles"]] == ["ventas@1", "operador@1"]
+    assert [b["ref"] for b in body["bundles"]] == ["ventas@1", "operador-2@2"]
     assert all(b["name"] for b in body["bundles"])
     places = {p["id"]: p["label"] for p in body["places"]}
     decisions = {d["capability"]: d for d in body["decisions"]}

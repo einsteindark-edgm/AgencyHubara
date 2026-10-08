@@ -49,6 +49,7 @@ CACHE_MAX = 500
 STAGE = "operador"
 
 _SEVERITY_RANK = {"grave": 0, "hoy": 1, "espera": 2}
+_HOUR_MS = 3_600_000
 
 
 def operator_capability(name: str) -> Any:
@@ -142,17 +143,21 @@ class OperatorDecisions:
                 out.append(card)  # un pedido: hechos, no una decisión
                 continue
             sid = facts.session_id
+            wait_ms = now - (facts.waiting_since_ms or facts.last_inbound_ms or now)
+            # La hora de espera entra en la llave: el paquete decide distinto con horas de espera, y así Jev relee
+            # un chat callado una vez por hora (no en cada consulta).
             key = (
                 "incendio", sid, self._provider("incendio", sid), facts.last_inbound_ms, facts.unanswered_count,
-                facts.escalation_reason, card.get("severity"), card.get("kind"), card.get("getting_worse"),
+                facts.escalation_reason, facts.handoff_pending, wait_ms // _HOUR_MS,
+                card.get("severity"), card.get("kind"), card.get("getting_worse"),
             )
             verdict = self._cached(key)
             if verdict is None and key not in self._inflight and started < MAX_FIRE_READS:
                 started += 1
                 inp = FireInput(
                     card=card, reason=facts.escalation_reason, unanswered_count=facts.unanswered_count,
-                    wait_ms=now - (facts.waiting_since_ms or facts.last_inbound_ms or now),
-                    events=tuple(events_for(sid)), previous=self._previous_fire.get(sid),
+                    wait_ms=wait_ms, events=tuple(events_for(sid)), previous=self._previous_fire.get(sid),
+                    handoff=facts.handoff_pending, waited_min=max(0, wait_ms) // 60_000,
                 )
                 self._start(key, self._fire_decision(sid, inp))
             if verdict is not None and isinstance(verdict.value, Mapping):
