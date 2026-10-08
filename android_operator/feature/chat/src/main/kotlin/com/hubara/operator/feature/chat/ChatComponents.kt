@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -54,6 +56,7 @@ import com.hubara.operator.core.designsystem.IconTile
 import com.hubara.operator.core.designsystem.OperatorIcons
 import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.Spacing
+import com.hubara.operator.core.designsystem.WorkingIndicator
 import com.hubara.operator.core.designsystem.SuggestionBubble
 import com.hubara.operator.core.model.Author
 import com.hubara.operator.core.model.DeliveryState
@@ -312,7 +315,14 @@ fun BotReadingPanel(stage: String?, busy: Boolean, onIntervene: () -> Unit) {
                 Text("El bot atiende", style = MaterialTheme.typography.titleSmallEmphasized)
                 Text("Etapa: ${stageLabel(stage)}", style = MaterialTheme.typography.bodySmall)
             }
-            Button(onClick = onIntervene, shapes = ButtonDefaults.shapes(), enabled = !busy) { Text("Tomar la conversación") }
+            Button(onClick = onIntervene, shapes = ButtonDefaults.shapes(), enabled = !busy) {
+                // Esperando al backend: muestra que trabaja (y deshabilitado no se toca dos veces).
+                if (busy) {
+                    WorkingIndicator()
+                    Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+                }
+                Text("Tomar la conversación")
+            }
         }
     }
 }

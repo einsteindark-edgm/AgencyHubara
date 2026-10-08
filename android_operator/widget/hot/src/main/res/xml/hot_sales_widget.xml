@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Solo pantalla de inicio (home_screen): nunca en la pantalla bloqueada, que muestra nombres de clientes.
+     autoAdvanceViewId no: las páginas cambian solo cuando el operador las desliza. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/hot_widget_description"
-    android:initialLayout="@layout/glance_default_loading_layout"
+    android:initialLayout="@layout/widget_pages"
+    android:previewLayout="@layout/widget_pages"
     android:minWidth="250dp"
-    android:minHeight="110dp"
+    android:minHeight="180dp"
+    android:minResizeHeight="180dp"
     android:resizeMode="horizontal|vertical"
     android:targetCellWidth="4"
-    android:targetCellHeight="2"
+    android:targetCellHeight="3"
     android:updatePeriodMillis="0"
     android:widgetCategory="home_screen" />

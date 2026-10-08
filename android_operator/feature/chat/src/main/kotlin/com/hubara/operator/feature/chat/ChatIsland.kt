@@ -1,6 +1,10 @@
 package com.hubara.operator.feature.chat
 
 import androidx.compose.foundation.layout.Column
+import com.hubara.operator.core.designsystem.LoadingState
+import com.hubara.operator.core.designsystem.LoadError
+import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
@@ -60,7 +64,7 @@ fun ChatIsland(vm: ChatViewModel, onMore: () -> Unit, onReactivate: () -> Unit, 
         ui = ui, draft = vm.draft, modifier = modifier,
         actions = ChatActions(
             onMore = onMore, onReactivate = onReactivate, onIntervene = vm::intervene, onSend = vm::send, onSendText = vm::sendText,
-            onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss, onClearError = vm::clearError,
+            onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss, onClearError = vm::clearError, onReload = vm::refresh,
         ),
     )
 }
@@ -76,6 +80,7 @@ class ChatActions(
     val onRetry: (String) -> Unit,
     val onDismiss: (String) -> Unit,
     val onClearError: () -> Unit,
+    val onReload: () -> Unit = {},
 )
 
 /** El chat sin ViewModel: lo que se ve dado un [ChatUiState]. */
@@ -84,23 +89,12 @@ fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modif
     Column(modifier) {
         if (!ui.humanInControl) BotReadingPanel(ui.stage, ui.busy, actions.onIntervene)
         ui.error?.let { ErrorNotice(it, onDismiss = actions.onClearError) }
-        val zone = remember { ZoneId.systemDefault() }
-        val items = remember(ui.messages) { chatItems(ui.messages, System.currentTimeMillis(), zone).asReversed() }
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            reverseLayout = true,
-            contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.md),
-        ) {
-            items(
-                items,
-                key = { if (it is ChatItem.Bubble) it.message.key else "day:${(it as ChatItem.Day).label}" },
-                contentType = { if (it is ChatItem.Bubble) it.message.author else "day" },
-            ) { item ->
-                when (item) {
-                    is ChatItem.Day -> DayHeader(item.label)
-                    is ChatItem.Bubble -> MessageBubble(item.message, position = item.position, zone = zone)
-                }
+        when (ui.history) {
+            HistoryView.LOADING -> LoadingState(Modifier.weight(1f))
+            HistoryView.FAILED -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                LoadError(actions.onReload, title = "No se pudo cargar la conversación")
             }
+            HistoryView.MESSAGES -> History(ui, Modifier.weight(1f))
         }
         // Piso del radar: los incendios que aparecen solos nunca tapan deshacer, burbujas ni lo que se escribe.
         RadarFloor {
@@ -112,6 +106,29 @@ fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modif
                     QuickActionStrip(ui.suggestions, onSend = actions.onSend, onEdit = { actions.onMore() }, onMore = actions.onMore)
                     Composer(draft, enabled = true, onSend = actions.onSendText)
                 }
+            }
+        }
+    }
+}
+
+/** El historial, del más nuevo abajo. */
+@Composable
+private fun History(ui: ChatUiState, modifier: Modifier) {
+    val zone = remember { ZoneId.systemDefault() }
+    val items = remember(ui.messages) { chatItems(ui.messages, System.currentTimeMillis(), zone).asReversed() }
+    LazyColumn(
+        modifier = modifier.fillMaxWidth(),
+        reverseLayout = true,
+        contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.md),
+    ) {
+        items(
+            items,
+            key = { if (it is ChatItem.Bubble) it.message.key else "day:${(it as ChatItem.Day).label}" },
+            contentType = { if (it is ChatItem.Bubble) it.message.author else "day" },
+        ) { item ->
+            when (item) {
+                is ChatItem.Day -> DayHeader(item.label)
+                is ChatItem.Bubble -> MessageBubble(item.message, position = item.position, zone = zone)
             }
         }
     }

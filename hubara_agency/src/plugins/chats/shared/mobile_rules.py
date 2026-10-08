@@ -651,3 +651,31 @@ def hot_sales(candidates: list[HotFacts], *, now_ms: int) -> list[dict[str, Any]
         }
         for c in hot
     ]
+
+
+# ── Humano (widget) ──────────────────────────────────────────────────────────
+
+
+#: Filas que manda `/mobile/human` (el widget muestra 3; el total va aparte).
+MAX_HUMAN = 10
+
+
+def human_chats(chats: list[ChatFireFacts]) -> list[dict[str, Any]]:
+    """Conversaciones que hoy atiende una persona (`active_route == humano`): primero las que esperan respuesta (la
+    espera más vieja arriba), después las al día (la más reciente arriba). Sin mensajes: va a la pantalla de inicio."""
+
+    def order(c: ChatFireFacts) -> tuple[int, int, str]:
+        if c.unanswered_count > 0:
+            return (0, c.waiting_since_ms or c.last_inbound_ms or 0, c.session_id)
+        return (1, -(c.last_inbound_ms or 0), c.session_id)
+
+    return [
+        {
+            "session_id": c.session_id,
+            "name": _first_name(c.name),
+            "unanswered": c.unanswered_count,
+            "waiting_since_ms": c.waiting_since_ms if c.unanswered_count > 0 else None,
+            "last_inbound_ms": c.last_inbound_ms,
+        }
+        for c in sorted((c for c in chats if c.in_human), key=order)
+    ]

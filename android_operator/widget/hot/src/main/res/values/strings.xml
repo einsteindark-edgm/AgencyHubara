@@ -1,4 +1,5 @@
 <resources>
-    <string name="hot_widget_label">Ventas calientes</string>
-    <string name="hot_widget_description">Las conversaciones que están por cerrarse, sin abrir la app.</string>
+    <string name="hot_widget_label">Operador: ventas, incendios y humano</string>
+    <string name="hot_widget_description">Desliza entre ventas calientes, incendios y los chats que atiende una persona, sin abrir la app.</string>
+    <string name="widget_open_app">Abre la app para cargar el widget.</string>
 </resources>

@@ -8,6 +8,9 @@
                                                    #   a backdated unanswered msg → GRAVE fire
     python3 inject.py reply wa_000000000101 "Quiero el de lavanda y el de coco"
     python3 inject.py reset [--image-base URL]     # rebuild the whole seed (timestamps re-based to now)
+    python3 inject.py network --path /api/orders/orders --delay 5
+                                                   # that API route answers 5 s late («Cargando…» scenarios);
+                                                   #   --fail answers 503 instead; --clear removes every rule
     python3 inject.py screen mas.json --from ../screens/mas.json
                                                    # serve this App Operador screen instead of the repo's one
                                                    #   (what frontend-deploy would publish); reset removes it
@@ -43,6 +46,7 @@ from sandbox_common import (  # noqa: E402
     MIN_MS,
     MOBILE_CONFIG,
     MOBILE_SCREENS,
+    NETWORK_RULES,
     PHONE_NUMBER_ID,
     PUSH_CURSOR,
     PUSH_OUTBOX,
@@ -217,6 +221,21 @@ def mobile_screen(name: str, source: str) -> None:
     print(f"screen: {name} ← {src}")
 
 
+def network(path: str | None, delay_s: float, fail: bool, clear: bool) -> None:
+    """Una ruta de la API lenta o caída (la aplica el middleware del backend de prueba). Una regla por ruta."""
+    if clear:
+        NETWORK_RULES.unlink(missing_ok=True)
+        print("network: sin reglas")
+        return
+    if not path or not path.startswith("/api/"):
+        sys.exit("network: --path must be an API route (/api/...)")
+    rules = [r for r in (json.loads(NETWORK_RULES.read_text(encoding="utf-8")) if NETWORK_RULES.exists() else [])
+             if r.get("path") != path]
+    rules.append({"path": path, "delay_s": delay_s, "fail": fail})
+    atomic_write_json(NETWORK_RULES, rules)
+    print(f"network: {path} → {'503' if fail else 'ok'} tras {delay_s:g} s")
+
+
 def push_device(token: str) -> None:
     """Registra un teléfono para avisos, como lo haría la app con su token de Firebase (`POST /mobile/devices`)."""
     t = now_ms()
@@ -241,6 +260,7 @@ def reset(image_base: str) -> None:
     import seed
 
     MOBILE_CONFIG.unlink(missing_ok=True)  # la configuración de la app vuelve a la de siempre
+    NETWORK_RULES.unlink(missing_ok=True)  # la red vuelve a ser normal
     PUSH_OUTBOX.unlink(missing_ok=True)    # ni pushes viejos por reenviar
     PUSH_CURSOR.unlink(missing_ok=True)
     shutil.rmtree(MOBILE_SCREENS, ignore_errors=True)  # y las pantallas, las del repo
@@ -273,6 +293,11 @@ def main() -> None:
     p_screen = sub.add_parser("screen", help="serve an App Operador screen instead of the repo's one")
     p_screen.add_argument("name", help="<id>.json")
     p_screen.add_argument("--from", dest="source", required=True, help="JSON file (relative to sandbox/)")
+    p_net = sub.add_parser("network", help="make an API route slow or failing (sandbox middleware)")
+    p_net.add_argument("--path", help="route prefix, e.g. /api/orders/orders")
+    p_net.add_argument("--delay", type=float, default=0.0, help="seconds before answering")
+    p_net.add_argument("--fail", action="store_true", help="answer 503 instead of the real response")
+    p_net.add_argument("--clear", action="store_true", help="remove every rule")
     p_device = sub.add_parser("push-device", help="register a phone token for push notices")
     p_device.add_argument("token")
     sub.add_parser("push-relay", help="print the pushes the backend sent since the last call (JSON lines)")
@@ -291,6 +316,8 @@ def main() -> None:
         mobile_config(args.min_version)
     elif args.cmd == "screen":
         mobile_screen(args.name, args.source)
+    elif args.cmd == "network":
+        network(args.path, args.delay, args.fail, args.clear)
     elif args.cmd == "push-device":
         push_device(args.token)
     elif args.cmd == "push-relay":

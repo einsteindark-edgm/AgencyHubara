@@ -597,3 +597,46 @@ def test_several_products_one_line_and_no_cart_value_without_every_price() -> No
     assert sale["cart_value_cop"] is None
     assert sale["risk"] is True and sale["name"] == "Cliente"
     assert _hot_sales(_hot(items=()))[0]["product"] is None
+
+
+# ── Humano (página del widget, 2026-10-08) ───────────────────────────────────
+
+
+def _human(session_id: str, *, unanswered: int = 0, since: int | None = None, last: int | None = None,
+           name: str | None = "Cliente Prueba"):
+    from src.plugins.chats.shared.mobile_rules import ChatFireFacts
+
+    return ChatFireFacts(
+        session_id=session_id, name=name, in_human=True, escalation_reason=None,
+        unanswered_count=unanswered, waiting_since_ms=since, last_inbound_ms=last,
+    )
+
+
+def test_human_chats_put_who_waits_longest_first_then_the_most_recent() -> None:
+    from src.plugins.chats.shared.mobile_rules import human_chats
+
+    rows = human_chats([
+        _human("wa_test_al_dia_viejo", last=NOW - 90 * MIN),
+        _human("wa_test_espera_5", unanswered=1, since=NOW - 5 * MIN, last=NOW - 5 * MIN),
+        _human("wa_test_al_dia_nuevo", last=NOW - 2 * MIN),
+        _human("wa_test_espera_20", unanswered=3, since=NOW - 20 * MIN, last=NOW - MIN, name="Sofía Pérez"),
+    ])
+
+    assert [r["session_id"] for r in rows] == [
+        "wa_test_espera_20", "wa_test_espera_5", "wa_test_al_dia_nuevo", "wa_test_al_dia_viejo",
+    ]
+    assert rows[0] == {
+        "session_id": "wa_test_espera_20", "name": "Sofía", "unanswered": 3,
+        "waiting_since_ms": NOW - 20 * MIN, "last_inbound_ms": NOW - MIN,
+    }
+
+
+def test_human_chats_skip_the_bot_and_never_carry_messages() -> None:
+    from src.plugins.chats.shared.mobile_rules import human_chats
+
+    bot = replace(_human("wa_test_bot", unanswered=2, since=NOW - MIN), in_human=False)
+    rows = human_chats([bot, _human("wa_test_humano", name=None)])
+
+    assert [r["session_id"] for r in rows] == ["wa_test_humano"]
+    assert rows[0]["name"] == "Cliente"
+    assert set(rows[0]) == {"session_id", "name", "unanswered", "waiting_since_ms", "last_inbound_ms"}

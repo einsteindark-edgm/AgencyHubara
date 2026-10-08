@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Una página: título y cuántas hay, hasta 3 filas (cada una abre su chat) y en qué página va.
+     StackView mide cada tarjeta con AT_MOST: con match_parent una página de filas cortas quedaba angosta y la de atrás
+     asomaba al lado (S24, Android 11). minWidth/minHeight grandes la llevan a TODO el espacio que le da la pila. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/page"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:minWidth="@dimen/widget_page_fill"
+    android:minHeight="@dimen/widget_page_fill"
+    android:background="@drawable/widget_card"
+    android:orientation="vertical"
+    android:paddingStart="@dimen/widget_padding"
+    android:paddingTop="16dp"
+    android:paddingEnd="@dimen/widget_padding"
+    android:paddingBottom="4dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/page_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="1"
+            android:textColor="@color/widget_on_surface"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/page_position"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/widget_on_surface_variant"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/page_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="8dp"
+        android:textColor="@color/widget_on_surface_variant"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/row_0"
+        style="@style/WidgetRow" />
+
+    <TextView
+        android:id="@+id/row_1"
+        style="@style/WidgetRow" />
+
+    <TextView
+        android:id="@+id/row_2"
+        style="@style/WidgetRow" />
+</LinearLayout>

@@ -12,5 +12,9 @@
                 <action android:name="com.hubara.operator.E2E_PUSH" />
             </intent-filter>
         </receiver>
+        <!-- SOLO debug (escenario S24): hospeda el widget de la pantalla de inicio para deslizarlo y tocarlo por adb. -->
+        <activity
+            android:name=".E2eWidgetHostActivity"
+            android:exported="true" />
     </application>
 </manifest>

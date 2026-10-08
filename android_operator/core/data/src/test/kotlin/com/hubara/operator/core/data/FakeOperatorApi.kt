@@ -5,6 +5,7 @@ import com.hubara.operator.core.network.dto.DeviceRequest
 import com.hubara.operator.core.network.dto.FiresDto
 import com.hubara.operator.core.network.dto.HandoffResponseDto
 import com.hubara.operator.core.network.dto.HotDto
+import com.hubara.operator.core.network.dto.HumanDto
 import com.hubara.operator.core.network.dto.HumanMessageRequest
 import com.hubara.operator.core.network.dto.HumanMessageResponseDto
 import com.hubara.operator.core.network.dto.InterveneRequest
@@ -70,6 +71,7 @@ class FakeOperatorApi : OperatorApi {
 
     override suspend fun fires() = firesResponse.also { calls += "fires" }
     override suspend fun hot() = HotDto()
+    override suspend fun human() = HumanDto()
     override suspend fun orders(limit: Int) = OrderListDto().also { calls += "orders" }
     override suspend fun order(id: String): OrderDetailDto = error("no usado")
     override suspend fun transitionStage(id: String, body: StageRequest) = OrderCommandResultDto(true, id, body.stage)

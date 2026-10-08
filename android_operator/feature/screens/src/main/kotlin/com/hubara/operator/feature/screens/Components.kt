@@ -53,6 +53,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -74,6 +75,7 @@ import com.hubara.operator.core.designsystem.Avatar
 import com.hubara.operator.core.designsystem.EmptyState
 import com.hubara.operator.core.designsystem.IconTile
 import com.hubara.operator.core.designsystem.OperatorIcons
+import com.hubara.operator.core.designsystem.WorkingIndicator
 import com.hubara.operator.core.designsystem.OperatorTheme
 import com.hubara.operator.core.designsystem.SegmentGap
 import com.hubara.operator.core.designsystem.Spacing
@@ -95,13 +97,18 @@ import kotlinx.serialization.json.JsonPrimitive
 class ScreenHost(
     val env: Env,
     val busy: Boolean,
+    /** El `origin` del componente que lanzó la llamada en curso. */
+    val working: String? = null,
     val bound: (String) -> JsonElement?,
-    val onAction: (Action, Scope) -> Unit,
+    val onAction: (Action, Scope, String?) -> Unit,
     val onBind: (String, JsonElement, Boolean) -> Unit,
 )
 
+/** Un `origin` por componente que lanza acciones (único en el proceso). */
+private val origins = java.util.concurrent.atomic.AtomicLong()
+
 val LocalScreenHost = staticCompositionLocalOf {
-    ScreenHost(Env.Default, busy = false, bound = { null }, onAction = { _, _ -> }, onBind = { _, _, _ -> })
+    ScreenHost(Env.Default, busy = false, bound = { null }, onAction = { _, _, _ -> }, onBind = { _, _, _ -> })
 }
 
 // ── Filas de la lista perezosa ────────────────────────────────────────────────────────────────────
@@ -182,7 +189,9 @@ fun ScreenRowContent(row: ScreenRow, modifier: Modifier = Modifier) {
 fun RenderNode(node: Node, scope: Scope, modifier: Modifier = Modifier) {
     val host = LocalScreenHost.current
     if (!node.isVisible(scope, host.env)) return
-    val tap: (() -> Unit)? = node.action?.let { action -> { host.onAction(action, scope) } }
+    // Quién lanza la acción: el botón que espera al backend lo muestra (`ScreenUi.working`).
+    val origin = remember { "c" + origins.incrementAndGet() }
+    val tap: (() -> Unit)? = node.action?.let { action -> { host.onAction(action, scope, origin) } }
     when (node.type) {
         "column" -> SduiColumn(node, scope, modifier)
         "row" -> SduiRow(node, scope, modifier)
@@ -217,7 +226,7 @@ fun RenderNode(node: Node, scope: Scope, modifier: Modifier = Modifier) {
             OperatorIcons.named(node.text("icon", scope)) ?: OperatorIcons.named("info")!!,
             node.text("title", scope), node.text("body", scope), modifier,
         )
-        "button" -> SduiButton(node, scope, modifier, tap)
+        "button" -> SduiButton(node, scope, modifier, tap, working = host.busy && host.working == origin)
         "chips" -> SduiChips(node, scope, modifier)
         "text_field" -> SduiTextField(node, scope, modifier)
         "switch" -> SduiSwitch(node, scope, modifier)
@@ -235,7 +244,7 @@ private fun NativeNode(node: Node, scope: Scope, modifier: Modifier) {
     val host = LocalScreenHost.current
     val component = LocalNativeComponents.current[node.type] ?: return
     val values = node.props.keys.mapNotNull { key -> node.template(key)?.let { key to it.text(scope, host.env) } }.toMap()
-    val actions = node.props.keys.mapNotNull { key -> node.actionProp(key)?.let { action -> key to { host.onAction(action, scope) } } }.toMap()
+    val actions = node.props.keys.mapNotNull { key -> node.actionProp(key)?.let { action -> key to { host.onAction(action, scope, null) } } }.toMap()
     component.Content(NativeProps(values, actions), modifier)
 }
 
@@ -626,16 +635,22 @@ private fun SduiNotice(node: Node, scope: Scope, modifier: Modifier, tap: (() ->
 // ── Acciones y entradas ──────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SduiButton(node: Node, scope: Scope, modifier: Modifier, tap: (() -> Unit)?) {
+private fun SduiButton(node: Node, scope: Scope, modifier: Modifier, tap: (() -> Unit)?, working: Boolean) {
     val host = LocalScreenHost.current
     val enabled = node.flag("enabled", scope, true) && !host.busy && tap != null
     val full = node.flag("full_width", scope, false)
     val m = if (full) modifier.fillMaxWidth().heightIn(min = 56.dp) else modifier
     val danger = node.text("tone", scope) == "danger"
     val label: @Composable RowScope.() -> Unit = {
-        OperatorIcons.named(node.text("icon", scope))?.let {
-            Icon(it, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+        // Esperando al backend: el indicador va en el lugar del ícono y el texto sigue diciendo qué hace.
+        if (working) {
+            WorkingIndicator()
             Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+        } else {
+            OperatorIcons.named(node.text("icon", scope))?.let {
+                Icon(it, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
+                Spacer(Modifier.width(ButtonDefaults.IconSpacing))
+            }
         }
         Text(node.text("text", scope))
     }

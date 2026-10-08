@@ -55,12 +55,13 @@ cd android_operator && ./gradlew :app:bundleRelease \
 | `:core:database` | Room: bandeja, mensajes, outbox, borradores, burbujas, incendios. |
 | `:core:data` | Repositorios (Room = única fuente de verdad), `AuthRepository`, outbox con deshacer, `SyncEngine`, y para las pantallas: `ScreenStore`, `ScreenDataClient`, las **fuentes del teléfono** (`screens/sources`: bandeja con no leídos, incendios, chat, plantillas) y el contrato `NativeActions`. |
 | `:core:navigation` | TODAS las claves de navegación, `Navigator` (una pila por pestaña), deep links, hoja inferior y `ScreenRoutes` (qué pantalla arma cada clave; `fireDestination`). |
-| `:core:designsystem` | **Material 3 Expressive con la marca**: paleta (`Color.kt`), Google Sans Flex (`Type.kt`), esquinas (`Shape.kt`), `Spacing`, íconos Material Symbols (`OperatorIcons`), `Avatar`, `StatusPill`, `IconTile`, `EmptyState`, `SuggestionBubble`, `segmentedShape`. |
+| `:core:designsystem` | **Material 3 Expressive con la marca**: paleta (`Color.kt`), Google Sans Flex (`Type.kt`), esquinas (`Shape.kt`), `Spacing`, íconos Material Symbols (`OperatorIcons`), `Avatar`, `StatusPill`, `IconTile`, `EmptyState`, `SuggestionBubble`, `segmentedShape`, y la carga (`Loading.kt`: `LoadingState`, `WorkingIndicator`, `LoadError`). |
 | `:core:ui` | `RadarOverlay`/`RadarLayer`, `FireCard`, horas (`TimeLabels`), `NativeComponent` (contrato de las piezas nativas). |
 | `:feature:auth` | El login (nativo: va antes de la sesión). |
 | `:feature:chat` | La pieza nativa `chat` (`ChatIsland`: lo que entendió el bot, historial, deshacer, burbujas, composer) con su `ChatViewModel`. Sin entradas de navegación. |
 | `:feature:screens` | **Todas las pantallas**: UN `ScreenViewModel` (MVI), el render de cada componente (`Components.kt`) y las entradas de TODAS las claves (`ScreensNavigation`: cada clave se arma con su pantalla según `ScreenRoutes`). `RealScreensTest` prueba los archivos reales del repo. |
-| `:core:push` | Fuera de la app: notificaciones, el vigía (`Vigia` + `VigiaWorker`), cerrar sesión y los **avisos push** (`PushRegistrar`, `PushHandler`, `OperatorMessagingService`, `FirebasePushTransport`). |
+| `:core:push` | Fuera de la app: notificaciones, el vigía (`Vigia` + `VigiaWorker`), cerrar sesión, los **avisos push** (`PushRegistrar`, `PushHandler`, `OperatorMessagingService`, `FirebasePushTransport`) y las páginas del widget (`WidgetPages.kt` + `AmbientStore`). |
+| `:widget:hot` | El widget de la pantalla de inicio: `AppWidgetProvider` con una `StackView` de tres páginas (ventas calientes, incendios, humano). Solo pinta lo que dejó el vigía. |
 | `:app` | `MainActivity`, `OperatorApp` (login o shell; las pestañas y sus números salen de `app.json`), radar, `AppNativeActions` (outbox, sesión, incendios). |
 
 ## Reglas
@@ -206,12 +207,31 @@ cd android_operator && ./gradlew :app:bundleRelease \
     traspaso). Cuando el operador responde, vuelve la regla por tiempo (2 min «hoy», 10 min grave). El paquete
     `operador-2@2` no deja que Jev lo baje (ni una espera de horas). S21 en el emulador.
 
+30. **Cargando solo sin nada que mostrar** (2026-10-08): `LoadingState` (el `LoadingIndicator` expresivo, «Cargando…» fijo
+    para TalkBack, aparece a los 300 ms para no parpadear) va donde la pantalla no tiene NADA: lo guardado (Room,
+    `FileScreenDataCache`) se muestra y la recarga va callada; el indicador de «tirar para actualizar» solo cuando lo
+    pidió el operador (`ScreenUi.pullIndicator`: tirar o una acción `refresh`). Una fuente del teléfono vacía (Room recién
+    instalada) no cuenta como dato hasta su primera carga buena: antes la bandeja decía «No hay chats» mientras llegaban.
+    Si falla sin nada guardado: `LoadError` con «Reintentar», nunca un indicador eterno. Una llamada (`call`) o acción
+    nativa marca `busy` + `working` (el `origin` del botón que la lanzó: ese muestra `WorkingIndicator`; las del menú,
+    la línea de `BusyBar`) y un doble toque no sale dos veces. El chat: `HistoryView` (cargando / error / mensajes). S22–S23.
+
+31. **El widget es `AppWidgetProvider` + `StackView`, no Glance** (2026-10-08): Glance 1.2 no tiene páginas que se
+    deslicen. Las páginas van ADENTRO del RemoteViews con `RemoteViewsCompat.setRemoteAdapter(RemoteCollectionItems)`:
+    en Android 12+ la API nativa y en el Android 11 del operador el `RemoteViewsCompatService` de `core-remoteviews`
+    (protegido con `BIND_REMOTEVIEWS`), sin servicio ni fábrica propios. La clase se sigue llamando
+    `HotSalesWidgetReceiver` para que los widgets ya puestos no se rompan. Trampas que vio S24: StackView mide cada
+    tarjeta con AT_MOST (sin `minWidth`/`minHeight` grandes una página de filas cortas queda angosta y asoma la de
+    atrás), las filas que faltan van INVISIBLE (no GONE) y deslizar HACIA ABAJO avanza. Solo `home_screen` (nunca la
+    pantalla bloqueada); filas sin mensajes ni esperas que se pongan viejas; cada fila abre `hubara://chat/<sesión>`
+    (un pedido sin chat, su ficha) con una plantilla `PendingIntent` explícita y MUTABLE solo para el fill-in.
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
 `/events`, `/api/orders/orders[/{id}]`, `PATCH /api/orders/orders/{id}/stage`.
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
-`GET /api/chats/mobile/hot`, `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,
+`GET /api/chats/mobile/hot`, `GET /api/chats/mobile/human` (página «Humano» del widget), `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,
 `DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`,
 `POST /api/chats/session-actions/{id}/tools/{tool}`.
 Pantallas del servidor (las de `screens/`): `/api/orders/orders`, `PATCH /api/orders/orders/{id}/confirm-payment`,

@@ -44,7 +44,11 @@ class SignOutTest {
     @Test fun cerrar_sesion_no_deja_datos_de_clientes_en_el_telefono() = runTest {
         db.conversations().upsert(listOf(ConversationEntity("wa_000000000101", "000000000101", "", "ventas", 1, null, 2, null, null, null, 0)))
         val ambient = AmbientStore(context)
-        ambient.saveHot(listOf(HotSaleDto(sessionId = "wa_000000000101", name = "Laura Prueba")))
+        ambient.savePage(WidgetPageKind.HOT, hotPage(listOf(HotSaleDto(sessionId = "wa_000000000101", name = "Laura Prueba"))))
+        // Las otras dos páginas del widget también tienen nombres de clientes.
+        ambient.savePage(WidgetPageKind.FIRES, WidgetPage(listOf(WidgetRow("Laura pide un humano", "grave", "hubara://chat/wa_000000000101")), 1))
+        ambient.savePage(WidgetPageKind.HUMAN, WidgetPage(listOf(WidgetRow("Laura", "2 sin responder", "hubara://chat/wa_000000000101")), 1))
+        assertThat(ambient.pages.first().human).isNotNull()
         val seen = SeenRepository(context, db.conversations())
         seen.update { SeenCounts(baseline = true, seen = mapOf("wa_000000000101" to 2)) }
         val manager = context.getSystemService(NotificationManager::class.java)
@@ -71,7 +75,7 @@ class SignOutTest {
         SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ }, screenData, push)()
 
         assertThat(db.conversations().observeAll().first()).isEmpty()
-        assertThat(ambient.hot.first()).isEmpty()
+        assertThat(ambient.pages.first()).isEqualTo(WidgetPages())  // ni ventas, ni incendios, ni quién atiende
         assertThat(seen.counts.first()).isEqualTo(SeenCounts())
         assertThat(shadowOf(manager).allNotifications).isEmpty()
         assertThat(widgetRefreshed).isEqualTo(1)  // el widget de la pantalla de inicio deja de mostrar nombres
