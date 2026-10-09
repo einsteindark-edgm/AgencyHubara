@@ -63,9 +63,18 @@ _LATER_VERB_RE = re.compile(
     r"|\b(?:lo|la|los|las) (?:hago|pido|compro|reviso|veo|miro|confirmo|decido)\b"
     r"|\b(?:hablamos|seguimos|nos hablamos|lo vemos)\b"
 )
-_LATER_TIME_RE = re.compile(
-    r"\b(?:cuando|luego|despues|mas tarde|mas tardecito|en un rato|al rato|manana|en la noche|esta noche|"
-    r"en la tarde|ahorita|otro dia|la otra semana|el (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b"
+#: Los momentos que dejan algo para después. «Ahorita» no: en Colombia es ya
+#: mismo («la compro ahorita»).
+_LATER_TIMES = (
+    r"luego|despues|mas tarde|mas tardecito|en un rato|al rato|manana|en la noche|esta noche|"
+    r"en la tarde|otro dia|la otra semana|el (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)"
+)
+_LATER_TIME_RE = re.compile(rf"\b(?:cuando|{_LATER_TIMES})\b")
+#: Un mensaje que SOLO dice un momento («Luego», «Mañana») o un momento y lo
+#: que hará («Luego miro», «Más tarde reviso», «Sí, mañana lo miro»).
+_ONLY_LATER_RE = re.compile(
+    rf"^(?:(?:si|ok|bueno|listo|vale|dale)\s+)?(?:{_LATER_TIMES})"
+    r"(?:\s+(?:lo\s+|la\s+)?(?:miro|reviso|veo|decido|pienso|confirmo))?$"
 )
 #: … o el «te aviso» / «te confirmo» con que se cierra el mensaje.
 _LATER_AT_END_RE = re.compile(r"\b(?:te|les|le) (?:aviso|confirmo|escribo|digo)\W*$")
@@ -104,6 +113,8 @@ def detect_deferral(text: str | None) -> bool:
     if _ARRIVAL_RE.search(norm) and not _PAYS_RE.search(norm):
         return True
     if _LATER_AT_END_RE.search(norm):
+        return True
+    if _ONLY_LATER_RE.match(" ".join(re.sub(r"[^\w\s]", " ", norm).split())):
         return True
     return bool(_LATER_VERB_RE.search(norm) and _LATER_TIME_RE.search(norm))
 

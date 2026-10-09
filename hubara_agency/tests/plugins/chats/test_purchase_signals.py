@@ -78,6 +78,28 @@ def test_a_purchase_detail_with_a_time_word_is_not_a_deferral(text: str) -> None
 
 @pytest.mark.parametrize(
     "text",
+    ["Después", "Luego", "Más tarde", "En un rato", "Mañana", "Sí, luego", "Luego miro", "Más tarde reviso",
+     "Mañana lo miro"],
+)
+def test_a_message_that_only_says_later_is_a_deferral(text: str) -> None:
+    """Revisión del premortem (2026-10-09): un mensaje que solo dice un momento
+    («Luego», «Mañana») o un momento y lo que hará («Luego miro») sigue
+    aplazando, como antes de reescribir la regla."""
+    assert detect_deferral(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["La compro ahorita", "Ok, lo confirmo ahorita", "Listo, ahorita lo pago",
+     "Sí, contra entrega, lo pago cuando me llegue"],
+)
+def test_ahorita_and_paying_on_delivery_are_not_deferrals(text: str) -> None:
+    """«Ahorita» en Colombia es ya mismo; pagar cuando le llegue es contra entrega."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
     ["Listo, lo pago mañana por nequi", "dale, mañana lo pago", "Confirmo, lo pago cuando llegue a la casa"],
 )
 def test_saying_when_they_pay_is_not_a_deferral(text: str) -> None:

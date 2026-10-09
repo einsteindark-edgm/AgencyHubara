@@ -870,11 +870,27 @@ rechazar `request_shipping_details` con `customer_deferred`; y, si el turno lo
 maneja remarketing, prefijar el resumen del handoff con `[EL CLIENTE APLAZÓ]`
 para que ventas no avance el cierre.
 
+Qué lee como aplazamiento la regla (`purchase_signals.detect_deferral`, el
+respaldo de `compra` cuando Jev duda o cae; premortem del 2026-10-09): las
+frases inequívocas («voy en camino», «ahora no», «lo pienso», «déjame
+pensarlo», «cuando llegue a la casa»), dejar algo para después con un momento
+(«luego te digo», «mañana te confirmo», «más tarde lo pido»), cerrar el
+mensaje con «te aviso», o un mensaje que solo dice un momento («Luego»,
+«Mañana», «Luego miro»). NO lo son: una pregunta («¿me llega mañana?»), decir
+cuándo paga («lo pago mañana», «lo pago cuando me llegue»), «ahorita» (ya
+mismo) ni un dato con «te confirmo» («te confirmo: lavanda»).
+
 #### Scenario: "Voy apenas en camino a casa" tras el gancho de remarketing
 
 - WHEN remarketing transfiere a ventas
 - THEN el handoff empieza con `[EL CLIENTE APLAZÓ]` y prohíbe pedir datos de envío
 - AND ventas responde texto y no manda el formulario
+
+#### Scenario: Una pregunta o un pago diferido no aplazan
+
+- GIVEN el cliente escribe «¿Me llega mañana?» o «Listo, lo pago mañana por nequi»
+- WHEN la regla lee el mensaje
+- THEN no es un aplazamiento y el formulario, el resumen y el registro no se frenan por eso
 
 ### Requirement: Lo que no existe en el catálogo se dice (2026-09-23, revisado 2026-09-29)
 
