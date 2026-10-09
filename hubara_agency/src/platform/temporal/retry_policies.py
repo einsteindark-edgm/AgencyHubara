@@ -14,10 +14,13 @@ from temporalio.common import RetryPolicy
 #: Premortem 2026-10-09: el deploy recrea LiteLLM mientras el worker atiende
 #: (10 a 30 s sin LLM). Con 3 intentos (unos 6 s de espera) el turno agotaba los
 #: reintentos, el workflow fallaba y el mensaje del cliente se perdía. Ahora las
-#: esperas suman 44 s (2+4+8+15+15) sin que ninguna pase de 15 s. Son opciones
+#: esperas suman 44 s (2+4+8+15+15) sin que ninguna pase de 15 s. Un LiteLLM
+#: colgado (no rechaza: no contesta) no traba el turno más que antes: tope
+#: total de 15 min, como con 3 intentos (revisión de compuertas). Son opciones
 #: de la activity: no cambian la historia (replay seguro).
 _LLM_OPTIONS = {
     "start_to_close_timeout": timedelta(minutes=5),
+    "schedule_to_close_timeout": timedelta(minutes=15),
     "retry_policy": RetryPolicy(
         maximum_attempts=6,
         initial_interval=timedelta(seconds=2),

@@ -33,3 +33,15 @@ def test_a_single_wait_stays_short() -> None:
     """Esperar no es colgar el turno: ninguna espera pasa de 20 s."""
     policy = _LLM_OPTIONS["retry_policy"]
     assert policy.maximum_interval is not None and policy.maximum_interval <= timedelta(seconds=20)
+
+
+def test_a_hung_llm_does_not_hold_the_turn_longer_than_before() -> None:
+    """Revisión de compuertas (2026-10-09): con 6 intentos de hasta 5 min, un
+    LiteLLM colgado (que no rechaza: no contesta) trababa el turno unos 30 min;
+    con 3 intentos eran unos 15. El tope total queda en 15 min y deja entrar
+    al menos dos intentos completos más las esperas."""
+    total = _LLM_OPTIONS.get("schedule_to_close_timeout")
+    attempt = _LLM_OPTIONS["start_to_close_timeout"]
+
+    assert total is not None and total <= timedelta(minutes=15)
+    assert total >= 2 * attempt + timedelta(seconds=sum(_waits(_LLM_OPTIONS["retry_policy"])))
