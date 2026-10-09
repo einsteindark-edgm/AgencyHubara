@@ -4,13 +4,13 @@ Cuando un cliente activa su nombre de usuario de WhatsApp, Meta omite su
 teléfono en el webhook (`messages[].from`, `contacts[].wa_id`) mientras el
 negocio no haya hablado con él en los últimos 30 días — justo el caso de un
 lead nuevo de anuncio. Solo llega `from_user_id` (el *business-scoped user
-ID*: `CO.1502576394655843` = país ISO, punto, hasta 128 alfanuméricos), y para
+ID*: `CO.9990000000000002` = país ISO, punto, hasta 128 alfanuméricos), y para
 contestarle se usa el campo `recipient` en vez de `to`.
 
 Una conversación de WhatsApp es `wa_<dirección>` y la dirección nombra un
 directorio del vault, donde un `.` no se admite (`is_vault_session_id`). Así
 que la dirección de estos clientes es el BSUID SIN el punto
-(`CO1502576394655843`): empieza con letras, nunca se confunde con un
+(`CO9990000000000002`): empieza con letras, nunca se confunde con un
 teléfono (solo dígitos) y se reconstruye exacto (el país son siempre 2 letras).
 
 Ledger 2026-09-25 y 2026-10-09: el parser exigía `from` y estos clientes
@@ -29,7 +29,7 @@ _PHONE_RE = re.compile(r"\d{8,15}")
 
 
 def address_from_user_id(user_id: Any) -> str | None:
-    """`CO.1502576394655843` → `CO1502576394655843`; `None` si no es un BSUID
+    """`CO.9990000000000002` → `CO9990000000000002`; `None` si no es un BSUID
     de quien escribe (un id "padre" `CO.ENT.…`, un traversal, etc.)."""
     if not isinstance(user_id, str):
         return None

@@ -13,7 +13,7 @@ import pytest
 
 from src.plugins.chats.agent.sales.sender_identity_store import FilesystemSenderIdentity
 
-_USER = "CO1502576394655843"
+_USER = "CO9990000000000002"
 
 
 def test_the_first_conversation_wins(tmp_path: Path) -> None:

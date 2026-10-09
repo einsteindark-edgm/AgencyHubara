@@ -1,6 +1,6 @@
 """Clientes con NOMBRE DE USUARIO de WhatsApp: Meta manda su mensaje SIN
 teléfono (`from` / `contacts[].wa_id` omitidos) y solo con su id de Meta
-(`from_user_id` / `contacts[].user_id`, el BSUID: `CO.1502576394655843`).
+(`from_user_id` / `contacts[].user_id`, el BSUID: `CO.9990000000000002`).
 
 Bug (ledger, 2026-09-25 y otra vez 2026-10-09): el parser exigía `from`, el
 webhook respondía 400 y el cliente nunca llegaba al bot. Halloween 07–08 oct:
@@ -20,8 +20,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 _PHONE_ID = "100000000000001"
-_BSUID = "CO.1502576394655843"
-_ADDRESS = "CO1502576394655843"
+_BSUID = "CO.9990000000000002"
+_ADDRESS = "CO9990000000000002"
 _PHONE = "573001234567"
 
 
@@ -72,7 +72,7 @@ def test_a_customer_without_phone_reaches_the_bot_under_their_meta_id(harness) -
 
     assert r.status_code == 200
     [parsed] = ingest.calls
-    assert parsed.from_number == _ADDRESS  # → conversación wa_CO1502576394655843
+    assert parsed.from_number == _ADDRESS  # → conversación wa_CO9990000000000002
     assert parsed.wa_user_id == _BSUID
 
 
@@ -132,9 +132,9 @@ def test_a_phone_customer_without_meta_id_is_unchanged(harness) -> None:
         "../../etc",  # traversal
         "CO.15025/76",
         "CO.",  # sin cuerpo
-        "1502576394655843",  # sin país
-        "co.1502576394655843",  # el país va en mayúsculas (ISO)
-        "CO.ENT.1502576394655843",  # un id "padre" no es quien escribe
+        "9990000000000002",  # sin país
+        "co.9990000000000002",  # el país va en mayúsculas (ISO)
+        "CO.ENT.9990000000000002",  # un id "padre" no es quien escribe
         "CO." + "1" * 129,  # pasado el tope de Meta (128)
     ],
 )

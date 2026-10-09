@@ -715,7 +715,7 @@ def test_a_customer_without_phone_can_be_escalated_and_tagged(h: _Harness) -> No
     """Cliente con nombre de usuario de WhatsApp: su conversación es
     `wa_<id de Meta sin punto>`. La guarda solo aceptaba `wa_<dígitos>` y el
     operador (o MBA) no podía escalar, etiquetar ni registrar su pedido."""
-    session = "wa_CO1502576394655843"
+    session = "wa_CO9990000000000002"
     r = h.client.post(_url("escalate", session), json={"reason_category": "EXPLICIT_REQUEST", "summary": "quiere humano"})
     assert r.status_code == 200, r.text
     assert h.meta(session)["active_route"] == ROUTE_HUMANO

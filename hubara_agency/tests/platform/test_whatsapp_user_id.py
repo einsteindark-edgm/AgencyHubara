@@ -1,5 +1,5 @@
-"""El id de Meta de un cliente con nombre de usuario (BSUID, `CO.1502576394655843`)
-como DIRECCIÓN de conversación: `CO1502576394655843` (sin el punto, para que
+"""El id de Meta de un cliente con nombre de usuario (BSUID, `CO.9990000000000002`)
+como DIRECCIÓN de conversación: `CO9990000000000002` (sin el punto, para que
 `wa_<dirección>` siga siendo un directorio seguro del vault), y de vuelta al
 campo `recipient` cuando le escribimos.
 """
@@ -15,7 +15,7 @@ from src.platform.whatsapp.user_id import (
 
 
 def test_a_meta_user_id_becomes_an_address_without_the_dot() -> None:
-    assert address_from_user_id("CO.1502576394655843") == "CO1502576394655843"
+    assert address_from_user_id("CO.9990000000000002") == "CO9990000000000002"
     assert address_from_user_id("US.aB3x") == "USaB3x"
 
 
@@ -32,7 +32,7 @@ def test_a_phone_is_sent_with_to() -> None:
 
 
 def test_a_meta_user_id_address_is_sent_with_recipient() -> None:
-    assert meta_recipient("CO1502576394655843") == {"recipient": "CO.1502576394655843"}
+    assert meta_recipient("CO9990000000000002") == {"recipient": "CO.9990000000000002"}
 
 
 def test_the_address_round_trips_at_the_longest_meta_user_id() -> None:
@@ -40,7 +40,7 @@ def test_the_address_round_trips_at_the_longest_meta_user_id() -> None:
     assert meta_recipient(address_from_user_id(longest)) == {"recipient": longest}
 
 
-@pytest.mark.parametrize("session_id", ["wa_573001234567", "wa_CO1502576394655843"])
+@pytest.mark.parametrize("session_id", ["wa_573001234567", "wa_CO9990000000000002"])
 def test_both_kinds_of_customer_are_customer_sessions(session_id: str) -> None:
     assert is_customer_session_id(session_id) is True
 
@@ -61,6 +61,6 @@ def test_a_customer_without_phone_gets_the_timezone_of_their_country() -> None:
 
     from src.platform.whatsapp.quiet_hours import resolve_local_timezone
 
-    assert resolve_local_timezone("wa_CO1502576394655843") == ZoneInfo("America/Bogota")
-    assert resolve_local_timezone("wa_MX1502576394655843") == ZoneInfo("America/Mexico_City")
-    assert resolve_local_timezone("wa_ZZ1502576394655843") == ZoneInfo("UTC")
+    assert resolve_local_timezone("wa_CO9990000000000002") == ZoneInfo("America/Bogota")
+    assert resolve_local_timezone("wa_MX9990000000000002") == ZoneInfo("America/Mexico_City")
+    assert resolve_local_timezone("wa_ZZ9990000000000002") == ZoneInfo("UTC")

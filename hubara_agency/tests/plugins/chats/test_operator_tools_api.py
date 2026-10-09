@@ -656,7 +656,7 @@ def test_every_suggested_action_runs_verbatim_on_the_tools_endpoint(h: _Harness,
 def test_the_operator_can_act_on_a_customer_without_phone(h: _Harness) -> None:
     """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta
     sin punto>`. La app no podía mandarle nada (404 `session_not_found`)."""
-    session = "wa_CO1502576394655843"
+    session = "wa_CO9990000000000002"
     (h.vault / session).mkdir(parents=True)
     (h.vault / session / "metadata.json").write_text(json.dumps(_human()), encoding="utf-8")
 

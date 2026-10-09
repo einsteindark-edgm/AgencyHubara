@@ -77,10 +77,10 @@ class WhatsAppMessage:
     # Nombre de perfil de WhatsApp de quien escribe (`value.contacts[].profile.name`), limpio. No es el
     # `contacts` de arriba (una tarjeta de contacto que el cliente compartió).
     profile_name: str | None = None
-    # El id de Meta de quien escribe (`from_user_id`, BSUID: `CO.1502576394655843`),
+    # El id de Meta de quien escribe (`from_user_id`, BSUID: `CO.9990000000000002`),
     # cuando viene válido. Un cliente con nombre de usuario puede llegar SIN
     # teléfono: entonces `from_number` es este id sin el punto
-    # (`CO1502576394655843`) — la dirección de su conversación `wa_CO1502…`.
+    # (`CO9990000000000002`) — la dirección de su conversación `wa_CO1502…`.
     wa_user_id: str | None = None
 
 

@@ -10,7 +10,7 @@ negocio no habló con él en los últimos 30 días —justo un lead nuevo de
 anuncio—, Meta omite su teléfono en el webhook (`messages[].from`,
 `contacts[].wa_id`) y manda solo su id de Meta: `from_user_id` /
 `contacts[].user_id`, el *business-scoped user ID* (BSUID), con forma
-`CO.1502576394655843` (país ISO, punto, hasta 128 alfanuméricos).
+`CO.9990000000000002` (país ISO, punto, hasta 128 alfanuméricos).
 
 El parser exigía `from` y esos clientes nunca llegaban al bot: Halloween 07–08
 oct 2026, Meta contó 8 conversaciones y entraron 5 (las 3 restantes eran estos
@@ -20,7 +20,7 @@ clientes; ledger de inbound).
 
 | Concepto | Valor |
 |---|---|
-| Dirección del cliente | teléfono (`573001234567`) o BSUID **sin el punto** (`CO1502576394655843`) |
+| Dirección del cliente | teléfono (`573001234567`) o BSUID **sin el punto** (`CO9990000000000002`) |
 | Conversación | `wa_<dirección>` — el punto no se admite en un directorio del vault (`is_vault_session_id`) |
 | Envío | `_post_json` (platform) traduce: dirección-BSUID → `"recipient": "CO.1502…"`; teléfono → `"to"` |
 | Mismo cliente, con y sin teléfono | `<vault>/_identity/whatsapp_user_ids/<CC><id>` fija su conversación (el primero gana) |
