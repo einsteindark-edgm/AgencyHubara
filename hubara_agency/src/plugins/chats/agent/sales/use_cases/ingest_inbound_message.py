@@ -223,6 +223,22 @@ _MAX_INBOUND_DOCUMENT_BYTES = 10 * 1024 * 1024
 logger = structlog.get_logger()
 
 
+#: Meta reintenta un webhook no aceptado hasta 7 días (+1 de margen): un
+#: `timestamp` más viejo no puede ser una re-entrega real — es un reloj
+#: sintético (simulador, laboratorio, fixtures) y cuenta la llegada.
+_META_RETRY_HORIZON_MS = 8 * 24 * 3600 * 1000
+
+
+def _customer_sent_ms(parsed: WhatsAppMessage, now_ms: int) -> int:
+    """Cuándo escribió el cliente: el `timestamp` de Meta, sin pasar de
+    `now_ms` (un reloj de Meta adelantado no estira la ventana). Sin
+    timestamp válido o fuera del horizonte de reintentos de Meta, la llegada."""
+    ts_ms = _inbound_meta(parsed)["ts_ms"]
+    if not isinstance(ts_ms, int) or now_ms - ts_ms > _META_RETRY_HORIZON_MS:
+        return now_ms
+    return min(now_ms, ts_ms)
+
+
 def _inbound_meta(parsed: WhatsAppMessage) -> dict[str, Any]:
     """`{wamid, ts_ms, kind}` del inbound (Meta manda la hora en segundos)."""
     ts = str(parsed.timestamp or "").strip()
@@ -465,6 +481,13 @@ class IngestInboundMessage:
         # _now_ms() en múltiples lugares y mantiene consistencia (los
         # timestamps de un mismo inbound son idénticos).
         now_ms = _now_ms()
+        # La ventana de 24 h la abre el CLIENTE al escribir: sale de cuándo
+        # envió el mensaje (`messages[].timestamp`), no de cuándo llegó el
+        # webhook. Meta reintenta hasta ~7 días un webhook que no aceptamos
+        # (clientes sin teléfono, 2026-10-09): re-entregado días después, la
+        # ventana ya está cerrada y el bot no puede escribirle texto libre.
+        sent_ms = _customer_sent_ms(parsed, now_ms)
+        arrived_after_window = compute_service_window_expiry(sent_ms) <= now_ms
         # Re-engagement (bug run 3b3fbaee): si el último episodio ya estaba
         # CERRADO, este inbound abre uno nuevo. Capturamos el episodio cerrado
         # ANTES de que `ensure_active_episode` mute `episodes[]`, para inyectar
@@ -584,8 +607,8 @@ class IngestInboundMessage:
         # Cada inbound del cliente reabre la ventana 24h — esto es lo que
         # permite al watchdog (Sprint 2) saber cuándo está por cerrarse y
         # disparar un utility template legítimo.
-        metadata["last_inbound_at_ms"] = now_ms
-        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(now_ms)
+        metadata["last_inbound_at_ms"] = sent_ms
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(sent_ms)
         # Lecturas del cliente (motor de decisiones, enchufe 1): compra,
         # retoma y baja las da el proveedor, con el metadata de ANTES de este
         # mensaje y lo que el cliente vio; acá solo se escriben, igual que hoy.
@@ -683,7 +706,7 @@ class IngestInboundMessage:
             and parsed.referral.get("ctwa_clid")
             and not (isinstance(_ctwa_exp, int) and now_ms < _ctwa_exp)
         ):
-            metadata["ctwa_window_expires_at_ms"] = compute_ctwa_window_expiry(now_ms)
+            metadata["ctwa_window_expires_at_ms"] = compute_ctwa_window_expiry(sent_ms)
 
         # Escalera de reactivación (decisión 2026-09-18): `SIN_RESPUESTA`
         # marca a quien agotó los toques sin contestar. Si VUELVE a escribir
@@ -958,8 +981,10 @@ class IngestInboundMessage:
         # demorar por el dispatch. Si el dispatcher falla (Temporal
         # down), el inbound del cliente sigue ruteándose normal — el
         # watchdog quedará no programado para este turno, lo cual es
-        # mejor que perder el inbound entero.
-        await self._emit_watchdog_events(session_id, metadata)
+        # mejor que perder el inbound entero. Un mensaje que llegó con su
+        # ventana ya cerrada no programa nada: no hay ventana que vigilar.
+        if not arrived_after_window:
+            await self._emit_watchdog_events(session_id, metadata)
 
         # --- 3. Traducir a texto efectivo (LLM-ready) ---
         # `catalog=None` por ahora — list_reply usa el title raw del cliente.
@@ -1215,6 +1240,19 @@ class IngestInboundMessage:
             # No hay message_id PERO limpiamos el flag arriba — persistimos
             # el pop para que no quede zombie en metadata.
             self._safe_write_metadata(session_id, metadata, base)
+
+        # Re-entrega tardía (ver 2): el mensaje ya quedó en el chat con la
+        # ventana cerrada; el bot no puede escribirle texto libre (Meta lo
+        # rechaza, 131047). No es un traspaso al humano (una falla técnica no
+        # lo es): el operador lo ve y lo reactiva con plantilla.
+        if arrived_after_window:
+            logger.warning(
+                "inbound_after_service_window",
+                session_id=session_id,
+                wa_message_id=parsed.message_id,
+                late_ms=now_ms - sent_ms,
+            )
+            return
 
         # Acuse de la despedida (ver 2c): ya quedó en el chat; el agente no
         # tiene nada que contestar.

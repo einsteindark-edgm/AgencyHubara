@@ -81,6 +81,19 @@ que contó Meta).
 - THEN el mensaje va a esa conversación, traiga o no teléfono (empezó sin teléfono → sigue en `wa_CO…`; empezó con teléfono → sigue en `wa_57…`)
 - AND si no la tiene, queda fijada la de este mensaje (el primero que escribe gana)
 
+#### Scenario: La ventana de 24 h se abre cuando el cliente escribió
+
+Meta reintenta un webhook no aceptado hasta 7 días. Con la ventana contada
+desde la LLEGADA, una re-entrega tardía parecía «ventana abierta»: el bot
+contestaba texto libre, Meta lo rechazaba (131047) y el panel no ofrecía la
+plantilla (2026-10-09).
+
+- GIVEN un mensaje con `messages[].timestamp` dentro del horizonte de reintentos de Meta (8 días)
+- WHEN se ingiere
+- THEN `last_inbound_at_ms` y `service_window_expires_at_ms` (y la ventana CTWA) salen de `min(llegada, timestamp)`
+- AND si esa ventana YA cerró al llegar, el mensaje queda en el chat y en la metadata, pero NO dispara el turno del bot ni el watchdog (`inbound_after_service_window` en el log), y NO pasa al humano: el operador lo ve con la ventana cerrada y lo reactiva con plantilla
+- AND un `timestamp` más viejo que el horizonte (reloj sintético: simulador, laboratorio) o ausente cuenta la llegada
+
 #### Scenario: Status update (no es mensaje)
 
 - GIVEN un webhook que es status update (delivered/read), no mensaje nuevo
