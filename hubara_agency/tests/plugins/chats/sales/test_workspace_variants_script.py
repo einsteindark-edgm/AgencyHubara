@@ -2,14 +2,11 @@
 
 Contrato sobre texto, como `test_workspace_price_rules.py`:
 
-* **El sí con el total antes del formulario (CON-04).** Con las variantes
-  completas, el bot pregunta si confirma la compra, con el precio, ANTES de
-  pedir datos; la guarda de `request_shipping_details` lo exige igual
-  (`purchase_not_confirmed`, que la calificación cuenta como CON-05). El paso
-  7 mandaba directo al formulario con la firma vieja
-  `request_shipping_details(order_total_cop, items_summary)`. Tampoco lleva su
-  propia frase de introducción: el formulario trae su mensaje (producto,
-  variantes, cantidad, subtotal) y repetirlo sobra (PR #392).
+* **El formulario sin un sí de más (2026-10-09, CON-04 v10).** Con las
+  variantes completas y el cliente siguiendo con la compra, el formulario sale
+  en ese turno; la guarda ya no pide un «sí» aparte. Tampoco lleva su propia
+  frase de introducción: el formulario trae su mensaje (producto, variantes,
+  cantidad, subtotal) y repetirlo sobra (PR #392).
 * **Lo que le gusta o para quién es.** En el turno 5 el cliente dijo «quiero
   uno para mi mamá, le gusta la naturaleza» y el bot le listó 11 aromas. La
   instrucción de recomendar una o dos opciones va en el guion de la etapa (no
@@ -29,14 +26,22 @@ def _stage(name: str) -> str:
     return (STAGES / name / "SKILL.md").read_text(encoding="utf-8")
 
 
-def test_variants_script_asks_for_the_yes_with_the_total_before_the_form() -> None:
+def test_variants_script_sends_the_form_without_asking_for_another_yes() -> None:
+    """Incidente del 2026-10-09 (criterio del operador): con el producto, la
+    ciudad y la forma de pago elegidos, el bot prometió el formulario y no lo
+    mandó; la guarda pedía un «sí» aparte. El formulario no espera
+    confirmación: sale en el turno en que el cliente sigue con la compra, y
+    un producto de un solo aroma y color ya tiene las variantes completas."""
     stage = _stage("etapa_variantes")
     step = next(line for line in stage.splitlines() if line.startswith("7. "))
 
     assert "order_total_cop" not in stage and "items_summary" not in stage
+    assert "purchase_not_confirmed" not in stage
     assert "request_shipping_details(items=[{handle, quantity}])" in step
-    assert "2× Velón Koala (Sándalo, Café): $72.000 en productos, ¿lo dejamos así?" in step
-    assert step.index("¿lo dejamos así?") < step.index("request_shipping_details")
+    assert "un solo aroma y un solo color" in step
+    assert "en ESE turno" in step
+    assert "No le pidas otro sí" in step
+    assert "la tool va en la misma respuesta" in step
 
 
 WORKSPACE = STAGES.parent

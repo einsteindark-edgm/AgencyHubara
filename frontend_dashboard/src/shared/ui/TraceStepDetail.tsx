@@ -80,7 +80,9 @@ const PART_NAMES: Record<string, string> = {
 };
 
 /** Protecciones que le dejan una nota al modelo para otra ronda. */
-const NOTE_GUARDS = new Set(["contract_extra_round", "turn_policy_extra_round"]);
+const NOTE_GUARDS = new Set(["contract_extra_round", "turn_policy_extra_round", "promised_action_round"]);
+/** Protecciones que retuvieron la respuesta del modelo (no salió en esa ronda). */
+const HOLDING_GUARDS = new Set(["contract_extra_round", "send_reply_retry", "promised_action_round"]);
 
 /** Argumentos de texto largo: van en su caja. */
 const TEXT_ARGS = new Set(["text", "intro_text", "body", "customer_message", "caption", "closing_text"]);
@@ -410,7 +412,7 @@ function Args({ args }: { args: unknown }) {
 /** Lo que pidió el modelo, cada pedido con su ejecución, y lo que pasó después en la ronda. */
 function Requested({ steps, index }: { steps: TraceStep[]; index: number }) {
   const round = modelRound(steps, index);
-  const held = round.after.some((s) => s.kind === "guard" && (s.name === "contract_extra_round" || s.name === "send_reply_retry"));
+  const held = round.after.some((s) => s.kind === "guard" && HOLDING_GUARDS.has(str(s.name) ?? ""));
   const answered = round.after.some((s) => s.kind === "cut" && s.reason === "send_reply");
   return (
     <>

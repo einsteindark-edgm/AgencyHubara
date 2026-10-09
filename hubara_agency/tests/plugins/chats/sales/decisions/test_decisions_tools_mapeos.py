@@ -129,12 +129,13 @@ async def test_search_keeps_todays_category_when_jev_fails(snapshot, oracle, mon
 
 FAM = ColorFamiliesLoader(DEFAULT_COLOR_FAMILIES_PATH).load()
 _CUBO = CatalogProductDTO(id="prod_cubo", handle="cubo-love", title="Cubo Love", status="published",
-                          tags=["Aroma: Lavanda", "Color: Rojo", "Color: Azul"])
+                          tags=["Aroma: Lavanda", "Aroma: Coco", "Color: Rojo", "Color: Azul"])
 _DUO = CatalogProductDTO(id="prod_duo", handle="duo-zodiacal", title="Duo Zodiacal", status="published",
-                         tags=["Aroma: Frutos rojos", "Aroma: Lavanda", "Color: Blanco"],
+                         tags=["Aroma: Frutos rojos", "Aroma: Lavanda", "Color: Blanco", "Color: Negro"],
                          options={"Signo": ["Aries", "Leo", "Escorpio"]})
 _VELON = CatalogProductDTO(id="prod_velon", handle="velon-amor-eterno", title="Velón Amor Eterno",
-                           status="published", tags=["Aroma: Lavanda", "Color: Blanco"], options={"Unico": ["Unico"]})
+                           status="published", tags=["Aroma: Lavanda", "Aroma: Coco", "Color: Blanco", "Color: Negro"],
+                           options={"Unico": ["Unico"]})
 
 
 class _Catalog:

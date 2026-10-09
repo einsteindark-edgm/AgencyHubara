@@ -35,6 +35,7 @@ Cada tool devuelve un envelope JSON con:
   * `summary` — texto para el LLM
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import contextlib
@@ -62,6 +63,7 @@ from src.plugins.chats.agent.sales.card_messages import (
     shipping_form_text,
 )
 from src.plugins.chats.agent.sales.config.shipping import (
+    CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
@@ -210,6 +212,12 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> str:
     if sink is not None:
         sink.append(queued["id"])
     return queued["id"]
+
+
+def _already_queued(session_key: str, kind: str) -> bool:
+    """¿La cola del turno ya trae un componente de este `kind`?"""
+    data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
+    return any(isinstance(i, dict) and i.get("kind") == kind for i in data.get("pending_ui_intents") or [])
 
 
 def _meta_retailer_id(product) -> str:
@@ -873,7 +881,7 @@ class PresentProductsTool(ToolBase):
 _MAX_ROWS = wa_limits.MAX_PRODUCT_LIST_ITEMS_TOTAL
 _MAX_SECTIONS = wa_limits.MAX_PRODUCT_LIST_SECTIONS
 #: Tope de la lectura del catálogo completo de la copia local.
-_WHOLE_CATALOG = 10_000
+_WHOLE_CATALOG = WHOLE_CATALOG
 
 
 def _group_title(product: Any, group_by: str) -> str:
@@ -1178,22 +1186,20 @@ def _catalog_unavailable(error: Exception) -> str:
 # ciudad/barrio/dirección/teléfono/pago en un solo mensaje.
 
 
-def _shipping_precondition_rejection(
-    session_key: str, *, order_total_cop: int, items_summary: str
-) -> dict[str, Any] | None:
+def _shipping_precondition_rejection(session_key: str) -> dict[str, Any] | None:
     """Envelope de rechazo para `request_shipping_details`, o None si procede.
 
-    Lee el metadata de la sesión (mismo store que `_append_intent`). Dos
-    casos, en este orden:
-      1. El ÚLTIMO inbound fue un aplazamiento → `customer_deferred`.
-      2. No hay confirmación de compra en el episodio (ni orden registrada)
-         → `purchase_not_confirmed` con el siguiente paso explícito.
+    Lee el metadata de la sesión (mismo store que `_append_intent`). Solo
+    frena un aplazamiento: si el ÚLTIMO inbound fue un «después» (incidente
+    2026-09-14, «Voy apenas en camino a casa») → `customer_deferred`.
+
+    No exige una confirmación de compra (criterio del operador, incidente del
+    2026-10-09): el cliente había elegido producto, ciudad y «el contra
+    entrega», el bot le escribió «Te paso el formulario» y la guarda lo frenó
+    porque nadie anotó un «sí». El formulario no compromete nada: la compra se
+    confirma en la tarjeta ✅ y en `register_order` (`closing_blocker`).
     """
-    from src.plugins.chats.agent.sales.use_cases.order_draft import get_projectable_draft
-    from src.plugins.chats.shared.purchase_signals import (
-        current_signal,
-        has_purchase_confirmation,
-    )
+    from src.plugins.chats.shared.purchase_signals import current_signal
 
     data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
     signal = current_signal(data)
@@ -1208,22 +1214,7 @@ def _shipping_precondition_rejection(
                 "breve y espera a que retome; no se mostró nada al cliente."
             ),
         }
-    if has_purchase_confirmation(data):
-        return None
-    slots = get_projectable_draft(data) or {}
-    producto = str(slots.get("producto") or "").strip() or items_summary
-    precio = f"${order_total_cop:,} COP".replace(",", ".")
-    return {
-        "queued": False,
-        "error": "purchase_not_confirmed",
-        "message": (
-            f"El cliente todavía NO confirmó que quiere comprar {producto}. "
-            f"Antes de pedir datos de envío: dile el precio ({precio}) y "
-            "pregúntale si lo dejamos así (send_quick_replies sí / cambiar algo). "
-            "Cuando responda que sí, vuelve a llamar request_shipping_details. "
-            "No se mostró nada al cliente."
-        ),
-    }
+    return None
 
 
 def _draft_items_of(session_key: str) -> list[dict[str, Any]]:
@@ -1442,12 +1433,10 @@ class RequestShippingDetailsTool(ToolBase):
             "📦 [TOOL request_shipping_details] session={} total={} COP (catálogo)",
             ctx.session_key, order_total_cop,
         )
-        # Guardas deterministas (2026-09-14, runs 01a0a0eb/01a0a0f1): el
-        # formulario de envío es un paso de CIERRE. No sale si el cliente
-        # acaba de aplazar ("voy en camino a casa") ni si nunca dijo que sí.
-        rejection = _shipping_precondition_rejection(
-            ctx.session_key, order_total_cop=order_total_cop, items_summary=items_summary
-        )
+        # Guarda determinista (2026-09-14, runs 01a0a0eb/01a0a0f1): no sale si
+        # el cliente acaba de aplazar ("voy en camino a casa"). Sin exigir un
+        # «sí» antes (incidente del 2026-10-09).
+        rejection = _shipping_precondition_rejection(ctx.session_key)
         if rejection is not None:
             logger.warning(
                 "📦 [TOOL request_shipping_details] session={} rechazada: {}",
@@ -1531,7 +1520,11 @@ class RequestShippingDetailsTool(ToolBase):
                 "order_total_cop": order_total_cop,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        # Una vez por turno (revisión del premortem, 2026-10-09): la ronda de
+        # las promesas o la red pueden pedirlo cuando ya está en la cola; con
+        # otro id el flush lo mandaba dos veces.
+        if not _already_queued(ctx.session_key, "shipping_flow"):
+            _append_intent(ctx.session_key, intent)
         return json.dumps({
             "queued": True,
             "kind": "shipping_flow",
@@ -1830,6 +1823,26 @@ class PresentOrderConfirmationTool(ToolBase):
                     "llamar present_order_confirmation con los precios EXACTOS "
                     "del catálogo (verify_order_for_checkout te los devuelve "
                     "en unit_price_cop). Nunca inventes ni negocies precios."
+                ),
+            }, ensure_ascii=False)
+
+        # Contra entrega solo desde el mínimo en productos (premortem
+        # 2026-10-09): el mínimo armaba las opciones del formulario, pero si la
+        # cantidad bajaba después, la tarjeta salía con contra entrega por
+        # debajo y el pedido se registraba así.
+        if payment_method == "cash_on_delivery" and not cash_on_delivery_available(subtotal):
+            logger.warning(
+                "🚨 [TOOL present_order_confirmation] cod_below_minimum session={} subtotal={}",
+                ctx.session_key, subtotal,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "cod_below_minimum",
+                "message": (
+                    f"Contra entrega es desde {format_cop(CASH_ON_DELIVERY_MIN_PRODUCTS_COP)} en productos y este "
+                    f"pedido suma {format_cop(subtotal)}. NO se encoló la confirmación. Dile al cliente con "
+                    "calidez que con este valor el pago es anticipado (Nequi o llave) o con link de pago, "
+                    "pregúntale cuál prefiere y vuelve a llamar present_order_confirmation con ese método."
                 ),
             }, ensure_ascii=False)
 
@@ -2636,7 +2649,7 @@ class SendQuickRepliesTool(ToolBase):
         from src.platform.catalog import normalize_label
 
         try:
-            result = await self._catalog.search(q="", limit=30)
+            result = await self._catalog.search(q="", limit=_WHOLE_CATALOG)
             products = list(result.results)
         except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar al chequeo por id
             logger.warning(
@@ -2921,7 +2934,7 @@ class PresentVariantPickerTool(ToolBase):
                 product = await self._catalog.get_by_handle(handle)
                 products = [product]
             else:
-                result = await self._catalog.search(q="", limit=30)
+                result = await self._catalog.search(q="", limit=_WHOLE_CATALOG)
                 products = list(result.results)
         except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar abierto
             logger.warning(

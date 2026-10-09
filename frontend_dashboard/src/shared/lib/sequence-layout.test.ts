@@ -154,6 +154,20 @@ describe("layoutSequence", () => {
     ]);
   });
 
+  it("la ronda de lo prometido y la respuesta que rescata se nombran en palabras", () => {
+    // Incidente del 2026-10-09: «Te paso el formulario» sin la herramienta.
+    const promise = "Te paso el formulario para los datos de envío 🤍";
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "promised_action_round", before: promise, after: "Prometiste el formulario…", tools: ["send_reply"] },
+      { i: 1, at_ms: 1, kind: "guard", name: "promised_action_text_kept", before: "", after: promise, tools: ["request_shipping_details"] },
+    ]);
+
+    expect(rows.map((r) => r.short)).toEqual([
+      "retuvo la respuesta: prometía algo que todavía no hizo",
+      "mandó la respuesta retenida: lo prometido ya salió",
+    ]);
+  });
+
   it("la red del relevo prometido se nombra en palabras y deja el texto como estaba", () => {
     // Laboratorio caso-cortesia-1001 (2026-09-30): el bot dijo «un colega del
     // equipo coordina contigo la entrega» sin escalar; la red escala y el

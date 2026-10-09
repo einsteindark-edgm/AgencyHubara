@@ -144,7 +144,10 @@ def tag_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 # ── TAG-08 · el colega prometido queda avisado (2026-09-30) ──────────────
 # El evaluador lee el relevo con su propia regla (no con la del bot que juzga):
 # quién (un colega, alguien del equipo…) y qué hará con el cliente.
-_HANDOFF_WHO = r"(?:colega|companer[oa]|asesora?|alguien del equipo|persona del equipo|nuestro equipo|el equipo)"
+_HANDOFF_WHO = (
+    r"(?:colega|companer[oa]|asesora?|alguien del equipo|persona del equipo|nuestro equipo|el equipo"
+    r"|alguien de (?:despachos?|logistica|bodega|produccion|ventas))"
+)
 _HANDOFF_PROMISE_RE = re.compile(
     rf"\b{_HANDOFF_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:van?\s+a\s+)?"
     r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
@@ -155,9 +158,35 @@ _HANDOFF_PROMISE_RE = re.compile(
 )
 
 
+#: Premortem 2026-10-09: un aviso atado a un evento del pedido («nuestro
+#: equipo te avisa cuando despachemos») lo manda el sistema: no es un relevo
+#: (misma excepción que la regla del bot, `capabilities/texto.py`).
+_ORDER_EVENT_RE = re.compile(
+    r"\bcuando\s+(?:lo\s+|te\s+lo\s+|la\s+)?(?:despach\w*|salga\w*|sale\b|envi(?:e|emos)\b"
+    r"|este\s+list[oa]|estemos\s+(?:por\s+)?(?:despach|envi)\w*|tengamos\s+la\s+guia|haya\s+novedad\w*"
+    r"|(?:tu|el|su)\s+pedido\s+(?:este|salga|llegue|vaya))"
+)
+_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]?")
+#: Coordinar, acordar o cuadrar algo con el cliente es hacerse cargo, aunque
+#: la frase nombre un evento del pedido: el aviso puro es la excepción
+#: (revisión del premortem, 2026-10-09).
+_TAKES_CHARGE_RE = re.compile(r"\b(?:coordin|acord|cuadr|organiz)\w*")
+
+
 def _plain(text: str) -> str:
     folded = unicodedata.normalize("NFKD", text.lower())
     return " ".join("".join(c for c in folded if not unicodedata.combining(c)).split())
+
+
+def _promises_handoff(text: str) -> bool:
+    for sentence in _SENTENCE_RE.findall(_plain(text)):
+        match = _HANDOFF_PROMISE_RE.search(sentence)
+        if not match:
+            continue
+        notice = _ORDER_EVENT_RE.search(sentence[match.start():]) and not _TAKES_CHARGE_RE.search(sentence)
+        if not notice:
+            return True
+    return False
 
 
 @code_check("TAG-08")
@@ -165,7 +194,7 @@ def tag_08(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     promised = None
     for t in judged_turns(traj):
         for text in t.sent_texts:
-            if not _HANDOFF_PROMISE_RE.search(_plain(text)):
+            if not _promises_handoff(text):
                 continue
             if t.state.get("route") != "humano" and not t.tool_ok("escalate_to_human"):
                 return failed("TAG-08", t.turn, f"turno {t.turn}: prometió un colega sin escalar {quote(text)}")
@@ -173,3 +202,34 @@ def tag_08(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if promised is None:
         return not_judged("TAG-08", traj, "el bot no le prometió un colega al cliente")
     return passed("TAG-08", "el colega prometido quedó avisado", promised)
+
+
+# ── TAG-09 · lo que promete, lo hace (incidente 2026-10-09) ──────────────
+# «Te paso el formulario para los datos de envío» dos turnos seguidos sin el
+# formulario. El mismo detector del bot (`use_cases/promised_actions.py`):
+# lo prometido sale en ese turno (una tool que lo hizo o la red que lo mandó);
+# «tu pedido quedó registrado» exige una orden registrada.
+
+
+@code_check("TAG-09")
+def tag_09(traj: Trajectory, ctx: CheckContext) -> CheckResult:
+    from src.plugins.chats.agent.sales.use_cases.promised_actions import promises_by_kind, promised_kinds
+
+    catalog = promises_by_kind()
+    promised_at = None
+    for t in judged_turns(traj):
+        for text in t.sent_texts:
+            for kind in sorted(promised_kinds(text)):
+                promise = catalog[kind]
+                if kind == "registro":
+                    kept = registered_order_turn(traj, t.turn) is not None
+                else:
+                    kept = bool(set(promise.intents) & set(t.intents)) or any(
+                        t.tool_ok(name) for name in promise.tools
+                    )
+                if not kept:
+                    return failed("TAG-09", t.turn, f"turno {t.turn}: prometió {kind} y no salió: {quote(text)}")
+                promised_at = promised_at or t.turn
+    if promised_at is None:
+        return not_judged("TAG-09", traj, "el bot no prometió nada para ahora")
+    return passed("TAG-09", "lo prometido salió en su turno", promised_at)

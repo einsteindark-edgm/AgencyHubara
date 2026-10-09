@@ -22,6 +22,7 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.decisions.guards import (
     clean_llm_text,
     customer_reply_text,
@@ -152,6 +153,47 @@ class SendReplyTool(ToolBase):
             session_key, _VERIFIED_CHECK_KEY, "verified_photos", verified_denial_message(products)
         )
 
+    def _unkept_promises(self, session_key: str, text: str) -> list[dict[str, Any]]:
+        """Incidente del 2026-10-09 (bot V2): «Te paso el formulario para los
+        datos de envío» salió dos turnos seguidos y `request_shipping_details`
+        nunca se llamó. Lo que el texto promete y el estado todavía no cumple:
+        un componente que la cola del turno no trae (`pending_ui_intents`, lo
+        que ya encolaron las tools de este turno; el flush va después del
+        texto) o «tu pedido quedó registrado» sin una orden registrada.
+
+        La tool NO retiene: no ve las otras tools de su mismo paso (pueden
+        correr después que ella y un retenido se perdía si una tarjeta cortaba
+        el turno). Lo graba en su resultado y `run_agent_turn` decide después
+        del paso completo, con las tools que de verdad salieron. Sin vault no
+        hay cola que mirar: se graba todo lo que promete."""
+        from src.plugins.chats.agent.sales.use_cases.promised_actions import broken_promises_in_queue
+        from src.plugins.chats.shared.purchase_signals import has_registered_order
+        from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import (
+            SHIPPING_FORM_KIND,
+            delivered_rows,
+            shipping_form_in_episode,
+        )
+
+        metadata: dict[str, Any] = {}
+        delivered: list[dict[str, Any]] = []
+        if self._vault_dir is not None:
+            try:
+                metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
+            except Exception:  # noqa: BLE001 — sin metadata legible: se graba todo lo prometido
+                metadata = {}
+            delivered = delivered_rows(self._vault_dir / session_key)
+        queued = [str(i.get("kind")) for i in metadata.get("pending_ui_intents") or [] if isinstance(i, dict)]
+        # El formulario sale una vez por episodio: el que ya salió también
+        # cumple (revisión del premortem: si no, la ronda pedía un segundo).
+        if shipping_form_in_episode(metadata, delivered):
+            queued.append(SHIPPING_FORM_KIND)
+        # Un pedido de una compra anterior no registra la de hoy (2026-10-09).
+        registered = has_registered_order(metadata)
+        return [
+            {"kind": p.kind, "tools": list(p.tools), "nudge": p.nudge}
+            for p in broken_promises_in_queue(text, queued, registered=registered)
+        ]
+
     def _held_before(self, session_key: str, key: str) -> bool:
         """¿Ya se retuvo un texto por `key` en este mensaje del cliente? Evita
         repetir la consulta (catálogo, Jev) en el segundo intento."""
@@ -174,7 +216,7 @@ class SendReplyTool(ToolBase):
         if self._catalog is None or self._vault_dir is None or self._held_before(session_key, _LIST_CHECK_KEY):
             return None
         try:
-            result = await self._catalog.search(q="", limit=30)
+            result = await self._catalog.search(q="", limit=WHOLE_CATALOG)
             aromas, colors = catalog_variant_labels(result.results)
             listed = await option_list(
                 text, aromas=aromas, colors=colors, session_id=session_key, vault_dir=self._vault_dir
@@ -221,13 +263,14 @@ class SendReplyTool(ToolBase):
         )
         if held is not None:
             return held
-        return json.dumps(
-            {
-                "reply": {"text": cleaned},
-                "summary": (
-                    "Mensaje listo para el cliente. Tu turno termina aquí: "
-                    "espera su respuesta."
-                ),
-            },
-            ensure_ascii=False,
-        )
+        envelope: dict[str, Any] = {
+            "reply": {"text": cleaned},
+            "summary": (
+                "Mensaje listo para el cliente. Tu turno termina aquí: "
+                "espera su respuesta."
+            ),
+        }
+        promises = self._unkept_promises(ctx.session_key, cleaned)
+        if promises:
+            envelope["promises"] = promises
+        return json.dumps(envelope, ensure_ascii=False)

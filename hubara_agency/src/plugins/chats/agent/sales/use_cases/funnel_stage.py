@@ -38,7 +38,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.shared.draft_items import draft_items, missing_variants
 
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     get_active_episode,
@@ -62,7 +62,8 @@ ALL_STAGES: tuple[str, ...] = (
 # son opcionales a propósito (el guion los pide, pero no bloquean la etapa).
 # `nombre_recibe` sí bloquea: la transportadora exige el nombre de quien
 # recibe (requisito 2026-08-31).
-_VARIANT_SLOTS: tuple[str, ...] = ("aroma", "color", "cantidad")
+# Aroma, color y cantidad de cada producto, menos lo que el catálogo no le
+# ofrece (`draft_items.missing_variants`, incidente del 2026-10-09).
 _SHIPPING_SLOTS: tuple[str, ...] = (
     "ciudad", "direccion", "telefono", "nombre_recibe", "metodo_pago"
 )
@@ -83,9 +84,7 @@ def resolve_funnel_stage(metadata: dict[str, Any]) -> str:
     # Cada producto del pedido con sus elecciones (un borrador viejo es un
     # solo ítem): con varios, la etapa no avanza por el primero completo.
     items = draft_items(draft)
-    if not items or not all(
-        all(item.get(k) for k in _VARIANT_SLOTS) for item in items
-    ):
+    if not items or any(missing_variants(draft, item) for item in items):
         return STAGE_VARIANTES
     if not all(slots.get(k) for k in _SHIPPING_SLOTS):
         return STAGE_DATOS_ENVIO

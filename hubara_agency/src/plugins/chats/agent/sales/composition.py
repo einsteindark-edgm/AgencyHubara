@@ -103,6 +103,22 @@ def build_sender_identity() -> FilesystemSenderIdentity:
     return FilesystemSenderIdentity(WORKSPACE_VAULT_DIR / "_identity" / "whatsapp_user_ids")
 
 
+def build_phone_identity() -> FilesystemSenderIdentity:
+    """Qué conversación es de cada teléfono de un cliente que empezó SIN
+    teléfono (`wa_<CC><id>`): cuando Meta empieza a mandar su teléfono se
+    recuerda, y un mensaje que después llegue solo con `from` sigue en su
+    conversación (premortem 2026-10-09)."""
+    return FilesystemSenderIdentity(WORKSPACE_VAULT_DIR / "_identity" / "whatsapp_phones")
+
+
+def has_phone_conversation(phone: str) -> bool:
+    """¿El teléfono ya tiene su conversación (`wa_<teléfono>`, de antes del
+    nombre de usuario)? Entonces no se recuerda como alias de la conversación
+    sin teléfono: lo que llegue solo con él sigue en la suya (revisión del
+    premortem 2026-10-09)."""
+    return (WORKSPACE_VAULT_DIR / f"wa_{phone}").is_dir()
+
+
 def build_session_history_reader() -> Callable[[str], list[dict[str, Any]]]:
     """`session_key -> eventos del historial JSONL` para tools que auditan lo
     que el bot ya le escribió al cliente (`verify_order_for_checkout`, run
