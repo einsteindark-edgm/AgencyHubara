@@ -430,6 +430,33 @@ def test_el_formulario_avisa_si_la_sesion_ya_tiene_pedido_registrado(h: _Harness
     assert body["already_registered_order_id"] == "order_9"
 
 
+def test_el_formulario_sabe_que_el_cliente_ya_mando_el_comprobante(h: _Harness) -> None:
+    """Caso 2026-10-09 (pedido #64): el cliente pagó mientras lo atendía el
+    humano. El formulario lo dice y abre con «enviar datos de pago» apagado."""
+    h.llm.reply = _FULL_EXTRACTION
+    meta = _metadata(
+        media_index=[{"media_id": "m1", "filename": "m1.jpg", "episode_id": "ep_001",
+                      "kind": "comprobante_pago", "created_at_ms": 1_758_000_400_000}],
+        recent_image_descriptions=[{"media_id": "m1", "kind": "comprobante_pago", "episode_id": "ep_001",
+                                    "description": "Comprobante de pago por $52.900,00 a la llave Nequi"}],
+    )
+    h.write_session(events=_conversation(), metadata=meta)
+
+    body = h.suggest()
+
+    assert body["payment_receipt"] == {
+        "media_id": "m1", "kind": "comprobante_pago", "received_at_ms": 1_758_000_400_000,
+        "description": "Comprobante de pago por $52.900,00 a la llave Nequi",
+    }
+
+
+def test_sin_comprobante_el_formulario_no_avisa_nada(h: _Harness) -> None:
+    h.llm.reply = _FULL_EXTRACTION
+    h.write_session(events=_conversation(), metadata=_metadata())
+
+    assert h.suggest()["payment_receipt"] is None
+
+
 def test_session_key_invalida_es_422(h: _Harness) -> None:
     res = h.client.post("/api/chats/order-intake/..%2Fetc/suggest")
     assert res.status_code in (404, 422)

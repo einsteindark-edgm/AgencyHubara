@@ -232,6 +232,8 @@ _TURN_CONTEXT = "[CONTEXTO DE TURNO"
 _TURN_CONTEXT_KINDS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*El cliente te escribió \d+ mensajes"), "burst_note"),
     (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*Hora actual en Colombia"), "clock"),
+    # El mensaje que citó el cliente (foto nuestra, su comprobante, un texto).
+    (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*El cliente escribió este mensaje RESPONDIENDO"), "quote"),
 )
 
 

@@ -66,6 +66,13 @@ from src.platform.whatsapp.window import (
     compute_service_window_expiry,
     watchdog_fire_at,
 )
+from src.plugins.chats.agent.sales.use_cases.after_purchase import (
+    CLOSED_WITH_ORDER,
+    OrderFactsReader,
+    after_order_marker,
+    build_after_purchase_note,
+    order_in_course,
+)
 from src.plugins.chats.agent.sales.use_cases.campaign_reply import (
     build_campaign_reply_note,
     campaign_label,
@@ -95,6 +102,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
     LoadOrStartSalesSession,
 )
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
+from src.plugins.chats.shared.quotes import build_quote_note, resolve_quote
 from src.plugins.chats.shared.purchase_signals import (
     build_deferral_note,
 )
@@ -317,8 +325,13 @@ class IngestInboundMessage:
         photo_identifier: PhotoIdentifierPort | None = None,
         photo_wait_s: float = PHOTO_WAIT_MAX_S,
         photo_notifier: PhotoNotifier | None = None,
+        order_facts: OrderFactsReader | None = None,
     ) -> None:
         self._history_store = history_store
+        # Los datos reales de un pedido (OrderFacts): el cliente que escribe
+        # justo después de comprar abre el episodio en post-venta, con la etapa
+        # y el pago del pedido (caso pedido #64). Sin él, la nota de siempre.
+        self._order_facts = order_facts
         self._photo_identifier = photo_identifier
         # Aviso al workflow de ventas: una foto del cliente se está leyendo (y
         # cuándo ya entró). Sin él, la foto entra como hoy.
@@ -511,6 +524,8 @@ class IngestInboundMessage:
         # bot (return-to-bot pone active_route=ventas) se reanuda el ciclo.
         episode_boundary_note: str | None = None
         _prev_closed_episode: dict[str, Any] | None = None
+        # El pedido anterior aún en curso (OrderFacts): post-venta.
+        _after_facts: Any = None
         campaign_reply_note: str | None = None
         campaign_reply_touch: dict[str, Any] | None = None
         # El episodio que se cerró cuando este mensaje abrió uno nuevo con el
@@ -568,11 +583,13 @@ class IngestInboundMessage:
             )
             # Con respuesta a campaña la nota de la campaña reemplaza a la de
             # frontera ("saluda y pregunta en qué ayudar" la contradice).
-            episode_boundary_note = (
-                build_episode_boundary_note(_prev_closed_episode)
-                if _prev_closed_episode is not None and campaign_reply_note is None
-                else None
-            )
+            if _prev_closed_episode is not None and campaign_reply_note is None:
+                _after_facts = await self._order_in_course(_prev_closed_episode, session_id, now_ms)
+                episode_boundary_note = (
+                    build_after_purchase_note(_after_facts)
+                    if _after_facts is not None
+                    else build_episode_boundary_note(_prev_closed_episode)
+                )
             ensure_active_episode(
                 metadata,
                 now_ms=now_ms,
@@ -584,6 +601,9 @@ class IngestInboundMessage:
                 msgs_count_at_start=msgs_count_at_start,
             )
             _episodes_now = metadata["episodes"]
+            if _after_facts is not None and len(_episodes_now) > _episode_count_before:
+                # La etapa del episodio nuevo es post-venta (`resolve_funnel_stage`).
+                _episodes_now[-1]["after_order"] = after_order_marker(_after_facts)
             # Memoria por episodio (run 28a8e407): el historial del LLM era de
             # TODA la sesión — tras el pedido #44 el cliente escribió "AMOR26"
             # y el bot contestó sobre ese pedido pese a la nota de frontera.
@@ -663,7 +683,11 @@ class IngestInboundMessage:
         # El cliente solo agradece o saluda (capacidad `cortesia`): el episodio
         # nuevo no abre venta (caso del 2026-09-29, «pedido listo»).
         if episode_boundary_note is not None and _prev_closed_episode is not None and readings.courtesy_only:
-            episode_boundary_note = build_episode_boundary_note(_prev_closed_episode, courtesy=True)
+            episode_boundary_note = (
+                build_after_purchase_note(_after_facts, courtesy=True)
+                if _after_facts is not None
+                else build_episode_boundary_note(_prev_closed_episode, courtesy=True)
+            )
         if written.signal is not None:
             logger.info(
                 "inbound_purchase_signal",
@@ -1205,7 +1229,7 @@ class IngestInboundMessage:
         # `wamid` + `reply_to`: el dashboard muestra qué mensaje citó el
         # cliente (caso run 541d90e0: "que el velón sea este" sin rastro de
         # a qué foto respondía).
-        reply_kwargs = _build_reply_kwargs(parsed, metadata)
+        reply_kwargs = _build_reply_kwargs(parsed, metadata, events_before)
         if persisted_document_url:
             self._history_store.append_user_event(
                 session_id,
@@ -1316,9 +1340,11 @@ class IngestInboundMessage:
         # enviamos (context.id ∈ outbound_media_index), le decimos al LLM
         # exactamente cuál — "esta me gusta" deja de ser ambiguo (caso
         # wa_573125671604: pedido registrado con el diseño equivocado).
+        # Cualquier otro mensaje citado (su comprobante, su foto, un texto
+        # nuestro): caso 2026-10-09, pedido #64.
         photo_citation_note = build_photo_citation_note(
             parsed.context, metadata
-        )
+        ) or build_quote_note(reply_kwargs.get("reply_to"))
         # HU web-cart: nota de lead caliente — se proyecta cada turno
         # mientras el episodio activo no tenga orden registrada (mismo ciclo
         # de vida que el breadcrumb del draft).
@@ -1508,6 +1534,20 @@ class IngestInboundMessage:
             logger.error("ingest.coupon_reading_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:300])
             return bool(coupon_in_play(_Inbound(session_id=session_id, text=text, now_ms=0, metadata=metadata)))
         return bool(verdict.value)
+
+    async def _order_in_course(self, prev_episode: dict[str, Any], session_id: str, now_ms: int) -> Any:
+        """Los datos (OrderFacts) del pedido con el que cerró el episodio
+        anterior, si sigue en curso; ``None`` si no hay pedido, ya terminó o no
+        se pudieron leer (nunca frena el ingest: el lector trae su tope)."""
+        order_id = prev_episode.get("order_id")
+        if self._order_facts is None or not order_id or prev_episode.get("closing_tag") not in CLOSED_WITH_ORDER:
+            return None
+        try:
+            facts = await self._order_facts(str(order_id))
+        except Exception as exc:  # noqa: BLE001 — sin datos, la nota de siempre
+            logger.warning("after_purchase_facts_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:200])
+            return None
+        return facts if order_in_course(prev_episode, facts, now_ms=now_ms) else None
 
     def _session_events(self, session_id: str) -> list[dict[str, Any]]:
         """El JSONL de la sesión (lo que ve el dashboard). Vacío si el store
@@ -2871,13 +2911,16 @@ _SYNTHETIC_ID_SUFFIXES = ("_transcribed", "_vision")
 
 
 def _build_reply_kwargs(
-    parsed: WhatsAppMessage, metadata: dict[str, Any]
+    parsed: WhatsAppMessage,
+    metadata: dict[str, Any],
+    events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """`wamid` (real, sin sufijo de reentry) + `reply_to` del evento del
     cliente en el JSONL. Si el id citado es una foto que mandó el bot
     (`outbound_media_index`), el snapshot viaja resuelto — el índice es
-    acotado y evicta; el resto (mensajes del propio JSONL) lo resuelve el
-    dashboard al leer."""
+    acotado y evicta. Cualquier otro mensaje (del historial o una burbuja del
+    bot en `outbound_text_index`) también: Jev lee la cita del evento y el
+    LLM recibe la nota (caso 2026-10-09, pedido #64)."""
     kwargs: dict[str, Any] = {}
     wamid = parsed.message_id
     if wamid:
@@ -2915,6 +2958,8 @@ def _build_reply_kwargs(
             reply_to["text"] = title
         if entry.get("image_url"):
             reply_to["image_url"] = entry["image_url"]
+    else:
+        reply_to.update(resolve_quote(valid_id, events or [], metadata.get("outbound_text_index")) or {})
     kwargs["reply_to"] = reply_to
     return kwargs
 

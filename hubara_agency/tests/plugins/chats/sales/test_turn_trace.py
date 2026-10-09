@@ -491,6 +491,16 @@ def test_the_product_the_customer_wrote_from_has_its_own_name() -> None:
     assert tt.context_note_names([note(CATALOG_ORIGIN), note("web")]) == ["catalog_card", "web_product"]
 
 
+def test_the_quoted_message_note_has_its_own_name() -> None:
+    """Caso 2026-10-09 (pedido #64): el cliente citó su comprobante y la
+    traza no decía si el turno vio la cita. Se arma con su productor real."""
+    from src.plugins.chats.shared.quotes import build_quote_note
+
+    note = build_quote_note({"id": "w1", "author": "user", "text": "[el cliente envió un comprobante de pago]"})
+
+    assert tt.context_note_names([note]) == ["quote"]
+
+
 def test_every_answer_of_jev_reaches_the_step() -> None:
     """El paso «Jev lee el mensaje» se cortaba en 24 respuestas (el tope de
     las listas): en la etapa de variantes se perdían justo las de la etapa

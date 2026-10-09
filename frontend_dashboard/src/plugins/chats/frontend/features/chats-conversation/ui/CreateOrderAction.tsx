@@ -39,6 +39,7 @@
  */
 import { useReducer, useState } from "react";
 
+import { formatBogotaHourMinute } from "@/shared/lib";
 import {
   useCreateOrderFromChat,
   useSuggestOrderFromChat,
@@ -48,6 +49,7 @@ import {
   type IntakeFieldSource,
   type OrderSuggestion,
   type PaymentMethod,
+  type PaymentReceipt,
 } from "@plugins/chats/frontend/entities/order-intake";
 
 import {
@@ -119,6 +121,8 @@ type Phase =
       k: "done";
       reference: string;
       paymentInstructionsSent: boolean;
+      /** El cliente ya había mandado su comprobante: no se le pidió el pago. */
+      receiptReceived: boolean;
       totalCop: number | null;
       /** El backend reconoció el mismo pedido ya registrado (C4). */
       alreadyRegistered: boolean;
@@ -136,6 +140,7 @@ type PhaseAction =
       type: "submit_ok";
       reference: string;
       paymentInstructionsSent: boolean;
+      receiptReceived: boolean;
       totalCop: number | null;
       alreadyRegistered: boolean;
     };
@@ -161,6 +166,7 @@ function phaseReducer(_state: Phase, action: PhaseAction): Phase {
         k: "done",
         reference: action.reference,
         paymentInstructionsSent: action.paymentInstructionsSent,
+        receiptReceived: action.receiptReceived,
         totalCop: action.totalCop,
         alreadyRegistered: action.alreadyRegistered,
       };
@@ -205,6 +211,19 @@ const MISSING_LABEL: Record<string, string> = {
   items: "productos",
   payment_method: "método de pago",
 };
+
+/** Aviso del comprobante que el cliente ya mandó (pedido #64). */
+function receiptNotice(receipt: PaymentReceipt): string {
+  const at = receipt.received_at_ms
+    ? formatBogotaHourMinute(receipt.received_at_ms / 1000)
+    : "";
+  const what = receipt.kind === "pdf_document" ? "un PDF" : receipt.description ?? "";
+  const detail = [at, what].filter(Boolean).join(", ");
+  return (
+    `El cliente ya envió su comprobante de pago${detail ? ` (${detail})` : ""}. ` +
+    "No se le mandarán los datos de pago."
+  );
+}
 
 function formatCop(value: number): string {
   return `$${value.toLocaleString("es-CO")}`;
@@ -330,7 +349,8 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
       setItems(itemsFrom(result));
       setShipping(shippingFrom(result));
       setPaymentMethod(result.payment_method ?? "");
-      setSendInstructions(true);
+      // El cliente ya pagó (pedido #64): no se le vuelven a pedir los datos.
+      setSendInstructions(result.payment_receipt === null);
       setQuote(quoteFromSuggestion(result));
       setQuoteStale(false);
       dispatch({ type: "read_ok" });
@@ -445,6 +465,7 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
         type: "submit_ok",
         reference: result.order_reference ?? result.order_id ?? "",
         paymentInstructionsSent: Boolean(result.payment_instructions_sent),
+        receiptReceived: result.payment_instructions_skipped === "receipt_received",
         totalCop: result.total_cop,
         alreadyRegistered: result.already_registered,
       });
@@ -531,12 +552,22 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                       {phase.totalCop !== null
                         ? ` Total registrado: ${formatCop(phase.totalCop)} (con envío).`
                         : ""}{" "}
-                      La conversación queda
-                      con el pago pendiente de verificación — cuando el cliente
-                      pague, usa "Confirmar pago".
-                      {phase.paymentInstructionsSent
-                        ? " Ya le enviamos las instrucciones de pago."
-                        : ""}
+                      {phase.receiptReceived ? (
+                        <>
+                          El cliente ya había enviado su comprobante, así que no
+                          se le mandaron los datos de pago. Revisa el comprobante
+                          y usa "Confirmar pago".
+                        </>
+                      ) : (
+                        <>
+                          La conversación queda con el pago pendiente de
+                          verificación — cuando el cliente pague, usa "Confirmar
+                          pago".
+                          {phase.paymentInstructionsSent
+                            ? " Ya le enviamos las instrucciones de pago."
+                            : ""}
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -569,6 +600,9 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                     {suggestion.already_registered_order_id}). Crear otro suma
                     un pedido nuevo.
                   </div>
+                )}
+                {suggestion.payment_receipt && (
+                  <div style={warnStyle}>{receiptNotice(suggestion.payment_receipt)}</div>
                 )}
                 {suggestion.warnings.map((warning) => (
                   <div key={warning} style={warnStyle}>

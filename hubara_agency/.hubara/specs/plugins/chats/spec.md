@@ -898,6 +898,22 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - WHEN al registrar Medusa (vendidas) o el vault (filas del cupo) no responden
 - THEN NO se crea el draft, el pedido queda en `failed_order_registrations` (pending) con el reparto CONFIRMADO, y el envelope trae `audit_id` SIN `error` (el bot escala como con Medusa caído) — nunca un "total nuevo" falso
 
+### Requirement: «Crear pedido» no le pide el pago a quien ya pagó (2026-10-09)
+
+Si en el episodio activo hay un comprobante del cliente (una foto que la visión leyó como `comprobante_pago` o un PDF, en `media_index` / `recent_image_descriptions`), `session-actions@v1 /order` SHALL registrar el pedido sin mandarle los datos de pago, aunque el formulario pida enviarlos (`payment_instructions_skipped: "receipt_received"`). Si el formulario los apaga, el motivo es `operator`. En los dos casos el aviso MUST salir de `pending_ui_intents`: si quedara en la cola, el primer flush posterior lo mandaría (por ejemplo, el turno del bot después de que «Confirmar pago» le devuelve la conversación). El comprobante de una compra anterior (otro episodio) no cuenta. `order-intake /suggest` SHALL devolver `payment_receipt`: el formulario abre con la casilla apagada y avisa «El cliente ya envió su comprobante de pago (hora, lo que leyó la visión)».
+
+#### Scenario: Pagó mientras lo atendía el humano (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el cliente mandó el comprobante en el episodio y lo atiende un humano
+- WHEN el operador da «Crear pedido» con transferencia
+- THEN el pedido se registra, no sale «Aquí tienes los datos para tu pago anticipado» y el aviso confirma que no se le pidió el pago
+
+#### Scenario: El comprobante era de la compra anterior
+
+- GIVEN el comprobante está en un episodio ya cerrado
+- WHEN el operador registra el pedido nuevo con transferencia
+- THEN los datos de pago salen como siempre
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)

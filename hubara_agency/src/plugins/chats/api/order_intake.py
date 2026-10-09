@@ -51,6 +51,7 @@ from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import resolve_item_variants
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
+from src.plugins.chats.agent.sales.use_cases.payment_receipts import payment_receipt_in_active_episode
 from src.plugins.chats.shared.order_intake import (
     build_prompt,
     catalog_digest,
@@ -337,6 +338,7 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         item["coupon_units"] = sum(d.units for d in lines)
         item["coupon_discount_cop"] = sum(d.units * d.discount_unit_cop for d in lines)
     notes = extracted.get("notes")
+    receipt = payment_receipt_in_active_episode(metadata)
 
     logger.info(
         "[chats.order_intake] suggest session={} items={} faltan={} degraded={} model={}",
@@ -368,6 +370,9 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         "notes": str(notes)[:500] if isinstance(notes, str) and notes.strip() else None,
         "catalog": catalog,
         "already_registered_order_id": registered_order_id(metadata),
+        # El comprobante que el cliente ya mandó en este episodio: el formulario
+        # lo avisa y abre con «enviar datos de pago» apagado (pedido #64).
+        "payment_receipt": receipt.as_dict() if receipt is not None else None,
         "model": deps.llm.model,
         "degraded": degraded,
         "error_detail": error_detail,

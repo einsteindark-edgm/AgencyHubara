@@ -148,3 +148,86 @@ async def test_message_without_context_injects_no_note():
 
     (call,) = loader.calls
     assert call.extra_context is None
+
+
+# ── Cita de cualquier mensaje de la conversación (caso 2026-10-09, pedido #64) ──
+#
+# El cliente respondió «…» CITANDO su propio comprobante de pago y el bot,
+# sin ver la cita, lo saludó como a un cliente nuevo. La cita se resuelve
+# contra el historial (y las burbujas del bot en `outbound_text_index`): el
+# evento queda con `reply_to.text` (lo que lee Jev) y el LLM recibe la nota.
+
+_RECEIPT_TEXT = "[el cliente envió un comprobante de pago: Comprobante de pago por $52.900,00 a la llave Nequi]"
+
+
+class _HistoryWithEvents:
+    """Historial con eventos previos (`read_events`) que registra el evento nuevo."""
+
+    def __init__(self, events: list[dict]) -> None:
+        self._events = events
+        self.appended: list[dict] = []
+
+    def read_events(self, session_id: str) -> list[dict]:
+        return list(self._events)
+
+    def append_user_event(self, session_id: str, content: str, **kwargs: object) -> None:
+        self.appended.append({"content": content, **kwargs})
+
+
+def _quote_message(quoted_id: str, text: str = "…") -> WhatsAppMessage:
+    return WhatsAppMessage(
+        message_id="wamid.reply",
+        from_number="5491111111111",
+        phone_number_id="PID",
+        text=text,
+        media=None,
+        timestamp="1714312345",
+        context={"from": "5491111111111", "id": quoted_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_reply_quoting_the_customer_receipt_reaches_the_bot_and_jev():
+    loader = FakeLoadOrStart()
+    history = _HistoryWithEvents([
+        {"role": "user", "content": _RECEIPT_TEXT, "wamid": "wamid.receipt",
+         "image_url": "/api/dashboard/media/x/m1.jpg", "timestamp": "2026-10-09T17:26:10+00:00"},
+        {"role": "assistant", "sender": "human", "content": "perfecto", "timestamp": "2026-10-09T17:36:20+00:00"},
+    ])
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore(),  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_quote_message("wamid.receipt"))
+
+    (event,) = history.appended
+    assert event["reply_to"] == {
+        "id": "wamid.receipt", "author": "user", "text": _RECEIPT_TEXT,
+        "image_url": "/api/dashboard/media/x/m1.jpg",
+    }
+    (call,) = loader.calls
+    note = "\n".join(call.extra_context or [])
+    assert "citando" in note.lower() and "un mensaje suyo" in note
+    assert "comprobante de pago por $52.900" in note.lower()
+
+
+@pytest.mark.asyncio
+async def test_reply_quoting_a_bot_text_bubble_names_it_for_the_bot():
+    loader = FakeLoadOrStart()
+    history = _HistoryWithEvents([])
+    use_case = IngestInboundMessage(
+        history_store=history,  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=FakeMetadataStore({_SESSION: {"outbound_text_index": {
+            "wamid.bot.1": {"text": "Tu pedido #64 entró en preparación.", "author": "agent"},
+        }}}),  # type: ignore[arg-type]
+    )
+
+    await use_case.execute(_quote_message("wamid.bot.1", "y cuándo llega?"))
+
+    (event,) = history.appended
+    assert event["reply_to"] == {"id": "wamid.bot.1", "author": "agent", "text": "Tu pedido #64 entró en preparación."}
+    note = "\n".join(loader.calls[0].extra_context or [])
+    assert "un mensaje que le enviamos" in note and "Tu pedido #64 entró en preparación." in note

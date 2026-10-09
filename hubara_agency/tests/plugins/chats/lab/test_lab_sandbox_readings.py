@@ -166,6 +166,25 @@ async def test_a_quoted_bot_photo_gets_the_citation_note_like_in_production(tmp_
         ingested.context
 
 
+async def test_a_quoted_receipt_gets_the_quote_note_like_in_production(tmp_path: Path, current_bot) -> None:
+    """Caso 2026-10-09 (pedido #64): «…» citando su propio comprobante. El
+    ingest resuelve la cita contra el historial y el LLM la recibe en la nota;
+    el laboratorio, con la cita del evento del dashboard."""
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
+
+    receipt = "[el cliente envió un comprobante de pago: Comprobante de pago por $52.900]"
+    message = {"text": "…", "kind": "text", "ts_ms": T0 + 60_000, "wamid": "wamid.Q"}
+    record = {"role": "user", "content": "…", "timestamp": "2026-10-09T20:01:37+00:00", "wamid": "wamid.Q",
+              "reply_to": {"id": "wamid.R", "author": "user", "text": receipt}}
+
+    [ingested] = await ingest_burst(
+        _metadata_with_product(), [message], session_id=SID_R, vault_dir=tmp_path, at_ms=T0 + 61_000,
+        records=[record],
+    )
+
+    assert any("a un mensaje suyo anterior" in n and receipt in n for n in ingested.context), ingested.context
+
+
 async def test_the_ad_banner_is_not_what_the_customer_wrote(tmp_path: Path, current_bot) -> None:
     """El ingest le antepone al primer mensaje que llega de un anuncio un
     banner con el título del anuncio; las lecturas leen solo el mensaje."""

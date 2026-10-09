@@ -1575,3 +1575,34 @@ notas del turno en ambos casos.
 - **`exoclaw_temporal`** — `build_prompt`, `llm_chat`, `record_turn`
 - **`platform/tool_extensions`** — `register_tool_extension` + `apply_tool_extensions`
 - **`platform/orchestration`** — `dispatch_event_activity`
+
+### Requirement: El bot ve el mensaje que cita el cliente (2026-10-09)
+
+Cuando el cliente responde citando un mensaje (`context.id` del webhook), el ingest SHALL resolver la cita contra el historial de la sesión (sus mensajes, como un comprobante o una foto, y los nuestros con `wamid`) y contra `outbound_text_index` (las burbujas del bot), y dejarla en `reply_to` del evento con `author` (`user` · `agent` · `human`), `text` y, si la tiene, `image_url`. Jev la lee del evento («el cliente cita este mensaje: «…»») y el LLM recibe la nota «El cliente escribió este mensaje RESPONDIENDO (citando) a…» (`quote` en la traza). La foto de producto que mandó el bot sigue con su nota propia; la ficha del catálogo, con la suya. El laboratorio SHALL armar la misma nota con la cita del evento.
+
+#### Scenario: Cita su propio comprobante (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el cliente mandó su comprobante y la visión lo leyó
+- WHEN responde «…» citando ese mensaje
+- THEN el evento queda con la cita resuelta y el turno lleva la nota con el texto del comprobante
+
+### Requirement: El cliente que escribe justo después de comprar está en post-venta (2026-10-09)
+
+Cuando un mensaje abre un episodio nuevo y el anterior cerró con un pedido (COMPRA_EXITOSA, CONFIRMADO_PAGO_PENDIENTE, CONFIRMADO_SIN_DATOS) de los últimos 30 días, el ingest SHALL leer ese pedido en OrderFacts (con tope de 3 s; nunca la copia del vault). Si el pedido sigue en curso (ni entregado ni cancelado):
+
+- la nota del episodio nuevo SHALL decir el número del pedido, su etapa y si el pago está confirmado; MUST NOT pedir «saluda con calidez y pregunta en qué puedes ayudar hoy» ni afirmar que el pago está en verificación cuando ya está pagado; con cortesía, la respuesta breve y cálida de siempre;
+- el episodio SHALL quedar marcado con `after_order` (solo `order_id` y `display_id`) y `resolve_funnel_stage` SHALL dar `etapa_postcierre` hasta que el cliente elija un producto (ahí es una venta nueva).
+
+Sin datos del pedido (Medusa caído o lento), o con el pedido entregado o cancelado, la nota y la etapa son las de siempre.
+
+#### Scenario: Escribe seis minutos después de que confirmaron su pago (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el humano vendió, registró el pedido y «Confirmar pago» devolvió la conversación al bot
+- WHEN el cliente escribe citando su comprobante
+- THEN la nota dice «su pedido #64 está en preparación. El pago ya está confirmado…», no le da la bienvenida y la etapa es post-venta
+
+#### Scenario: El pedido ya se entregó
+
+- GIVEN el pedido anterior figura entregado en OrderFacts
+- WHEN el cliente vuelve a escribir
+- THEN la conversación nueva abre como siempre

@@ -165,8 +165,32 @@ def build_ingest_use_case() -> IngestInboundMessage:
         photo_identifier=build_photo_identifier(catalog),
         # Texto antes de la foto: el workflow de ventas espera la foto.
         photo_notifier=load_session.notify_photo_reading,
+        # El cliente que escribe tras comprar: post-venta con el pedido real.
+        order_facts=build_order_facts_reader(),
     )
     return _INGEST_USE_CASE
+
+
+#: Tope para leer un pedido en el webhook: sin datos a tiempo, la nota de siempre.
+_ORDER_FACTS_TIMEOUT_S = 3.0
+
+
+def _order_facts_port() -> Any:
+    from src.sdk.connectorkit import get_order_facts_port
+
+    return get_order_facts_port()
+
+
+def build_order_facts_reader() -> Callable[[str], Awaitable[Any]]:
+    """OrderFacts de UN pedido (``None`` si Medusa no lo conoce), con tope:
+    el ingest corre en el webhook y nunca espera más que esto."""
+    import asyncio
+
+    async def read(order_id: str) -> Any:
+        snapshot = await asyncio.wait_for(_order_facts_port().get_facts([order_id]), timeout=_ORDER_FACTS_TIMEOUT_S)
+        return snapshot.facts.get(order_id)
+
+    return read
 
 
 def build_photo_identifier(catalog: Any) -> PhotoIdentifier:

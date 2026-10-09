@@ -39,6 +39,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.shared.quotes import build_quote_note
 from src.plugins.chats.agent.sales_lab.cases import without_referral_banner
 from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
@@ -323,7 +324,9 @@ async def ingest_burst(
         # La foto del bot que citó el cliente (la cita va en su evento del
         # dashboard: `reply_to`, como el `context` del webhook).
         quoted = record.get("reply_to") if isinstance(record.get("reply_to"), dict) else None
-        photo = build_photo_citation_note({"id": quoted.get("id")} if quoted else None, metadata)
+        photo = build_photo_citation_note({"id": quoted.get("id")} if quoted else None, metadata) or build_quote_note(
+            quoted
+        )
         # El mensaje que abrió el episodio lleva la nota del episodio nuevo,
         # con la cortesía que acaba de leer (como el ingest).
         boundary = (

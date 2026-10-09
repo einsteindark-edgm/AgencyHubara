@@ -221,9 +221,61 @@ def test_order_can_skip_the_payment_instructions_message(h: _Harness) -> None:
 
     assert body["registered"] is True
     assert body["payment_instructions_sent"] is False and h.flushed == []
-    # El intent queda ENCOLADO (auditoría + el canvas de pago lo sigue viendo),
-    # simplemente no se despacha al cliente en este momento.
-    assert h.meta()["pending_ui_intents"][0]["kind"] == "payment_instructions"
+    assert body["payment_instructions_skipped"] == "operator"
+    # Sale de la cola: encolado, el próximo flush (el primer turno del bot
+    # tras «Confirmar pago», que devuelve la conversación) lo mandaba igual.
+    assert not _queued_payment_instructions(h)
+
+
+def _with_receipt(h: _Harness, *, kind: str = "comprobante_pago", episode_closed: bool = False) -> None:
+    """El cliente ya mandó su comprobante en el chat (lo leyó la visión, o un
+    PDF), con un humano atendiendo — como lo deja el ingest."""
+    episodes = [{"episode_id": "ep_1", "started_at_ms": 1, "closed_at_ms": None}]
+    if episode_closed:
+        episodes = [{**episodes[0], "closed_at_ms": 2, "closing_tag": "COMPRA_EXITOSA"},
+                    {"episode_id": "ep_2", "started_at_ms": 3, "closed_at_ms": None}]
+    metadata: dict[str, Any] = {
+        "active_route": ROUTE_HUMANO, "tag": "HUMANO", "episodes": episodes,
+        "media_index": [{"media_id": "m1", "filename": "m1.jpg", "episode_id": "ep_1", "kind": kind,
+                         "retention_class": "receipt", "created_at_ms": 1_791_566_770_000}],
+    }
+    if kind == "comprobante_pago":
+        metadata["recent_image_descriptions"] = [{
+            "media_id": "m1", "kind": kind, "episode_id": "ep_1",
+            "description": "Comprobante de pago por $65.900,00 a la llave Nequi",
+        }]
+    (h.vault / _A).mkdir(parents=True)
+    (h.vault / _A / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def _queued_payment_instructions(h: _Harness) -> list[dict[str, Any]]:
+    return [i for i in h.meta().get("pending_ui_intents") or [] if i.get("kind") == "payment_instructions"]
+
+
+@pytest.mark.parametrize("kind", ["comprobante_pago", "pdf_document"])
+def test_order_does_not_ask_for_the_payment_when_the_customer_already_sent_a_receipt(h: _Harness, kind: str) -> None:
+    """Caso 2026-10-09 (pedido #64): el cliente pagó y mandó el comprobante
+    mientras lo atendía el humano; al dar «Crear pedido» (casilla marcada por
+    defecto) el sistema le mandó los datos para pagar. Con un comprobante en el
+    episodio, el pedido se registra sin pedirle el pago otra vez."""
+    _with_receipt(h, kind=kind)
+
+    body = h.client.post(_url("order"), json={**_ORDER, "send_payment_instructions": True}).json()
+
+    assert body["registered"] is True
+    assert body["payment_instructions_sent"] is False and h.flushed == []
+    assert body["payment_instructions_skipped"] == "receipt_received"
+    assert not _queued_payment_instructions(h)
+
+
+def test_order_asks_for_the_payment_when_the_receipt_was_for_an_earlier_purchase(h: _Harness) -> None:
+    """El comprobante de una compra anterior (otro episodio) no paga este pedido."""
+    _with_receipt(h, episode_closed=True)
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["payment_instructions_sent"] is True and h.flushed == [_A]
+    assert body["payment_instructions_skipped"] is None
 
 
 def test_order_created_by_the_human_turns_on_schedule_and_confirm_payment(h: _Harness) -> None:
