@@ -7,7 +7,13 @@ su comprobante. Con el episodio en post-venta, Jev lee que el cliente menciona
 un comprobante y la guía de `turno-v4` le decía al LLM «agradece y confirma que
 el equipo revisa el pago»: falso, el pago ya estaba confirmado. Con `turno-v5`
 el paso es mirar el pago con `check_order_status` y decir lo que diga. Las
-preguntas a Jev, los umbrales y las tablas no cambian.
+preguntas a Jev y los umbrales no cambian.
+
+Y la tabla de `cierre` (decisión del operador, 2026-10-09: ningún silencio pasa
+solo al equipo): un pedido a medio cerrar que Jev lee como «confirmó la compra
+pero no terminó de dar los datos de envío» cierra INTERESADO —el episodio sigue
+abierto con el pedido y remarketing lo retoma—, no CONFIRMADO_SIN_DATOS + relevo
+al equipo. La pregunta a Jev es la misma; cambia solo lo que decide su respuesta.
 
 En un clon de forge `ventas-6` no viaja (experimento de esta tienda): se salta.
 """
@@ -34,6 +40,7 @@ IN_FORGE_CLONE = not (Path(__file__).resolve().parents[6] / "forge").is_dir()
 CHANGED = {
     "bundle.yaml": {"id", "version"},
     "turn.yaml": {"policy"},
+    "capabilities/cierre.yaml": {"decide", "examples"},
 }
 TEAM_CHECKS = "confirma que el equipo revisa el pago"
 
@@ -64,7 +71,7 @@ def test_ventas_6_is_certified() -> None:
     assert load_bundle(V6, CATALOG_PATH).ref == "ventas-6@6"
 
 
-def test_ventas_6_is_ventas_5_with_turno_v5_and_nothing_else() -> None:
+def test_ventas_6_is_ventas_5_with_turno_v5_and_the_close_table_and_nothing_else() -> None:
     _need_v6()
 
     v5_files = sorted(str(p.relative_to(V5)) for p in V5.rglob("*.yaml"))
@@ -124,3 +131,67 @@ async def test_with_ventas_5_the_step_says_the_team_checks_the_payment(monkeypat
     note = await _turn_note(monkeypatch, "ventas-5")
 
     assert TEAM_CHECKS in note
+
+
+# ── el cierre por silencio de un pedido a medio cerrar ─────────────────────────
+
+
+SID = "wa_573001234567"
+
+
+def _seed_unfinished_order(vault: Path) -> None:
+    """Confirmó la compra (borrador con `confirmed_at_ms`), le faltan los datos
+    de envío y se quedó callado: el caso que Jev lee `confirmado_sin_datos`."""
+    import json
+
+    session = vault / SID
+    (session / "sessions").mkdir(parents=True, exist_ok=True)
+    episode = {
+        "episode_id": "ep_1", "started_at_ms": 1, "closed_at_ms": None,
+        "order_draft": {"slots": {"producto": "Velón"}, "confirmed_at_ms": 2, "confirmed_by": "button"},
+    }
+    (session / "metadata.json").write_text(json.dumps({"episodes": [episode]}), encoding="utf-8")
+    lines = [{"role": "assistant", "content": "¿Confirmas el pedido?"}, {"role": "user", "content": "Sí, confirmo"}]
+    (session / "sessions" / f"{SID}.jsonl").write_text("\n".join(json.dumps(x) for x in lines), encoding="utf-8")
+
+
+async def _ghost_notice(monkeypatch: pytest.MonkeyPatch, vault: Path, bundle: str) -> str:
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.sales.activities.bootstrap_session import decide_ghosting_action
+
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", bundle)
+    monkeypatch.setenv("DECISIONS_BOT", "B")
+    registry.reset()
+    answer = TypedAnswer(
+        id="cierre.etiqueta", kind="choice", choice="confirmado_sin_datos",
+        probs=(("confirmado_sin_datos", 0.92),), confidence=0.92,
+    )
+    fake = FakePerceptionAdapter({"cierre.etiqueta": answer})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    _seed_unfinished_order(vault)
+    return await ActivityEnvironment().run(decide_ghosting_action, SID)
+
+
+async def test_with_ventas_6_an_unfinished_order_goes_back_to_remarketing(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    from src.plugins.chats.agent.sales.prompts import build_decided_ghosting_prompt
+
+    _need_v6()
+
+    notice = await _ghost_notice(monkeypatch, _isolate_vault_dir, "ventas-6")
+
+    assert notice == build_decided_ghosting_prompt("INTERESADO")
+    assert "escalate_to_human" not in notice
+
+
+async def test_with_ventas_5_an_unfinished_order_goes_to_the_team(
+    monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
+) -> None:
+    """Lo que pasaría hoy: el relevo al equipo; por eso va en el paquete."""
+    from src.plugins.chats.agent.sales.prompts import build_decided_ghosting_prompt
+
+    notice = await _ghost_notice(monkeypatch, _isolate_vault_dir, "ventas-5")
+
+    assert notice == build_decided_ghosting_prompt("CONFIRMADO_SIN_DATOS")

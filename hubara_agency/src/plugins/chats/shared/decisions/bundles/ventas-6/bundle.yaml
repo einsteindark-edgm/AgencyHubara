@@ -7,6 +7,10 @@
 # respondió citando su comprobante; en post-venta la guía de `turno-v4` pedía
 # «agradece y confirma que el equipo revisa el pago» con el pago ya confirmado.
 # Con `turno-v5` el paso es mirar el pago con `check_order_status`.
+# Y la tabla de `cierre` (decisión del operador, 2026-10-09: ningún silencio
+# pasa solo al equipo): «confirmó y no terminó de dar los datos de envío»
+# cierra INTERESADO —remarketing lo retoma con el pedido— en vez de
+# CONFIRMADO_SIN_DATOS + relevo. La pregunta a Jev no cambia.
 #
 # ventas-5:
 # Es `ventas-4@4` con dos preguntas reescritas (incidente del 2026-10-09 y su

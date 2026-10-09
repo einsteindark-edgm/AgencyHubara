@@ -3,6 +3,11 @@
 # La etiqueta del cierre por ghosting (F8). Hoy la elige el LLM con el aviso
 # de ghosting (regla = ""); con Jev, la lectura de la conversación la decide.
 # Los invariantes del pedido son piso (closing_invariants, obligatorio).
+#
+# ventas-6 (decisión del operador, 2026-10-09: ningún silencio pasa solo al
+# equipo): «confirmó la compra pero no terminó de dar los datos de envío»
+# cierra INTERESADO —el episodio sigue abierto con el pedido y remarketing lo
+# retoma—, no CONFIRMADO_SIN_DATOS + relevo. La pregunta a Jev no cambia.
 capability: cierre
 value: string
 options: ["", CONFIRMADO_SIN_DATOS, INTERESADO, RECHAZO, COMPRA_EXITOSA]
@@ -23,7 +28,7 @@ decide:
   - when: "!('cierre.etiqueta' in choice) || conf['cierre.etiqueta'] < th['choice']"
     then: doubt
   - when: "choice['cierre.etiqueta'] == 'confirmado_sin_datos'"
-    then: CONFIRMADO_SIN_DATOS
+    then: INTERESADO
   - when: "choice['cierre.etiqueta'] == 'interesado'"
     then: INTERESADO
   - when: "choice['cierre.etiqueta'] == 'rechazo'"
@@ -39,6 +44,7 @@ examples:
   - {answers: {cierre.etiqueta: {choice: interesado, p: 0.84}}, expect: doubt}
   - {answers: {}, expect: doubt}
   # Una fila por etiqueta y una opción que no es de la lista (premortem 2026-10-02).
-  - {answers: {cierre.etiqueta: {choice: confirmado_sin_datos, p: 0.9}}, expect: CONFIRMADO_SIN_DATOS}
+  # Pedido a medio cerrar: a remarketing, no al equipo (2026-10-09).
+  - {answers: {cierre.etiqueta: {choice: confirmado_sin_datos, p: 0.9}}, expect: INTERESADO}
   - {answers: {cierre.etiqueta: {choice: compra_exitosa, p: 0.9}}, expect: COMPRA_EXITOSA}
   - {answers: {cierre.etiqueta: {choice: otra, p: 0.9}}, expect: doubt}
