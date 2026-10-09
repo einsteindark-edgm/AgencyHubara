@@ -93,6 +93,21 @@ plantilla (2026-10-09).
 - THEN `last_inbound_at_ms` y `service_window_expires_at_ms` (y la ventana CTWA) salen de `min(llegada, timestamp)`
 - AND si esa ventana YA cerró al llegar, el mensaje queda en el chat y en la metadata, pero NO dispara el turno del bot ni el watchdog (`inbound_after_service_window` en el log), y NO pasa al humano: el operador lo ve con la ventana cerrada y lo reactiva con plantilla
 - AND un `timestamp` más viejo que el horizonte (reloj sintético: simulador, laboratorio) o ausente cuenta la llegada
+- AND la ventana la abre el ÚLTIMO mensaje del cliente: un rezagado que llega después de uno más nuevo no la cierra hacia atrás (`last_inbound_at_ms` no retrocede)
+
+#### Scenario: El chat dice cuándo escribió el cliente un mensaje que llegó tarde
+
+Caso 2026-10-09 (cliente sin teléfono): Meta re-entregó en fila dos mensajes de un
+cliente sin teléfono (del 5 y del 6 oct). El segundo llegó 19 s después de la
+plantilla del operador, con la hora de llegada, y pareció su respuesta: el
+operador esperó que el bot contestara y no entendió por qué el panel volvía a
+pedir plantilla.
+
+- GIVEN un mensaje del cliente que Meta entregó 5 min o más después de que lo escribió
+- WHEN se guarda en el historial
+- THEN el evento lleva `sent_at` (ISO UTC, cuándo lo escribió; `timestamp` sigue siendo la llegada y ordena el chat)
+- AND si llegó con la ventana ya cerrada lleva `arrived_after_window: true`
+- AND `GET /api/dashboard/sessions/{id}` los entrega tal cual; el panel web y la app muestran «Escrito el …» en la burbuja y, con la ventana cerrada, la nota «El bot no respondió: llegó con la ventana de 24 h cerrada»
 
 #### Scenario: Status update (no es mensaje)
 

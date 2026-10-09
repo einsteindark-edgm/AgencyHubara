@@ -1,5 +1,6 @@
 package com.hubara.operator.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -32,6 +33,9 @@ data class MessageEntity(
     val text: String?,
     val imageUrl: String?,
     val timestampMs: Long?,
+    /** v4: cuándo escribió el cliente un mensaje que Meta entregó tarde, y si llegó con la ventana cerrada. */
+    val sentAtMs: Long? = null,
+    @ColumnInfo(defaultValue = "0") val arrivedAfterWindow: Boolean = false,
 )
 
 /** Envíos del operador que todavía no confirmó el servidor. */

@@ -35,4 +35,26 @@ describe("chatMessageSchema · sender", () => {
   it("rejects an unknown sender", () => {
     expect(() => chatMessageSchema.parse({ ui_type: "agent_message", role: "assistant", content: "x", sender: "robot" })).toThrow();
   });
+
+});
+
+describe("chatMessageSchema · mensaje que Meta entregó tarde", () => {
+  const base = { ui_type: "user_message", role: "user", content: "hola, ¿siguen teniendo velas?" };
+
+  it("conserva cuándo lo escribió el cliente y que llegó con la ventana cerrada", () => {
+    const parsed = chatMessageSchema.parse({
+      ...base,
+      timestamp: "2026-10-09T21:35:42+00:00",
+      sent_at: "2026-10-06T17:02:04+00:00",
+      arrived_after_window: true,
+    });
+    expect(parsed.sent_at).toBe("2026-10-06T17:02:04+00:00");
+    expect(parsed.arrived_after_window).toBe(true);
+  });
+
+  it("un valor raro no tumba la sesión: la burbuja queda como un mensaje normal (L-10)", () => {
+    const parsed = chatMessageSchema.parse({ ...base, sent_at: { x: 1 }, arrived_after_window: "sí" });
+    expect(parsed.sent_at).toBeUndefined();
+    expect(parsed.arrived_after_window).toBeUndefined();
+  });
 });

@@ -341,6 +341,9 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
   //   agent  → bubble outbound del bot
   //   human  → bubble outbound del humano operador (badge distinto)
   const isOutbound = sender !== "user";
+  // Mensaje que Meta entregó tarde: cuándo lo escribió el cliente (la
+  // llegada sigue en `time`/`dayIso` y ordena el chat).
+  const sentUnix = isOutbound ? 0 : toUnixSeconds(m.sent_at);
   return {
     kind: isOutbound ? "out" : "in",
     text: m.content ?? "",
@@ -354,6 +357,9 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     replyTo: adaptQuote(m.reply_to),
     event: m.event,
     turnKey: m.turn_key,
+    sentDayIso: bogotaDayIsoFromUnix(sentUnix) || undefined,
+    sentTime: formatBogotaHourMinute(sentUnix) || undefined,
+    arrivedAfterWindow: !isOutbound && m.arrived_after_window ? true : undefined,
   };
 }
 

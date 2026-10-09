@@ -38,6 +38,7 @@ import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
 // Todo lo que llega del backend se valida acá: un id inválido descarta la fila, un enum nuevo cae en
@@ -110,6 +111,8 @@ fun SessionDetailsDto.toDomain(): ChatDetail? {
                 text = m.content,
                 imageUrl = m.imageUrl,
                 timestampMs = ts,
+                sentAtMs = parseTimestampMs(m.sentAt),
+                arrivedAfterWindow = (m.arrivedAfterWindow as? JsonPrimitive)?.booleanOrNull == true,
             )
         }
     return ChatDetail(

@@ -50,3 +50,12 @@ fun dayLabel(ms: Long, nowMs: Long, zone: ZoneId): String {
         else -> "${day.dayOfMonth} de ${MONTHS[day.monthValue - 1]} de ${day.year}"
     }
 }
+
+/** Cuándo escribió el cliente un mensaje que Meta entregó tarde: «Escrito ayer, 10:40 p. m.». */
+fun writtenLabel(sentMs: Long, nowMs: Long, zone: ZoneId): String {
+    val day = when (val label = dayLabel(sentMs, nowMs, zone)) {
+        "Hoy", "Ayer" -> label.lowercase()
+        else -> "el $label"
+    }
+    return "Escrito $day, ${clockLabel(sentMs, zone)}"
+}

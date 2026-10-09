@@ -78,6 +78,8 @@ class FilesystemMessageHistoryStore:
         document_filename: str | None = None,
         wamid: str | None = None,
         reply_to: dict[str, Any] | None = None,
+        sent_at_ms: int | None = None,
+        arrived_after_window: bool = False,
     ) -> None:
         """Persiste un inbound del cliente con timestamp ISO UTC.
 
@@ -101,6 +103,13 @@ class FilesystemMessageHistoryStore:
         del webhook). ``{"id": <wamid citado>}`` más, si el ingest lo pudo
         resolver (foto del bot), ``author``/``text``/``image_url``. El
         dashboard pinta la cita encima de la burbuja.
+
+        ``sent_at_ms``: cuándo lo escribió el cliente, si Meta lo entregó tarde
+        (``timestamp`` sigue siendo la llegada: ordena el chat). Se guarda como
+        ``sent_at`` ISO UTC. ``arrived_after_window``: llegó con la ventana de
+        24 h ya cerrada y el bot no pudo contestarle. Caso 2026-10-09: un
+        mensaje de 3 días antes apareció debajo de la plantilla recién enviada
+        y pareció su respuesta.
         """
         event: dict[str, Any] = {
             "role": "user",
@@ -119,6 +128,10 @@ class FilesystemMessageHistoryStore:
             event["wamid"] = wamid
         if reply_to:
             event["reply_to"] = reply_to
+        if sent_at_ms is not None:
+            event["sent_at"] = datetime.fromtimestamp(sent_at_ms / 1000, timezone.utc).isoformat()
+        if arrived_after_window:
+            event["arrived_after_window"] = True
         self._append(session_id, event)
 
     def append_assistant_event(

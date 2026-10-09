@@ -60,6 +60,8 @@ fun Message.toEntity(sessionId: SessionId, position: Int) = MessageEntity(
     text = text,
     imageUrl = imageUrl,
     timestampMs = timestampMs,
+    sentAtMs = sentAtMs,
+    arrivedAfterWindow = arrivedAfterWindow,
 )
 
 fun MessageEntity.toDomain() = Message(
@@ -68,4 +70,6 @@ fun MessageEntity.toDomain() = Message(
     text = text,
     imageUrl = imageUrl,
     timestampMs = timestampMs,
+    sentAtMs = sentAtMs,
+    arrivedAfterWindow = arrivedAfterWindow,
 )
