@@ -122,3 +122,17 @@ async def test_without_a_vault_the_promise_is_still_recorded(tmp_path: Path, ctx
 
     assert env["reply"] == {"text": FORM_PROMISE}
     assert [p["kind"] for p in env["promises"]] == ["formulario"]
+
+
+@pytest.mark.asyncio
+async def test_a_form_already_delivered_in_this_episode_keeps_the_promise(tmp_path: Path, ctx: ToolContext) -> None:
+    """Revisión del premortem (2026-10-09): mirar solo la cola hacía que la
+    ronda pidiera un SEGUNDO formulario cuando el bot volvía a nombrar el que
+    el cliente ya tenía."""
+    path = _seed(tmp_path, episodes=[{"episode_id": "ep_001", "started_at_ms": 1_000, "closed_at_ms": None}])
+    row = {"id": "f1", "kind": "shipping_flow", "ok": True, "wamid": "wamid.f1", "at_ms": 5_000}
+    (path.parent / "ui_intents_delivered.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    env = await _send(tmp_path, ctx, "Te paso el formulario para los datos de envío 🤍")
+
+    assert "promises" not in env

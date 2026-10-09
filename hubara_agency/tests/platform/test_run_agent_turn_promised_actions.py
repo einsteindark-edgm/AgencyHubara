@@ -91,9 +91,10 @@ async def _record_turn(inp: RecordTurnInput) -> None:
 @workflow.defn(name="PromisedActionsProbeWorkflow")
 class _PromisedActionsProbeWorkflow:
     @workflow.run
-    async def run(self) -> dict:
+    async def run(self, max_iterations: int = 10) -> dict:
         session = SessionInput(
-            session_id="wa_promises", channel="whatsapp", chat_id="wa_promises", llm=LLMConfig(model="fake"),
+            session_id="wa_promises", channel="whatsapp", chat_id="wa_promises",
+            llm=LLMConfig(model="fake", max_iterations=max_iterations),
             workspace=WorkspaceConfig(path="/tmp/ws"), tool_definitions_json="[]",
         )
         result = await run_agent_turn(
@@ -105,7 +106,7 @@ class _PromisedActionsProbeWorkflow:
         }
 
 
-async def _turn(replies: list[Any], *, form_rejected: bool = False) -> dict[str, Any]:
+async def _turn(replies: list[Any], *, form_rejected: bool = False, max_iterations: int = 10) -> dict[str, Any]:
     STATE.__init__()
     STATE.replies = replies
     STATE.form_rejected = form_rejected
@@ -116,7 +117,7 @@ async def _turn(replies: list[Any], *, form_rejected: bool = False) -> dict[str,
             workflow_runner=UnsandboxedWorkflowRunner(),
         ):
             return await env.client.execute_workflow(
-                _PromisedActionsProbeWorkflow.run, id="promised-actions", task_queue=QUEUE
+                _PromisedActionsProbeWorkflow.run, max_iterations, id="promised-actions", task_queue=QUEUE
             )
 
 
@@ -174,3 +175,47 @@ async def test_a_text_without_promises_is_the_turn_of_always() -> None:
     assert out["final"] == "En Bogotá llega en 1 a 2 días hábiles 🤍"
     assert out["guards"] == []
     assert len(STATE.calls) == 1
+
+
+async def test_the_held_text_goes_out_when_the_round_only_sends_the_form() -> None:
+    """Revisión del premortem (2026-10-09): si el modelo responde la ronda solo
+    con el formulario (que corta el turno esperando al cliente), el texto
+    retenido —la respuesta a lo que el cliente preguntó— no salía."""
+    out = await _turn([
+        [("send_reply", {"text": PROMISE})],
+        [("request_shipping_details", {"items": [{"handle": "calabaza", "quantity": 1}]})],
+    ])
+
+    assert out["final"] == PROMISE
+    assert "promised_action_round" in out["guards"]
+
+
+async def test_no_round_on_the_last_iteration() -> None:
+    """Sin iteraciones para la ronda, el texto sale (no el «se me cortó»)."""
+    out = await _turn([[("send_reply", {"text": PROMISE})]], max_iterations=1)
+
+    assert out["final"] == PROMISE
+    assert "promised_action_round" not in out["guards"]
+
+
+def test_the_memory_does_not_keep_the_promise_nudges() -> None:
+    """Revisión del premortem (2026-10-09): el resultado grabado de `send_reply`
+    llevaba «no lo mandaste: llama request_shipping_details»; en el turno
+    siguiente el modelo lo releía y mandaba el formulario otra vez aunque la
+    ronda o la red ya lo hubieran mandado. La nota vive solo en su turno."""
+    from src.platform.workflow_helpers import _history_view
+
+    recorded = [
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "send_reply", "arguments": json.dumps({"text": PROMISE})}},
+        ]},
+        {"role": "tool", "tool_call_id": "c1", "name": "send_reply", "content": json.dumps({
+            "reply": {"text": PROMISE}, "summary": "Mensaje listo.",
+            "promises": [{"kind": "formulario", "tools": ["request_shipping_details"], "nudge": NUDGE}],
+        })},
+    ]
+
+    view = _history_view(recorded, {"c1": PROMISE})
+
+    stored = json.loads(view[1]["content"])
+    assert "promises" not in stored and stored["reply"] == {"text": PROMISE}

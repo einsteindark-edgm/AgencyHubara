@@ -214,6 +214,12 @@ def _append_intent(session_key: str, intent: dict[str, Any]) -> str:
     return queued["id"]
 
 
+def _already_queued(session_key: str, kind: str) -> bool:
+    """¿La cola del turno ya trae un componente de este `kind`?"""
+    data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
+    return any(isinstance(i, dict) and i.get("kind") == kind for i in data.get("pending_ui_intents") or [])
+
+
 def _meta_retailer_id(product) -> str:
     """Retailer id VIGENTE del producto en Meta Catalog.
 
@@ -1514,7 +1520,11 @@ class RequestShippingDetailsTool(ToolBase):
                 "order_total_cop": order_total_cop,
             },
         }
-        _append_intent(ctx.session_key, intent)
+        # Una vez por turno (revisión del premortem, 2026-10-09): la ronda de
+        # las promesas o la red pueden pedirlo cuando ya está en la cola; con
+        # otro id el flush lo mandaba dos veces.
+        if not _already_queued(ctx.session_key, "shipping_flow"):
+            _append_intent(ctx.session_key, intent)
         return json.dumps({
             "queued": True,
             "kind": "shipping_flow",

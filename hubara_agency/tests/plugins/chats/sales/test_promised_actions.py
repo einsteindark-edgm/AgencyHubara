@@ -23,6 +23,8 @@ from src.plugins.chats.agent.sales.use_cases.promised_actions import broken_prom
         ("Perfecto, contra entrega.\n\nTe paso el formulario para los datos de envío 🤍", "formulario"),
         ("Te envío el formulario y dejamos el pedido listo", "formulario"),
         ("Ahí te va el formulario 🤍", "formulario"),
+        ("Listo, el total es $45.000. Te paso el formulario 🤍", "formulario"),
+        ("Te dejo el formulario para cuando puedas llenarlo 🤍", "formulario"),
         ("Te comparto las tarifas de envío.", "tarifas"),
         ("Ya mismo te paso los costos de envío 🚚", "tarifas"),
         ("Listo, te paso el resumen de tu pedido para que lo confirmes.", "resumen"),
@@ -52,6 +54,16 @@ def test_each_promise_is_read_with_its_component(text: str, kind: str) -> None:
         "No te puedo enviar fotos de ese diseño, no lo manejamos.",
         "La Calabaza viene en naranja y huele a canela.",
         "El envío a Bogotá llega en 1 a 2 días hábiles.",
+        # Revisión del premortem (2026-10-09): el condicional después, el
+        # pedido antes, un monto con punto y lo que ya está arriba.
+        "Dime el color y te paso el formulario 🤍",
+        "Te paso el formulario apenas me confirmes el aroma.",
+        "Te paso el formulario cuando me digas el color.",
+        "Te paso el formulario después de que elijas el aroma.",
+        "Si te parece bien el total de $45.000 te paso el formulario.",
+        "Te muestro las fotos si quieres.",
+        "Te dejo el formulario arriba 👆 cuando lo llenes seguimos.",
+        "Llénalo en el formulario que te envié arriba.",
     ],
 )
 def test_offers_questions_conditionals_and_facts_are_not_promises(text: str) -> None:

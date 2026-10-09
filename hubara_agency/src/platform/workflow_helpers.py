@@ -710,11 +710,19 @@ def _history_view(
       few-shot que lo hacía narrar también en la respuesta final.
     * Cada `send_reply` con el texto que de verdad salió (la tool pudo haber
       quitado un párrafo de razonamiento).
+    * Sin las `promises` que grabó `send_reply` (premortem 2026-10-09): su
+      nota («no lo mandaste: llama…») sirve en SU turno; releída después, el
+      modelo pedía otra vez lo que la ronda o la red ya habían mandado.
 
     Solo cambia el payload de `record_turn`: replay-safe sin patch.
     """
     view: list[dict[str, Any]] = []
     for message in recorded:
+        if message.get("role") == "tool" and message.get("name") == "send_reply":
+            payload = _try_parse_decision_payload(message.get("content"))
+            if isinstance(payload, dict) and "promises" in payload:
+                payload = {k: v for k, v in payload.items() if k != "promises"}
+                message = {**message, "content": json.dumps(payload, ensure_ascii=False)}
         if message.get("role") == "assistant" and message.get("tool_calls"):
             calls = []
             for call in message["tool_calls"]:
@@ -1130,6 +1138,10 @@ async def _run_agent_turn_impl(
     # que hicieron lo suyo y las rondas de promesas. Listas en memoria.
     kept_tools: list[str] = []
     promise_rounds = 0
+    # El texto que la ronda retuvo y las tools que lo cumplen: si la ronda se
+    # contesta solo con esa tarjeta (que corta el turno), el texto sale igual.
+    promise_withheld_text: str | None = None
+    promise_tools: set[str] = set()
     # Bug saludo descartado (run ddd0d472): textos client-facing emitidos JUNTO
     # con tool calls. Solo manipulación de lista en memoria → no agrega commands
     # al history (replay-safe sin gate; el gate vive en el workflow que decide
@@ -1283,6 +1295,8 @@ async def _run_agent_turn_impl(
             # Lo que esos textos prometen y el estado no cumplía al validarlos
             # (`promises` del resultado grabado de `send_reply`).
             batch_promises: list[dict[str, Any]] = []
+            # Las tools de ESTE paso que hicieron lo suyo.
+            batch_kept: list[str] = []
             # DEFAULT-DENY (run 1c9ef231): el content que acompaña una tool
             # call es narración interna SIEMPRE — se descarta y se loguea. El
             # texto para el cliente viaja en los params de la tool
@@ -1373,6 +1387,7 @@ async def _run_agent_turn_impl(
                     batch_awaits_customer = True
                 if tc.name != "send_reply" and _kept_by_tool(payload):
                     kept_tools.append(tc.name)
+                    batch_kept.append(tc.name)
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
@@ -1559,10 +1574,16 @@ async def _run_agent_turn_impl(
                         and promise_rounds < 1
                         and not batch_awaits_customer
                         and not batch_tag_ends_turn
+                        # La ronda necesita otra vuelta: en la última, el texto sale.
+                        and iteration < session.llm.max_iterations
                         else None
                     )
                     if promise_note and workflow.patched(PROMISED_ACTIONS_PATCH):
                         promise_rounds += 1
+                        promise_withheld_text = reply_text
+                        promise_tools = {
+                            str(t) for p in batch_promises if isinstance(p, dict) for t in p.get("tools") or []
+                        }
                         steps.append(
                             {"kind": "guard", "at_ms": _now_ms(), "name": "promised_action_round",
                              "before": reply_text, "after": promise_note, "tools": list(tools_used)}
@@ -1672,6 +1693,15 @@ async def _run_agent_turn_impl(
                         f"turno cortado: {batch_tool_names} espera respuesta del cliente"
                     )
                     final_content = ""
+                    # La ronda de las promesas se contestó con la tarjeta que
+                    # cumplía lo prometido y sin texto nuevo: sale el texto
+                    # retenido (la respuesta a lo que el cliente preguntó).
+                    if promise_withheld_text and not batch_reply_texts and promise_tools & set(batch_kept):
+                        final_content = promise_withheld_text
+                        steps.append(
+                            {"kind": "guard", "at_ms": _now_ms(), "name": "promised_action_text_kept",
+                             "before": "", "after": final_content, "tools": batch_tool_names}
+                        )
                     steps.append(
                         {"kind": "cut", "at_ms": _now_ms(), "reason": "awaits_customer", "tools": batch_tool_names}
                     )

@@ -336,22 +336,9 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
 
 def _delivered_rows(session_id: str) -> list[dict[str, Any]]:
     """Las filas del registro de entregas de la sesión (vacío si no hay)."""
-    from src.plugins.chats.agent.sales.activities.flush_ui_intents import _DELIVERED_LOG
+    from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import delivered_rows
 
-    path = WORKSPACE_VAULT_DIR / session_id / _DELIVERED_LOG
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in lines:
-        try:
-            row = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(row, dict):
-            rows.append(row)
-    return rows
+    return delivered_rows(WORKSPACE_VAULT_DIR / session_id)
 
 
 async def _ensure_promised_shipping_form(session_id: str, text: str, data: dict[str, Any]) -> bool:
@@ -365,6 +352,7 @@ async def _ensure_promised_shipping_form(session_id: str, text: str, data: dict[
     """
     from exoclaw.agent.tools import ToolContext
 
+    from src.plugins.chats.agent.sales.tools.order_draft import offered_options
     from src.plugins.chats.agent.sales.tools.ui_intents import RequestShippingDetailsTool
     from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import (
         promises_shipping_form,
@@ -385,10 +373,10 @@ async def _ensure_promised_shipping_form(session_id: str, text: str, data: dict[
         )
         return False
     products = [p for p in page.results if getattr(p, "status", "published") == "published"]
-    items = shipping_form_items(data, products)
+    items = shipping_form_items(data, products, offered_options)
     if not items:
         activity.logger.warning(
-            "ensure_promised_shipping_form: el borrador no se cruza con el catálogo — no se manda",
+            "ensure_promised_shipping_form: el pedido no está completo (catálogo, cantidad o variantes) — no se manda",
             extra={"session_id": session_id},
         )
         return False

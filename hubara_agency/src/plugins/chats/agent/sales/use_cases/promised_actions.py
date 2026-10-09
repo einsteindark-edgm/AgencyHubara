@@ -8,11 +8,11 @@ puede pasar con cualquier componente que el bot anuncia: las tarifas, el
 resumen, el catálogo, las fotos, los aromas o colores, o decir que el pedido
 quedó registrado sin registrarlo.
 
-Este módulo es PURO (sin I/O ni reloj): lo leen la segunda puerta del turno en
-el workflow V2 (`workflows/promises_v2.py`: una ronda más que nombra la tool,
-ANTES de que el texto salga), la red de la activity
-(`ensure_promised_handoff_activity`: el formulario, si aun así no salió) y la
-calificación.
+Este módulo es PURO (sin I/O ni reloj): lo leen `send_reply` (graba en su
+resultado lo prometido que el estado no cumple; `run_agent_turn` da UNA ronda
+más que nombra la tool, ANTES de que el texto salga), la red de la activity
+(`ensure_promised_handoff_activity`: el formulario y las tarifas, si aun así no
+salieron) y la calificación (TAG-09).
 
 Qué NO es una promesa de ahora: una pregunta («¿te paso el formulario?»), una
 oferta («si quieres te envío las fotos»), un condicional («cuando me confirmes
@@ -144,7 +144,23 @@ _CONDITIONAL_RE = re.compile(
     r"|\bquieres\s+que\b|\bte\s+gustaria\b|\bcuando\b|\bapenas\b|\ben\s+cuanto\b|\buna\s+vez\s+que\b"
     r"|\b(?:luego|despues)\s+de\b|\bno\s+$"
 )
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?\n])|(?=¿)")
+# Revisión del premortem (2026-10-09): el condicional DESPUÉS de la promesa
+# («te paso el formulario apenas me confirmes el aroma», «te muestro las fotos
+# si quieres») y lo que ya salió («te dejo el formulario arriba»).
+_CONDITIONAL_AFTER_RE = re.compile(
+    r"\b(?:apenas|en\s+cuanto|una\s+vez\s+que|(?:despues|luego)\s+de\s+que)\b"
+    r"|\bsi\s+(?:quieres|gustas|deseas|prefieres|te\s+parece|me\b)"
+    r"|\bcuando\s+(?:me\s+|lo\s+|la\s+)?(?:digas|confirmes|elijas|escojas|decidas|definas|indiques|avises)\b"
+)
+_ALREADY_SENT_RE = re.compile(r"\barriba\b|\bque\s+te\s+(?:envie|mande|pase|deje|comparti)\b")
+# «Dime el color y te paso el formulario»: primero pide algo, la promesa depende de eso.
+_ASK_THEN_RE = re.compile(
+    r"\b(?:dime|digame|cuentame|confirmame|elige|escoge|avisame|indicame|mandame|enviame|pasame|regalame)\b"
+    r".*\by\s*$"
+)
+# Corta en . ! ? y salto de línea, nunca en el punto de un monto («$45.000»);
+# una pregunta empieza en «¿».
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[!?\n])|(?<=\.)(?!\d)|(?=¿)")
 
 
 def _plain(text: str) -> str:
@@ -164,9 +180,12 @@ def _sentences(text: str) -> list[str]:
 
 def _promises_in(sentence: str, pattern: re.Pattern[str], *, inline_list: bool = False) -> bool:
     for match in pattern.finditer(sentence):
-        if _CONDITIONAL_RE.search(sentence[: match.start()] + " "):
+        before, after = sentence[: match.start()], sentence[match.end():]
+        if _CONDITIONAL_RE.search(before + " ") or _ASK_THEN_RE.search(before):
             continue
-        if inline_list and ":" in sentence[match.end():]:
+        if _CONDITIONAL_AFTER_RE.search(after) or _ALREADY_SENT_RE.search(after):
+            continue
+        if inline_list and ":" in after:
             # «Te muestro los aromas: canela y vainilla» ya es la lista.
             continue
         return True

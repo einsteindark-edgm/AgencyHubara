@@ -45,9 +45,18 @@ _CALABAZA = CatalogProductDTO(
 )
 
 
+_KOALA = CatalogProductDTO(
+    id="prod_koala", handle="velon-koala", title="Velón Koala", status="published",
+    tags=["Aroma: Lavanda", "Color: Lila", "Color: Azul"],
+    variants=[CatalogVariantDTO(
+        id="variant_koala", title="Unico", prices=[CatalogPriceDTO(amount="36000", currency_code="cop")],
+    )],
+)
+
+
 class _Catalog:
     async def search(self, q: str, *, limit: int = 10, category: str | None = None) -> Any:
-        return SimpleNamespace(query=q, results=[_CALABAZA])
+        return SimpleNamespace(query=q, results=[_CALABAZA, _KOALA])
 
     async def get_by_handle(self, handle: str) -> CatalogProductDTO:
         if handle != _CALABAZA.handle:
@@ -180,14 +189,23 @@ async def test_a_draft_product_missing_from_the_catalog_sends_nothing(_isolate_v
     assert _intents(md) == []
 
 
-async def test_a_draft_without_quantity_asks_for_one(_isolate_vault_dir: Path) -> None:
-    draft = {k: v for k, v in _DRAFT.items() if k != "cantidad"}
+@pytest.mark.parametrize(
+    "draft",
+    [
+        {k: v for k, v in _DRAFT.items() if k != "cantidad"},  # sin cantidad
+        {**_DRAFT, "cantidad": "media docena"},  # una cantidad que no se lee
+        {**_DRAFT, "producto": "Velón Koala"},  # le falta elegir el color
+    ],
+)
+async def test_an_incomplete_order_is_left_to_the_model(_isolate_vault_dir: Path, draft: dict) -> None:
+    """Revisión del premortem (2026-10-09): la red no adivina. Sin cantidad
+    legible o con variantes por elegir, el formulario lo manda el modelo (la
+    ronda del turno ya le dijo que lo prometió)."""
     md = _seed(_isolate_vault_dir, episodes=[_episode(draft)])
 
     await _run(PROMISE)
 
-    (intent,) = _intents(md)
-    assert intent["params"]["order_total_cop"] == 16000
+    assert _intents(md) == []
 
 
 @pytest.mark.parametrize(

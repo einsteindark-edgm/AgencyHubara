@@ -1158,7 +1158,7 @@ class SetOrderSlotTool(ToolBase):
         return json.dumps(envelope, ensure_ascii=False)
 
 
-def _offered_options(product: Any) -> dict[str, list[str]]:
+def offered_options(product: Any) -> dict[str, list[str]]:
     """Las opciones que el catálogo le ofrece al cliente: aroma por tags;
     color por la paleta real (`metadata.colores`) si existe, si no por tags
     (la misma lista con que `_check_values` valida)."""
@@ -1177,7 +1177,7 @@ def _only_options(
     rejected_fields = {r.get("field") for r in rejected}
     filled: dict[str, str] = {}
     not_offered: list[str] = []
-    for kind, options in _offered_options(product).items():
+    for kind, options in offered_options(product).items():
         if not options:
             not_offered.append(kind)
             continue

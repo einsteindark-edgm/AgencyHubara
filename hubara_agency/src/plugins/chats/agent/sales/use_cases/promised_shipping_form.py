@@ -13,7 +13,9 @@ filas del registro de entregas: el I/O lo hace la activity.
 """
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+import json
+from collections.abc import Callable, Iterable, Mapping
+from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales.use_cases.promised_actions import promised_kinds
@@ -22,6 +24,8 @@ from src.plugins.chats.shared.draft_items import draft_items, find_product
 from src.plugins.chats.shared.funnel import active_episode
 
 SHIPPING_FORM_KIND = "shipping_flow"
+#: El registro de entregas del flush (`activities/flush_ui_intents._DELIVERED_LOG`).
+DELIVERED_LOG = "ui_intents_delivered.jsonl"
 
 def promises_shipping_form(text: str | None) -> bool:
     """¿El texto le dice al cliente que AHORA le manda el formulario de envío?
@@ -32,6 +36,24 @@ def promises_shipping_form(text: str | None) -> bool:
     promesas.
     """
     return "formulario" in promised_kinds(text)
+
+
+def delivered_rows(session_dir: Path) -> list[dict[str, Any]]:
+    """Las filas del registro de entregas de la sesión (vacío si no hay o no
+    se puede leer; una línea dañada se salta)."""
+    try:
+        lines = (session_dir / DELIVERED_LOG).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
 
 
 def shipping_form_in_episode(metadata: Mapping[str, Any], delivered: Iterable[Mapping[str, Any]]) -> bool:
@@ -54,10 +76,17 @@ def shipping_form_in_episode(metadata: Mapping[str, Any], delivered: Iterable[Ma
     )
 
 
-def shipping_form_items(metadata: Mapping[str, Any], products: list[Any]) -> list[dict[str, Any]] | None:
+def shipping_form_items(
+    metadata: Mapping[str, Any],
+    products: list[Any],
+    offered: Callable[[Any], Mapping[str, list[str]]] | None = None,
+) -> list[dict[str, Any]] | None:
     """`items` de `request_shipping_details` ({handle, quantity}) desde el
-    borrador del episodio activo, o None si algún producto no está en el
-    catálogo (no se adivina). Sin cantidad anotada, una unidad."""
+    borrador del episodio activo, o None si el pedido no está completo: un
+    producto que no está en el catálogo, una cantidad que falta o no se lee
+    («media docena»), o un aroma o color por elegir (`offered`: las opciones
+    que el catálogo le ofrece al producto; con una sola, ya está). La red no
+    adivina (revisión del premortem, 2026-10-09)."""
     episode = active_episode(dict(metadata)) or {}
     draft = episode.get("order_draft")
     lines = draft_items(draft if isinstance(draft, dict) else None)
@@ -68,6 +97,11 @@ def shipping_form_items(metadata: Mapping[str, Any], products: list[Any]) -> lis
         product = find_product(products, line.get("producto"))
         if product is None:
             return None
-        quantity = parse_leading_quantity(str(line.get("cantidad") or "")) or 1
+        quantity = parse_leading_quantity(str(line.get("cantidad") or ""))
+        if not quantity:
+            return None
+        options = offered(product) if offered is not None else {}
+        if any(len(choices) > 1 and not str(line.get(kind) or "").strip() for kind, choices in options.items()):
+            return None
         items.append({"handle": product.handle, "quantity": quantity})
     return items

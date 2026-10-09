@@ -167,14 +167,25 @@ class SendReplyTool(ToolBase):
         del paso completo, con las tools que de verdad salieron. Sin vault no
         hay cola que mirar: se graba todo lo que promete."""
         from src.plugins.chats.agent.sales.use_cases.promised_actions import broken_promises_in_queue
+        from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import (
+            SHIPPING_FORM_KIND,
+            delivered_rows,
+            shipping_form_in_episode,
+        )
 
         metadata: dict[str, Any] = {}
+        delivered: list[dict[str, Any]] = []
         if self._vault_dir is not None:
             try:
                 metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
             except Exception:  # noqa: BLE001 — sin metadata legible: se graba todo lo prometido
                 metadata = {}
+            delivered = delivered_rows(self._vault_dir / session_key)
         queued = [str(i.get("kind")) for i in metadata.get("pending_ui_intents") or [] if isinstance(i, dict)]
+        # El formulario sale una vez por episodio: el que ya salió también
+        # cumple (revisión del premortem: si no, la ronda pedía un segundo).
+        if shipping_form_in_episode(metadata, delivered):
+            queued.append(SHIPPING_FORM_KIND)
         order = metadata.get("registered_order")
         registered = isinstance(order, dict) and order.get("success") is True
         return [
