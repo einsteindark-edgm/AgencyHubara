@@ -167,6 +167,7 @@ class SendReplyTool(ToolBase):
         del paso completo, con las tools que de verdad salieron. Sin vault no
         hay cola que mirar: se graba todo lo que promete."""
         from src.plugins.chats.agent.sales.use_cases.promised_actions import broken_promises_in_queue
+        from src.plugins.chats.shared.purchase_signals import has_registered_order
         from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import (
             SHIPPING_FORM_KIND,
             delivered_rows,
@@ -186,8 +187,8 @@ class SendReplyTool(ToolBase):
         # cumple (revisión del premortem: si no, la ronda pedía un segundo).
         if shipping_form_in_episode(metadata, delivered):
             queued.append(SHIPPING_FORM_KIND)
-        order = metadata.get("registered_order")
-        registered = isinstance(order, dict) and order.get("success") is True
+        # Un pedido de una compra anterior no registra la de hoy (2026-10-09).
+        registered = has_registered_order(metadata)
         return [
             {"kind": p.kind, "tools": list(p.tools), "nudge": p.nudge}
             for p in broken_promises_in_queue(text, queued, registered=registered)
