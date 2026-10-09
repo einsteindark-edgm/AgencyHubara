@@ -384,6 +384,15 @@ entrega ya asignada (`summary.due_iso != null`).
 - THEN el flujo de 2 pasos (agendar + confirmar) queda disponible como fallback
 - AND el popover avisa explícitamente que no se pudo verificar si ya hay fecha (la protección está apagada)
 
+#### Scenario: "Crear pedido" después de un cierre sin pedido
+
+- GIVEN el último episodio cerró sin pedido (p.ej. CONFIRMADO_SIN_DATOS por inactividad) y no hay episodio activo
+- WHEN el operador registra el pedido con "Crear pedido"
+- THEN el pedido queda en ESE episodio y su cierre pasa a CONFIRMADO_PAGO_PENDIENTE (el anterior queda en `order_attached_after_close`)
+- AND NO se abre un episodio vacío: en Ads la conversación sale «ganado» en su canal (no en la campaña del primer anuncio de la sesión)
+- AND "Confirmar pago" cierra ese mismo episodio con COMPRA_EXITOSA
+- AND si ese episodio ya tenía su propio pedido, el pedido nuevo abre otro episodio (nunca pisa una venta)
+
 #### Scenario: Agendar sobre stage avanzado se rechaza
 
 - GIVEN un pedido en stage `ready`/`shipping`/`delivered`/`cancelled`
