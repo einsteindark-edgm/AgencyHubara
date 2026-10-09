@@ -32,43 +32,41 @@ from src.plugins.chats.shared.funnel import active_episode
 
 SIGNAL_KEY = "last_inbound_signal"
 
-#: El cliente aplaza en primera persona: cuenta aunque lo diga preguntando
-#: («¿te confirmo mañana?»).
+#: Frases que aplazan solas (también preguntando: «¿lo pienso y te escribo?»).
+#: Premortem 2026-10-09: la regla es el respaldo cuando Jev duda o cae, así
+#: que solo lleva lo inequívoco. «Déjame una de lavanda», «te confirmo:
+#: lavanda», «les escribo la dirección» o «cuando llegue pago en efectivo» son
+#: compras, no aplazamientos.
 _DEFERRAL_PATTERNS = [
     re.compile(p)
     for p in (
         r"\ben camino\b",
         r"\bahora no\b",
         r"\bahorita no\b",
-        r"\bcuando llegue\b",
-        r"\bdejame\b",
-        r"\bdeja(me)? (que )?(miro|reviso|pienso|veo)\b",
-        r"\blo pienso\b",
-        # "te / les / le": al negocio se le habla en plural ("les escribo la
-        # otra semana" — incidente runs 337efe8c / ee3cec91).
-        r"\b(te|les|le) aviso\b",
-        r"\b(te|les|le) escribo\b",
-        r"\b(te|les|le) confirmo\b",
+        r"\bno puedo ahora\b",
         r"\bestoy ocupad",
         r"\bme ocup[eo]\b",
-        r"\bno puedo ahora\b",
+        r"\blo pienso\b",
+        r"\bpensarlo\b",
+        r"\blo voy a pensar\b",
+        r"\bdeja(me)? (que )?(lo )?(miro|mirar|reviso|revisar|pienso|pensar|veo|ver|consulto|consultar)\b",
+        # «cuando llegue a la casa»: no «cuando llegue pago en efectivo».
+        r"\bcuando llegue a\b",
     )
 ]
-#: Solo un momento («mañana», «después», «luego»): aplaza en una afirmación
-#: («mañana lo hago»), no en una pregunta («¿me llega mañana?», «¿y después
-#: cómo pago?» — premortem 2026-10-09: la regla frenaba el formulario).
-_DEFERRAL_TIME_PATTERNS = [
-    re.compile(p)
-    for p in (
-        r"\bluego\b",
-        r"\bmas tarde",
-        r"\bdespues\b",
-        r"\ben un rato\b",
-        r"\bmanana\b",
-        r"\ben la noche\b",
-        r"\bmas tardecito\b",
-    )
-]
+#: Dejarlo para después: «te aviso / te confirmo / te escribo» o «lo hago /
+#: lo pido / lo miro» con un momento («luego», «mañana», «más tarde»)…
+_LATER_VERB_RE = re.compile(
+    r"\b(?:te|les|le) (?:aviso|escribo|confirmo|digo|cuento|hablo)\b"
+    r"|\b(?:lo|la|los|las) (?:hago|pido|compro|reviso|veo|miro|pago|confirmo|decido)\b"
+    r"|\b(?:hablamos|seguimos|nos hablamos|lo vemos)\b"
+)
+_LATER_TIME_RE = re.compile(
+    r"\b(?:cuando|luego|despues|mas tarde|mas tardecito|en un rato|al rato|manana|en la noche|esta noche|"
+    r"en la tarde|ahorita|otro dia|la otra semana|el (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo))\b"
+)
+#: … o el «te aviso» / «te confirmo» con que se cierra el mensaje.
+_LATER_AT_END_RE = re.compile(r"\b(?:te|les|le) (?:aviso|confirmo|escribo|digo)\W*$")
 
 _AFFIRMATION_START = re.compile(
     r"^\W*(si|dale|listo|de una|hagale|claro|perfecto|vale|ok|okay|va|bueno|confirmo|confirmado)\b"
@@ -90,19 +88,20 @@ def _normalize(text: str) -> str:
 
 
 def detect_deferral(text: str | None) -> bool:
-    """True si el cliente está aplazando ("luego", "voy en camino", "mañana").
+    """True si el cliente está aplazando ("voy en camino", "lo pienso", "luego
+    te digo", "mañana te confirmo", "te aviso").
 
-    Una pregunta solo aplaza si lo dice en primera persona («¿te confirmo
-    mañana?»); «¿me llega mañana?» pregunta cuándo, no aplaza.
+    Una palabra de tiempo sola no aplaza («¿me llega mañana?», «mañana estoy
+    en casa»): tiene que dejar algo para después (te aviso, lo pido…).
     """
     if not text:
         return False
     norm = _normalize(text)
     if any(p.search(norm) for p in _DEFERRAL_PATTERNS):
         return True
-    if "?" in norm or "¿" in norm:
-        return False
-    return any(p.search(norm) for p in _DEFERRAL_TIME_PATTERNS)
+    if _LATER_AT_END_RE.search(norm):
+        return True
+    return bool(_LATER_VERB_RE.search(norm) and _LATER_TIME_RE.search(norm))
 
 
 def detect_purchase_affirmation(text: str | None) -> bool:

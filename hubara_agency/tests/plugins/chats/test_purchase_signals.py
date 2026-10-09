@@ -57,6 +57,33 @@ def test_a_question_about_when_is_not_a_deferral(text: str) -> None:
     assert detect_deferral(text) is False
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Déjame una de lavanda",
+        "Te confirmo: lavanda y en blanco",
+        "Les escribo la dirección: Calle 1 # 2-3",
+        "cuando llegue pago en efectivo",
+        "Mañana estoy en casa todo el día",
+        "Lo recibo en la noche, después de las 6",
+        "Ok, te aviso cualquier cosa del pedido: es para mi mamá",
+    ],
+)
+def test_a_purchase_detail_with_a_time_word_is_not_a_deferral(text: str) -> None:
+    """Premortem 2026-10-09: la regla aplazaba compras. Solo cuentan las
+    frases fuertes («voy en camino», «lo pienso», «ahora no») o un «te aviso /
+    te confirmo / lo hago» que se deja para después; lo demás lo decide Jev."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Te aviso", "Les confirmo más tarde", "Después hablamos", "Déjame pensarlo", "Lo voy a pensar", "Más tarde lo pido"],
+)
+def test_leaving_it_for_later_is_a_deferral(text: str) -> None:
+    assert detect_deferral(text) is True
+
+
 @pytest.mark.parametrize("text", ["¿Te confirmo mañana?", "¿Te aviso luego?", "¿Lo pienso y te escribo?"])
 def test_a_question_that_defers_in_first_person_still_defers(text: str) -> None:
     assert detect_deferral(text) is True
