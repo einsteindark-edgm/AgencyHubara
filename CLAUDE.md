@@ -63,6 +63,16 @@ Monorepo con backend Python (Temporal + DEHA hexagonal architecture) + frontend 
     el repo es público y ahí están las credenciales de prod. Receta: `android_operator/e2e/README.md`.
 15. **El bot nuevo se controla SOLO por comando.** Desde el 2026-10-06 (decisión del operador: «para evitar que alguien jugando dañe producción») los paneles «Bot nuevo» y «Motor de decisiones» de Agents son de solo lectura y los `PUT /api/chats/perception/*` responden 403. Los cambios (modo, números de prueba, capacidades, workflow V2, «los números de prueba deciden con Jev») van por `infra/scripts/bot_control.sh` → `decisions/control.py`, con las mismas garantías (techos de Terraform, la vara al subir, apagar siempre pasa, firma `comando:<quien>`). No vuelvas a poner botones que cambien el bot en el dashboard. Guía: `docs/motor-de-decisiones/control-por-comando.md`.
 
+16. **Lo que el bot promete, lo hace; y una guarda no frena lo que el bot hizo bien.** Incidente 2026-10-09 (bot V2,
+    cliente sin teléfono): «Te paso el formulario para los datos de envío» dos turnos seguidos sin
+    `request_shipping_details`, y cuando la llamó, la guarda `purchase_not_confirmed` la frenó; el operador mandó el
+    formulario a mano. Hoy: `send_reply` graba `promises` (detector puro `chats/agent/sales/use_cases/promised_actions.py`),
+    `run_agent_turn` retiene ese texto y da UNA ronda más si ninguna tool del turno lo cumplió (`promised_action_round`,
+    patch `promised-actions-round-v1`), `ensure_promised_handoff_activity` manda el formulario o las tarifas si aun así
+    no salieron, y Calidad LLM lo mide (TAG-09). Un componente nuevo que el bot pueda anunciar = su fila en
+    `_PROMISES` (frase, tools, intents) con test. Una guarda nueva que rechace una tool = un test con el caso legítimo
+    que NO debe frenar (el formulario ya no espera un «sí»: solo frena un aplazamiento).
+
 ## Hooks activos (`.claude/settings.json`)
 
 | Hook | Cuando | Qué hace |
