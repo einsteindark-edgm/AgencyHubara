@@ -449,6 +449,8 @@ replacements:
     files:
       - "infra/compose/graphagents/render-env-from-ssm.sh"
       - "infra/robotocore/test-local.sh"
+      - "infra/terraform/platform/modules/github-oidc/**"
+      - "hubara_agency/tests/infra/test_cross_tenant_iam.py"
       - "infra/terraform/platform/modules/graphagents-secrets/**"
       - "infra/terraform/compute/modules/graphagents-instance/**"
     from: "/graphagents"
@@ -458,6 +460,18 @@ replacements:
     from: "tenants/hubara.env"
     to: "tenants/{{slug}}.env"
   # ── genéricos al final ──────────────────────────────────────────────────
+  - id: iam-tests-prefijos              # los árboles SSM que asierta el test de aislamiento IAM
+    files: ["hubara_agency/tests/infra/test_cross_tenant_iam.py"]
+    from: '"/hubara/'
+    to: '"{{ssm_prefix}}/'
+  - id: iam-tests-tag-graphagents
+    files: ["hubara_agency/tests/infra/test_cross_tenant_iam.py"]
+    from: '== ["graphagents"]'
+    to: '== ["graphagents-{{slug}}"]'
+  - id: iam-tests-cloudwatch            # el parámetro del agente de CloudWatch lleva el prefijo de recursos
+    files: ["hubara_agency/tests/infra/test_cross_tenant_iam.py"]
+    from: "AmazonCloudWatch-agencyhubara-"
+    to: "AmazonCloudWatch-{{prefix}}-"
   - id: ssm-vincenzo                     # asserts de robotocore sobre el 2.º tenant de la madre
     files: ["infra/robotocore/**"]
     from: "/hubara/vincenzo/"

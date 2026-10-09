@@ -98,6 +98,29 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# La caja de observabilidad no lee ningún parámetro SSM. El agente SSM
+# (AmazonSSMManagedInstanceCore) trae GetParameter(s) sobre "*": un Deny
+# explícito le cierra los secretos de todos los proyectos de la cuenta.
+data "aws_iam_policy_document" "deny_ssm_parameters" {
+  statement {
+    sid    = "DenyEveryParameter"
+    effect = "Deny"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "ssm:GetParameterHistory",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "deny_ssm_parameters" {
+  name   = "deny-ssm-parameters"
+  role   = aws_iam_role.signoz.id
+  policy = data.aws_iam_policy_document.deny_ssm_parameters.json
+}
+
 resource "aws_iam_instance_profile" "signoz" {
   name = "agencyhubara-observability"
   role = aws_iam_role.signoz.name

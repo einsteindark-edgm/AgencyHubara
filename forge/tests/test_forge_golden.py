@@ -64,6 +64,8 @@ FIXTURE_FILES = {
         '  statement {\n    resources = [\n'
         '      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}",\n'
         '      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*",\n    ]\n  }\n}\n'
+        'statement {\n  sid = "SendCommandToGraphAgentsBoxOnly"\n  condition {\n'
+        '    variable = "ssm:resourceTag/Role"\n    values   = ["graphagents"]\n  }\n}\n'
         'resource "aws_instance" "app" {\n'
         '  volume_tags = {\n    Name   = "agencyhubara-${var.tenant}-app-root"\n'
         '    Backup = "daily"\n  }\n}\n'
@@ -267,6 +269,12 @@ FIXTURE_FILES = {
     ".github/workflows/forge-gates.yml": "name: forge-gates\n",
     "hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py": (
         'class StoreCodes:\n    sku_prefix: str = "HUB-"\n    web_domain: str = "hubara"\n'
+    ),
+    # Aislamiento IAM entre proyectos de la cuenta: los árboles SSM y el tag de
+    # la caja GraphAgents que permiten las políticas son los DEL PROYECTO
+    "infra/terraform/platform/modules/github-oidc/main.tf": (
+        'not_resources = [\n  "arn:aws:ssm:*:*:parameter/hubara/*",\n'
+        '  "arn:aws:ssm:*:*:parameter/graphagents/*",\n  "arn:aws:ssm:*:*:parameter/hubara-lab/*",\n]\n'
     ),
     "docs/cartagena/plan.md": "# Vertical hotelero de otro cliente\n",
     # App móvil Tauri: viaja al clon, pero la EIP de hubara en el CSP no
@@ -888,3 +896,15 @@ def test_el_dominio_por_defecto_del_clon_es_el_del_cliente(mini_repo, acme_bundl
     dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
     codes = (dest / "hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py").read_text()
     assert 'web_domain: str = "acme.example.com".lower()' in codes
+
+
+def test_el_aislamiento_iam_del_clon_usa_sus_propios_arboles_y_tags(mini_repo, acme_bundle, tmp_path):
+    """El CI del clon solo lee SUS parámetros y su caja de app solo le manda
+    comandos a SU GraphAgents: los nombres de Hubara no sobreviven."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    oidc = (dest / "infra/terraform/platform/modules/github-oidc/main.tf").read_text()
+    for tree in ("parameter/acme/*", "parameter/acme-graphagents/*", "parameter/acme-lab/*"):
+        assert tree in oidc, tree
+    assert "parameter/hubara" not in oidc and "parameter/graphagents" not in oidc
+    app = (dest / "infra/terraform/compute/modules/app-instance/main.tf").read_text()
+    assert 'values   = ["graphagents-acme"]' in app

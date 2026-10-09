@@ -44,6 +44,13 @@ Hubara) — revisar antes del go-live si la tienda no encaja:
 
 ## F2 — Bootstrap AWS (una vez, local con creds admin)
 
+> **Cuenta compartida con el proyecto madre.** Las cajas de {{company}} solo leen
+> sus parámetros SSM y solo le mandan comandos a su caja GraphAgents, y el rol de
+> solo lectura del CI solo lee sus árboles (`{{ssm_prefix}}/*`, `/{{slug}}-graphagents/*`,
+> `/{{slug}}-lab/*`). El rol de ESCRITURA de Terraform (`{{prefix}}-gha-terraform`,
+> environment `production` con reviewers) sigue siendo amplio en la cuenta: para
+> un aislamiento total, una cuenta AWS propia por cliente.
+
 - [ ] `python3 infra/scripts/aws_bootstrap.py state` → bucket `{{prefix}}-tfstate` + tabla `{{prefix}}-tflock`
 - [ ] `ssh-keygen -t ed25519 -f ~/.ssh/{{slug}}_ops -C "{{slug}}-ops"` → pública a `infra/terraform/compute/tenants.auto.tfvars`
 - [ ] Environment `production` en GitHub con required reviewers

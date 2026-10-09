@@ -96,6 +96,27 @@ data "aws_iam_policy_document" "ssm_read" {
       "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*",
     ]
   }
+  # El candado real (aislamiento entre proyectos de la misma cuenta, forge):
+  # AmazonSSMManagedInstanceCore permite GetParameter(s) sobre "*" y los
+  # SecureString usan la llave aws/ssm. Un Deny explícito le gana: sin él, esta
+  # caja leería los secretos de OTRO proyecto/clon de la cuenta.
+  statement {
+    sid    = "DenyEveryParameterOutsideTheTenant"
+    effect = "Deny"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "ssm:GetParameterHistory",
+    ]
+    not_resources = [
+      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}",
+      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*",
+      # la config del agente de CloudWatch (monitoring.tf): sin ella se apaga la
+      # métrica de memoria de la caja y su alarma
+      "arn:aws:ssm:*:*:parameter/AmazonCloudWatch-agencyhubara-${var.tenant}-app",
+    ]
+  }
   statement {
     sid       = "DecryptSecureString"
     actions   = ["kms:Decrypt"]
@@ -146,14 +167,34 @@ data "aws_iam_policy_document" "wake_graphagents" {
     actions   = ["ec2:DescribeInstances"]
     resources = ["*"]
   }
+  # SendCommand se autoriza contra la INSTANCIA y contra el DOCUMENTO (como la
+  # caja del laboratorio): solo la caja con el tag de SU GraphAgents y solo
+  # AWS-RunShellScript (lo único que manda boto3_launcher). Sobre "*" la caja
+  # de app de un clon podía correr shell en la caja de producción de OTRO
+  # proyecto de la cuenta.
   statement {
-    # SSM SendCommand/GetCommandInvocation: despachar el run a la box y leer el
-    # resultado de la invocación. DescribeInstanceInformation: esperar a que el
-    # AGENTE SSM de la box esté Online tras el arranque frío del autostop —
-    # EC2 `running` no alcanza y el send_command prematuro muere con
-    # InvalidInstanceId (PR #141). Es read-only y NO soporta resource-scope.
-    sid       = "DispatchViaSSM"
-    actions   = ["ssm:SendCommand", "ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"]
+    sid       = "SendCommandToGraphAgentsBoxOnly"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ec2:*:*:instance/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Role"
+      values   = ["graphagents"]
+    }
+  }
+  statement {
+    sid       = "SendCommandShellDocumentOnly"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ssm:*::document/AWS-RunShellScript"]
+  }
+  statement {
+    # GetCommandInvocation: leer el resultado de la invocación.
+    # DescribeInstanceInformation: esperar a que el AGENTE SSM de la box esté
+    # Online tras el arranque frío del autostop — EC2 `running` no alcanza y el
+    # send_command prematuro muere con InvalidInstanceId (PR #141). Read-only y
+    # SIN resource-scope en AWS.
+    sid       = "ReadDispatchState"
+    actions   = ["ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"]
     resources = ["*"]
   }
 }
