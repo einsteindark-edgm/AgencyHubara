@@ -214,6 +214,12 @@ def broken_promises_in_queue(text: str | None, queued: Iterable[str], *, registe
     ]
 
 
+def promises_by_kind() -> dict[str, Promise]:
+    """Cada componente que el texto puede prometer, por `kind` (lo lee la
+    calificación TAG-09)."""
+    return {p.kind: p for p in [*(p for p, _ in _PROMISES), _REGISTERED]}
+
+
 def promise_note(promises: Iterable[Promise]) -> str | None:
     """La nota de la segunda puerta para las promesas rotas (None si no hay)."""
     nudges = [p.nudge for p in promises]

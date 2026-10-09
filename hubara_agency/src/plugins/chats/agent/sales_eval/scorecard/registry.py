@@ -27,7 +27,9 @@ from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 # mensaje de tarifas como respuesta a cuánto cuesta el envío.
 # v10 (incidente del 2026-10-09, criterio del operador: el formulario no espera
 # confirmación de nada): CON-01 pide el producto elegido y ningún aplazamiento
-# vigente, no un «sí»; CON-04 pasa a «manda el formulario sin hacer esperar».
+# vigente, no un «sí»; CON-04 pasa a «manda el formulario sin hacer esperar»;
+# TAG-08 deja afuera el aviso de un evento del pedido y TAG-09 nuevo: lo que el
+# bot promete para ahora sale en ese turno.
 REGISTRY_VERSION = 10
 
 LEVELS = ("critico", "mayor", "menor")
@@ -313,6 +315,11 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot le dijo al cliente que un colega o alguien del equipo lo atiende.",
        "Ese turno escaló (el LLM con escalate_to_human o la red de seguridad): el colega queda avisado.",
        ("laboratorio caso-cortesia-1001: «un colega coordina la entrega» sin escalar (2026-09-30)",)),
+    _c("TAG-09", "Lo que promete, lo hace", "estado", "critico", "code",
+       "El bot le prometió algo para ahora (formulario, tarifas, resumen, catálogo, fotos, aromas o colores) o "
+       "dijo que el pedido quedó registrado.",
+       "Ese componente sale en el mismo turno y el pedido está registrado de verdad.",
+       ("incidente 2026-10-09",)),
     _c("TAG-07", "RECHAZO o INTERESADO sostenidos por la conversación", "estado", "mayor", "judge",
        "El episodio cerró con RECHAZO o quedó en INTERESADO.",
        "La conversación sostiene la etiqueta (el cliente rechazó, o mostró interés sin comprar).",

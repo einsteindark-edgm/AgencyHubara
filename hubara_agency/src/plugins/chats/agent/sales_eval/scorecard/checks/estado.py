@@ -192,3 +192,34 @@ def tag_08(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     if promised is None:
         return not_judged("TAG-08", traj, "el bot no le prometió un colega al cliente")
     return passed("TAG-08", "el colega prometido quedó avisado", promised)
+
+
+# ── TAG-09 · lo que promete, lo hace (incidente 2026-10-09) ──────────────
+# «Te paso el formulario para los datos de envío» dos turnos seguidos sin el
+# formulario. El mismo detector del bot (`use_cases/promised_actions.py`):
+# lo prometido sale en ese turno (una tool que lo hizo o la red que lo mandó);
+# «tu pedido quedó registrado» exige una orden registrada.
+
+
+@code_check("TAG-09")
+def tag_09(traj: Trajectory, ctx: CheckContext) -> CheckResult:
+    from src.plugins.chats.agent.sales.use_cases.promised_actions import promises_by_kind, promised_kinds
+
+    catalog = promises_by_kind()
+    promised_at = None
+    for t in judged_turns(traj):
+        for text in t.sent_texts:
+            for kind in sorted(promised_kinds(text)):
+                promise = catalog[kind]
+                if kind == "registro":
+                    kept = registered_order_turn(traj, t.turn) is not None
+                else:
+                    kept = bool(set(promise.intents) & set(t.intents)) or any(
+                        t.tool_ok(name) for name in promise.tools
+                    )
+                if not kept:
+                    return failed("TAG-09", t.turn, f"turno {t.turn}: prometió {kind} y no salió: {quote(text)}")
+                promised_at = promised_at or t.turn
+    if promised_at is None:
+        return not_judged("TAG-09", traj, "el bot no prometió nada para ahora")
+    return passed("TAG-09", "lo prometido salió en su turno", promised_at)
