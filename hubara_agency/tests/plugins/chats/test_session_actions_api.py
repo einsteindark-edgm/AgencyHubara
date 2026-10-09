@@ -707,3 +707,13 @@ def test_after_a_close_the_draft_starts_empty_in_the_new_episode_and_the_old_one
     assert episodes[-1]["order_draft"]["slots"] == {"ciudad": "Cali"}
     assert episodes[-2]["order_draft"]["slots"] == {"producto": "luz-serena", "cantidad": "2"}  # intacto
     assert meta["tag"] == "NO_ETIQUETADO"
+
+
+def test_a_customer_without_phone_can_be_escalated_and_tagged(h: _Harness) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su conversación es
+    `wa_<id de Meta sin punto>`. La guarda solo aceptaba `wa_<dígitos>` y el
+    operador (o MBA) no podía escalar, etiquetar ni registrar su pedido."""
+    session = "wa_CO1502576394655843"
+    r = h.client.post(_url("escalate", session), json={"reason_category": "EXPLICIT_REQUEST", "summary": "quiere humano"})
+    assert r.status_code == 200, r.text
+    assert h.meta(session)["active_route"] == ROUTE_HUMANO

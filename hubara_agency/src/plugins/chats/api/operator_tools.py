@@ -48,13 +48,13 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
 from src.plugins.chats.api.mobile import find_product, unit_price_cop
 from src.plugins.chats.api.session_actions import (
-    _SESSION_RE,
     _ctx,
     _release_session_lock,
     _session_lock,
 )
 from src.plugins.chats.shared.draft_items import draft_items
 from src.plugins.chats.shared.order_intake import normalize_payment_method
+from src.sdk.identitykit import is_customer_session_id
 from src.sdk.connectorkit import (
     ProductNotFoundError,
     get_catalog_client,
@@ -444,10 +444,10 @@ def _ok(tool: str, client_action_id: str, *, sent: bool, deduplicated: bool) -> 
 
 @router.post("/session-actions/{session_key}/tools/{tool}")
 async def run_tool(session_key: str, tool: str, body: ToolBody, deps: OpDeps) -> Any:
-    # El formato de `session_actions` (`wa_<dígitos>`: el segmento llega al
-    # vault) con la forma de error de esta ruta: una llave que no puede nombrar
-    # una sesión es una sesión que no existe — antes de tocar nada.
-    if not _SESSION_RE.fullmatch(session_key):
+    # El formato de `session_actions` (`wa_<teléfono>` o `wa_<id de Meta>`: el
+    # segmento llega al vault) con la forma de error de esta ruta: una llave que
+    # no puede nombrar una sesión es una sesión que no existe — antes de tocar nada.
+    if not is_customer_session_id(session_key):
         return _error(404, "session_not_found")
     session = session_key
     if tool not in ALLOWED_TOOLS:

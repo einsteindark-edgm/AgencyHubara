@@ -30,6 +30,7 @@
 | [15-textkit.md](15-textkit.md) | `textkit`: guards PUROS del texto LLM→cliente, importables desde una TOOL (libre de Temporal — `agentkit` no lo es y R-DIP lo frena en `tools/*.py`) | 2026-09-18 |
 | [16-labkit.md](16-labkit.md) | `labkit`: laboratorio de conversaciones — almacén S3 (`bench/`, `orders/`, `runs/`) y lanzador de la caja por SSM | 2026-09-23 |
 | [17-decisionkit.md](17-decisionkit.md) | `decisionkit`: paquetes de decisión — capacidades del motor como YAML tipado + CEL, certificadas con `decisions check` | 2026-10-01 |
+| [18-identitykit.md](18-identitykit.md) | `identitykit`: quién es el cliente de WhatsApp — teléfono o id de Meta (BSUID) sin teléfono; PURO (lo usa el parser del webhook) | 2026-10-09 |
 
 ## El mapa mental en 30 segundos
 

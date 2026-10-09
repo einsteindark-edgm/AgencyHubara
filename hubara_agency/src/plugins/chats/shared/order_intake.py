@@ -28,6 +28,7 @@ from datetime import datetime
 from typing import Any
 
 from src.plugins.chats.shared.draft_items import ITEM_FIELDS, draft_items
+from src.sdk.identitykit import is_user_id_address
 
 HANDOFF_MARKER = "--- EL OPERADOR HUMANO TOMA EL CONTROL ---"
 
@@ -86,8 +87,11 @@ _SESSION_PREFIX = "wa_"
 
 
 def phone_from_session(session_key: str) -> str:
-    """``wa_573001234567`` → ``573001234567`` (el número del cliente)."""
-    return session_key[len(_SESSION_PREFIX):] if session_key.startswith(_SESSION_PREFIX) else session_key
+    """``wa_573001234567`` → ``573001234567`` (el número del cliente). ``""`` si
+    la sesión es de un cliente sin teléfono (``wa_CO1502…``, su id de Meta): ese
+    id no es un número al que se pueda llamar ni despachar."""
+    address = session_key[len(_SESSION_PREFIX):] if session_key.startswith(_SESSION_PREFIX) else session_key
+    return "" if is_user_id_address(address) else address
 
 
 def handoff_started_ms(metadata: dict[str, Any]) -> int | None:

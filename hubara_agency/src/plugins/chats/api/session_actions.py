@@ -47,7 +47,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
-import re
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -105,6 +104,7 @@ from src.sdk.messagingkit import (
     resolve_local_timezone,
     set_manual_postponement,
 )
+from src.sdk.identitykit import is_customer_session_id
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore, get_temporal_client
 
 router = APIRouter()
@@ -115,7 +115,6 @@ ROUTE_VENTAS = "ventas"
 PAYMENT_PENDING_TAG = "CONFIRMADO_PAGO_PENDIENTE"
 PAYMENT_VERIFICATION_REASON = "PAYMENT_VERIFICATION_PENDING"
 _SOURCE = "session_actions"
-_SESSION_RE = re.compile(r"^wa_[0-9]{8,15}$")
 
 #: Lo único que un agente externo PROPONE (D1.3); el resto lo decide Hubara.
 PROPOSED_TAGS = Literal["INTERESADO", "RECHAZO"]
@@ -193,13 +192,14 @@ def _release_session_lock(session_key: str) -> None:
     lock = _SESSION_LOCKS.get(session_key)
     if lock is not None and not lock.locked() and not lock._waiters:  # noqa: SLF001 — sin esperas: liberar la entrada
         _SESSION_LOCKS.pop(session_key, None)
-SessionKey = Annotated[str, PathParam(min_length=1, max_length=64)]
+SessionKey = Annotated[str, PathParam(min_length=1, max_length=140)]
 
 
 def _session(session_key: str) -> str:
-    """Solo ``wa_<dígitos>``: el segmento llega al filesystem del vault."""
-    if not _SESSION_RE.fullmatch(session_key):
-        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<dígitos>)")
+    """Solo ``wa_<teléfono>`` o ``wa_<id de Meta sin punto>`` (cliente con nombre
+    de usuario): el segmento llega al filesystem del vault."""
+    if not is_customer_session_id(session_key):
+        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<teléfono> o wa_<id de Meta>)")
     return session_key
 
 

@@ -636,3 +636,18 @@ def test_every_suggested_action_runs_verbatim_on_the_tools_endpoint(h: _Harness,
         )
         assert r.status_code == 200, (action, r.text)
         assert r.json()["sent"] is True
+
+
+def test_the_operator_can_act_on_a_customer_without_phone(h: _Harness) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta
+    sin punto>`. La app no podía mandarle nada (404 `session_not_found`)."""
+    session = "wa_CO1502576394655843"
+    (h.vault / session).mkdir(parents=True)
+    (h.vault / session / "metadata.json").write_text(json.dumps(_human()), encoding="utf-8")
+
+    r = h.client.post(
+        f"/api/chats/session-actions/{session}/tools/send_shipping_rates",
+        json={"client_action_id": "act-bsuid", "args": {}},
+    )
+
+    assert r.status_code == 200, r.text

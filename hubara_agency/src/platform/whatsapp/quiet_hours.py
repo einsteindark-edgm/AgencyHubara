@@ -17,6 +17,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from src.platform.constants import WHATSAPP_SESSION_PREFIX
+from src.platform.whatsapp.user_id import is_user_id_address
 
 #: Inicio del horario permitido (hora local del cliente, `HH` o `HH:MM`).
 DEFAULT_QUIET_HOURS_START: str = "8"
@@ -39,16 +40,33 @@ COUNTRY_CODE_TO_TZ: dict[str, str] = {
     "1": "America/New_York",         # USA / Canada (genérico; conservador)
 }
 
+#: Lo mismo por país ISO: un cliente sin teléfono (nombre de usuario de
+#: WhatsApp) tiene sesión `wa_<CC><id de Meta>` y su país son esas 2 letras.
+ISO_COUNTRY_TO_TZ: dict[str, str] = {
+    "CO": "America/Bogota",
+    "AR": "America/Argentina/Buenos_Aires",
+    "MX": "America/Mexico_City",
+    "CL": "America/Santiago",
+    "PE": "America/Lima",
+    "BR": "America/Sao_Paulo",
+    "US": "America/New_York",
+    "CA": "America/New_York",
+}
+
 
 def resolve_local_timezone(session_id: str) -> ZoneInfo:
     """Mapea el session_id (`wa_<+code><phone>`) a su IANA timezone.
 
     Heurística: los primeros 1-3 dígitos del número (post-`+`) son el country
-    code; longest-match contra `COUNTRY_CODE_TO_TZ`. Sin match → UTC.
+    code; longest-match contra `COUNTRY_CODE_TO_TZ`. Un cliente sin teléfono
+    (`wa_CO1502…`) se resuelve por su país ISO. Sin match → UTC.
     """
     if not session_id.startswith(WHATSAPP_SESSION_PREFIX):
         return ZoneInfo("UTC")
-    phone = session_id[len(WHATSAPP_SESSION_PREFIX):].lstrip("+")
+    address = session_id[len(WHATSAPP_SESSION_PREFIX):]
+    if is_user_id_address(address):
+        return ZoneInfo(ISO_COUNTRY_TO_TZ.get(address[:2], "UTC"))
+    phone = address.lstrip("+")
     for code_len in (3, 2, 1):
         tz_name = COUNTRY_CODE_TO_TZ.get(phone[:code_len])
         if tz_name:

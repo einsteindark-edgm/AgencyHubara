@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -72,12 +71,11 @@ from src.sdk.connectorkit import (
     get_promo_quota_store,
     parse_variant_tags,
 )
+from src.sdk.identitykit import is_customer_session_id
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
 
 router = APIRouter()
 
-#: Mismo guard que ``session_actions``: el segmento llega al filesystem del vault.
-_SESSION_RE = re.compile(r"^wa_[0-9]{8,15}$")
 
 #: Modelo de extracción. DeepSeek vía el proxy litellm (`litellm_proxy/` le dice
 #: al SDK que resuelva el alias EN el proxy — la API key del vendor vive ahí,
@@ -151,12 +149,12 @@ def get_order_intake_deps() -> OrderIntakeDeps:
 
 
 Deps = Annotated[OrderIntakeDeps, Depends(get_order_intake_deps)]
-SessionKey = Annotated[str, PathParam(min_length=1, max_length=64)]
+SessionKey = Annotated[str, PathParam(min_length=1, max_length=140)]
 
 
 def _session(session_key: str) -> str:
-    if not _SESSION_RE.fullmatch(session_key):
-        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<dígitos>)")
+    if not is_customer_session_id(session_key):
+        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<teléfono> o wa_<id de Meta>)")
     return session_key
 
 

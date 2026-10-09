@@ -47,6 +47,7 @@ from src.platform.temporal.client import get_temporal_client
 from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
 from src.plugins.chats.agent.sales.inbound_ledger_store import FilesystemInboundLedger
+from src.plugins.chats.agent.sales.sender_identity_store import FilesystemSenderIdentity
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
     IngestDeliveryStatus,
@@ -94,6 +95,12 @@ def build_inbound_ledger() -> FilesystemInboundLedger:
     sobrevive a deploys, a diferencia de los logs del container). `_ledger/`
     no empieza con `wa_` → ningún scanner de sesiones lo toma por conversación."""
     return FilesystemInboundLedger(WORKSPACE_VAULT_DIR / "_ledger" / "webhook")
+
+
+def build_sender_identity() -> FilesystemSenderIdentity:
+    """Qué conversación es de cada id de Meta (BSUID) de un cliente con nombre
+    de usuario, dentro del vault (`_identity/` no empieza con `wa_`)."""
+    return FilesystemSenderIdentity(WORKSPACE_VAULT_DIR / "_identity" / "whatsapp_user_ids")
 
 
 def build_session_history_reader() -> Callable[[str], list[dict[str, Any]]]:

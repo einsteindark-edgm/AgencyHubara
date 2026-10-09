@@ -39,6 +39,7 @@ from src.platform.config import (
 )
 from src.platform.whatsapp import dtos as wa_dtos
 from src.platform.whatsapp import outbound as wa_outbound
+from src.platform.whatsapp.user_id import meta_recipient
 
 logger = structlog.get_logger()
 
@@ -420,6 +421,14 @@ async def send_template(
 # =============================================================================
 
 
+def _addressed(data: dict[str, Any]) -> dict[str, Any]:
+    to = data.get("to")
+    if not isinstance(to, str):
+        return data
+    addressed = {key: value for key, value in data.items() if key != "to"}
+    return {**meta_recipient(to), **addressed}
+
+
 async def _post_json(
     phone_number_id: str,
     data: dict[str, Any],
@@ -435,7 +444,13 @@ async def _post_json(
 
     Si `WHATSAPP_ACCESS_TOKEN` no está configurado (dev sin token), simula
     un envío exitoso con id sintético y loguea como `FakeSend`.
+
+    El destinatario se traduce ACÁ, el único punto por donde sale todo envío:
+    los callers ponen en `to` la dirección de la conversación (`wa_<dirección>`
+    sin el prefijo) y, si es el id de Meta de un cliente sin teléfono
+    (`CO1502…`), sale como `recipient: "CO.1502…"`.
     """
+    data = _addressed(data)
     if not WHATSAPP_ACCESS_TOKEN:
         logger.warning("FakeSend (no token configured)", label=label, payload=data)
         return wa_dtos.OutboundResult(wa_message_id=f"fake-{label}", ok=True)
