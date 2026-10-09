@@ -33,6 +33,21 @@ sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
 `workflow.deprecate_patch(...)` de los tres gates.
 | `history_sales_system_turns_preclock_v1.json` | `HubaraSalesSessionWorkflow` | sintética, turnos de sistema PRE `system-turn-bogota-clock-v1`, generada con el código de `lab/todo` (f7e38acf) |
 | `history_sales_v2_system_turns_preclock_v1.json` | `HubaraSalesSessionWorkflowV2` | la misma forma en el V2, generada con el código de `main` (f89716ad) |
+| `history_sales_v2_promises_prepatch_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, ventana de versiones mezcladas de `promised-actions-round-v1` (código actual con el gate forzado a «no») |
+| `history_sales_v2_promises_round_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, control positivo con el marcador de `promised-actions-round-v1` |
+
+**`history_sales_v2_promises_prepatch_v1.json` y `history_sales_v2_promises_round_v1.json`
+también están CONGELADAS y NO se regeneran.** La ronda de lo prometido (incidente
+del 2026-10-09: «Te paso el formulario» sin `request_shipping_details`) se decide
+por una clave NUEVA del resultado de `send_reply` (`promises`): una history real
+de antes del deploy jamás la activa. La pre-patch es la ventana de versiones
+mezcladas (la activity ya devuelve `promises`, el workflow todavía sin la ronda:
+el texto sale en el `send_reply`); la otra, el control positivo (marcador, ronda,
+formulario y el texto retenido que sale). Su control negativo está automatizado
+(`test_the_promise_histories_break_without_the_gate`). Sesión sintética
+`wa_promesas_v2`, identidad del worker → `fixture-worker`. Procedencia en
+`generate_sales_v2_promises_fixtures.py`. Se borran junto con
+`workflow.deprecate_patch("promised-actions-round-v1")`.
 
 **`history_sales_system_turns_preclock_v1.json` también está CONGELADA y NO se
 regenera.** Tiene la forma de los turnos de SISTEMA del V1 (los que arma el
