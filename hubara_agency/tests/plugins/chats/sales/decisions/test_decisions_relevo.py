@@ -32,6 +32,12 @@ PROMISES = (
     "Claro que sí, un colega del equipo coordina la entrega contigo en este mismo chat para hoy después de las 5 🤍",
     "Déjame pasar tu caso con un colega del equipo para que confirme la logística contigo en este mismo chat.",
     "Ya pasamos tu solicitud a una asesora 🤍",
+    # Revisión del premortem (2026-10-09): un relevo de verdad que además
+    # nombra un evento del pedido sigue siendo relevo.
+    "Un colega del equipo coordina contigo la entrega cuando despachemos tu pedido 🤍",
+    "Un colega te escribe cuando esté listo tu pedido para coordinar el pago del saldo.",
+    "Un colega te contacta cuando estemos listos para tomar tu pedido personalizado.",
+    "Alguien de despachos te contacta cuando salga tu pedido para coordinar la dirección.",
 )
 NOT_PROMISES = (
     "El equipo de Hubara hace cada vela a mano 🤍",
@@ -40,6 +46,12 @@ NOT_PROMISES = (
     "¿En qué color lo quieres, lila o azul?",
     "Te paso el enlace con un descuento para tu próxima compra 🤍",
     "Coordino la entrega contigo: ¿a qué hora te queda bien?",
+    # Premortem 2026-10-09: un aviso que llega con un evento del pedido (lo
+    # manda el sistema al despachar) no es pasarle la conversación a nadie;
+    # leerlo como relevo escalaba y callaba al bot en plena venta.
+    "Listo 🤍 Nuestro equipo te avisa cuando despachemos tu pedido.",
+    "El equipo te confirma la guía cuando salga el envío 🚚",
+    "Un colega te escribe cuando tu pedido esté listo para despachar.",
 )
 
 

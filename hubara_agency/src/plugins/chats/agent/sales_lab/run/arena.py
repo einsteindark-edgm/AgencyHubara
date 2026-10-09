@@ -7,8 +7,8 @@ que devuelve el sandbox):
     latencia p50/p95;
   * verificación: decisiones (send / complement / pending) y p95;
   * tasa de complemento y de ronda extra (la capa ② del V1,
-    `turn_policy_extra_round`, y la segunda puerta del V2,
-    `contract_extra_round`);
+    `turn_policy_extra_round`, la segunda puerta del V2,
+    `contract_extra_round`, y la de lo prometido, `promised_action_round`);
   * decisiones de las capacidades del motor en los casos (`decisions`): quién
     decidió y cuántas cayeron a la regla porque Jev falló (tardanza, sin
     llave, error), con el motivo; `jev_fallback_notes` lo dice en las notas
@@ -36,9 +36,10 @@ from typing import Any
 
 _CLASSIFIER_STEPS = ("perception", "verify")
 _BINS = 10
-#: Guardas que le dan al LLM una ronda más: la capa ② del V1 y la segunda
-#: puerta del contrato de herramientas del V2 (`workflow_helpers`).
-_EXTRA_ROUND_GUARDS = ("turn_policy_extra_round", "contract_extra_round")
+#: Guardas que le dan al LLM una ronda más: la capa ② del V1, la segunda
+#: puerta del contrato de herramientas del V2 y la de lo prometido sin hacer
+#: (incidente del 2026-10-09) (`workflow_helpers`).
+_EXTRA_ROUND_GUARDS = ("turn_policy_extra_round", "contract_extra_round", "promised_action_round")
 #: Proveedores con los que la capacidad le pregunta a Jev.
 _JEV_PROVIDERS = frozenset({"jev", "sombra"})
 #: Cuando decide la regla sin que Jev haya fallado: Jev dudó, o no había nada

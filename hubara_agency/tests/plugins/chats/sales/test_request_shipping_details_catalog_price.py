@@ -158,18 +158,18 @@ async def test_multi_item_form_message_lists_each_product_with_its_variant_and_s
 
 
 @pytest.mark.asyncio
-async def test_purchase_not_confirmed_quotes_catalog_price(ctx, _isolate_vault_dir: Path) -> None:
-    """La guía al LLM ("dile el precio (...)") cita el precio del catálogo,
-    no el número que el LLM haya mandado."""
+async def test_form_without_a_yes_quotes_catalog_price(ctx, _isolate_vault_dir: Path) -> None:
+    """Sin un «sí» anotado el formulario sale igual (incidente del
+    2026-10-09) y su total es el del catálogo, no el número del LLM."""
     path = _seed(_isolate_vault_dir, confirmed=False)
     tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=FakeCatalog())
     result = json.loads(await tool.execute_with_context(
         ctx, items=[{"handle": "trilogia-del-terror", "quantity": 1}], order_total_cop=45000,
     ))
-    assert result["error"] == "purchase_not_confirmed"
-    assert "$49.500" in result["message"]
-    assert "45.000" not in result["message"]
-    assert _intents(path) == []
+    assert result["queued"] is True
+    assert result["order_total_cop"] == 49500
+    (intent,) = _intents(path)
+    assert intent["params"]["flow_action_data"]["order_total_cop"] == 49500
 
 
 @pytest.mark.asyncio

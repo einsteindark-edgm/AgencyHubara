@@ -74,15 +74,19 @@ def _read(path: Path) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_shipping_details_rejected_without_purchase_confirmation(ctx, _isolate_vault_dir: Path) -> None:
-    path = _seed(_isolate_vault_dir, {"episodes": [_episode({"producto": "Cubo Love", "color": "Azul", "aroma": "Café"})]})
+async def test_shipping_details_sent_without_an_explicit_yes(ctx, _isolate_vault_dir: Path) -> None:
+    """Incidente del 2026-10-09 (ventas-4): producto, ciudad y «el contra
+    entrega» elegidos, el bot escribió «Te paso el formulario» y la guarda lo
+    frenó con `purchase_not_confirmed` porque nadie anotó un «sí». Criterio
+    del operador: el formulario no espera confirmación de nada; la
+    confirmación vive en la tarjeta ✅ y en `register_order`."""
+    path = _seed(_isolate_vault_dir, {"episodes": [_episode({
+        "producto": "Cubo Love", "cantidad": "1", "ciudad": "Bogotá", "metodo_pago": "contra entrega",
+    })]})
     tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
     result = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
-    assert result["queued"] is False
-    assert result["error"] == "purchase_not_confirmed"
-    assert "Cubo Love" in result["message"]
-    assert "21.000" in result["message"] or "21000" in result["message"]
-    assert _read(path).get("pending_ui_intents", []) == []
+    assert result["queued"] is True
+    assert [i["kind"] for i in _read(path)["pending_ui_intents"]] == ["shipping_flow"]
 
 
 @pytest.mark.asyncio
@@ -366,3 +370,19 @@ async def test_ingest_registers_affirmation_as_confirmation(_isolate_vault_dir: 
     md = store.read(sid)
     assert md["episodes"][0]["order_draft"]["confirmed_at_ms"] > 0
     assert not any("APLAZ" in n.upper() for n in loader.calls[0][2])
+
+
+@pytest.mark.asyncio
+async def test_the_form_is_queued_once_per_turn(ctx, _isolate_vault_dir: Path) -> None:
+    """Revisión del premortem (2026-10-09): la ronda de las promesas o la red
+    podían pedir el formulario cuando ya estaba en la cola del turno; cada
+    llamada lo encolaba con otro id y el flush lo mandaba dos veces."""
+    path = _seed(_isolate_vault_dir, {"episodes": [_episode({"producto": "Cubo Love", "cantidad": "1"})]})
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
+
+    first = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
+    second = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
+
+    assert first["queued"] is True and second["queued"] is True
+    assert [i["kind"] for i in _read(path)["pending_ui_intents"]] == ["shipping_flow"]
+

@@ -1,8 +1,8 @@
 """IdentityKit — quién es el cliente de WhatsApp (teléfono o id de Meta), PURO.
 
 Un cliente con nombre de usuario de WhatsApp puede llegar SIN teléfono: Meta
-solo manda su id (`from_user_id`, BSUID: `CO.1502576394655843`). Su
-conversación es `wa_CO1502576394655843` (el id sin el punto: directorio seguro
+solo manda su id (`from_user_id`, BSUID: `CO.9990000000000002`). Su
+conversación es `wa_CO9990000000000002` (el id sin el punto: directorio seguro
 del vault) y el cliente HTTP de platform le contesta con `recipient` en vez de
 `to` — ningún plugin arma ese campo.
 
@@ -16,8 +16,8 @@ Uso canónico::
 
     from src.sdk.identitykit import address_from_user_id, is_customer_session_id
 
-    address_from_user_id("CO.1502576394655843")      # "CO1502576394655843"
-    is_customer_session_id("wa_CO1502576394655843")  # True (y "wa_573001234567")
+    address_from_user_id("CO.9990000000000002")      # "CO9990000000000002"
+    is_customer_session_id("wa_CO9990000000000002")  # True (y "wa_573001234567")
 """
 from __future__ import annotations
 

@@ -166,11 +166,11 @@ def test_a_customer_without_phone_is_recorded_under_their_conversation(harness, 
 
     monkeypatch.setattr(api, "build_sender_identity", lambda: FilesystemSenderIdentity(tmp_path))
     use, ledger = harness
-    use(_Ingest()).post("/api/webhook", json=_body(_username_change("wamid.U", "CO.1502576394655843")))
+    use(_Ingest()).post("/api/webhook", json=_body(_username_change("wamid.U", "CO.9990000000000002")))
 
     seen, ingested = [r for r in ledger.records if r["kind"] == "message"]
-    assert (seen["session_id"], seen["user_id"]) == ("wa_CO1502576394655843", "CO.1502576394655843")
-    assert ingested["session_id"] == "wa_CO1502576394655843"
+    assert (seen["session_id"], seen["user_id"]) == ("wa_CO9990000000000002", "CO.9990000000000002")
+    assert ingested["session_id"] == "wa_CO9990000000000002"
 
 
 def test_a_rejected_meta_user_id_is_kept_in_the_ledger(harness) -> None:

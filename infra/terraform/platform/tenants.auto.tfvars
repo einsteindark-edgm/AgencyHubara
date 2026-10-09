@@ -41,8 +41,14 @@ tenants = {
     # el cliente escribe desde la ficha del catálogo (o la página de la web),
     # la guía de descubrimiento le dice al LLM que responda sobre ese producto
     # en vez de «ayúdale a escoger un producto». Promovido sin pasar por el
-    # laboratorio (decisión del operador). El resto de `lab` queda en sus
-    # defaults (todo apagado). Volver atrás = "ventas-3".
+    # laboratorio (decisión del operador). `ventas-5` (2026-10-09) es
+    # `ventas-4` con la pregunta de `compra` ampliada a la propuesta de cierre
+    # («Si dale» a «te paso el formulario… y dejamos el pedido listo» ya no se
+    # retira) y la de `relevo` sin el aviso puro de un evento del pedido
+    # («nuestro equipo te avisa cuando despachemos» ya no escala; un colega
+    # que coordina algo cuando sale el pedido sí). Incidente del 2026-10-09;
+    # medido con una sonda contra Jev, sin caja del laboratorio. El resto de
+    # `lab` queda en sus defaults (todo apagado). Volver atrás = "ventas-4".
     #
     # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
     # banco del laboratorio. El del operador (2026-10-05) es el número con el
@@ -63,7 +69,7 @@ tenants = {
     # calidad vista en Calidad LLM → "on". Volver atrás = "off" + apply + Backend
     # deploy.
     lab = {
-      decisions_bundle        = "ventas-4"
+      decisions_bundle        = "ventas-5"
       internal_numbers        = ["+573125671604"]
       perception_mode_ceiling = "canary"
       capabilities_ceiling    = "canary"

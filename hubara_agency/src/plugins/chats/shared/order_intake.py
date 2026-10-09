@@ -88,7 +88,7 @@ _SESSION_PREFIX = "wa_"
 
 def phone_from_session(session_key: str) -> str:
     """``wa_573001234567`` → ``573001234567`` (el número del cliente). ``""`` si
-    la sesión es de un cliente sin teléfono (``wa_CO1502…``, su id de Meta): ese
+    la sesión es de un cliente sin teléfono (``wa_CO9990…``, su id de Meta): ese
     id no es un número al que se pueda llamar ni despachar."""
     address = session_key[len(_SESSION_PREFIX):] if session_key.startswith(_SESSION_PREFIX) else session_key
     return "" if is_user_id_address(address) else address

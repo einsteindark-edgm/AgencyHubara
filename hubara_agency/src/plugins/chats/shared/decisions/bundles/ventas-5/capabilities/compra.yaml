@@ -1,0 +1,115 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Qué hace el cliente con la compra?», con lo que le preguntó el asesor a la
+# vista: la ÚNICA definición de «compra confirmada». El carrito y el botón
+# «Confirmar» los lee el código (no se preguntan). Confirma solo con
+# certeza y la pregunta de compra a la vista (la tarjeta de confirmación como
+# lo último que vio el cliente, o Jev que lo dice); retira un «sí» que
+# respondía otra cosa (el costo de equivocarse es una pregunta más).
+# Dominio (F5): «elige un producto, color, aroma, diseño» es de velas.
+#
+# ventas-5 (incidente del 2026-10-09): el asesor ANUNCIÓ el cierre («Te paso el
+# formulario para los datos de envío y dejamos el pedido listo») y el cliente
+# dijo «Si dale». Jev leyó `confirma` 0,89, pero `pregunta_compra` solo
+# contaba una PREGUNTA de compra (0,10) y la fila de retiro de ventas-3 quitó
+# el sí. La pregunta ahora cuenta también la propuesta de cierre (formulario,
+# resumen, «dejamos el pedido listo»). Sonda con Jev, 10 conversaciones
+# sintéticas: los dos anuncios pasan a compra; «¿te cuento los aromas?»,
+# «¿te muestro el catálogo?» y «¿te muestro las fotos?» siguen sin serlo.
+capability: compra
+value: "list<string?>"
+input: Inbound
+view: {builtin: purchase_window}
+rule: {builtin: purchase_signal}
+state: {builtin: purchase_context}
+questions:
+  - id: compra.que_hace
+    kind: choice
+    text: "¿Qué hace el cliente con la compra en ESTE MENSAJE?"
+    criteria:
+      "confirma": "confirma que compra o acepta el pedido"
+      "aplaza": "aplaza la compra (luego, otro día, voy en camino)"
+      "rechaza": "dice que no quiere comprar"
+      "pregunta": "hace una pregunta"
+      "da_datos": "da datos de envío o de pago"
+      "elige": "elige un producto, color, aroma, diseño o cantidad"
+      "se_despide": "se despide o agradece"
+      "otro": "otra cosa"
+  - id: compra.pregunta_compra
+    kind: noul
+    text: "¿El último mensaje del asesor en el CONTEXTO le pide al cliente confirmar la compra o el pedido, o le propone cerrarlo (le dice que le pasa el formulario de envío o el resumen, o que deja el pedido listo)?"
+    when: "inp.context && inp.asked_known == null"
+    criteria:
+      "true": "sí: le pide confirmar la compra o le propone cerrar el pedido"
+      "false": "no: le pregunta otra cosa (ver opciones, fotos, aromas, colores o el catálogo) o no le pregunta nada"
+thresholds: {"choice": 0.7, "confirm": 0.85, "purchase_question": 0.85, "retract": 0.2}
+vars:
+  # Si el asesor le preguntó por la compra: la tarjeta lo dice; si no, Jev.
+  asked: "inp.asked_known != null ? (inp.asked_known == 'confirmar_compra' ? 1.0 : 0.0) : ('compra.pregunta_compra' in p ? p['compra.pregunta_compra'] : -1.0)"
+decide:
+  # ventas-3 (2026-10-06, turno 5): si se sabe que el asesor NO preguntó por la
+  # compra (la tarjeta lo dice, o Jev ≤ `retract`), el «sí» que la regla leyó
+  # en el texto respondía otra cosa: se retira, aunque Jev dude de lo que hace
+  # el cliente. Un aplazamiento que Jev lea CON certeza no se toca (lo deciden
+  # las filas de abajo); uno dudoso no deja pasar el sí (revisión del PR #390).
+  # `rule` vale [] en un ejemplo sin `rule:`.
+  - when: "vars.asked >= 0.0 && vars.asked <= th['retract'] && rule == ['affirmation', 'text'] && !('compra.que_hace' in choice && choice['compra.que_hace'] == 'aplaza' && conf['compra.que_hace'] >= th['choice'])"
+    then: [null, text]
+  - when: "!('compra.que_hace' in choice) || conf['compra.que_hace'] < th['choice']"
+    then: doubt
+  - when: "choice['compra.que_hace'] == 'aplaza'"
+    then: [deferral, text]
+  - when: "choice['compra.que_hace'] != 'confirma'"
+    then: [null, text]
+  # Sin contexto no se sabe qué respondió: decide la regla.
+  - when: "inp.asked_known == null && !inp.context"
+    then: doubt
+  - when: "inp.asked_known == null && !('compra.pregunta_compra' in p)"
+    then: doubt
+  - when: "conf['compra.que_hace'] >= th['confirm'] && vars.asked >= th['purchase_question']"
+    then: [affirmation, text]
+  - when: "vars.asked <= th['retract']"
+    then: [null, text]
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: first_eq}
+examples:
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}}, input: {context: true, asked_known: confirmar_compra}, expect: [affirmation, text]}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}, compra.pregunta_compra: 0.9}, input: {context: true}, expect: [affirmation, text]}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}, compra.pregunta_compra: 0.2}, input: {context: true}, expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}, compra.pregunta_compra: 0.5}, input: {context: true}, expect: doubt}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}}, input: {context: false}, expect: doubt}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.8}}, input: {context: true, asked_known: confirmar_compra}, expect: doubt}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}}, input: {context: true, asked_known: confirmar_dato_envio}, expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.7}}, expect: [deferral, text]}
+  - {answers: {compra.que_hace: {choice: pregunta, p: 0.9}}, expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.69}}, expect: doubt}
+  # Con contexto y sin la tarjeta, sin la respuesta de si le preguntó: duda (premortem 2026-10-02).
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.9}}, input: {context: true}, expect: doubt}
+  # ventas-3 (2026-10-06, turno 5): «¿Te cuento los aromas y colores?» → «Si,
+  # quiero uno para mi mamá, le gusta la naturaleza». Jev duda de la compra
+  # (0,51) pero sabe que el asesor no la preguntó (0,05); la regla leyó un «sí»
+  # en el texto. Se retira.
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.51}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [null, text]}
+  # Bordes de «no preguntó»: 0,2 retira; 0,21 duda (decide la regla).
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.51}, compra.pregunta_compra: 0.2}, input: {context: true}, rule: [affirmation, text], expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.51}, compra.pregunta_compra: 0.21}, input: {context: true}, rule: [affirmation, text], expect: doubt}
+  # Lo último fue el formulario de envío (la tarjeta lo dice): el «sí» es de un dato.
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.5}}, input: {context: true, asked_known: confirmar_dato_envio}, rule: [affirmation, text], expect: [null, text]}
+  # Sin saber si preguntó (sin contexto), no se retira nada.
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.51}}, input: {context: false}, rule: [affirmation, text], expect: doubt}
+  # La regla leyó un aplazamiento: la fila nueva no lo toca.
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.51}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [deferral, text], expect: doubt}
+  # Un aplazamiento dudoso de Jev no deja pasar el sí (revisión del PR #390:
+  # daba duda y la regla confirmaba); con certeza (borde 0,7), aplaza.
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.6}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.69}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [null, text]}
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.7}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [deferral, text]}
+  - {answers: {compra.que_hace: {choice: aplaza, p: 0.9}, compra.pregunta_compra: 0.05}, input: {context: true}, rule: [affirmation, text], expect: [deferral, text]}
+  # ventas-5 (incidente del 2026-10-09): «Si dale» al anuncio de cierre. Jev
+  # confirma (0,89) y con la pregunta nueva sabe que el asesor propuso cerrar
+  # (0,94, sonda): es compra (con ventas-4 daba 0,10 y se retiraba).
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.89}, compra.pregunta_compra: 0.94}, input: {context: true}, rule: [affirmation, text], expect: [affirmation, text]}
+  # «Listo» al mismo anuncio: Jev duda de la compra (0,66) aunque sabe que
+  # propuso cerrar (0,82): no se retira, decide la regla.
+  - {answers: {compra.que_hace: {choice: confirma, p: 0.66}, compra.pregunta_compra: 0.82}, input: {context: true}, rule: [affirmation, text], expect: doubt}

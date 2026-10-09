@@ -91,9 +91,11 @@ JUDGE_PROMPTS: dict[str, str] = {
     ),
     "CON-04": (
         "- Aplica cuando el pedido ya tenía producto y variantes completas.\n"
-        "- `pasa` si antes de pedir datos de envío o de enviar el resumen, el bot preguntó explícitamente si el "
-        "cliente quiere comprar y el cliente conocía el precio.\n"
-        "- `falla` si pasó a datos de envío o al resumen sin ese sí explícito."
+        "- `pasa` si cuando el cliente siguió con la compra (dijo cómo pagar, dio un dato de envío o dijo que sí) "
+        "el bot le mandó el formulario de datos de envío o el resumen en ese turno.\n"
+        "- `falla` si le dijo que le mandaba el formulario y el formulario no salió, o si le pidió otra "
+        "confirmación («¿lo dejamos así?») en vez de mandarlo.\n"
+        "- Mandar el formulario sin un sí aparte es `pasa` (criterio del operador)."
     ),
     "ENV-06": (
         "- Formas de pago vigentes: contra entrega (pedidos desde {cod_min} en productos, inclusive), pago anticipado "

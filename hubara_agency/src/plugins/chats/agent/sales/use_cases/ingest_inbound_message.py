@@ -1224,12 +1224,15 @@ class IngestInboundMessage:
             )
 
         # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
-        # Si el cliente respondió (por texto, por nfm_reply, lo que sea),
-        # ya NO estamos en modo "esperando Flow" — limpiamos el flag para
-        # que el próximo loop del workflow vuelva al timeout normal de 60s.
-        cleared_flow_flag = (
-            metadata.pop("shipping_flow_awaiting_reply_since_ms", None)
-            is not None
+        # Solo la respuesta del formulario (`nfm_reply`) termina la espera de
+        # 10 min. Premortem 2026-10-09: cualquier mensaje la borraba; si el
+        # cliente preguntaba algo mientras lo llenaba y tardaba, a los 5 min el
+        # cierre por abandono lo etiquetaba, la red escalaba al humano y el
+        # formulario caía en una bandeja humana sin acuse. Si nunca llega, la
+        # marca vence sola (`read_idle_timeout_seconds`, 10 min).
+        is_flow_reply = (effective.structured_payload or {}).get("kind") == "nfm_reply"
+        cleared_flow_flag = is_flow_reply and (
+            metadata.pop("shipping_flow_awaiting_reply_since_ms", None) is not None
         )
 
         # --- 7. Persistir last_inbound_message_id para typing indicator ---

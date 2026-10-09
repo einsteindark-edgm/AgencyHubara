@@ -1,0 +1,40 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# En un pedido registrado SIN portavelas (lo decide la tool contra el
+# catálogo), las oraciones que le afirman algo del portavelas se quitan; si
+# no queda nada, la despedida aprobada. Decirle que su pedido no lo incluye
+# es cierto y queda. Valor: el texto que queda.
+# Dominio (F5): 100 % velas.
+capability: portavelas
+value: string
+input: PortavelasCheck
+items: {builtin: sentences}
+rule: {builtin: portavelas_notice}
+state:
+  builtin: numbered_items
+  with: {header: "El cliente acaba de registrar un pedido que NO incluye portavelas. Despedida que el asesor escribió, por oraciones:", max: 8}
+each:
+  id: "egreso.portavelas.{n}"
+  kind: noul
+  when: "inp.text != '' && inp.order_registered && inp.portavelas_included != true"
+  text: "¿La oración [{n}] le afirma algo del portavelas?"
+  criteria:
+    "true": "le afirma algo del portavelas como si su pedido lo trajera (que viene, sus colores, cómo se escoge)"
+    "false": "no habla del portavelas, o le aclara que su pedido no lo incluye"
+thresholds: {"yes": 0.85, "no": 0.15}
+decide:
+  - when: "items.exists(i, !has(i.p) || (i.p > th['no'] && i.p < th['yes']))"
+    then: doubt
+  - when: "items.all(i, i.p <= th['no'])"
+    then: {expr: "inp.text"}
+  - when: "items.exists(i, i.p <= th['no'])"
+    then: {expr: "items.filter(i, i.p <= th['no']).map(i, i.text).join(' ')"}
+  - otherwise: {expr: "dom.farewell_order_registered"}
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  - items: [{text: "Listo.", p: 0.1}, {text: "El portavelas viene en dorado.", p: 0.9}, {text: "Gracias.", p: 0.15}]
+    expect: "Listo. Gracias."
+  - {items: [{text: "Listo.", p: 0.1}], input: {text: "Listo."}, expect: "Listo."}
+  - {items: [{text: "El portavelas viene en dorado.", p: 0.85}], expect: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."}
+  - {items: [{text: "Listo.", p: 0.5}], expect: doubt}

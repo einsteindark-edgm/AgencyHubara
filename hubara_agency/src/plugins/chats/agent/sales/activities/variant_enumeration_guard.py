@@ -26,6 +26,7 @@ from pathlib import Path
 
 from temporalio import activity
 
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.decisions.capabilities.texto import TextoCatalogo
 from src.plugins.chats.agent.sales.decisions.guards import capability, decide_for_session
 from src.plugins.chats.agent.sales.tools.ui_intents import (
@@ -45,7 +46,7 @@ from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 
 async def _catalog_labels() -> tuple[list[str], list[str]]:
-    result = await get_catalog_client().search(q="", limit=30)
+    result = await get_catalog_client().search(q="", limit=WHOLE_CATALOG)
     return catalog_variant_labels(result.results)
 
 

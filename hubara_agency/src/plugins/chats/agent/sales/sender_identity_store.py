@@ -1,7 +1,7 @@
 """Adapter filesystem: qué conversación es de cada id de Meta (BSUID).
 
 Un cliente con nombre de usuario llega primero SIN teléfono (conversación
-`wa_CO1502…`) y, una vez que le contestamos, Meta empieza a mandar también su
+`wa_CO9990…`) y, una vez que le contestamos, Meta empieza a mandar también su
 teléfono. Sin recordar el BSUID, ese segundo mensaje abriría `wa_57…` y el bot
 perdería el hilo. Al revés también: un cliente con teléfono que más adelante
 llega solo con el BSUID sigue en su `wa_57…`.

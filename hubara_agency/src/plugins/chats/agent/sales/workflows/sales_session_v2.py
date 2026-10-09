@@ -73,7 +73,6 @@ with workflow.unsafe.imports_passed_through():
         apply_variant_enumeration_guard_activity,
         bootstrap_sales_session_activity,
         build_first_contact_greeting_activity,
-        decide_ghosting_action,
         ensure_closing_escalation_activity,
         ensure_payment_pending_closure_activity,
         flush_pending_ui_intents_activity,
@@ -116,6 +115,8 @@ with workflow.unsafe.imports_passed_through():
         restart_allowed,
         settle_burst,
     )
+    # El aviso del cierre por abandono con red (premortem 2026-10-09).
+    from src.plugins.chats.agent.sales.workflows.ghosting_v2 import ghost_trigger as ghost_trigger_of
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
@@ -410,12 +411,9 @@ class HubaraSalesSessionWorkflowV2:
                     )
                     # Cierre por abandono (F8): con la sesión, el motor puede
                     # decidir la etiqueta y el aviso le dice al LLM cuál usar.
-                    ghost_trigger = await workflow.execute_activity(
-                        decide_ghosting_action,
-                        session.session_id,
-                        start_to_close_timeout=timedelta(seconds=10),
-                        retry_policy=RetryPolicy(maximum_attempts=2),
-                    )
+                    # 30 s y, si falla, el aviso de la regla (premortem
+                    # 2026-10-09: con Jev lento el workflow moría).
+                    ghost_trigger = await ghost_trigger_of(session.session_id)
                     self._pending.append(
                         PendingMessage(
                             message=ghost_trigger, is_ghost_trigger=True, plugin_context=await _system_turn_clock() or None

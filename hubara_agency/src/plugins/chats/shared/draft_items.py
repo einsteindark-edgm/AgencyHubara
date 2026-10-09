@@ -13,6 +13,12 @@ from typing import Any
 # Campos que pertenecen a UN producto del pedido (el resto de los slots —
 # envío, pago, notas — son del pedido completo).
 ITEM_FIELDS: tuple[str, ...] = ("producto", "aroma", "color", "diseno", "cantidad")
+#: Lo que cada producto del pedido necesita para salir de la etapa de variantes.
+VARIANT_SLOTS: tuple[str, ...] = ("aroma", "color", "cantidad")
+#: `order_draft[NOT_OFFERED_KEY]`: {clave del producto: atributos que el
+#: catálogo no ofrece} (incidente del 2026-10-09: una vela sin colores nunca
+#: salía de la etapa de variantes). Lo escribe `set_order_slot`.
+NOT_OFFERED_KEY = "sin_opciones"
 
 
 def draft_items(draft: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -36,3 +42,24 @@ def product_key(name: Any) -> str:
     return " ".join(
         "".join(c for c in folded if not unicodedata.combining(c)).split()
     )
+
+
+def find_product(products: list[Any], name: Any) -> Any | None:
+    """Producto cuyo título o handle es ``name`` (sin acentos/mayúsculas)."""
+    wanted = product_key(name)
+    if not wanted:
+        return None
+    return next(
+        (p for p in products if wanted in (product_key(p.title), product_key(p.handle))),
+        None,
+    )
+
+
+def missing_variants(draft: dict[str, Any] | None, item: dict[str, Any]) -> list[str]:
+    """Lo que le falta a un ítem para salir de la etapa de variantes: aroma,
+    color y cantidad, menos lo que el catálogo no le ofrece a su producto
+    (`order_draft[NOT_OFFERED_KEY]`)."""
+    marks = draft.get(NOT_OFFERED_KEY) if isinstance(draft, dict) else None
+    skip = marks.get(product_key(item.get("producto"))) if isinstance(marks, dict) else None
+    not_offered = set(skip) if isinstance(skip, list) else set()
+    return [k for k in VARIANT_SLOTS if not str(item.get(k) or "").strip() and k not in not_offered]

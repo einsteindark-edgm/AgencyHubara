@@ -153,9 +153,79 @@ def test_tag08_a_reply_without_a_promise_is_not_judged() -> None:
     assert run("TAG-08", t).verdict == "no_aplica"
 
 
+def test_tag08_an_order_event_notice_is_not_a_promise() -> None:
+    """Premortem 2026-10-09: «nuestro equipo te avisa cuando despachemos» es el
+    aviso que manda el sistema al despachar, no un colega que se hace cargo."""
+    t = traj(T(1, sent=["Listo 🤍 Nuestro equipo te avisa cuando despachemos tu pedido."],
+               state=_tag_state("NO_ETIQUETADO")))
+
+    assert run("TAG-08", t).verdict == "no_aplica"
+
+
 def test_tag08_is_a_major_state_check() -> None:
     from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
 
     spec = SPECS_BY_ID.get("TAG-08")
     assert spec is not None and (spec.family, spec.level, spec.kind) == ("estado", "mayor", "code")
     assert REGISTRY_VERSION >= 6
+
+
+# TAG-09 · lo que promete, lo hace ──────────────────────────────────────────
+# Incidente del 2026-10-09: «Te paso el formulario para los datos de envío»
+# dos turnos seguidos sin el formulario. El mismo detector del bot
+# (`use_cases/promised_actions.py`): el componente prometido tiene que salir
+# en ese turno (una tool del LLM o la red que lo mandó).
+
+FORM_PROMISE = "Perfecto, contra entrega.\n\nTe paso el formulario para los datos de envío 🤍"
+
+
+def test_tag09_a_promised_form_that_never_went_out_fails() -> None:
+    t = traj(T(1, sent=["El set completo está en $45.000 🤍"]), T(2, sent=[FORM_PROMISE]))
+
+    r = run("TAG-09", t)
+
+    assert (r.verdict, r.turn) == ("falla", 2)
+    assert "formulario" in r.evidence
+
+
+def test_tag09_the_form_in_the_same_turn_keeps_the_promise() -> None:
+    by_tool = traj(T(1, sent=[FORM_PROMISE], tools=[tool("request_shipping_details")]))
+    by_net = traj(T(1, sent=[FORM_PROMISE], intents=["shipping_flow"]))
+
+    assert run("TAG-09", by_tool).verdict == "pasa"
+    assert run("TAG-09", by_net).verdict == "pasa"
+
+
+def test_tag09_saying_the_order_is_registered_needs_the_order() -> None:
+    claim = "¡Listo! Tu pedido quedó registrado 🤍"
+    without = traj(T(1, sent=[claim]))
+    registered_before = traj(T(1, tools=[tool("register_order")]), T(2, sent=[claim]))
+
+    assert run("TAG-09", without).verdict == "falla"
+    assert run("TAG-09", registered_before).verdict == "pasa"
+
+
+def test_tag09_without_promises_is_not_judged() -> None:
+    t = traj(T(1, sent=["¿Te paso el formulario para los datos de envío?"]))
+
+    assert run("TAG-09", t).verdict == "no_aplica"
+
+
+def test_tag09_is_a_critical_state_check() -> None:
+    from src.plugins.chats.agent.sales_eval.scorecard.registry import SPECS_BY_ID
+
+    spec = SPECS_BY_ID.get("TAG-09")
+    assert spec is not None and (spec.family, spec.level, spec.kind) == ("estado", "critico", "code")
+
+
+def test_tag08_a_real_handoff_with_an_order_event_is_still_a_promise() -> None:
+    # Sin parametrize: `test_focus_mode` cosecha estos tests llamándolos.
+    for text in (
+        "Un colega del equipo coordina contigo la entrega cuando despachemos tu pedido 🤍",
+        "Un colega te contacta cuando estemos listos para tomar tu pedido personalizado.",
+        "Alguien de despachos te contacta cuando salga tu pedido para coordinar la dirección.",
+    ):
+        t = traj(T(1, sent=[text], state=_tag_state("NO_ETIQUETADO")))
+
+        assert run("TAG-08", t).verdict == "falla", text
+

@@ -60,7 +60,7 @@ from src.plugins.chats.api.mobile_devices import (
 )
 from src.plugins.chats.api.mobile_push import TEST_MESSAGE, PushDispatcher
 from src.plugins.chats.api.order_intake import _read_events
-from src.plugins.chats.shared.draft_items import draft_items, product_key
+from src.plugins.chats.shared.draft_items import draft_items, find_product
 from src.plugins.chats.shared.mobile_rules import (
     MAX_HUMAN,
     ChatFireFacts,
@@ -207,17 +207,6 @@ async def _catalog_products(deps: MobileDeps) -> list[Any] | None:
         logger.warning("[chats.mobile] catálogo no disponible: {}", exc)
         return None
     return [p for p in result.results if getattr(p, "status", "published") == "published"]
-
-
-def find_product(products: list[Any], name: Any) -> Any | None:
-    """Producto cuyo título o handle es ``name`` (sin acentos/mayúsculas)."""
-    wanted = product_key(name)
-    if not wanted:
-        return None
-    return next(
-        (p for p in products if wanted in (product_key(p.title), product_key(p.handle))),
-        None,
-    )
 
 
 def _image_count(product: Any) -> int:

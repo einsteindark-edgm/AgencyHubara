@@ -89,6 +89,15 @@ def test_resolve_session_dir_with_plus_prefix(tmp_path):
     )
 
 
+def test_a_customer_without_phone_is_never_matched_by_digits(tmp_path):
+    """Premortem 2026-10-09: un cliente con nombre de usuario de WhatsApp es
+    `wa_<país><id de Meta>`. Los últimos 10 dígitos de su id no son un
+    teléfono: comparar por sufijo le asignaba el historial de otro cliente."""
+    _make_session(tmp_path, "wa_CO9990003125671604")
+
+    assert _resolve_session_id_for_phone(tmp_path, "3125671604") is None
+
+
 def test_resolve_no_match_returns_none(tmp_path):
     """Phone que no matchea ninguna sesión → None (panel mostrará Sin datos)."""
     _make_session(tmp_path, "wa_573125671604")
