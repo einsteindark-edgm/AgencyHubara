@@ -265,6 +265,9 @@ FIXTURE_FILES = {
     ),
     "hubara_agency/tests/plugins/mba/conftest.py": 'PHONE_NUMBER_ID = "1234091093112024"\n',
     ".github/workflows/forge-gates.yml": "name: forge-gates\n",
+    "hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py": (
+        'class StoreCodes:\n    sku_prefix: str = "HUB-"\n    web_domain: str = "hubara"\n'
+    ),
     "docs/cartagena/plan.md": "# Vertical hotelero de otro cliente\n",
     # App móvil Tauri: viaja al clon, pero la EIP de hubara en el CSP no
     "frontend_dashboard/src-tauri/tauri.conf.json": (
@@ -311,6 +314,18 @@ ACME_CLIENT = {
         "domains": ["acme.example.com"],
         "instagram": "acme.cafe",
     },
+    "commerce": {
+        "payment_nequi_number": "3001234567",
+        "payment_link_surcharge_local": "2%",
+        "payment_link_surcharge_other": "3,1%",
+        "shipping_local_zone": "Medellín y el área metropolitana",
+        "shipping_local_city": "Medellín",
+        "shipping_rate_local_cop": 9000,
+        "shipping_rate_national_cop": 18500,
+        "cash_on_delivery_min_cop": 60000,
+        "sku_prefix": "ACM-",
+        "catalog_collections": ["vitrina"],
+    },
 }
 
 
@@ -355,13 +370,14 @@ def acme_bundle(tmp_path: Path) -> Path:
     return bundle
 
 
-def _apply(mini_repo: Path, acme_bundle: Path, tmp_path: Path):
+def _apply(mini_repo: Path, acme_bundle: Path, tmp_path: Path, allow_todos: bool = False):
     dest = tmp_path / "AgencyAcme"
     report = forge.run_apply(
         src=mini_repo,
         dest=dest,
         client_dir=acme_bundle,
         manifest=forge.load_manifest(),
+        allow_todos=allow_todos,
     )
     return dest, report
 
@@ -810,3 +826,65 @@ def test_init_deja_el_frontmatter_de_las_skills_al_principio(mini_repo, tmp_path
     skill = (bundle / "workspace" / "mba_sales" / "skills" / "persona-y-tono.md").read_text()
     assert skill.startswith("---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n")
     assert "TODO-BRAND" in skill
+
+
+# ── Política comercial: client.yaml → commerce → Terraform del clon ───────────
+
+
+def test_la_politica_comercial_del_cliente_llega_a_su_terraform(mini_repo, acme_bundle, tmp_path):
+    """Tarifas, contra entrega, pagos y códigos del catálogo son del cliente:
+    viajan de client.yaml al bloque `store` del tfvars (→ SSM → .env)."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    for line in (
+        'payment_nequi_number = "3001234567"',
+        'payment_link_surcharge_local = "2%"',
+        'shipping_local_zone = "Medellín y el área metropolitana"',
+        "shipping_rate_local_cop = 9000",
+        "shipping_rate_national_cop = 18500",
+        "cash_on_delivery_min_cop = 60000",
+        'sku_prefix = "ACM-"',
+        'web_domain = "acme.example.com"',  # sale de business.domains
+        'catalog_collections = ["vitrina"]',
+    ):
+        assert line in " ".join(plat.split()), line
+
+
+def test_sin_politica_comercial_el_apply_real_falla_y_dice_que_falta(mini_repo, acme_bundle, tmp_path):
+    import yaml as _yaml
+
+    client = dict(ACME_CLIENT, commerce={"sku_prefix": "ACM-", "shipping_rate_local_cop": "TODO"})
+    (acme_bundle / "client.yaml").write_text(_yaml.safe_dump(client), encoding="utf-8")
+    with pytest.raises(forge.ForgeError, match="shipping_rate_local_cop"):
+        _apply(mini_repo, acme_bundle, tmp_path)
+    # clon de prueba: lo pendiente queda fuera (manda el default del motor)
+    dest = tmp_path / "Prueba"
+    forge.run_apply(src=mini_repo, dest=dest, client_dir=acme_bundle, manifest=forge.load_manifest(), allow_todos=True)
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    assert 'sku_prefix = "ACM-"' in " ".join(plat.split()) and "shipping_rate_local_cop" not in plat
+
+
+def test_una_politica_mal_escrita_falla_antes_de_forjar(mini_repo, acme_bundle, tmp_path):
+    import yaml as _yaml
+
+    bad = dict(ACME_CLIENT["commerce"], shipping_rate_local_cop="7.900")
+    (acme_bundle / "client.yaml").write_text(_yaml.safe_dump(dict(ACME_CLIENT, commerce=bad)), encoding="utf-8")
+    with pytest.raises(forge.ForgeError, match="shipping_rate_local_cop"):
+        _apply(mini_repo, acme_bundle, tmp_path, allow_todos=True)
+
+
+def test_init_siembra_la_politica_comercial_pendiente(mini_repo, tmp_path):
+    import yaml as _yaml
+
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "c")
+    commerce = _yaml.safe_load((bundle / "client.yaml").read_text())["commerce"]
+    assert set(commerce) >= {"shipping_rate_local_cop", "cash_on_delivery_min_cop", "sku_prefix", "payment_nequi_number"}
+    assert commerce["shipping_rate_local_cop"] == "TODO" and commerce["payment_nequi_number"] == ""
+
+
+def test_el_dominio_por_defecto_del_clon_es_el_del_cliente(mini_repo, acme_bundle, tmp_path):
+    """Sin STORE_WEB_DOMAIN (dev, tests) un enlace de SU tienda en una foto
+    sigue siendo suyo: el default del clon es su dominio, no `hubara`."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    codes = (dest / "hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py").read_text()
+    assert 'web_domain: str = "acme.example.com".lower()' in codes

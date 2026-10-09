@@ -83,6 +83,10 @@ _VALID_KINDS = (
 # del 2026-09-28: el bot negó 3 productos que sí tenemos). Con este prompt el
 # mismo modelo copió nombre, precio y URL en 15 de 15 capturas. El emparejador
 # de la foto con el catálogo (plugin de ventas) usa `texto_visible`.
+#: Cómo se ve un SKU de la tienda (`STORE_SKU_PREFIX`, nace en Terraform
+#: `tenants.<t>.store`; sin variable, el de la tienda madre).
+_SKU_EXAMPLE = ((os.getenv("STORE_SKU_PREFIX") or "").strip().upper() or "HUB-") + "XXXX"
+
 _PROMPT_ES = (
     "Eres el paso de visión de un chat de ventas de velas artesanales por "
     "WhatsApp (Colombia). Mira la imagen y responde SOLO con un JSON con esta "
@@ -99,7 +103,7 @@ _PROMPT_ES = (
     'no, null>",\n'
     '    "url": "<copia exacta de cualquier URL visible, aunque esté cortada; '
     'si no, null>",\n'
-    '    "sku": "<copia exacta de un código tipo HUB-XXXX si se ve; si no, '
+    '    "sku": "<copia exacta de un código tipo ' + _SKU_EXAMPLE + ' si se ve; si no, '
     'null>",\n'
     '    "otros": ["<otras líneas de texto relevantes, copiadas tal cual>"]\n'
     "  },\n"

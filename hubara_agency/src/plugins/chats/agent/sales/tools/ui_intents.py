@@ -66,6 +66,7 @@ from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
     SHIPPING_FLOW_PLACEHOLDER,
+    SHIPPING_LOCAL_ZONE,
     SHIPPING_RATE_RULE,
     SHIPPING_RATES_MESSAGE,
     cash_on_delivery_available,
@@ -2057,7 +2058,7 @@ class SendShippingRatesTool(ToolBase):
     name = "send_shipping_rates"
     description = (
         "Envía al cliente el mensaje estándar con las tarifas mínimas de "
-        "envío (Bogotá y municipios cercanos / nivel nacional) y la "
+        f"envío ({SHIPPING_LOCAL_ZONE} / nivel nacional) y la "
         "aclaración de que el valor definitivo se confirma al despachar. "
         "Úsala SIEMPRE que el cliente pregunte cuánto vale, cuánto cuesta o "
         "cuánto cobran el envío/domicilio — en vez de escribir las tarifas "

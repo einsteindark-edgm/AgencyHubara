@@ -37,6 +37,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from src.plugins.chats.agent.sales.config.store_codes import CODES
+
 if TYPE_CHECKING:
     from src.sdk.catalogkit import CatalogPhotoIndex, CatalogPort
     from src.sdk.connectorkit import ImageEmbeddingPort, PhotoMatchPort, VisibleText, VisionResult
@@ -48,11 +50,18 @@ HOW_LINK = "enlace"
 HOW_NAME = "nombre"
 HOW_IMAGE = "imagen"
 
-_SKU_RE = re.compile(r"(?<![A-Z0-9-])HUB-[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Z0-9])", re.IGNORECASE)
+def sku_pattern(sku_prefix: str) -> re.Pattern[str]:
+    """Un SKU de la tienda suelto en el texto de una foto."""
+    return re.compile(
+        r"(?<![A-Z0-9-])" + re.escape(sku_prefix) + r"[A-Z0-9]+(?:-[A-Z0-9]+)*(?![A-Z0-9])", re.IGNORECASE
+    )
+
+
+_SKU_RE = sku_pattern(CODES.sku_prefix)
 _PRODUCT_PATH_RE = re.compile(r"/products/([a-z0-9-]+)", re.IGNORECASE)
 #: El enlace tiene que ser de NUESTRA tienda: la captura de otra tienda puede
 #: traer un handle igual a uno nuestro («/products/angel»).
-_OUR_STORE = "hubara"
+_OUR_STORE = CODES.web_domain
 #: Un enlace cortado («luz-de-bel...») vale si es el comienzo de un solo handle.
 _MIN_LINK_PREFIX = 6
 _FUZZY_MIN = 0.90

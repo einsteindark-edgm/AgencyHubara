@@ -277,6 +277,23 @@ cédula (si está) a `metadata.receiver_national_id`.
 - WHEN se registra el pedido con los demás datos completos
 - THEN el registro procede normalmente y ningún campo de cédula viaja a Medusa
 
+### Requirement: La política comercial es de la tienda (2026-10-09)
+
+Las tarifas de envío y su zona local, el mínimo de contra entrega, la llave
+Nequi/Bre-B, los recargos del link de pago, el prefijo de los SKU, el dominio
+de la tienda y las colecciones del catálogo MUST salir de la configuración de
+la tienda (`tenants.<t>.store` en Terraform → SSM → `.env`; código en
+`config/{shipping,payments,store_codes}.py` y `catalog/agent/composition.py`).
+Sin configuración MUST regir la política de la tienda madre (las cifras de
+abajo), byte a byte. Un monto mal escrito MUST impedir el arranque (nunca un
+precio raro al cliente).
+
+#### Scenario: Otra tienda publica sus tarifas
+
+- GIVEN `SHIPPING_LOCAL_ZONE="Medellín y el área metropolitana"`, `SHIPPING_LOCAL_CITY="Medellín"`, `SHIPPING_RATE_LOCAL_COP=9000`, `SHIPPING_RATE_NATIONAL_COP=18500`
+- WHEN el cliente pregunta cuánto vale el envío
+- THEN el mensaje dice «• Medellín y el área metropolitana: $9.000» y «• Nivel Nacional: $18.500», y una entrega en Medellín cotiza $9.000
+
 ### Requirement: Formas de pago informadas (2026-08-31)
 
 El sales-worker MUST informar exactamente TRES formas de pago, con sus

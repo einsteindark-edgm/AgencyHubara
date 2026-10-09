@@ -20,6 +20,7 @@ infra/whatsapp-provisioning/whatsapp_provision.py).
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -146,6 +147,80 @@ def render_vars(client: dict) -> dict:
         "enabled_plugins": client.get("enabled_plugins") or ENABLED_PLUGINS_DEFAULT,
         "engine_sha": "",  # se completa en apply
     }
+
+
+# ── Política comercial (client.yaml → commerce → Terraform `store`) ─────────
+#
+# Lo que el bot le dice al cliente sobre envío y pagos, y cómo reconoce los
+# códigos de su catálogo. El clon la escribe en tenants.auto.tfvars → SSM →
+# .env (modules/store-config); sin ella el motor usaría la de la tienda madre.
+#: campo → (tipo, validación, ejemplo). Orden = orden en el tfvars.
+COMMERCE_FIELDS: dict[str, tuple[str, str, str]] = {
+    "payment_nequi_number": ("str", r"(\d{7,15})?", "3001234567 · vacío = sin pago anticipado"),
+    "payment_link_surcharge_local": ("str", r"\d+(,\d+)?%", "1,5%"),
+    "payment_link_surcharge_other": ("str", r"\d+(,\d+)?%", "2,69%"),
+    "shipping_local_zone": ("str", r".+", "Bogotá y municipios cercanos"),
+    "shipping_local_city": ("str", r".+", "Bogotá"),
+    "shipping_rate_local_cop": ("int", "", "7900"),
+    "shipping_rate_national_cop": ("int", "", "16940"),
+    "cash_on_delivery_min_cop": ("int", "", "45000"),
+    "sku_prefix": ("str", r"[A-Z0-9]{1,12}-", "HUB-"),
+    "web_domain": ("str", r"[a-z0-9.-]+", "tienda.com"),
+    "catalog_collections": ("list", "", '["home_banner"]'),
+}
+#: Opcionales: sin valor manda el default del motor (no es dato de otra tienda).
+COMMERCE_OPTIONAL = {"payment_nequi_number", "web_domain", "catalog_collections"}
+
+
+def _pending(value: object) -> bool:
+    return value is None or (isinstance(value, str) and "TODO" in value)
+
+
+def commerce_values(client: dict, vars_: dict, allow_todos: bool) -> dict:
+    """La política comercial validada; lo pendiente bloquea un clon real."""
+    raw = dict(client.get("commerce") or {})
+    if _pending(raw.get("web_domain")) and not vars_["primary_domain"].startswith("TODO"):
+        raw["web_domain"] = vars_["primary_domain"]
+    out, pending, bad = {}, [], []
+    for name, (kind, pattern, example) in COMMERCE_FIELDS.items():
+        value = raw.get(name)
+        if _pending(value):
+            if name not in COMMERCE_OPTIONAL:
+                pending.append(f"{name} (p. ej. {example})")
+            continue
+        if kind == "int":
+            ok = isinstance(value, int) and not isinstance(value, bool) and value > 0
+        elif kind == "list":
+            ok = isinstance(value, list) and bool(value) and all(isinstance(v, str) and v.strip() for v in value)
+        else:
+            ok = isinstance(value, str) and re.fullmatch(pattern, value.strip()) is not None
+        if not ok:
+            bad.append(f"{name}={value!r} (p. ej. {example})")
+            continue
+        if value == "":  # llave Nequi vacía a propósito = sin pago anticipado
+            continue
+        out[name] = value.strip() if isinstance(value, str) else value
+    if bad:
+        raise ForgeError("client.yaml → commerce mal escrito: " + "; ".join(bad))
+    if pending and not allow_todos:
+        raise ForgeError(
+            "client.yaml → commerce incompleto (la política comercial de la tienda; usa "
+            "--allow-todos solo para un clon de prueba): " + ", ".join(pending)
+        )
+    return out
+
+
+def store_block(values: dict) -> str:
+    """El bloque `store` del tfvars de platform (indentado dentro del tenant)."""
+    if not values:
+        return "    # store = {}  # política comercial pendiente (clon de prueba): manda el default del motor"
+    width = max(len(k) for k in values)
+    lines = ["    store = {"]
+    for name, value in values.items():
+        rendered = json.dumps(value, ensure_ascii=False) if not isinstance(value, int) else str(value)
+        lines.append(f"      {name.ljust(width)} = {rendered}")
+    lines.append("    }")
+    return "\n".join(lines)
 
 
 def _render(text: str, vars_: dict) -> str:
@@ -453,6 +528,7 @@ def run_apply(
         )
     vars_ = render_vars(load_client(client_dir))
     vars_["store_bundle"] = manifest["decision_bundles"]["store"]
+    vars_["store_block"] = store_block(commerce_values(load_client(client_dir), vars_, allow_todos))
     dirty = subprocess.run(
         ["git", "-C", str(src), "status", "--porcelain"], capture_output=True, text=True
     ).stdout.strip()
@@ -585,6 +661,19 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                     "product_description": "TODO",
                     "domains": [],
                     "instagram": "",
+                },
+                # Política comercial: lo que el bot le dice al cliente sobre envío y
+                # pagos (→ Terraform tenants.<t>.store → SSM). apply la exige completa.
+                "commerce": {
+                    "payment_nequi_number": "",  # llave Nequi/Bre-B; vacío = sin pago anticipado
+                    "payment_link_surcharge_local": "TODO",  # recargo del link con Nequi/Bancolombia, p. ej. "1,5%"
+                    "payment_link_surcharge_other": "TODO",  # con otros bancos, p. ej. "2,69%"
+                    "shipping_local_zone": "TODO",  # p. ej. "Bogotá y municipios cercanos"
+                    "shipping_local_city": "TODO",  # la ciudad de esa zona, p. ej. "Bogotá"
+                    "shipping_rate_local_cop": "TODO",  # tarifa mínima local, p. ej. 7900
+                    "shipping_rate_national_cop": "TODO",  # tarifa mínima nacional, p. ej. 16940
+                    "cash_on_delivery_min_cop": "TODO",  # contra entrega desde este subtotal, p. ej. 45000
+                    "sku_prefix": "TODO",  # prefijo de los SKU en Medusa, p. ej. "ACM-"
                 },
                 # consumido por forge/steps/ (supabase_provision + medusa_provision)
                 "medusa": {

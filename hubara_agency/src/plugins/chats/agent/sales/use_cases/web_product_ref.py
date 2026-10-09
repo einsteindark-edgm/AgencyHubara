@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 
+from src.plugins.chats.agent.sales.config.store_codes import CODES
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     get_active_episode,
 )
@@ -22,7 +23,14 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
 # `ref:` (case-insensitive) + SKU `HUB-<CODE>[-<VARIANT>]`. The marker is
 # mandatory: a bare SKU in the text triggers nothing (smaller attack surface).
 # The SKU is normalised to uppercase, which is how the uploader loads it.
-_PRODUCT_REF_RE = re.compile(r"(?i:ref):\s*(HUB-[A-Z0-9]+(?:-[A-Z0-9]+)?)(?![A-Z0-9-])", re.IGNORECASE)
+def product_ref_pattern(sku_prefix: str) -> re.Pattern[str]:
+    """`ref: <prefijo><CODE>[-<VARIANT>]` con el prefijo de SKU de la tienda."""
+    return re.compile(
+        r"(?i:ref):\s*(" + re.escape(sku_prefix) + r"[A-Z0-9]+(?:-[A-Z0-9]+)?)(?![A-Z0-9-])", re.IGNORECASE
+    )
+
+
+_PRODUCT_REF_RE = product_ref_pattern(CODES.sku_prefix)
 
 # Closed list, mirrored from the storefront's `AgentSource`.
 _AGENT_SOURCES = ("chatgpt", "gemini", "perplexity", "copilot", "claude")

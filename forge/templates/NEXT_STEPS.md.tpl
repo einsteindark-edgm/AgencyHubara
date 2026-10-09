@@ -24,28 +24,23 @@ Lo que forge instaló desde `forge/clients/{{slug}}/`:
       El clon corre `{{store_bundle}}` (la misma inteligencia que la tienda madre).
       Certificar: `cd hubara_agency && uv run python -m src.sdk.cli decisions check`
 
-Lo que TODAVÍA vive en el código del motor y es política comercial de la tienda
-(revisar y ajustar en este repo antes del go-live — forge no lo adivina):
+- [ ] Política comercial (de `client.yaml → commerce`): tarifas de envío y zona local,
+      mínimo de contra entrega, llave Nequi/Bre-B, recargos del link de pago, prefijo de
+      SKU, dominio y colecciones del catálogo. Viven en
+      `infra/terraform/platform/tenants.auto.tfvars → store` (→ SSM → `.env`, módulo
+      `store-config`); cambiarlas = PR + `terraform apply` de platform + Backend deploy.
+      Sin `payment_nequi_number` el bot no ofrece pago anticipado.
 
-- [ ] Tarifas de envío, zona local y mínimo de contra entrega:
-      `hubara_agency/src/plugins/chats/agent/sales/config/shipping.py`
-      (`SHIPPING_RATE_BOGOTA_COP`, `SHIPPING_RATE_NATIONAL_COP`,
-      `CASH_ON_DELIVERY_MIN_PRODUCTS_COP`, `SHIPPING_RATES_MESSAGE`). La zona
-      local está modelada como «Bogotá y municipios cercanos» (también en la
-      capacidad `zona_de_envio` del paquete).
-- [ ] Recargos del link de pago: `.../sales/config/payments.py`
-      (`PAYMENT_LINK_SURCHARGE_*`). La llave Nequi/Bre-B NO va en código: va en
-      `infra/terraform/platform/tenants.auto.tfvars` → `store.payment_nequi_number`
-      (F3). Sin ella el bot no ofrece pago anticipado.
-- [ ] Límites conocidos del motor (asume una tienda tipo Hubara en Colombia, COP):
-      variantes por **aroma/color** (tools de ventas, `mobile_rules.py`, app y
-      dashboard), la capacidad **`portavelas`** del paquete (quitarla de
-      `bundle.yaml` en una versión nueva si la tienda no tiene accesorio
-      equivalente), el prefijo de SKU **`HUB-`** (`use_cases/web_product_ref.py`,
-      `use_cases/photo_product.py`), las colecciones de Medusa que entran al
-      catálogo (`catalog/agent/use_cases/pull_catalog.py`), el mapa de categorías
-      de Google (`platform/meta_catalog/mapper.py`) y los emojis de variantes
-      (`platform/whatsapp/variant_emoji.py`).
+Límites conocidos del motor (asume una tienda en Colombia, COP, con variantes tipo
+Hubara) — revisar antes del go-live si la tienda no encaja:
+
+- [ ] Variantes por **aroma/color** (tools de ventas, `mobile_rules.py`, app y dashboard).
+- [ ] La capacidad **`portavelas`** del paquete (quitarla en una versión nueva del paquete
+      si la tienda no tiene accesorio equivalente) y la pregunta de **`zona_de_envio`**,
+      que habla de Bogotá (la zona local del código sí es la de `commerce`).
+- [ ] El mapa de categorías de Google (`platform/meta_catalog/mapper.py`) y los emojis de
+      variantes (`platform/whatsapp/variant_emoji.py`): una categoría que no conocen sale sin
+      categoría de Google (Meta la acepta) y una variante, con el emoji genérico.
 
 ## F2 — Bootstrap AWS (una vez, local con creds admin)
 
@@ -74,8 +69,9 @@ Lo que TODAVÍA vive en el código del motor y es política comercial de la tien
       `HUBARA_SERVICE_TOKEN` (`openssl rand -hex 32`) y `COGNITO_*` (los crea el apply).
       Keys NUEVAS de este cliente: DEEPSEEK_API_KEY, GEMINI_API_KEY, OPENROUTER_API_KEY (Jev),
       GHCR_PULL_TOKEN (PAT fine-grained solo al package `{{image}}`), WHATSAPP_VERIFY_TOKEN real.
-- [ ] Llave Nequi/Bre-B de {{company}}: `store = { payment_nequi_number = "…" }` en
-      `infra/terraform/platform/tenants.auto.tfvars` → apply (es dato público, vive en git).
+- [ ] Política comercial de {{company}}: ya está en `tenants.auto.tfvars → store`
+      (forge la escribió desde `client.yaml → commerce`, incluida la llave Nequi
+      `store = { payment_nequi_number = "…" }`); revisarla y aplicarla con el apply de arriba.
 
 ## F4 — Medusa propio (Railway) — steps S2–S4
 

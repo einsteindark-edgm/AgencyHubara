@@ -1,5 +1,5 @@
-# Datos comerciales PÚBLICOS de la tienda por tenant (modules/store-config):
-# hoy la llave Nequi/Bre-B del pago anticipado. Provider SIMULADO.
+# Política comercial PÚBLICA de la tienda por tenant (modules/store-config):
+# pago anticipado, envío, contra entrega, códigos del catálogo. Provider SIMULADO.
 #
 #   terraform -chdir=infra/terraform/platform init -backend=false
 #   terraform -chdir=infra/terraform/platform test
@@ -49,6 +49,75 @@ run "una_llave_que_no_son_digitos_no_pasa_el_plan" {
         callback_urls = ["https://t1.example.com/callback"]
         logout_urls   = ["https://t1.example.com/"]
         store         = { payment_nequi_number = "+57 300 123" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+run "la_politica_comercial_va_a_ssm_con_los_nombres_del_codigo" {
+  command = plan
+  module { source = "./modules/store-config" }
+  variables {
+    tenant = "t1"
+    config = {
+      shipping_local_zone          = "Medellín y el área metropolitana"
+      shipping_local_city          = "Medellín"
+      shipping_rate_local_cop      = 9000
+      shipping_rate_national_cop   = 18500
+      cash_on_delivery_min_cop     = 60000
+      payment_link_surcharge_local = "2%"
+      payment_link_surcharge_other = "3,1%"
+      sku_prefix                   = "ACM-"
+      web_domain                   = "acme.example.com"
+      catalog_collections          = ["vitrina", "nuevos"]
+    }
+  }
+  assert {
+    condition = (
+      aws_ssm_parameter.store["SHIPPING_RATE_LOCAL_COP"].value == "9000"
+      && aws_ssm_parameter.store["SHIPPING_RATE_NATIONAL_COP"].value == "18500"
+      && aws_ssm_parameter.store["CASH_ON_DELIVERY_MIN_COP"].value == "60000"
+      && aws_ssm_parameter.store["SHIPPING_LOCAL_ZONE"].value == "Medellín y el área metropolitana"
+      && aws_ssm_parameter.store["SHIPPING_LOCAL_CITY"].value == "Medellín"
+      && aws_ssm_parameter.store["PAYMENT_LINK_SURCHARGE_LOCAL"].value == "2%"
+      && aws_ssm_parameter.store["PAYMENT_LINK_SURCHARGE_OTHER"].value == "3,1%"
+      && aws_ssm_parameter.store["STORE_SKU_PREFIX"].value == "ACM-"
+      && aws_ssm_parameter.store["STORE_WEB_DOMAIN"].value == "acme.example.com"
+      && aws_ssm_parameter.store["CATALOG_COLLECTION_HANDLES"].value == "vitrina,nuevos"
+    )
+    error_message = "Cada campo de tenants.<t>.store es un String en SSM con el nombre que lee el código."
+  }
+  assert {
+    condition     = length(aws_ssm_parameter.store) == 10
+    error_message = "Sin payment_nequi_number no se crea ese parámetro; los demás sí."
+  }
+}
+
+run "un_monto_que_no_es_entero_positivo_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { shipping_rate_local_cop = 0 }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+run "un_recargo_sin_formato_porcentaje_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { payment_link_surcharge_local = "1.5" }
       }
     }
   }

@@ -13,6 +13,7 @@ PLUGIN_REFACTOR_PLAN.md §8 para la convención del vault.
 from __future__ import annotations
 
 import importlib
+import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -21,6 +22,20 @@ import pytest_asyncio
 from temporalio.testing import WorkflowEnvironment
 
 from tests._reaper import reap_stale_test_servers
+
+# La política comercial de la tienda (`tenants.<t>.store` → .env) se lee al
+# IMPORTAR (`sales/config/{shipping,payments,store_codes}.py`): un .env de una
+# tienda exportado en el shell haría que las pruebas midieran otra política
+# (como `SALES_DECISIONS_BUNDLE`, abajo). Se limpia antes de importar src.
+# Las pruebas de otra política la pasan explícita (`*.from_env({...})`).
+STORE_POLICY_ENV = (
+    "PAYMENT_LINK_SURCHARGE_LOCAL", "PAYMENT_LINK_SURCHARGE_OTHER",
+    "SHIPPING_LOCAL_ZONE", "SHIPPING_LOCAL_CITY", "SHIPPING_RATE_LOCAL_COP",
+    "SHIPPING_RATE_NATIONAL_COP", "CASH_ON_DELIVERY_MIN_COP",
+    "STORE_SKU_PREFIX", "STORE_WEB_DOMAIN", "CATALOG_COLLECTION_HANDLES",
+)
+for _var in STORE_POLICY_ENV:
+    os.environ.pop(_var, None)
 
 
 @pytest.fixture(scope="session", autouse=True)

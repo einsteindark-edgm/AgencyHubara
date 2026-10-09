@@ -346,10 +346,10 @@ replacements:
     files: ["hubara_agency/src/**"]
     from: '"HUBARA_TENANT_ID", "hubara"'
     to: '"HUBARA_TENANT_ID", "{{slug}}"'
-  - id: foto-link-tienda                 # un link de la tienda en una foto = el dominio del cliente
-    files: ["hubara_agency/src/plugins/chats/agent/sales/use_cases/photo_product.py"]
-    from: '_OUR_STORE = "hubara"'
-    to: '_OUR_STORE = "{{primary_domain}}".lower()'
+  - id: dominio-tienda-default          # sin STORE_WEB_DOMAIN, el dominio del CLIENTE
+    files: ["hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py"]
+    from: 'web_domain: str = "hubara"'
+    to: 'web_domain: str = "{{primary_domain}}".lower()'
   - id: ads-meta-ssm                     # token de Ads en SSM: prefijo y tenant del CLON
     # (sin esto el clon leería /hubara/hubara/meta/oauth: el token de Hubara)
     files: ["hubara_agency/src/plugins/ads/meta/settings.py", "hubara_agency/tests/plugins/ads/**"]

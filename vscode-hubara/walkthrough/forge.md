@@ -21,12 +21,18 @@ espacios, p. ej. `mi_tienda`) y pulsa **Sembrar**. Se crea
 - **`client.yaml`** — los datos del cliente: `company` (nombre comercial),
   `repo` (dueño/nombre en GitHub), `android_app_id` (el id de su App Operador
   en Google Play, por defecto `com.acktos.<nombre>`), `aws` (región y
-  prefijos) y `business` (país, moneda, descripción, dominios). La consola
-  avisa de los valores que siguen en plantilla (`TODO`, `TODO-owner`,
-  `api_url` vacío); no bloquean, pero el clon saldría con esos huecos.
+  prefijos), `business` (país, moneda, descripción, dominios) y
+  **`commerce`**, la política comercial que el bot le dice al cliente: tarifas
+  de envío y su zona local, mínimo de contra entrega, llave Nequi (vacía = sin
+  pago anticipado), recargos del link de pago, prefijo de los SKU y
+  colecciones del catálogo. Forjar **se niega** mientras `commerce` tenga
+  `TODO` (salvo un clon de prueba): sin ella el clon cobraría con la política
+  de la tienda madre. Forge la escribe en el Terraform del clon
+  (`tenants.auto.tfvars → store`). La consola avisa de los demás valores en
+  plantilla (`TODO-owner`, `api_url` vacío).
 - **`domain.yaml`** — **el concepto de la tienda** para el motor de
-  decisiones: nombre, despedida al registrar un pedido, ejemplos de cómo
-  habla y de sus productos y variantes, y sus políticas de venta.
+  decisiones: nombre, despedida al registrar un pedido y ejemplos de cómo
+  habla y de sus productos y variantes.
 - **`workspace/`** — las voces del cliente, una carpeta por agente: `sales`
   (ventas), `remarketing` (reactivación), `mba_sales` (el agente de Meta
   Business)… La lista exacta y los archivos que cada uno necesita los define

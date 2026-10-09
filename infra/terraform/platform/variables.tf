@@ -68,12 +68,22 @@ variable "tenants" {
       min_version_code = optional(number, 0)  # versionCode mínimo; una app más vieja pide actualizarse
     }), {})
 
-    # Datos comerciales PÚBLICOS de la tienda (modules/store-config → SSM String
-    # /hubara/<tenant>/<VAR>). payment_nequi_number: la llave Nequi/Bre-B que el
-    # bot le da al cliente para el pago anticipado; null = no se crea el
-    # parámetro y manda el default del código.
+    # Política comercial PÚBLICA de la tienda (modules/store-config → SSM String
+    # /hubara/<tenant>/<VAR>): lo que el bot le dice al cliente sobre precios de
+    # envío y formas de pago, y cómo reconoce los códigos de su catálogo. Cada
+    # campo en null = no se crea el parámetro y manda el default del código.
     store = optional(object({
-      payment_nequi_number = optional(string)
+      payment_nequi_number         = optional(string)       # llave Nequi/Bre-B del pago anticipado (solo dígitos)
+      payment_link_surcharge_local = optional(string)       # recargo del link con Nequi o Bancolombia ("1,5%")
+      payment_link_surcharge_other = optional(string)       # recargo del link con otros bancos ("2,69%")
+      shipping_local_zone          = optional(string)       # cómo se le nombra al cliente la zona local
+      shipping_local_city          = optional(string)       # la ciudad que cae en la zona local
+      shipping_rate_local_cop      = optional(number)       # tarifa mínima de la zona local
+      shipping_rate_national_cop   = optional(number)       # tarifa mínima nacional
+      cash_on_delivery_min_cop     = optional(number)       # contra entrega desde este subtotal de productos (inclusive)
+      sku_prefix                   = optional(string)       # prefijo de los SKU en Medusa ("HUB-")
+      web_domain                   = optional(string)       # dominio de la tienda (enlaces en fotos)
+      catalog_collections          = optional(list(string)) # colecciones de Medusa que entran al catálogo
     }), {})
 
     # Laboratorio de conversaciones y capas del bot con clasificador
@@ -103,6 +113,30 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : t.store.payment_nequi_number == null || can(regex("^[0-9]{7,15}$", t.store.payment_nequi_number))])
     error_message = "tenants.*.store.payment_nequi_number: solo dígitos (p.ej. 3001234567), o sin definir."
+  }
+
+  validation {
+    condition = alltrue(flatten([for t in values(var.tenants) : [
+      for v in [t.store.shipping_rate_local_cop, t.store.shipping_rate_national_cop, t.store.cash_on_delivery_min_cop] :
+      v == null ? true : (v > 0 && v == floor(v))
+    ]]))
+    error_message = "tenants.*.store: los montos (shipping_rate_*_cop, cash_on_delivery_min_cop) son pesos enteros mayores que 0, o sin definir."
+  }
+
+  validation {
+    condition = alltrue(flatten([for t in values(var.tenants) : [
+      for v in [t.store.payment_link_surcharge_local, t.store.payment_link_surcharge_other] :
+      v == null ? true : can(regex("^[0-9]+(,[0-9]+)?%$", v))
+    ]]))
+    error_message = "tenants.*.store.payment_link_surcharge_*: porcentaje como lo lee el cliente (p.ej. \"1,5%\")."
+  }
+
+  validation {
+    condition = alltrue([for t in values(var.tenants) :
+      (t.store.sku_prefix == null || can(regex("^[A-Z0-9]{1,12}-$", t.store.sku_prefix)))
+      && (t.store.catalog_collections == null || length(coalesce(t.store.catalog_collections, [])) > 0)
+    ])
+    error_message = "tenants.*.store: sku_prefix en mayúsculas terminado en guion (p.ej. \"HUB-\"); catalog_collections no vacía (sin definir = el default)."
   }
 
   validation {

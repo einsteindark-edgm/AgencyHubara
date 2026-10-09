@@ -23,12 +23,11 @@ tenants = {
       customer_allowlist = []
     }
 
-    # Datos comerciales PÚBLICOS: la llave Nequi/Bre-B que el bot le da al
-    # cliente para el pago anticipado (solo dígitos). Sin ella el bot NO ofrece
-    # pago anticipado (el clon nace fail-closed, nunca con la llave de otro).
-    # store = {
-    #   payment_nequi_number = "3001234567"
-    # }
+    # Política comercial de {{company}} (desde client.yaml → commerce): tarifas
+    # de envío, contra entrega, pagos y códigos del catálogo → SSM → .env
+    # (modules/store-config). Sin payment_nequi_number el bot NO ofrece pago
+    # anticipado (el clon nace fail-closed, nunca con la llave de otro).
+{{store_block}}
 
     # App Operador (Android): política de privacidad pública (Google Play la exige).
     mobile = {
