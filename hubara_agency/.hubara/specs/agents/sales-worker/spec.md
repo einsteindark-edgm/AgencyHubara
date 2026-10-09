@@ -649,6 +649,14 @@ y validarse DENTRO de la tool (activity), nunca en el workflow.
 - THEN el turno continúa para que llame `escalate_to_human("ORDER_PENDING_SHIPPING_DETAILS", summary)`
 - AND si en vez de escalar acusa recibo, la red `ensure_closing_escalation` escala por él; el acuse no sale
 
+#### Scenario: Pedido a medio cerrar y el cliente se queda callado (2026-10-09)
+
+- GIVEN el cliente confirmó y no dio los datos de envío, o los dio y no tocó «Confirmar»
+- WHEN llega el cierre por ghosting
+- THEN el aviso de ghosting y el guion (`TOOLS.md`, `sales_script`) piden `INTERESADO` con un motivo que diga qué falta, sin escalar
+- AND el episodio sigue abierto con el pedido guardado y el Window Strategist lo retoma (gancho transaccional: 30–75 min de silencio)
+- AND ningún silencio pasa solo al equipo (decisión del operador); `CONFIRMADO_SIN_DATOS` + relevo queda solo si una lectura del paquete `cierre` lo elige, hasta su versión nueva
+
 ### Requirement: Lo que no salió, el LLM no lo recuerda (run b06636a6 → 5ed9af2d)
 
 El historial que el LLM lee en la sesión siguiente MUST NOT contener como
@@ -791,6 +799,12 @@ confirmación es episodio-scoped (incidente runs 01a0a0eb / 01a0a0f1, 2026-09-14
 - WHEN el LLM llama `request_shipping_details`
 - THEN la tool devuelve `queued=false, error=purchase_not_confirmed` y no encola nada
 - AND si el ghosting etiqueta `CONFIRMADO_SIN_DATOS`, queda `INTERESADO` y la sesión sigue en ruta ventas
+
+#### Scenario: Cliente que vuelve con un pedido de una compra anterior (2026-10-09)
+
+- GIVEN `registered_order` exitoso registrado ANTES de que empezara el episodio abierto, y el draft de hoy sin `confirmed_at_ms`
+- THEN no hay confirmación de compra: el pedido viejo no confirma la compra nueva
+- AND `CONFIRMADO_SIN_DATOS` degrada a `INTERESADO`, `escalate_to_human(ORDER_PENDING_SHIPPING_DETAILS)` se rechaza y la conversación sigue en ruta ventas
 
 #### Scenario: El cliente dijo que sí
 

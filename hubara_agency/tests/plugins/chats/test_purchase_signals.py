@@ -107,6 +107,30 @@ def test_registered_order_counts_as_confirmation() -> None:
     assert has_purchase_confirmation(md) is True
 
 
+def test_an_order_from_a_previous_purchase_is_not_this_purchase() -> None:
+    """Conversación real del 2026-10-09: clienta que vuelve (pedido del 23-sep)
+    pide otra vez, da sus datos y no toca «Confirmar». El pedido viejo hizo
+    pasar por confirmada la compra nueva: el cierre por silencio la pasó al
+    equipo en vez de dejarla a remarketing."""
+    md = {
+        "registered_order": {"success": True, "order_id": "o_viejo", "registered_at_ms": NOW - 16 * 86_400_000},
+        "episodes": [
+            {"episode_id": "ep_001", "order_id": "o_viejo", "closed_at_ms": NOW - 16 * 86_400_000},
+            {"episode_id": "ep_002", "started_at_ms": NOW - 14 * 86_400_000, "closed_at_ms": None,
+             "order_draft": {"slots": {"producto": "Trilogía del Terror", "ciudad": "Bogotá"}}},
+        ],
+    }
+    assert has_purchase_confirmation(md) is False
+
+
+def test_an_order_registered_in_this_episode_counts() -> None:
+    md = {
+        "registered_order": {"success": True, "order_id": "o1", "registered_at_ms": NOW},
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": NOW - 5_000, "closed_at_ms": None}],
+    }
+    assert has_purchase_confirmation(md) is True
+
+
 def test_confirmation_is_episode_scoped() -> None:
     md = _metadata_with_draft(producto="Cubo Love")
     register_inbound_purchase_signals(md, "dale", now_ms=NOW, message_id="m")
