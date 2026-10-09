@@ -301,7 +301,14 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
         return False
     if not await promised_handoff(text, session_id=session_id, vault_dir=WORKSPACE_VAULT_DIR):
         # La otra promesa del texto: el formulario de envío (2026-10-09).
-        await _ensure_promised_shipping_form(session_id, text, data)
+        # Best-effort: una falla de la red nunca tumba el envío del texto.
+        try:
+            await _ensure_promised_shipping_form(session_id, text, data)
+        except Exception:  # noqa: BLE001
+            activity.logger.exception(
+                "ensure_promised_shipping_form: la red falló — el texto sale igual",
+                extra={"session_id": session_id},
+            )
         return False
     try:
         now_ms = int(activity.info().scheduled_time.timestamp() * 1000)

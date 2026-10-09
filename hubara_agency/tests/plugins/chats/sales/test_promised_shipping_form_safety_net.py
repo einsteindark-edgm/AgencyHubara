@@ -222,3 +222,17 @@ async def test_talking_about_the_form_is_not_promising_it(_isolate_vault_dir: Pa
     await _run(text)
 
     assert _intents(md) == []
+
+
+async def test_a_broken_catalog_never_breaks_the_turn(_isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """La red es best-effort: si el catálogo no se puede ni armar (el
+    laboratorio corre esta activity de verdad), el texto sale igual."""
+    def _boom() -> Any:
+        raise RuntimeError("catálogo sin configurar")
+
+    monkeypatch.setattr(episode_closure, "_catalog_client", _boom)
+    md = _seed(_isolate_vault_dir)
+
+    assert await _run(PROMISE) is False
+
+    assert _intents(md) == []
