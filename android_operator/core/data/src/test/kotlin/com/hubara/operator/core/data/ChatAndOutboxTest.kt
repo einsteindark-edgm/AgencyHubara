@@ -62,6 +62,25 @@ class ChatAndOutboxTest {
         assertThat(view.messages.map { it.text }).containsExactly("hola")
     }
 
+    // Caso 2026-10-09: el chat se pinta desde Room; si la marca de «llegó tarde» no se guarda, la
+    // burbuja vuelve a mostrar solo la hora de llegada y parece una respuesta a la plantilla.
+    @Test fun un_mensaje_que_llego_tarde_conserva_cuando_se_escribio() = runTest {
+        api.details["wa_test_laura"] = api.details["wa_test_laura"]!!.copy(
+            messages = listOf(
+                ChatMessageDto(
+                    "user_message", "user", "hola, ¿siguen teniendo velas?",
+                    timestamp = JsonPrimitive("2026-10-09T21:35:42+00:00"),
+                    sentAt = JsonPrimitive("2026-10-06T17:02:04+00:00"),
+                    arrivedAfterWindow = JsonPrimitive(true),
+                ),
+            ),
+        )
+        chats.refresh(laura)
+        val message = chats.observeChat(laura).first().messages.single()
+        assertThat(message.sentAtMs).isEqualTo(1791306124000L)
+        assertThat(message.arrivedAfterWindow).isTrue()
+    }
+
     @Test fun el_texto_aparece_como_pendiente_y_desaparece_al_confirmar() = runTest {
         chats.refresh(laura)
         val id = outbox.sendText(laura, "te confirmo el aroma")

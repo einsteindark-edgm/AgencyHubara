@@ -153,6 +153,13 @@ export interface ChatMessageItem {
   event?: ChatEvent;
   /** Turno del bot que produjo el mensaje (abre el hilo del turno). */
   turnKey?: string;
+  /** Mensaje del cliente que Meta entregó tarde: día (YYYY-MM-DD Colombia) y
+   *  hora en que lo escribió. `time`/`dayIso` siguen siendo la llegada. La
+   *  etiqueta («escrito el lunes») se arma en render (regla 5). */
+  sentDayIso?: string;
+  sentTime?: string;
+  /** Llegó con la ventana de 24 h cerrada: el bot no pudo contestarle. */
+  arrivedAfterWindow?: boolean;
 }
 
 export interface MemoryItem {

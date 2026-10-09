@@ -136,3 +136,19 @@ def test_a_card_the_operator_sent_from_the_app_is_a_component_note_not_a_text_bu
 
     assert [m["ui_type"] for m in msgs] == ["ui_component_sent", "human_message"]
     assert msgs[0]["sender"] == "human"
+
+
+def test_late_customer_message_reaches_the_dashboard_with_when_it_was_written(client_with_temp_vault):
+    """Caso 2026-10-09: el panel (web y app) necesita la hora real de un
+    mensaje que Meta entregó tarde y saber que el bot no pudo contestarle."""
+    client, vault = client_with_temp_vault
+    store = FilesystemMessageHistoryStore(vault)
+    store.append_user_event(
+        "wa_L", "hola, ¿siguen teniendo velas?", sent_at_ms=1_791_306_124_000, arrived_after_window=True
+    )
+
+    msg = client.get("/api/dashboard/sessions/wa_L").json()["messages"][0]
+
+    assert msg["ui_type"] == "user_message"
+    assert msg["sent_at"] == "2026-10-06T17:02:04+00:00"
+    assert msg["arrived_after_window"] is True

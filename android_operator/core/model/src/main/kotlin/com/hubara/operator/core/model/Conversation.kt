@@ -43,6 +43,10 @@ data class Message(
     val imageUrl: String?,
     val timestampMs: Long?,
     val state: DeliveryState = DeliveryState.SENT,
+    /** Mensaje del cliente que Meta entregó tarde: cuándo lo escribió (`timestampMs` es la llegada). */
+    val sentAtMs: Long? = null,
+    /** Llegó con la ventana de 24 h cerrada: el bot no pudo contestarle. */
+    val arrivedAfterWindow: Boolean = false,
 )
 
 /** Estado de un mensaje del operador que pasa por el outbox. */
