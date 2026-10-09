@@ -35,6 +35,7 @@ from src.plugins.chats.agent.sales.composition import (
     build_ingest_use_case,
     build_phone_identity,
     build_sender_identity,
+    has_phone_conversation,
 )
 from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
@@ -252,7 +253,8 @@ def _in_their_conversation(parsed: Any) -> Any:
     (BSUID) y, según el momento, con o sin teléfono. La primera conversación
     que abrió es la suya: si empezó sin teléfono (`wa_CO1502…`) se queda ahí
     cuando Meta empieza a mandar el teléfono, y si empezó con teléfono
-    (`wa_57…`) se queda ahí cuando llega solo con el BSUID."""
+    (`wa_57…`) se queda ahí cuando llega solo con el BSUID. Un teléfono que ya
+    tiene su conversación no se vuelve alias de otra."""
     user_address = address_from_user_id(getattr(parsed, "wa_user_id", None))
     phone = parsed.from_number if str(parsed.from_number or "").isdigit() else None
     if user_address is None:
@@ -261,7 +263,7 @@ def _in_their_conversation(parsed: Any) -> Any:
         alias = build_phone_identity().known_address(phone) if phone else None
         return parsed if alias in (None, phone) else replace(parsed, from_number=alias)
     address = build_sender_identity().remember(user_address, parsed.from_number)
-    if phone and address != phone:
+    if phone and address != phone and not has_phone_conversation(phone):
         build_phone_identity().remember(phone, address)
     return parsed if address == parsed.from_number else replace(parsed, from_number=address)
 

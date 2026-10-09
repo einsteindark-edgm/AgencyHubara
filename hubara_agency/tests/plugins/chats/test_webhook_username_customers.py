@@ -124,6 +124,21 @@ def test_a_customer_who_started_without_phone_keeps_their_conversation_if_only_t
     assert [m.from_number for m in ingest.calls] == [_ADDRESS, _ADDRESS, _ADDRESS]
 
 
+def test_a_phone_that_already_has_its_conversation_keeps_it(harness, _isolate_vault_dir) -> None:
+    """Revisión del premortem (2026-10-09): si el teléfono ya tiene su
+    conversación (`wa_57…`, de antes del nombre de usuario), recordarlo como
+    alias de la conversación sin teléfono se la quitaba: lo que llegara solo
+    con `from` iba a parar a la otra, sin su historial ni sus pedidos."""
+    client, ingest = harness
+    (_isolate_vault_dir / f"wa_{_PHONE}").mkdir()
+
+    client.post("/api/webhook", json=_body(_msg("wamid.U1", user_id=_BSUID)))
+    client.post("/api/webhook", json=_body(_msg("wamid.U2", phone=_PHONE, user_id=_BSUID)))
+    client.post("/api/webhook", json=_body(_msg("wamid.U3", phone=_PHONE)))
+
+    assert [m.from_number for m in ingest.calls] == [_ADDRESS, _ADDRESS, _PHONE]
+
+
 def test_a_phone_customer_who_later_arrives_only_with_their_meta_id_stays_in_their_conversation(harness) -> None:
     client, ingest = harness
 
