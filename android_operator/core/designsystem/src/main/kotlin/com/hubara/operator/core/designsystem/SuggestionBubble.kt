@@ -22,7 +22,8 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Una burbuja de acción: tocar envía, mantener presionado edita. La principal va rellena con el primario; las
- * demás, tonales (secundario). Es un `Surface` propio (no `SuggestionChip`) porque necesita las dos acciones.
+ * demás, tonales (secundario). [order] = «Crear pedido»: va en verde (el par de éxito) para verse de un vistazo,
+ * esté primera o no. Es un `Surface` propio (no `SuggestionChip`) porque necesita las dos acciones.
  * Se ve de 40 dp pero responde en 48 dp (área táctil mínima de Material).
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -34,12 +35,22 @@ fun SuggestionBubble(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     icon: ImageVector? = null,
+    order: Boolean = false,
 ) {
     val colors = MaterialTheme.colorScheme
+    val brand = OperatorTheme.colors
     Surface(
         shape = CircleShape,
-        color = if (primary) colors.primary else colors.secondaryContainer,
-        contentColor = if (primary) colors.onPrimary else colors.onSecondaryContainer,
+        color = when {
+            order -> brand.successContainer
+            primary -> colors.primary
+            else -> colors.secondaryContainer
+        },
+        contentColor = when {
+            order -> brand.onSuccessContainer
+            primary -> colors.onPrimary
+            else -> colors.onSecondaryContainer
+        },
         modifier = modifier
             .minimumInteractiveComponentSize()
             .defaultMinSize(minHeight = 40.dp)

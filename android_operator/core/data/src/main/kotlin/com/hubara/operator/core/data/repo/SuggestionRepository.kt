@@ -14,6 +14,13 @@ import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
+/**
+ * Lo que sabe hacer esta app con una burbuja (`?features=`): `open_screen` = abrir la pantalla del servidor que pida
+ * («Crear pedido» → `crear_pedido`). Sin esto el backend no le manda esas burbujas: una app vieja las enviaría como
+ * una tool que no existe.
+ */
+const val FEATURES = "open_screen"
+
 /** Las burbujas vigentes. Las decide el servidor (hoy por reglas; con Jev, más adelante). */
 @Singleton
 class SuggestionRepository @Inject constructor(
@@ -25,7 +32,7 @@ class SuggestionRepository @Inject constructor(
     }
 
     suspend fun refresh(sessionId: SessionId): Result<Unit> = safeCall {
-        val dto = api.suggestions(sessionId.raw)
+        val dto = api.suggestions(sessionId.raw, features = FEATURES)
         val current = dao.get(sessionId.raw)
         // Una respuesta más vieja que la guardada no pisa la nueva.
         if (current == null || dto.version >= current.version) {

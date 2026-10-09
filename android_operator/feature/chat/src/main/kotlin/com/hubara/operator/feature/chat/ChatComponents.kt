@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -64,6 +66,7 @@ import com.hubara.operator.core.model.Message
 import com.hubara.operator.core.model.Prominence
 import com.hubara.operator.core.model.ShippingForm
 import com.hubara.operator.core.model.Suggestion
+import com.hubara.operator.core.model.SuggestionTone
 import com.hubara.operator.core.ui.clockLabel
 import java.time.ZoneId
 import kotlinx.collections.immutable.ImmutableList
@@ -221,7 +224,13 @@ fun QuickActionStrip(
     onMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // La primera burbuja (la principal) siempre a la vista. La fila conserva la posición de la burbuja que ya estaba:
+    // al tomar el chat se veían las guardadas y «Crear pedido», que llega adelante, quedaba escondida a la izquierda
+    // (lo encontró S28 en el emulador; Robolectric no lo reproduce).
+    val row = rememberLazyListState()
+    LaunchedEffect(suggestions.firstOrNull()?.id) { row.scrollToItem(0) }
     LazyRow(
+        state = row,
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = Spacing.md, vertical = 2.dp),
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
@@ -232,7 +241,12 @@ fun QuickActionStrip(
                 primary = s.prominence == Prominence.PRIMARY,
                 onClick = { onSend(s) },
                 onLongClick = if (s.editable) ({ onEdit(s) }) else null,
-                icon = if (s.prominence == Prominence.PRIMARY) OperatorIcons.Bolt else null,
+                icon = when {
+                    s.tone == SuggestionTone.ORDER -> OperatorIcons.OrdersFilled
+                    s.prominence == Prominence.PRIMARY -> OperatorIcons.Bolt
+                    else -> null
+                },
+                order = s.tone == SuggestionTone.ORDER,
                 modifier = Modifier.animateItem(),
             )
         }

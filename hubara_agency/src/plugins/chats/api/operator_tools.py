@@ -44,15 +44,16 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
     SendShippingRatesTool,
     collect_enqueued_intent_ids,
 )
-from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
-from src.plugins.chats.api.mobile import find_product, unit_price_cop
+from src.plugins.chats.api.mobile import unit_price_cop
+from src.plugins.chats.api.order_intake import _read_events
 from src.plugins.chats.api.session_actions import (
     _ctx,
     _release_session_lock,
     _session_lock,
 )
-from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.shared.draft_items import draft_items, find_product
+from src.plugins.chats.shared.operator_order import operator_view, positive_quantity
 from src.plugins.chats.shared.order_intake import normalize_payment_method
 from src.sdk.identitykit import is_customer_session_id
 from src.sdk.connectorkit import (
@@ -201,9 +202,24 @@ def _rejection(envelope: dict[str, Any]) -> tuple[str, str] | None:
 
 
 class _InvalidArgs(Exception):
-    def __init__(self, problems: list[str]) -> None:
+    """422 `invalid_args`: `problems` (la lista) y `message`, la frase que la
+    app le muestra al operador tal cual (sin ella decía «faltan datos para esta
+    acción» y el operador no sabía qué faltaba)."""
+
+    def __init__(self, problems: list[str], message: str | None = None) -> None:
         super().__init__("; ".join(problems))
         self.problems = problems
+        self.message = message or _sentence(problems)
+
+
+def _sentence(problems: list[str]) -> str:
+    text = "; ".join(p.strip().rstrip(".") for p in problems if p.strip())
+    return f"{text[:1].upper()}{text[1:]}." if text else "Faltan datos para esta acción."
+
+
+def _join(parts: list[str]) -> str:
+    """«a, b y c»."""
+    return parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} y {parts[-1]}"
 
 
 class _Rejected(Exception):
@@ -229,14 +245,14 @@ def _unknown(args: dict[str, Any], allowed: set[str]) -> list[str]:
 
 async def _catalog_product(deps: OperatorToolsDeps, handle: Any, problems: list[str]) -> Any | None:
     if not isinstance(handle, str) or not handle.strip():
-        problems.append("product es obligatorio (handle del catálogo)")
+        problems.append("elige el producto")
         return None
     if deps.catalog is None:
         raise _CatalogUnavailable()
     try:
         return await deps.catalog.get_by_handle(handle.strip())
     except ProductNotFoundError:
-        problems.append(f"product '{handle}' no existe en el catálogo")
+        problems.append(f"el producto «{handle}» no está en el catálogo")
         return None
     except Exception as exc:  # noqa: BLE001 — catálogo caído ≠ args malos
         raise _CatalogUnavailable() from exc
@@ -276,13 +292,16 @@ async def _all_products(deps: OperatorToolsDeps) -> list[Any]:
     return [p for p in result.results if getattr(p, "status", "published") == "published"]
 
 
-async def _draft_lines(metadata: dict[str, Any], deps: OperatorToolsDeps) -> list[tuple[dict[str, Any], Any, int]]:
-    """(ítem del borrador, producto del catálogo, cantidad) del episodio ACTIVO."""
-    episode = get_active_episode(metadata) or {}
-    draft = episode.get("order_draft") if isinstance(episode.get("order_draft"), dict) else None
-    items = draft_items(draft)
+#: El borrador sin productos: lo que el operador tiene que hacer.
+_NO_PRODUCTS = "el pedido todavía no tiene productos: elige el producto y la cantidad"
+
+
+async def _draft_lines(view: dict[str, Any], deps: OperatorToolsDeps) -> list[tuple[dict[str, Any], Any, int]]:
+    """(ítem del pedido, producto del catálogo, cantidad) del borrador del
+    operador (`mobile.operator_view`)."""
+    items = draft_items(view)
     if not items:
-        raise _InvalidArgs(["el borrador del pedido no tiene productos: manda los args completos"])
+        raise _InvalidArgs([_NO_PRODUCTS])
     products = await _all_products(deps)
     lines: list[tuple[dict[str, Any], Any, int]] = []
     problems: list[str] = []
@@ -290,7 +309,7 @@ async def _draft_lines(metadata: dict[str, Any], deps: OperatorToolsDeps) -> lis
         product = find_product(products, item.get("producto"))
         quantity = parse_leading_quantity(str(item.get("cantidad") or ""))
         if product is None:
-            problems.append(f"'{item.get('producto')}' no está en el catálogo")
+            problems.append(f"«{item.get('producto')}» no está en el catálogo")
         elif not quantity:
             problems.append(f"falta la cantidad de {product.title}")
         else:
@@ -301,14 +320,24 @@ async def _draft_lines(metadata: dict[str, Any], deps: OperatorToolsDeps) -> lis
 
 
 async def _shipping_request_args(
-    args: dict[str, Any], metadata: dict[str, Any], deps: OperatorToolsDeps
+    args: dict[str, Any], view: dict[str, Any], deps: OperatorToolsDeps
 ) -> dict[str, Any]:
-    """`{}` → `items` {handle, quantity} desde el borrador (el total lo pone la
-    tool desde el catálogo, igual que con el bot)."""
-    if args:
-        raise _InvalidArgs(_unknown(args, set()))
-    lines = await _draft_lines(metadata, deps)
-    return {"items": [{"handle": p.handle, "quantity": q} for _item, p, q in lines]}
+    """`{product, quantity}` (lo que el operador elige en la app; la cantidad
+    por defecto es 1) o `{}` → `items` {handle, quantity} del pedido (el total
+    lo pone la tool desde el catálogo, igual que con el bot)."""
+    problems = _unknown(args, {"product", "quantity"})
+    if "product" not in args:
+        if problems or "quantity" in args:
+            raise _InvalidArgs(problems or ["elige el producto"])
+        lines = await _draft_lines(view, deps)
+        return {"items": [{"handle": p.handle, "quantity": q} for _item, p, q in lines]}
+    quantity = positive_quantity(args.get("quantity", 1))
+    if quantity is None:
+        problems.append("la cantidad tiene que ser un número de 1 a 999")
+    product = await _catalog_product(deps, args.get("product"), problems)
+    if problems or product is None:
+        raise _InvalidArgs(problems)
+    return {"items": [{"handle": product.handle, "quantity": quantity}]}
 
 
 #: Tope de productos de la lista tappable de la tool (Meta: 30).
@@ -332,35 +361,38 @@ async def _products_args(args: dict[str, Any], deps: OperatorToolsDeps) -> dict[
 
 
 async def _confirmation_args(
-    args: dict[str, Any], metadata: dict[str, Any], deps: OperatorToolsDeps
+    args: dict[str, Any], view: dict[str, Any], deps: OperatorToolsDeps
 ) -> dict[str, Any]:
-    """`{}` → args de `present_order_confirmation` desde el borrador: precio
-    del CATÁLOGO por ítem (la tool lo vuelve a validar), la tarifa mínima
-    publicada de la ciudad (la misma regla que `/order`), dirección y medio
-    de pago. Lo que falte se dice — no se inventa."""
+    """`{}` → args de `present_order_confirmation` desde el borrador del
+    operador: precio del CATÁLOGO por ítem (la tool lo vuelve a validar), la
+    tarifa mínima publicada de la ciudad (la misma regla que `/order`),
+    dirección y medio de pago. Lo que falte se dice — no se inventa."""
     if args:
         raise _InvalidArgs(_unknown(args, set()))
-    episode = get_active_episode(metadata) or {}
-    draft = episode.get("order_draft") if isinstance(episode.get("order_draft"), dict) else {}
-    slots = draft.get("slots") if isinstance(draft.get("slots"), dict) else {}
+    slots = view.get("slots") if isinstance(view.get("slots"), dict) else {}
     city = str(slots.get("ciudad") or "").strip()
     address = str(slots.get("direccion") or "").strip()
     method = normalize_payment_method(slots.get("metodo_pago"))
-    problems: list[str] = []
-    if not city:
-        problems.append("falta la ciudad de envío en el borrador")
-    if not address:
-        problems.append("falta la dirección de envío en el borrador")
-    if method is None:
-        problems.append(
-            "falta un medio de pago reconocible en el borrador "
-            "(transferencia/Nequi, link de pago o contra entrega)"
+    missing = [
+        part for part, absent in (
+            ("el producto", not draft_items(view)),
+            ("la ciudad", not city),
+            ("la dirección", not address),
+            ("el medio de pago", method is None),
+        ) if absent
+    ]
+    if missing:
+        hint = (
+            "Elige el producto en «Pedir datos de envío» y espera a que el cliente llene el formulario."
+            if "el producto" in missing
+            else "Espera a que el cliente llene el formulario o pídeselo con «Pedir datos de envío»."
         )
-    try:
-        lines = await _draft_lines(metadata, deps)
-    except _InvalidArgs as exc:
-        problems.extend(exc.problems)
-        lines = []
+        raise _InvalidArgs(
+            [f"falta {part}" for part in missing],
+            message=f"Para el resumen falta {_join(missing)}. {hint}",
+        )
+    problems: list[str] = []
+    lines = await _draft_lines(view, deps)
     items: list[dict[str, Any]] = []
     for item, product, quantity in lines:
         price = unit_price_cop(product)
@@ -385,17 +417,23 @@ async def _confirmation_args(
 
 
 async def _operator_args(
-    tool: str, args: dict[str, Any], metadata: dict[str, Any], deps: OperatorToolsDeps
+    tool: str, args: dict[str, Any], session: str, metadata: dict[str, Any], deps: OperatorToolsDeps
 ) -> dict[str, Any]:
     if tool == "present_variant_picker" and "variant_type" not in args:
         return await _picker_args(args, deps)
     if tool == "present_products" and "handles" not in args:
         return await _products_args(args, deps)
     if tool == "request_shipping_details" and "items" not in args:
-        return await _shipping_request_args(args, metadata, deps)
+        return await _shipping_request_args(args, _view(session, metadata, deps), deps)
     if tool == "present_order_confirmation" and "items" not in args:
-        return await _confirmation_args(args, metadata, deps)
+        return await _confirmation_args(args, _view(session, metadata, deps), deps)
     return args
+
+
+def _view(session: str, metadata: dict[str, Any], deps: OperatorToolsDeps) -> dict[str, Any]:
+    """El borrador del pedido con lo que pasó con el humano al mando: el bot
+    no corre y nadie más lo llena (caso 2026-10-09)."""
+    return operator_view(metadata, _read_events(deps.vault_dir, session))
 
 
 def _prior_action(metadata: dict[str, Any], client_action_id: str) -> dict[str, Any] | None:
@@ -484,7 +522,7 @@ async def _run(session: str, tool: str, body: ToolBody, deps: OperatorToolsDeps)
         else:
             produced = await _run_bot_tool(store, session, tool, dict(body.args), deps)
     except _InvalidArgs as exc:
-        return _error(422, "invalid_args", problems=exc.problems)
+        return _error(422, "invalid_args", problems=exc.problems, message=exc.message)
     except _Rejected as exc:
         if exc.reason == "catalog_unavailable":  # la tool no pudo leer el snapshot
             return _error(503, "catalog_unavailable")
@@ -515,7 +553,7 @@ async def _run_bot_tool(
     al operador un intent que un turno del bot encolara en medio desde el worker de Ventas: el candado de
     este endpoint es por proceso, así que salía firmado como humano."""
     instance = _bot_tools(deps)[tool]()
-    args, problems = _arg_problems(instance, await _operator_args(tool, raw, store.read(session), deps))
+    args, problems = _arg_problems(instance, await _operator_args(tool, raw, session, store.read(session), deps))
     if problems:
         raise _InvalidArgs(problems)
     with collect_enqueued_intent_ids() as produced:

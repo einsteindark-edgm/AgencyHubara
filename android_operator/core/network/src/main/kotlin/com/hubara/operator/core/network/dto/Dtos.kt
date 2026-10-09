@@ -120,6 +120,8 @@ data class SuggestionDto(
     val label: String,
     val prominence: String = "normal",
     val editable: Boolean = false,
+    val tone: String? = null,
+    val opens: String? = null,
     val action: ActionRefDto,
 )
 
