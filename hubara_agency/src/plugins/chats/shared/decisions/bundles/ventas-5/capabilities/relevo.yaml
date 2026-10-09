@@ -7,8 +7,11 @@
 #
 # ventas-5 (premortem del 2026-10-09): «Nuestro equipo te avisa cuando
 # despachemos tu pedido» es el aviso que manda el sistema al despachar, no un
-# colega que se hace cargo; Jev le daba 0,84 (al borde del 0,85 que escala y
-# calla al bot en plena venta). La pregunta lo excluye.
+# colega que se hace cargo; Jev le daba 0,85 (escala y calla al bot en plena
+# venta). La pregunta excluye SOLO el aviso puro: excluir todo lo que nombra
+# el despacho dejaba en duda (0,69–0,84) relevos de verdad como «alguien de
+# despachos te contacta cuando salga tu pedido para coordinar la dirección».
+# Sonda con textos sintéticos: avisos ≤ 0,11, relevos ≥ 0,90.
 capability: relevo
 value: bool
 input: TextoAlCliente
@@ -19,10 +22,10 @@ state:
 questions:
   - id: relevo.promete
     kind: noul
-    text: "¿El mensaje le dice al cliente que una persona del equipo (un colega, un asesor, alguien de despachos) lo va a contactar, a coordinar o a confirmar algo con él? Un aviso de que le escriben cuando el pedido se despache, salga o esté listo no cuenta."
+    text: "¿El mensaje le dice al cliente que una persona del equipo (un colega, un asesor, alguien de despachos) lo va a contactar para coordinar, acordar, confirmar o tomar algo con él? Cuenta aunque diga que será cuando el pedido salga o esté listo. No cuenta si solo le avisan o le mandan la guía cuando el pedido se despache, salga o esté listo, sin nada que coordinar con él."
     criteria:
-      "true": "sí: una persona del equipo se hace cargo de algo con el cliente"
-      "false": "no (también si solo le avisan cuando el pedido se despache, salga o esté listo)"
+      "true": "sí: una persona del equipo se va a hacer cargo de algo con el cliente, aunque sea cuando el pedido salga o esté listo"
+      "false": "no: nadie se hace cargo de nada con él, o solo le avisan (o le mandan la guía) cuando el pedido se despache, salga o esté listo"
 thresholds: {"yes": 0.85, "no": 0.15}
 decide:
   - when: "!('relevo.promete' in p)"

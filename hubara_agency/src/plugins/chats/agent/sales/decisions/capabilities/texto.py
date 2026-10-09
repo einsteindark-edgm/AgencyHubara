@@ -452,7 +452,7 @@ class TextoAlCliente:
 #: queda avisado. Lo que se coordina puede ir entre el verbo y «contigo»
 #: («coordina la entrega contigo»), y el caso «se pasa» a un colega
 #: (laboratorio r3).
-_WHO = r"(?:colega|companer[oa]|asesora?|persona del equipo|alguien del equipo)"
+_WHO = r"(?:colega|companer[oa]|asesora?|persona del equipo|alguien del equipo|alguien de (?:despachos?|logistica|bodega|produccion|ventas))"
 _DOES = r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
 _RELEVO_RE = re.compile(
     rf"\b{_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:va(?:n)?\s+a\s+)?{_DOES}"
@@ -470,10 +470,14 @@ _RELEVO_RE = re.compile(
 #: que llega con un evento del pedido.
 _ORDER_EVENT_RE = re.compile(
     r"\bcuando\s+(?:lo\s+|te\s+lo\s+|la\s+)?(?:despach\w*|salga\w*|sale\b|envi(?:e|emos)\b"
-    r"|este\s+list[oa]|estemos\b|tengamos\s+la\s+guia|haya\s+novedad\w*"
+    r"|este\s+list[oa]|estemos\s+(?:por\s+)?(?:despach|envi)\w*|tengamos\s+la\s+guia|haya\s+novedad\w*"
     r"|(?:tu|el|su)\s+pedido\s+(?:este|salga|llegue|vaya))"
 )
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]?")
+#: Coordinar, acordar o cuadrar algo con el cliente es hacerse cargo, aunque
+#: la frase nombre un evento del pedido: el aviso puro es la excepción
+#: (revisión del premortem, 2026-10-09).
+_TAKES_CHARGE_RE = re.compile(r"\b(?:coordin|acord|cuadr|organiz)\w*")
 
 
 def promises_a_handoff(text: str | None) -> bool:
@@ -486,7 +490,10 @@ def promises_a_handoff(text: str | None) -> bool:
     2026-10-09: escalaba y callaba al bot en plena venta)."""
     for sentence in _SENTENCE_RE.findall(plain(" ".join(str(text or "").split()))):
         match = _RELEVO_RE.search(sentence)
-        if match and not _ORDER_EVENT_RE.search(sentence[match.start():]):
+        if not match:
+            continue
+        notice = _ORDER_EVENT_RE.search(sentence[match.start():]) and not _TAKES_CHARGE_RE.search(sentence)
+        if not notice:
             return True
     return False
 

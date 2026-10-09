@@ -144,7 +144,10 @@ def tag_06(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 # ── TAG-08 · el colega prometido queda avisado (2026-09-30) ──────────────
 # El evaluador lee el relevo con su propia regla (no con la del bot que juzga):
 # quién (un colega, alguien del equipo…) y qué hará con el cliente.
-_HANDOFF_WHO = r"(?:colega|companer[oa]|asesora?|alguien del equipo|persona del equipo|nuestro equipo|el equipo)"
+_HANDOFF_WHO = (
+    r"(?:colega|companer[oa]|asesora?|alguien del equipo|persona del equipo|nuestro equipo|el equipo"
+    r"|alguien de (?:despachos?|logistica|bodega|produccion|ventas))"
+)
 _HANDOFF_PROMISE_RE = re.compile(
     rf"\b{_HANDOFF_WHO}\b[^.!?\n]{{0,60}}?\b(?:te|le|les)\s+(?:van?\s+a\s+)?"
     r"(?:respond|escrib|contact|confirm|coordin|atiend|llam|avis|cuent|ayud)\w*"
@@ -160,10 +163,14 @@ _HANDOFF_PROMISE_RE = re.compile(
 #: (misma excepción que la regla del bot, `capabilities/texto.py`).
 _ORDER_EVENT_RE = re.compile(
     r"\bcuando\s+(?:lo\s+|te\s+lo\s+|la\s+)?(?:despach\w*|salga\w*|sale\b|envi(?:e|emos)\b"
-    r"|este\s+list[oa]|estemos\b|tengamos\s+la\s+guia|haya\s+novedad\w*"
+    r"|este\s+list[oa]|estemos\s+(?:por\s+)?(?:despach|envi)\w*|tengamos\s+la\s+guia|haya\s+novedad\w*"
     r"|(?:tu|el|su)\s+pedido\s+(?:este|salga|llegue|vaya))"
 )
 _SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]?")
+#: Coordinar, acordar o cuadrar algo con el cliente es hacerse cargo, aunque
+#: la frase nombre un evento del pedido: el aviso puro es la excepción
+#: (revisión del premortem, 2026-10-09).
+_TAKES_CHARGE_RE = re.compile(r"\b(?:coordin|acord|cuadr|organiz)\w*")
 
 
 def _plain(text: str) -> str:
@@ -174,7 +181,10 @@ def _plain(text: str) -> str:
 def _promises_handoff(text: str) -> bool:
     for sentence in _SENTENCE_RE.findall(_plain(text)):
         match = _HANDOFF_PROMISE_RE.search(sentence)
-        if match and not _ORDER_EVENT_RE.search(sentence[match.start():]):
+        if not match:
+            continue
+        notice = _ORDER_EVENT_RE.search(sentence[match.start():]) and not _TAKES_CHARGE_RE.search(sentence)
+        if not notice:
             return True
     return False
 

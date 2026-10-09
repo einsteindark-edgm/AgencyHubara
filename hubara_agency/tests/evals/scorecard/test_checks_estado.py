@@ -1,6 +1,8 @@
 """Checks de etiquetado y escalación (TAG-*)."""
 from __future__ import annotations
 
+import pytest
+
 from src.plugins.chats.agent.sales_eval.scorecard.checks import CODE_CHECKS
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext
 from tests.evals.scorecard.dsl import T, tool, traj
@@ -216,3 +218,15 @@ def test_tag09_is_a_critical_state_check() -> None:
 
     spec = SPECS_BY_ID.get("TAG-09")
     assert spec is not None and (spec.family, spec.level, spec.kind) == ("estado", "critico", "code")
+
+
+@pytest.mark.parametrize("text", [
+    "Un colega del equipo coordina contigo la entrega cuando despachemos tu pedido 🤍",
+    "Un colega te contacta cuando estemos listos para tomar tu pedido personalizado.",
+    "Alguien de despachos te contacta cuando salga tu pedido para coordinar la dirección.",
+])
+def test_tag08_a_real_handoff_with_an_order_event_is_still_a_promise(text: str) -> None:
+    t = traj(T(1, sent=[text], state=_tag_state("NO_ETIQUETADO")))
+
+    assert run("TAG-08", t).verdict == "falla"
+

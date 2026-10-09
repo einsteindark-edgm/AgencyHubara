@@ -89,7 +89,11 @@ def test_relevo_only_rewords_its_question_to_leave_out_order_event_notices() -> 
     assert {k: v for k, v in q_new.items() if k not in ("text", "criteria")} == {
         k: v for k, v in q_old.items() if k not in ("text", "criteria")
     }
-    assert q_new["text"].startswith(q_old["text"]) and "no cuenta" in q_new["text"]
+    # Excluye SOLO el aviso puro: un relevo que nombra el despacho sigue
+    # contando (la primera redacción dejaba esos relevos en duda).
+    assert "un colega, un asesor, alguien de despachos" in q_new["text"]
+    assert "Cuenta aunque diga que será cuando el pedido salga o esté listo" in q_new["text"]
+    assert "No cuenta si solo le avisan" in q_new["text"]
     assert new["decide"] == old["decide"] and new["thresholds"] == old["thresholds"]
 
 
