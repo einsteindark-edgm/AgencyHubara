@@ -152,6 +152,35 @@ class SendReplyTool(ToolBase):
             session_key, _VERIFIED_CHECK_KEY, "verified_photos", verified_denial_message(products)
         )
 
+    def _unkept_promises(self, session_key: str, text: str) -> list[dict[str, Any]]:
+        """Incidente del 2026-10-09 (bot V2): «Te paso el formulario para los
+        datos de envío» salió dos turnos seguidos y `request_shipping_details`
+        nunca se llamó. Lo que el texto promete y el estado todavía no cumple:
+        un componente que la cola del turno no trae (`pending_ui_intents`, lo
+        que ya encolaron las tools de este turno; el flush va después del
+        texto) o «tu pedido quedó registrado» sin una orden registrada.
+
+        La tool NO retiene: no ve las otras tools de su mismo paso (pueden
+        correr después que ella y un retenido se perdía si una tarjeta cortaba
+        el turno). Lo graba en su resultado y `run_agent_turn` decide después
+        del paso completo, con las tools que de verdad salieron. Sin vault no
+        hay cola que mirar: se graba todo lo que promete."""
+        from src.plugins.chats.agent.sales.use_cases.promised_actions import broken_promises_in_queue
+
+        metadata: dict[str, Any] = {}
+        if self._vault_dir is not None:
+            try:
+                metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
+            except Exception:  # noqa: BLE001 — sin metadata legible: se graba todo lo prometido
+                metadata = {}
+        queued = [str(i.get("kind")) for i in metadata.get("pending_ui_intents") or [] if isinstance(i, dict)]
+        order = metadata.get("registered_order")
+        registered = isinstance(order, dict) and order.get("success") is True
+        return [
+            {"kind": p.kind, "tools": list(p.tools), "nudge": p.nudge}
+            for p in broken_promises_in_queue(text, queued, registered=registered)
+        ]
+
     def _held_before(self, session_key: str, key: str) -> bool:
         """¿Ya se retuvo un texto por `key` en este mensaje del cliente? Evita
         repetir la consulta (catálogo, Jev) en el segundo intento."""
@@ -221,13 +250,14 @@ class SendReplyTool(ToolBase):
         )
         if held is not None:
             return held
-        return json.dumps(
-            {
-                "reply": {"text": cleaned},
-                "summary": (
-                    "Mensaje listo para el cliente. Tu turno termina aquí: "
-                    "espera su respuesta."
-                ),
-            },
-            ensure_ascii=False,
-        )
+        envelope: dict[str, Any] = {
+            "reply": {"text": cleaned},
+            "summary": (
+                "Mensaje listo para el cliente. Tu turno termina aquí: "
+                "espera su respuesta."
+            ),
+        }
+        promises = self._unkept_promises(ctx.session_key, cleaned)
+        if promises:
+            envelope["promises"] = promises
+        return json.dumps(envelope, ensure_ascii=False)

@@ -236,3 +236,23 @@ async def test_a_broken_catalog_never_breaks_the_turn(_isolate_vault_dir: Path, 
     assert await _run(PROMISE) is False
 
     assert _intents(md) == []
+
+
+# ── las tarifas prometidas (sin argumentos: la red las manda siempre) ──────
+
+
+async def test_promised_rates_without_the_card_are_queued(_isolate_vault_dir: Path) -> None:
+    md = _seed(_isolate_vault_dir)
+
+    assert await _run("Claro 🤍 Te comparto las tarifas de envío.") is False
+
+    assert [i["kind"] for i in _intents(md)] == ["shipping_rates"]
+
+
+async def test_rates_already_queued_are_not_repeated(_isolate_vault_dir: Path) -> None:
+    queued = {"id": "r1", "kind": "shipping_rates", "params": {}, "queued_at_ms": NOW - 1_000}
+    md = _seed(_isolate_vault_dir, pending_ui_intents=[queued])
+
+    await _run("Te comparto las tarifas de envío.")
+
+    assert _intents(md) == [queued]

@@ -13,46 +13,25 @@ filas del registro de entregas: el I/O lo hace la activity.
 """
 from __future__ import annotations
 
-import re
-import unicodedata
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from src.plugins.chats.agent.sales.use_cases.promised_actions import promised_kinds
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
 from src.plugins.chats.shared.draft_items import draft_items, find_product
 from src.plugins.chats.shared.funnel import active_episode
 
 SHIPPING_FORM_KIND = "shipping_flow"
 
-_FORM = r"(?:(?:el|un|nuestro|este)\s+)?(?:(?:link|enlace)\s+(?:del|de)\s+)?formulario\b"
-_PROMISE_RE = re.compile(
-    # «te paso / envío / mando / comparto el formulario», «te voy a enviar el formulario»
-    rf"\b(?:te|le|les)\s+(?:paso|envio|mando|comparto|dejo|adjunto|hago\s+llegar"
-    rf"|(?:voy|vamos)\s+a\s+(?:pasar|enviar|mandar|compartir|dejar))\s+{_FORM}"
-    # «ahí te va el formulario», «aquí te dejo el formulario»
-    rf"|\b(?:aqui|ahi|aca)\s+(?:te\s+)?(?:va|dejo|envio|mando|paso)\s+{_FORM}"
-)
-# Una oración termina en . ! ? o salto de línea; la que pregunta no promete.
-_SENTENCE_RE = re.compile(r"[^.!?\n]*[.!?\n]?")
-
-
-def _plain(text: str) -> str:
-    folded = unicodedata.normalize("NFD", text or "")
-    return " ".join("".join(c for c in folded if not unicodedata.combining(c)).lower().split())
-
-
 def promises_shipping_form(text: str | None) -> bool:
     """¿El texto le dice al cliente que AHORA le manda el formulario de envío?
 
-    Una pregunta («¿te paso el formulario?») no promete, y hablar del
-    formulario («ya te envié el formulario», «llena el formulario») tampoco.
+    El detector de las promesas del bot (`promised_actions`): una pregunta
+    («¿te paso el formulario?»), una oferta, un condicional o hablar del
+    formulario («ya te envié el formulario», «llena el formulario») no son
+    promesas.
     """
-    for sentence in _SENTENCE_RE.findall(text or ""):
-        if "?" in sentence or "¿" in sentence:
-            continue
-        if _PROMISE_RE.search(_plain(sentence)):
-            return True
-    return False
+    return "formulario" in promised_kinds(text)
 
 
 def shipping_form_in_episode(metadata: Mapping[str, Any], delivered: Iterable[Mapping[str, Any]]) -> bool:

@@ -300,15 +300,16 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
     if data.get("active_route") == ROUTE_HUMANO:
         return False
     if not await promised_handoff(text, session_id=session_id, vault_dir=WORKSPACE_VAULT_DIR):
-        # La otra promesa del texto: el formulario de envío (2026-10-09).
+        # Las otras promesas del texto (2026-10-09): el formulario y las
+        # tarifas, si aun después de la ronda del turno no salieron.
         # Best-effort: una falla de la red nunca tumba el envío del texto.
-        try:
-            await _ensure_promised_shipping_form(session_id, text, data)
-        except Exception:  # noqa: BLE001
-            activity.logger.exception(
-                "ensure_promised_shipping_form: la red falló — el texto sale igual",
-                extra={"session_id": session_id},
-            )
+        for net in (_ensure_promised_shipping_form, _ensure_promised_rates):
+            try:
+                await net(session_id, text, data)
+            except Exception:  # noqa: BLE001
+                activity.logger.exception(
+                    "%s: la red falló — el texto sale igual", net.__name__, extra={"session_id": session_id}
+                )
         return False
     try:
         now_ms = int(activity.info().scheduled_time.timestamp() * 1000)
@@ -402,6 +403,31 @@ async def _ensure_promised_shipping_form(session_id: str, text: str, data: dict[
         extra={"session_id": session_id},
     )
     return queued
+
+
+async def _ensure_promised_rates(session_id: str, text: str, data: dict[str, Any]) -> bool:
+    """Las tarifas prometidas («te comparto las tarifas de envío») que no están
+    en la cola del turno: la tarjeta no lleva argumentos, se encola tal cual.
+    Devuelve True si quedó en la cola."""
+    from exoclaw.agent.tools import ToolContext
+
+    from src.plugins.chats.agent.sales.tools.ui_intents import SendShippingRatesTool
+    from src.plugins.chats.agent.sales.use_cases.promised_actions import promised_kinds
+
+    if "tarifas" not in promised_kinds(text):
+        return False
+    queued = data.get("pending_ui_intents") or []
+    if any(isinstance(i, dict) and i.get("kind") == "shipping_rates" for i in queued):
+        return False
+    ctx = ToolContext(session_key=session_id, channel="whatsapp", chat_id=session_id)
+    envelope = json.loads(await SendShippingRatesTool(WORKSPACE_VAULT_DIR).execute_with_context(ctx))
+    queued_now = envelope.get("queued") is True
+    activity.logger.warning(
+        "ensure_promised_rates: el texto prometía las tarifas sin la tarjeta — %s",
+        "encoladas (red de seguridad)" if queued_now else f"no salieron ({envelope.get('error')})",
+        extra={"session_id": session_id},
+    )
+    return queued_now
 
 
 def _write_own_changes(session_id: str, base: dict[str, Any], data: dict[str, Any]) -> None:
