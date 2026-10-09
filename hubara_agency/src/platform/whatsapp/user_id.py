@@ -25,7 +25,7 @@ from src.platform.constants import WHATSAPP_SESSION_PREFIX
 
 _USER_ID_RE = re.compile(r"([A-Z]{2})\.([A-Za-z0-9]{1,128})")
 _USER_ID_ADDRESS_RE = re.compile(r"[A-Z]{2}[A-Za-z0-9]{1,128}")
-_PHONE_RE = re.compile(r"\d{8,15}")
+_PHONE_RE = re.compile(r"\d{6,15}")  # el mismo largo que acepta el parser (SEC-12)
 
 
 def address_from_user_id(user_id: Any) -> str | None:

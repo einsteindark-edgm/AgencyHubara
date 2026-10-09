@@ -64,3 +64,14 @@ def test_a_customer_without_phone_gets_the_timezone_of_their_country() -> None:
     assert resolve_local_timezone("wa_CO9990000000000002") == ZoneInfo("America/Bogota")
     assert resolve_local_timezone("wa_MX9990000000000002") == ZoneInfo("America/Mexico_City")
     assert resolve_local_timezone("wa_ZZ9990000000000002") == ZoneInfo("UTC")
+
+
+def test_a_conversation_the_parser_accepts_is_a_customer_conversation() -> None:
+    """Premortem 2026-10-09: el parser acepta teléfonos de 6 a 15 dígitos
+    (SEC-12) y las guardas exigían 8: una conversación de 6 o 7 dígitos
+    entraba y después las acciones del panel daban 422."""
+    from src.platform.whatsapp.user_id import is_customer_session_id
+
+    assert is_customer_session_id("wa_1234567") is True
+    assert is_customer_session_id("wa_123456") is True
+    assert is_customer_session_id("wa_12345") is False

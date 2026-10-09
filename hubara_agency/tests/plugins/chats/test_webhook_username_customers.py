@@ -62,6 +62,8 @@ def harness(monkeypatch, tmp_path):
     monkeypatch.setattr(api, "build_ingest_use_case", lambda: ingest)
     identity = FilesystemSenderIdentity(tmp_path / "_identity")
     monkeypatch.setattr(api, "build_sender_identity", lambda: identity)
+    phones = FilesystemSenderIdentity(tmp_path / "_phones")
+    monkeypatch.setattr(api, "build_phone_identity", lambda: phones)
     return TestClient(app), ingest
 
 
@@ -106,6 +108,20 @@ def test_when_the_phone_shows_up_later_the_customer_stays_in_their_conversation(
     client.post("/api/webhook", json=_body(_msg("wamid.U2", phone=_PHONE, user_id=_BSUID)))
 
     assert [m.from_number for m in ingest.calls] == [_ADDRESS, _ADDRESS]
+
+
+def test_a_customer_who_started_without_phone_keeps_their_conversation_if_only_the_phone_comes(harness) -> None:
+    """Premortem 2026-10-09: el teléfono que Meta empieza a mandar se
+    descartaba sin recordarlo. Si después llega un mensaje solo con `from`
+    (sin `from_user_id`), abría `wa_57…`: otra conversación, sin el borrador
+    ni el formulario ni el pedido."""
+    client, ingest = harness
+
+    client.post("/api/webhook", json=_body(_msg("wamid.U1", user_id=_BSUID)))
+    client.post("/api/webhook", json=_body(_msg("wamid.U2", phone=_PHONE, user_id=_BSUID)))
+    client.post("/api/webhook", json=_body(_msg("wamid.U3", phone=_PHONE)))
+
+    assert [m.from_number for m in ingest.calls] == [_ADDRESS, _ADDRESS, _ADDRESS]
 
 
 def test_a_phone_customer_who_later_arrives_only_with_their_meta_id_stays_in_their_conversation(harness) -> None:
