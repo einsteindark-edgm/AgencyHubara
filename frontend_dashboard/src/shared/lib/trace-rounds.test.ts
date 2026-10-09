@@ -99,4 +99,21 @@ describe("roundInput (lo que el bot le manda al modelo en cada ronda)", () => {
       { kind: "note", text: `Tu send_reply NO se envió. ${CONTRACT_NOTE}` },
     ]);
   });
+
+  it("la ronda de lo prometido deja su nota, como la lee el modelo", () => {
+    // Incidente del 2026-10-09: «Te paso el formulario» sin la herramienta.
+    const note = "Prometiste el formulario de envío y no lo mandaste: llama request_shipping_details.";
+    const steps: TraceStep[] = [
+      { i: 0, at_ms: 0, kind: "inbound", messages: [{ text: "contra entrega" }] },
+      { i: 1, at_ms: 10, kind: "llm", round: 1, tool_calls: ["send_reply"], text_fate: "none" },
+      { i: 2, at_ms: 20, kind: "tool", name: "send_reply", ok: true, args: { text: "Te paso el formulario 🤍" }, excerpt: '{"reply": {"text": "Te paso…"}}' },
+      { i: 3, at_ms: 30, kind: "guard", name: "promised_action_round", before: "Te paso el formulario 🤍", after: note, tools: ["send_reply"] },
+      { i: 4, at_ms: 40, kind: "llm", round: 2, tool_calls: ["request_shipping_details"], text_fate: "none" },
+    ];
+
+    expect(roundInput(steps, 4).items).toEqual([
+      { kind: "tool", name: "send_reply", text: '{"reply": {"text": "Te paso…"}}' },
+      { kind: "note", text: `Tu send_reply NO se envió. ${note}` },
+    ]);
+  });
 });

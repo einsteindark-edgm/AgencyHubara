@@ -107,6 +107,25 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText(CONTRACT_NOTE)).toBeVisible();
   });
 
+  it("la ronda de lo prometido: la respuesta retenida y la nota que recibió el modelo", () => {
+    // Incidente del 2026-10-09: «Te paso el formulario» sin la herramienta.
+    const promise = "Perfecto, contra entrega. Te paso el formulario para los datos de envío 🤍";
+    const note = "Prometiste el formulario de envío y no lo mandaste: llama request_shipping_details.";
+    const steps: TraceStep[] = [
+      { i: 0, at_ms: 0, kind: "inbound", messages: [{ text: "contra entrega" }] },
+      { i: 1, at_ms: 10, kind: "llm", round: 1, tool_calls: ["send_reply"], text_fate: "none" },
+      { i: 2, at_ms: 20, kind: "tool", name: "send_reply", ok: true, args: { text: promise }, excerpt: '{"reply": {"text": "Perfecto…"}}' },
+      { i: 3, at_ms: 30, kind: "guard", name: "promised_action_round", before: promise, after: note, tools: ["send_reply"] },
+      { i: 4, at_ms: 40, kind: "llm", round: 2, tool_calls: ["request_shipping_details"], text_fate: "none" },
+    ];
+    const row = layoutSequence(steps).rows.findIndex((r) => r.stepIndex === 1 && r.from !== 1);
+    show(steps, row === -1 ? 2 : row); // ronda 1 → pide responder al cliente
+
+    expect(screen.getByText("no salió: el bot la retuvo")).toBeVisible();
+    expect(screen.getByText("retuvo la respuesta: prometía algo que todavía no hizo")).toBeVisible();
+    expect(screen.getByText(note)).toBeVisible();
+  });
+
   it("la herramienta dice cuál se ejecutó y con qué, a la vista", () => {
     show(t20, 3); // Bot → Herramientas: set_order_slot
 

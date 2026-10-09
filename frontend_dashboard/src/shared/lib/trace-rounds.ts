@@ -48,6 +48,7 @@ export interface RoundInputView {
 /** La nota que el bot le deja al modelo cuando una protección le pide otra ronda. */
 const ROUND_NOTES: Record<string, (after: string) => string> = {
   contract_extra_round: (after) => `Tu send_reply NO se envió. ${after}`,
+  promised_action_round: (after) => `Tu send_reply NO se envió. ${after}`,
   turn_policy_extra_round: (after) => after,
   send_reply_retry: () =>
     "Tu send_reply NO se envió: otra herramienta del mismo paso falló. Lee el error y vuelve a responderle al cliente con send_reply.",

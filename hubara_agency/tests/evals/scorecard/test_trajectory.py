@@ -82,6 +82,19 @@ def test_the_form_the_safety_net_sent_counts_as_sent() -> None:
     assert traj.turns[1].intents == ()
 
 
+def test_the_rates_the_safety_net_sent_count_as_sent() -> None:
+    """Revisión del premortem (2026-10-09): la red también manda las tarifas
+    prometidas («te comparto las tarifas») sin tool del LLM; TAG-09 las daba
+    por no enviadas aunque el cliente las vio."""
+    sent = _trace(1, steps=[{"kind": "outbound", "at_ms": 9, "bubbles": [
+        {"kind": "shipping_rates", "wamid": "wamid.r1", "delivered": True},
+    ]}])
+
+    traj = build_trajectory([sent], session_id="wa_100000000001", episode={"episode_id": "ep_007"})
+
+    assert traj.turns[0].intents == ("shipping_rates",)
+
+
 def test_a_handoff_from_remarketing_is_read_as_a_handoff_not_as_the_customer() -> None:
     # La plataforma ya no marca el traspaso en `trigger` (siempre «customer»):
     # el turno que es SOLO un traspaso trae el encuadre de la plataforma como
