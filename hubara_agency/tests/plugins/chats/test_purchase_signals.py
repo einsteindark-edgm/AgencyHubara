@@ -78,6 +78,17 @@ def test_a_purchase_detail_with_a_time_word_is_not_a_deferral(text: str) -> None
 
 @pytest.mark.parametrize(
     "text",
+    ["Listo, lo pago mañana por nequi", "dale, mañana lo pago", "Confirmo, lo pago cuando llegue a la casa"],
+)
+def test_saying_when_they_pay_is_not_a_deferral(text: str) -> None:
+    """Premortem 2026-10-09: cuándo paga no aplaza la compra; leído como
+    aplazamiento, `register_order` frenaba con `customer_deferred` a un
+    cliente que ya había tocado ✅ Confirmar."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
     ["Te aviso", "Les confirmo más tarde", "Después hablamos", "Déjame pensarlo", "Lo voy a pensar", "Más tarde lo pido"],
 )
 def test_leaving_it_for_later_is_a_deferral(text: str) -> None:

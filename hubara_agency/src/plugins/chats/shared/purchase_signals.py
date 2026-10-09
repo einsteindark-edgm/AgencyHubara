@@ -50,15 +50,17 @@ _DEFERRAL_PATTERNS = [
         r"\bpensarlo\b",
         r"\blo voy a pensar\b",
         r"\bdeja(me)? (que )?(lo )?(miro|mirar|reviso|revisar|pienso|pensar|veo|ver|consulto|consultar)\b",
-        # «cuando llegue a la casa»: no «cuando llegue pago en efectivo».
-        r"\bcuando llegue a\b",
     )
 ]
+#: «cuando llegue a la casa lo veo» aplaza; «lo pago cuando llegue a la casa»
+#: dice cuándo paga (premortem 2026-10-09): no cuenta si el mensaje habla de pagar.
+_ARRIVAL_RE = re.compile(r"\bcuando llegue a\b")
+_PAYS_RE = re.compile(r"\b(?:pago|pagar|pagamos|pagaria|pague|consigno|transfiero)\b")
 #: Dejarlo para después: «te aviso / te confirmo / te escribo» o «lo hago /
 #: lo pido / lo miro» con un momento («luego», «mañana», «más tarde»)…
 _LATER_VERB_RE = re.compile(
     r"\b(?:te|les|le) (?:aviso|escribo|confirmo|digo|cuento|hablo)\b"
-    r"|\b(?:lo|la|los|las) (?:hago|pido|compro|reviso|veo|miro|pago|confirmo|decido)\b"
+    r"|\b(?:lo|la|los|las) (?:hago|pido|compro|reviso|veo|miro|confirmo|decido)\b"
     r"|\b(?:hablamos|seguimos|nos hablamos|lo vemos)\b"
 )
 _LATER_TIME_RE = re.compile(
@@ -98,6 +100,8 @@ def detect_deferral(text: str | None) -> bool:
         return False
     norm = _normalize(text)
     if any(p.search(norm) for p in _DEFERRAL_PATTERNS):
+        return True
+    if _ARRIVAL_RE.search(norm) and not _PAYS_RE.search(norm):
         return True
     if _LATER_AT_END_RE.search(norm):
         return True
