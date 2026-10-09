@@ -155,9 +155,28 @@ _HANDOFF_PROMISE_RE = re.compile(
 )
 
 
+#: Premortem 2026-10-09: un aviso atado a un evento del pedido («nuestro
+#: equipo te avisa cuando despachemos») lo manda el sistema: no es un relevo
+#: (misma excepción que la regla del bot, `capabilities/texto.py`).
+_ORDER_EVENT_RE = re.compile(
+    r"\bcuando\s+(?:lo\s+|te\s+lo\s+|la\s+)?(?:despach\w*|salga\w*|sale\b|envi(?:e|emos)\b"
+    r"|este\s+list[oa]|estemos\b|tengamos\s+la\s+guia|haya\s+novedad\w*"
+    r"|(?:tu|el|su)\s+pedido\s+(?:este|salga|llegue|vaya))"
+)
+_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]?")
+
+
 def _plain(text: str) -> str:
     folded = unicodedata.normalize("NFKD", text.lower())
     return " ".join("".join(c for c in folded if not unicodedata.combining(c)).split())
+
+
+def _promises_handoff(text: str) -> bool:
+    for sentence in _SENTENCE_RE.findall(_plain(text)):
+        match = _HANDOFF_PROMISE_RE.search(sentence)
+        if match and not _ORDER_EVENT_RE.search(sentence[match.start():]):
+            return True
+    return False
 
 
 @code_check("TAG-08")
@@ -165,7 +184,7 @@ def tag_08(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     promised = None
     for t in judged_turns(traj):
         for text in t.sent_texts:
-            if not _HANDOFF_PROMISE_RE.search(_plain(text)):
+            if not _promises_handoff(text):
                 continue
             if t.state.get("route") != "humano" and not t.tool_ok("escalate_to_human"):
                 return failed("TAG-08", t.turn, f"turno {t.turn}: prometió un colega sin escalar {quote(text)}")

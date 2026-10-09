@@ -40,6 +40,12 @@ NOT_PROMISES = (
     "¿En qué color lo quieres, lila o azul?",
     "Te paso el enlace con un descuento para tu próxima compra 🤍",
     "Coordino la entrega contigo: ¿a qué hora te queda bien?",
+    # Premortem 2026-10-09: un aviso que llega con un evento del pedido (lo
+    # manda el sistema al despachar) no es pasarle la conversación a nadie;
+    # leerlo como relevo escalaba y callaba al bot en plena venta.
+    "Listo 🤍 Nuestro equipo te avisa cuando despachemos tu pedido.",
+    "El equipo te confirma la guía cuando salga el envío 🚚",
+    "Un colega te escribe cuando tu pedido esté listo para despachar.",
 )
 
 

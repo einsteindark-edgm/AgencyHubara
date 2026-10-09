@@ -466,10 +466,29 @@ _RELEVO_RE = re.compile(
 )
 
 
+#: «cuando despachemos / salga el envío / esté listo tu pedido…»: un aviso
+#: que llega con un evento del pedido.
+_ORDER_EVENT_RE = re.compile(
+    r"\bcuando\s+(?:lo\s+|te\s+lo\s+|la\s+)?(?:despach\w*|salga\w*|sale\b|envi(?:e|emos)\b"
+    r"|este\s+list[oa]|estemos\b|tengamos\s+la\s+guia|haya\s+novedad\w*"
+    r"|(?:tu|el|su)\s+pedido\s+(?:este|salga|llegue|vaya))"
+)
+_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?\n]?")
+
+
 def promises_a_handoff(text: str | None) -> bool:
     """¿El texto le dice al cliente que una persona del equipo lo va a
-    contactar, coordinar o confirmar algo con él? (la regla de `relevo`)."""
-    return bool(_RELEVO_RE.search(plain(" ".join(str(text or "").split()))))
+    contactar, coordinar o confirmar algo con él? (la regla de `relevo`).
+
+    Un aviso atado a un evento del pedido («nuestro equipo te avisa cuando
+    despachemos», «te confirmo la guía cuando salga el envío») no le pasa la
+    conversación a nadie: lo manda el sistema al despachar (premortem
+    2026-10-09: escalaba y callaba al bot en plena venta)."""
+    for sentence in _SENTENCE_RE.findall(plain(" ".join(str(text or "").split()))):
+        match = _RELEVO_RE.search(sentence)
+        if match and not _ORDER_EVENT_RE.search(sentence[match.start():]):
+            return True
+    return False
 
 
 @en_retiro("clase:relevo")

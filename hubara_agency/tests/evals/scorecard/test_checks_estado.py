@@ -153,6 +153,15 @@ def test_tag08_a_reply_without_a_promise_is_not_judged() -> None:
     assert run("TAG-08", t).verdict == "no_aplica"
 
 
+def test_tag08_an_order_event_notice_is_not_a_promise() -> None:
+    """Premortem 2026-10-09: «nuestro equipo te avisa cuando despachemos» es el
+    aviso que manda el sistema al despachar, no un colega que se hace cargo."""
+    t = traj(T(1, sent=["Listo 🤍 Nuestro equipo te avisa cuando despachemos tu pedido."],
+               state=_tag_state("NO_ETIQUETADO")))
+
+    assert run("TAG-08", t).verdict == "no_aplica"
+
+
 def test_tag08_is_a_major_state_check() -> None:
     from src.plugins.chats.agent.sales_eval.scorecard.registry import REGISTRY_VERSION, SPECS_BY_ID
 
