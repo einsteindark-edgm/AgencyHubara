@@ -22,8 +22,9 @@ clientes; ledger de inbound).
 |---|---|
 | Dirección del cliente | teléfono (`573001234567`) o BSUID **sin el punto** (`CO9990000000000002`) |
 | Conversación | `wa_<dirección>` — el punto no se admite en un directorio del vault (`is_vault_session_id`) |
-| Envío | `_post_json` (platform) traduce: dirección-BSUID → `"recipient": "CO.1502…"`; teléfono → `"to"` |
+| Envío | `_post_json` (platform) traduce: dirección-BSUID → `"recipient": "CO.9990…"`; teléfono → `"to"` |
 | Mismo cliente, con y sin teléfono | `<vault>/_identity/whatsapp_user_ids/<CC><id>` fija su conversación (el primero gana) |
+| Mismo cliente que empezó sin teléfono | `<vault>/_identity/whatsapp_phones/<teléfono>` → su conversación `wa_<CC><id>`: lo que después llegue solo con `from` sigue ahí (premortem 2026-10-09). No se escribe si `wa_<teléfono>` ya existe: esa conversación es la del teléfono |
 
 La dirección se distingue de un teléfono porque empieza con 2 letras, y se
 reconstruye exacta (el país siempre son 2 letras).
@@ -32,7 +33,7 @@ reconstruye exacta (el país siempre son 2 letras).
 
 | Símbolo | Rol |
 |---|---|
-| `address_from_user_id` | `CO.1502…` → `CO1502…`; `None` si no es el BSUID de quien escribe (id "padre" `CC.ENT.…`, traversal, > 128) |
+| `address_from_user_id` | `CO.9990…` → `CO9990…`; `None` si no es el BSUID de quien escribe (id "padre" `CC.ENT.…`, traversal, > 128) |
 | `is_user_id_address` | ¿la dirección es un BSUID (y no un teléfono)? — para no mostrarlo ni usarlo como teléfono |
 | `is_customer_session_id` | `wa_<teléfono 8-15 dígitos>` o `wa_<BSUID sin punto>`: la guarda de las rutas que reciben un `session_id` de un cliente real |
 

@@ -810,17 +810,78 @@ cliente aplazó. La confirmación vive donde compromete: la tarjeta ✅ y
 - WHEN el ingest procesa el mensaje
 - THEN `order_draft.confirmed_at_ms` queda registrado
 
-### Requirement: El formulario que el texto promete sale
+### Requirement: Lo que el texto promete, el turno lo hace (2026-10-09)
 
-Antes de enviar el texto final del turno (`ensure_promised_handoff_activity`),
-si el texto le promete al cliente el formulario de envío ("te paso el
-formulario", "te envío el formulario", "ahí te va el formulario"; una pregunta
-no promete) y en el episodio activo el formulario no está en la cola ni salió,
-el sistema SHALL encolarlo con `request_shipping_details` y los ítems del
-borrador (producto del catálogo y cantidad; sin cantidad, una). Sus guardas
-siguen valiendo (un aplazamiento no lo recibe). Si el borrador no se cruza con
-el catálogo, no se adivina. Incidente del 2026-10-09: el bot lo prometió dos
-turnos seguidos sin llamar la tool y el operador lo mandó a mano.
+Incidente del 2026-10-09: el bot V2 cerró dos turnos con «Te paso el
+formulario para los datos de envío» por `send_reply` y nunca llamó
+`request_shipping_details`; el operador lo mandó a mano. Un texto que le
+promete al cliente un componente PARA AHORA SHALL ir con la tool que lo manda:
+
+| Lo que promete | Lo cumple |
+|---|---|
+| el formulario de envío | `request_shipping_details` |
+| las tarifas de envío | `send_shipping_rates` |
+| el resumen del pedido | `present_order_confirmation` |
+| el catálogo | `present_products` / `list_categories` / `present_product_gallery` |
+| las fotos | `present_product_detail` / `present_product_gallery` / `present_products` |
+| las opciones (aromas, colores) | `present_variant_picker` |
+| «tu pedido quedó registrado» | `register_order` (una orden registrada) |
+
+`send_reply` SHALL grabar en su resultado (`promises`: kind, tools, nota) lo
+que el texto promete y el estado todavía no cumple: un componente ya en la cola
+del turno, el formulario ya entregado en el episodio o una orden registrada lo
+cumplen. Después del paso COMPLETO del modelo, `run_agent_turn` SHALL retener
+el texto y dar UNA ronda más con la nota que nombra la tool si ninguna tool del
+turno que salió (no rechazada) lo cumple; el orden del paso no importa. Si la
+ronda se contesta solo con la tool prometida, el texto retenido sale
+(`promised_action_text_kept`). Si el modelo insiste sin la tool, o es la última
+vuelta del turno, el texto sale. No hay ronda si la puerta del contrato ya pidió
+otra, si el turno espera al cliente o si una etiqueta lo cierra. Va detrás del
+parche `promised-actions-round-v1` y aplica a los dos bots (V1 y V2 comparten
+`send_reply` y `run_agent_turn`); remarketing y ETA no tienen `send_reply`.
+
+No son promesas: una oferta («si quieres te envío las fotos»), una pregunta
+(«¿te paso el formulario?»), un condicional antes o después («cuando me
+confirmes el color te paso el resumen», «te paso el formulario apenas elijas el
+aroma»), un pedido al cliente («dime el color y te paso el formulario») ni lo
+que ya salió («te dejo el formulario arriba»). El historial del LLM no guarda
+las notas (`promises` se quita del resultado de `send_reply`). El scorecard lo
+mide con TAG-09; el paso a paso lo muestra en palabras.
+
+#### Scenario: El bot promete el formulario sin la tool
+
+- GIVEN un borrador listo para el envío
+- WHEN el modelo llama solo `send_reply` con «Perfecto, contra entrega. Te paso el formulario para los datos de envío 🤍»
+- THEN el texto no sale en esa ronda y el modelo recibe «Tu send_reply NO se envió.» con la nota que nombra `request_shipping_details`
+- AND si la ronda siguiente llama `request_shipping_details`, sale el texto retenido y después el formulario
+
+#### Scenario: La tool va en el mismo paso
+
+- GIVEN el modelo llama `send_reply` («te paso el formulario») y `request_shipping_details` en el mismo paso, en cualquier orden
+- WHEN termina el paso
+- THEN no hay ronda extra
+
+#### Scenario: Una oferta no es promesa
+
+- WHEN el texto dice «Si quieres te envío las fotos del Velón Koala.»
+- THEN `send_reply` no graba `promises` y el turno sigue como siempre
+
+### Requirement: El formulario y las tarifas que el texto promete salen
+
+Detrás de la ronda (por si el modelo insiste sin la tool), antes de enviar el
+texto final del turno (`ensure_promised_handoff_activity`): si el texto le
+promete al cliente el formulario de envío ("te paso el formulario", "te envío
+el formulario", "ahí te va el formulario"; una pregunta no promete) y en el
+episodio activo el formulario no está en la cola ni salió, el sistema SHALL
+encolarlo con `request_shipping_details` y los ítems del borrador (producto del
+catálogo y cantidad). Sus guardas siguen valiendo (un
+aplazamiento no lo recibe; un formulario por turno). Si el borrador no se cruza
+con el catálogo, falta la cantidad o falta elegir una variante con varias
+opciones, no se adivina. Las tarifas prometidas («te comparto las tarifas de
+envío») que no están en la cola SHALL encolarse con `send_shipping_rates` (la
+tarjeta no lleva argumentos). Cada red es best-effort: su falla no tumba la del
+relevo. Incidente del 2026-10-09: el bot prometió el formulario dos turnos
+seguidos sin llamar la tool y el operador lo mandó a mano.
 
 #### Scenario: El bot promete el formulario sin la tool
 
@@ -833,6 +894,12 @@ turnos seguidos sin llamar la tool y el operador lo mandó a mano.
 - GIVEN un formulario entregado después del inicio del episodio activo
 - WHEN el texto vuelve a decir «te paso el formulario»
 - THEN no se encola otro
+
+#### Scenario: El bot promete las tarifas sin la tarjeta
+
+- WHEN el texto final dice «Te comparto las tarifas de envío 🚚» y la tarjeta no está en la cola
+- THEN la tarjeta de tarifas queda en la cola y sale después del texto
+- AND TAG-09 la cuenta como enviada (la burbuja entregada en el paso a paso)
 
 ### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
 
@@ -1577,6 +1644,13 @@ Antes de enviar el texto final de un turno que no escaló, V1 y V2 SHALL pregunt
 - GIVEN el LLM llamó `escalate_to_human` y su despedida dice «Un colega del equipo te responde en este mismo chat»
 - WHEN el workflow envía la despedida
 - THEN la red no se consulta
+
+#### Scenario: Un aviso del pedido no es un relevo (premortem 2026-10-09)
+
+- GIVEN el texto dice «Nuestro equipo te avisa cuando despachemos tu pedido» o «El equipo te confirma la guía cuando salga el envío»
+- WHEN la red consulta `relevo`
+- THEN no escala (el aviso lo manda el sistema al despachar; escalar callaba al bot en plena venta)
+- AND «Alguien de despachos te contacta cuando salga tu pedido para coordinar la dirección» SÍ es relevo: coordinar, acordar o tomar algo con el cliente es hacerse cargo, aunque nombre el despacho (ventas-5, regla del bot y TAG-08)
 
 ### Requirement: Las notas del turno no cambian las instrucciones (2026-10-06)
 

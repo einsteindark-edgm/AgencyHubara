@@ -8,8 +8,10 @@ ninguna tool del turno que salió (no rechazada) lo cumple, el texto se retiene
 y hay UNA ronda más con la nota: el modelo llama la tool y reenvía su texto.
 El orden del paso no importa (`[send_reply, formulario]` cumple). Si el modelo
 insiste sin la tool, el texto sale (una sola ronda; la red de la activity
-sigue detrás para el formulario). Sin `promises` grabadas el turno es el de
-siempre (V1, remarketing, ETA y las historias viejas no se enteran).
+sigue detrás para el formulario y las tarifas). Sin `promises` grabadas el
+turno es el de siempre. Aplica a los dos bots de ventas (V1 y V2 comparten
+`send_reply` y `run_agent_turn`, detrás del parche); remarketing (sin
+`send_reply`), ETA y las historias viejas no se enteran.
 """
 from __future__ import annotations
 
