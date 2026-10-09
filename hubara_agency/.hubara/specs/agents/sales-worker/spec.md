@@ -1515,6 +1515,14 @@ El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perceptio
 
 En una conversación del workflow V2 (`HubaraSalesSessionWorkflowV2`), toda lectura semántica del texto del cliente o del LLM SHALL decidirse en el motor de decisiones: una capacidad con su pregunta a Jev, su política y la regla de hoy como respaldo DENTRO del motor. Ninguna regla de texto MUST volver a juzgar después lo que el motor decidió. V1, remarketing y ETA MUST seguir byte a byte como hoy. El laboratorio (brazo B) y el perfil por defecto de producción MUST correr el MISMO perfil del bot nuevo (`jev-v3`).
 
+Excepción (decisión del operador, 2026-10-09, opción B del premortem del incidente del formulario): lo que el texto del bot promete hacer AHORA (el formulario, las tarifas, el resumen, el catálogo, las fotos, las opciones, «tu pedido quedó registrado») lo lee el detector de código `chats/agent/sales/use_cases/promised_actions.py`, en V1 y V2, sin preguntarle a Jev. No juzga lo que el motor decidió: lee el texto que el bot ya decidió enviar, y su único efecto es una ronda más para la tool prometida (`promised-actions-round-v1`, también en V1 porque `run_agent_turn` es compartido) o la red que manda el formulario o las tarifas. Una frase mal leída se arregla ahí, con su caso en `test_promised_actions.py`; no es una capacidad del motor (ver «Lo que el texto promete, el turno lo hace»).
+
+#### Scenario: Lo que el bot promete lo lee el detector, no el motor (excepción 2026-10-09)
+
+- GIVEN una conversación V2 y el texto «Te paso el formulario para los datos de envío» sin `request_shipping_details` en el turno
+- WHEN `send_reply` lo valida
+- THEN el detector `promised_actions` graba la promesa sin preguntarle a Jev y el turno da UNA ronda más; ninguna capacidad del motor decide si el texto promete
+
 #### Scenario: El envío respeta lo que decidió el motor
 
 - GIVEN una conversación V2 con `destinatario` en Jev y un texto «Usa el código VELAS_10 al pagar» que el egreso aprobó
