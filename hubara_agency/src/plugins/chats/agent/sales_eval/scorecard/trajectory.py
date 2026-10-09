@@ -256,6 +256,21 @@ def _with_category_menu(intents: tuple[str, ...], raw_tools: Any) -> tuple[str, 
     return tuple(out) if "categories" in out else (*out, "categories")
 
 
+def _with_net_form(intents: tuple[str, ...], steps: Any) -> tuple[str, ...]:
+    """El formulario que salió en el flush del turno sin que una tool del LLM
+    lo pidiera: lo mandó la red del formulario prometido (incidente del
+    2026-10-09, `ensure_promised_handoff_activity`). El cliente lo vio."""
+    if "shipping_flow" in intents:
+        return intents
+    delivered = any(
+        isinstance(b, dict) and b.get("kind") == "shipping_flow" and b.get("delivered") is True
+        for step in steps or []
+        if isinstance(step, dict) and step.get("kind") == "outbound"
+        for b in step.get("bubbles") or []
+    )
+    return (*intents, "shipping_flow") if delivered else intents
+
+
 def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
     return {
         "closing_tag": episode.get("closing_tag"),
@@ -308,7 +323,7 @@ def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
         suppressed_reason=raw.get("suppressed_reason"),
         discarded_narration=tuple(str(x) for x in raw.get("discarded_narration") or []),
         tools=tools,
-        intents=_with_category_menu(_intents_for(tools, guards), raw.get("tools")),
+        intents=_with_net_form(_with_category_menu(_intents_for(tools, guards), raw.get("tools")), raw.get("steps")),
         guards=guards,
         stage_in=raw.get("stage_in"),
         stage_out=raw.get("stage_out"),

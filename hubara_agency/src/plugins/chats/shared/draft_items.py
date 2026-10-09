@@ -36,3 +36,14 @@ def product_key(name: Any) -> str:
     return " ".join(
         "".join(c for c in folded if not unicodedata.combining(c)).split()
     )
+
+
+def find_product(products: list[Any], name: Any) -> Any | None:
+    """Producto cuyo título o handle es ``name`` (sin acentos/mayúsculas)."""
+    wanted = product_key(name)
+    if not wanted:
+        return None
+    return next(
+        (p for p in products if wanted in (product_key(p.title), product_key(p.handle))),
+        None,
+    )

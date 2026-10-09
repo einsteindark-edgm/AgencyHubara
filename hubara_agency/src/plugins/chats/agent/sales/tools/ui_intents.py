@@ -1178,22 +1178,20 @@ def _catalog_unavailable(error: Exception) -> str:
 # ciudad/barrio/dirección/teléfono/pago en un solo mensaje.
 
 
-def _shipping_precondition_rejection(
-    session_key: str, *, order_total_cop: int, items_summary: str
-) -> dict[str, Any] | None:
+def _shipping_precondition_rejection(session_key: str) -> dict[str, Any] | None:
     """Envelope de rechazo para `request_shipping_details`, o None si procede.
 
-    Lee el metadata de la sesión (mismo store que `_append_intent`). Dos
-    casos, en este orden:
-      1. El ÚLTIMO inbound fue un aplazamiento → `customer_deferred`.
-      2. No hay confirmación de compra en el episodio (ni orden registrada)
-         → `purchase_not_confirmed` con el siguiente paso explícito.
+    Lee el metadata de la sesión (mismo store que `_append_intent`). Solo
+    frena un aplazamiento: si el ÚLTIMO inbound fue un «después» (incidente
+    2026-09-14, «Voy apenas en camino a casa») → `customer_deferred`.
+
+    No exige una confirmación de compra (criterio del operador, incidente del
+    2026-10-09): el cliente había elegido producto, ciudad y «el contra
+    entrega», el bot le escribió «Te paso el formulario» y la guarda lo frenó
+    porque nadie anotó un «sí». El formulario no compromete nada: la compra se
+    confirma en la tarjeta ✅ y en `register_order` (`closing_blocker`).
     """
-    from src.plugins.chats.agent.sales.use_cases.order_draft import get_projectable_draft
-    from src.plugins.chats.shared.purchase_signals import (
-        current_signal,
-        has_purchase_confirmation,
-    )
+    from src.plugins.chats.shared.purchase_signals import current_signal
 
     data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
     signal = current_signal(data)
@@ -1208,22 +1206,7 @@ def _shipping_precondition_rejection(
                 "breve y espera a que retome; no se mostró nada al cliente."
             ),
         }
-    if has_purchase_confirmation(data):
-        return None
-    slots = get_projectable_draft(data) or {}
-    producto = str(slots.get("producto") or "").strip() or items_summary
-    precio = f"${order_total_cop:,} COP".replace(",", ".")
-    return {
-        "queued": False,
-        "error": "purchase_not_confirmed",
-        "message": (
-            f"El cliente todavía NO confirmó que quiere comprar {producto}. "
-            f"Antes de pedir datos de envío: dile el precio ({precio}) y "
-            "pregúntale si lo dejamos así (send_quick_replies sí / cambiar algo). "
-            "Cuando responda que sí, vuelve a llamar request_shipping_details. "
-            "No se mostró nada al cliente."
-        ),
-    }
+    return None
 
 
 def _draft_items_of(session_key: str) -> list[dict[str, Any]]:
@@ -1442,12 +1425,10 @@ class RequestShippingDetailsTool(ToolBase):
             "📦 [TOOL request_shipping_details] session={} total={} COP (catálogo)",
             ctx.session_key, order_total_cop,
         )
-        # Guardas deterministas (2026-09-14, runs 01a0a0eb/01a0a0f1): el
-        # formulario de envío es un paso de CIERRE. No sale si el cliente
-        # acaba de aplazar ("voy en camino a casa") ni si nunca dijo que sí.
-        rejection = _shipping_precondition_rejection(
-            ctx.session_key, order_total_cop=order_total_cop, items_summary=items_summary
-        )
+        # Guarda determinista (2026-09-14, runs 01a0a0eb/01a0a0f1): no sale si
+        # el cliente acaba de aplazar ("voy en camino a casa"). Sin exigir un
+        # «sí» antes (incidente del 2026-10-09).
+        rejection = _shipping_precondition_rejection(ctx.session_key)
         if rejection is not None:
             logger.warning(
                 "📦 [TOOL request_shipping_details] session={} rechazada: {}",

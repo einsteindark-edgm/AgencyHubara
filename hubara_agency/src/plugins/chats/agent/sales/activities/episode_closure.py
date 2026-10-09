@@ -39,6 +39,7 @@ from __future__ import annotations
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import copy
+import json
 import time
 from typing import Any
 
@@ -254,6 +255,13 @@ async def ensure_closing_escalation_activity(
     return escalated
 
 
+def _catalog_client() -> Any:
+    """El catálogo del worker (el snapshot de `catalog_sync`)."""
+    from src.sdk.catalogkit import get_catalog_client
+
+    return get_catalog_client()
+
+
 #: Motivo con el que la red deja la conversación en la bandeja humana.
 _PROMISED_HANDOFF_REASON = "OTHER"
 _PROMISE_IN_MOTIVO = 300
@@ -261,7 +269,12 @@ _PROMISE_IN_MOTIVO = 300
 
 @activity.defn(name="ensure_promised_handoff")
 async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
-    """Red de seguridad del relevo prometido (laboratorio caso-cortesia-1001,
+    """Las promesas del texto final del turno, antes de enviarlo.
+
+    Si promete el formulario de envío y no salió, lo encola
+    (`_ensure_promised_shipping_form`; el flush lo manda después del texto).
+
+    Red de seguridad del relevo prometido (laboratorio caso-cortesia-1001,
     2026-09-30): el bot le dijo al cliente «un colega del equipo coordina
     contigo la entrega» sin llamar `escalate_to_human`, y la conversación
     siguió en la ruta del bot. Nadie la veía en la bandeja humana.
@@ -287,6 +300,8 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
     if data.get("active_route") == ROUTE_HUMANO:
         return False
     if not await promised_handoff(text, session_id=session_id, vault_dir=WORKSPACE_VAULT_DIR):
+        # La otra promesa del texto: el formulario de envío (2026-10-09).
+        await _ensure_promised_shipping_form(session_id, text, data)
         return False
     try:
         now_ms = int(activity.info().scheduled_time.timestamp() * 1000)
@@ -306,6 +321,80 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
         )
         _write_own_changes(session_id, base, data)
     return escalated
+
+
+#: Cuántos productos del snapshot se leen para cruzar el borrador.
+_CATALOG_LIMIT = 200
+
+
+def _delivered_rows(session_id: str) -> list[dict[str, Any]]:
+    """Las filas del registro de entregas de la sesión (vacío si no hay)."""
+    from src.plugins.chats.agent.sales.activities.flush_ui_intents import _DELIVERED_LOG
+
+    path = WORKSPACE_VAULT_DIR / session_id / _DELIVERED_LOG
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
+    rows: list[dict[str, Any]] = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+async def _ensure_promised_shipping_form(session_id: str, text: str, data: dict[str, Any]) -> bool:
+    """Red del formulario prometido (incidente 2026-10-09): el bot cerró con
+    «te paso el formulario para los datos de envío» sin llamar
+    `request_shipping_details`, dos turnos seguidos, y el operador lo mandó a
+    mano. Si el texto lo promete y en el episodio no salió ni está en la cola,
+    lo pide con la misma tool (sus guardas: un cliente que acaba de aplazar no
+    lo recibe) y los ítems del borrador. Devuelve True si quedó en la cola.
+    Una falla (catálogo caído, producto que no está) deja el texto como está.
+    """
+    from exoclaw.agent.tools import ToolContext
+
+    from src.plugins.chats.agent.sales.tools.ui_intents import RequestShippingDetailsTool
+    from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import (
+        promises_shipping_form,
+        shipping_form_in_episode,
+        shipping_form_items,
+    )
+
+    if not promises_shipping_form(text):
+        return False
+    if shipping_form_in_episode(data, _delivered_rows(session_id)):
+        return False
+    catalog = _catalog_client()
+    try:
+        page = await catalog.search("", limit=_CATALOG_LIMIT)
+    except Exception as exc:  # noqa: BLE001 — sin catálogo no se adivina el pedido
+        activity.logger.warning(
+            "ensure_promised_shipping_form: catálogo no disponible (%s)", exc, extra={"session_id": session_id}
+        )
+        return False
+    products = [p for p in page.results if getattr(p, "status", "published") == "published"]
+    items = shipping_form_items(data, products)
+    if not items:
+        activity.logger.warning(
+            "ensure_promised_shipping_form: el borrador no se cruza con el catálogo — no se manda",
+            extra={"session_id": session_id},
+        )
+        return False
+    tool = RequestShippingDetailsTool(WORKSPACE_VAULT_DIR, catalog=catalog)
+    ctx = ToolContext(session_key=session_id, channel="whatsapp", chat_id=session_id)
+    envelope = json.loads(await tool.execute_with_context(ctx, items=items))
+    queued = envelope.get("queued") is True
+    activity.logger.warning(
+        "ensure_promised_shipping_form: el texto prometía el formulario sin la tool — %s",
+        "encolado (red de seguridad)" if queued else f"no salió ({envelope.get('error')})",
+        extra={"session_id": session_id},
+    )
+    return queued
 
 
 def _write_own_changes(session_id: str, base: dict[str, Any], data: dict[str, Any]) -> None:

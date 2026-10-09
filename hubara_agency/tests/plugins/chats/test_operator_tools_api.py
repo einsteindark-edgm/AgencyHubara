@@ -397,14 +397,29 @@ def test_asking_shipping_details_builds_the_items_from_the_draft(h: _Harness) ->
 
 
 def test_asking_shipping_details_keeps_the_bot_guard_and_needs_a_resolvable_draft(h: _Harness) -> None:
-    h.seed(_human(episodes=_draft(_CHOSEN, confirmed=False)))
+    # El formulario no espera un «sí» (incidente del 2026-10-09); un cliente
+    # que acaba de aplazar sí lo frena, también desde la app.
+    h.seed(_human(
+        episodes=_draft(_CHOSEN, confirmed=False),
+        last_inbound_message_id="wamid.defer",
+        last_inbound_signal={"kind": "deferral", "at_ms": _now(), "message_id": "wamid.defer", "text": "luego"},
+    ))
     r = h.run("request_shipping_details", cid="s1")
-    assert (r.status_code, r.json()["reason"]) == (422, "purchase_not_confirmed")
+    assert (r.status_code, r.json()["reason"]) == (422, "customer_deferred")
 
     h.seed(_human(episodes=_draft({**_CHOSEN, "producto": "Vela que no existe"})))
     r = h.run("request_shipping_details", cid="s2")
     assert r.status_code == 422 and r.json()["error"] == "invalid_args"
     assert h.sent_texts() == []
+
+
+def test_asking_shipping_details_does_not_wait_for_a_yes(h: _Harness) -> None:
+    h.seed(_human(episodes=_draft(_CHOSEN, confirmed=False)))
+
+    r = h.run("request_shipping_details", cid="s3")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sent"] is True
 
 
 _CLOSING = {**_CHOSEN, "ciudad": "Bogotá", "barrio": "Chapinero", "direccion": "Cl 1 # 2-3",

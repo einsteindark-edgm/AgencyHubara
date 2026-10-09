@@ -779,24 +779,59 @@ El sistema SHALL registrar de forma determinista la confirmación de compra del
 cliente (`episode.order_draft.confirmed_at_ms`): un mensaje afirmativo ("sí",
 "dale", "lo quiero", "dame 2") o el botón Confirmar, con un producto ya elegido
 en el draft del episodio activo. Sin esa confirmación (ni orden registrada):
-`request_shipping_details` SHALL rechazar la llamada con `purchase_not_confirmed`
-y el siguiente paso explícito; `manage_conversation_tag(CONFIRMADO_SIN_DATOS)`
-SHALL degradar a `INTERESADO` sin cerrar el episodio ni escalar; y
+`manage_conversation_tag(CONFIRMADO_SIN_DATOS)` SHALL degradar a `INTERESADO`
+sin cerrar el episodio ni escalar; y
 `escalate_to_human(ORDER_PENDING_SHIPPING_DETAILS)` SHALL rechazarse. La
 confirmación es episodio-scoped (incidente runs 01a0a0eb / 01a0a0f1, 2026-09-14).
 
-#### Scenario: El cliente eligió pero nunca dijo que sí
+`request_shipping_details` NO SHALL exigir esa confirmación (incidente del
+2026-10-09, criterio del operador: el formulario no espera confirmación de
+nada): solo SHALL rechazar con `customer_deferred` si el último mensaje del
+cliente aplazó. La confirmación vive donde compromete: la tarjeta ✅ y
+`register_order` (requirement siguiente).
 
-- GIVEN un draft con producto/aroma/color y sin `confirmed_at_ms`
+#### Scenario: El cliente eligió y sigue con la compra sin decir «sí»
+
+- GIVEN un draft con producto, ciudad y método de pago y sin `confirmed_at_ms`
 - WHEN el LLM llama `request_shipping_details`
-- THEN la tool devuelve `queued=false, error=purchase_not_confirmed` y no encola nada
+- THEN el formulario queda en la cola (`queued=true`)
 - AND si el ghosting etiqueta `CONFIRMADO_SIN_DATOS`, queda `INTERESADO` y la sesión sigue en ruta ventas
+
+#### Scenario: El cliente acaba de aplazar
+
+- GIVEN el último inbound "voy apenas en camino a casa"
+- WHEN el LLM llama `request_shipping_details`
+- THEN la tool devuelve `queued=false, error=customer_deferred` y no encola nada
 
 #### Scenario: El cliente dijo que sí
 
 - GIVEN un draft con producto y el inbound "sí, déjalo en azul"
 - WHEN el ingest procesa el mensaje
-- THEN `order_draft.confirmed_at_ms` queda registrado y `request_shipping_details` procede
+- THEN `order_draft.confirmed_at_ms` queda registrado
+
+### Requirement: El formulario que el texto promete sale
+
+Antes de enviar el texto final del turno (`ensure_promised_handoff_activity`),
+si el texto le promete al cliente el formulario de envío ("te paso el
+formulario", "te envío el formulario", "ahí te va el formulario"; una pregunta
+no promete) y en el episodio activo el formulario no está en la cola ni salió,
+el sistema SHALL encolarlo con `request_shipping_details` y los ítems del
+borrador (producto del catálogo y cantidad; sin cantidad, una). Sus guardas
+siguen valiendo (un aplazamiento no lo recibe). Si el borrador no se cruza con
+el catálogo, no se adivina. Incidente del 2026-10-09: el bot lo prometió dos
+turnos seguidos sin llamar la tool y el operador lo mandó a mano.
+
+#### Scenario: El bot promete el formulario sin la tool
+
+- GIVEN un draft con «Calabaza» × 3 y ningún formulario en el episodio
+- WHEN el texto final dice «Te paso el formulario para tus datos de envío»
+- THEN el formulario queda en la cola con `calabaza` × 3 y sale después del texto
+
+#### Scenario: El formulario ya salió en este episodio
+
+- GIVEN un formulario entregado después del inicio del episodio activo
+- WHEN el texto vuelve a decir «te paso el formulario»
+- THEN no se encola otro
 
 ### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
 
