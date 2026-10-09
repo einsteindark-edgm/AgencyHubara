@@ -1523,3 +1523,12 @@ def test_test_send_accepts_a_programmed_coupon_but_not_a_paused_draft_or_expired
         assert res.status_code == 422
         assert fragment in res.json()["detail"]
         assert sent == []
+
+
+def test_get_audience_conversation_de_un_cliente_sin_telefono(client: TestClient) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta
+    sin punto>`. Entra en la audiencia como cualquier otro (la plantilla le
+    llega con `recipient`), así que el visor no puede devolverle 422."""
+    res = client.get("/api/marketing/audience/wa_CO1502576394655843/conversation")
+    assert res.status_code == 200
+    assert client.get("/api/marketing/audience/wa_CO.1502/conversation").status_code == 422

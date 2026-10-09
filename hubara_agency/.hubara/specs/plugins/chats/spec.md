@@ -57,6 +57,43 @@ y el resto se perdía en silencio.
 - THEN los válidos se ingieren y se devuelve HTTP 200 (un 400 haría que Meta reintente TODO el POST y re-entregue los válidos)
 - AND cada ítem rechazado se loguea con su motivo
 
+#### Scenario: Cliente con nombre de usuario de WhatsApp (sin teléfono)
+
+Si el cliente activó su nombre de usuario y el negocio no habló con él en los
+últimos 30 días (el caso de un lead nuevo de anuncio), Meta omite el teléfono
+(`messages[].from`, `contacts[].wa_id`) y manda solo su id de Meta
+(`from_user_id` / `contacts[].user_id`, BSUID: `CO.1502576394655843`). Bug
+(ledger 2026-09-25 y 2026-10-09): el parser exigía `from`, respondía 400 y el
+cliente nunca llegaba al bot (Halloween 07–08 oct: 3 de las 8 conversaciones
+que contó Meta).
+
+- GIVEN un mensaje sin `from` y con `from_user_id` = `<CC>.<1..128 alfanuméricos>`
+- WHEN se procesa
+- THEN se ingiere en la conversación `wa_<CC><id>` (el BSUID sin el punto: directorio seguro del vault)
+- AND `WhatsAppMessage.wa_user_id` lleva el BSUID y `profile_name` sale del contacto con ese `user_id`
+- AND la respuesta al cliente sale con `"recipient": "<BSUID>"` en vez de `"to"` (la traduce `_post_json`, único punto de salida)
+- AND un `from_user_id` inválido (sin país, id "padre" `CC.ENT.…`, traversal, > 128) se rechaza como antes
+
+#### Scenario: El mismo cliente con y sin teléfono sigue en SU conversación
+
+- GIVEN un mensaje que trae BSUID
+- WHEN el BSUID ya tiene conversación (`<vault>/_identity/whatsapp_user_ids/<CC><id>`)
+- THEN el mensaje va a esa conversación, traiga o no teléfono (empezó sin teléfono → sigue en `wa_CO…`; empezó con teléfono → sigue en `wa_57…`)
+- AND si no la tiene, queda fijada la de este mensaje (el primero que escribe gana)
+
+#### Scenario: La ventana de 24 h se abre cuando el cliente escribió
+
+Meta reintenta un webhook no aceptado hasta 7 días. Con la ventana contada
+desde la LLEGADA, una re-entrega tardía parecía «ventana abierta»: el bot
+contestaba texto libre, Meta lo rechazaba (131047) y el panel no ofrecía la
+plantilla (2026-10-09).
+
+- GIVEN un mensaje con `messages[].timestamp` dentro del horizonte de reintentos de Meta (8 días)
+- WHEN se ingiere
+- THEN `last_inbound_at_ms` y `service_window_expires_at_ms` (y la ventana CTWA) salen de `min(llegada, timestamp)`
+- AND si esa ventana YA cerró al llegar, el mensaje queda en el chat y en la metadata, pero NO dispara el turno del bot ni el watchdog (`inbound_after_service_window` en el log), y NO pasa al humano: el operador lo ve con la ventana cerrada y lo reactiva con plantilla
+- AND un `timestamp` más viejo que el horizonte (reloj sintético: simulador, laboratorio) o ausente cuenta la llegada
+
 #### Scenario: Status update (no es mensaje)
 
 - GIVEN un webhook que es status update (delivered/read), no mensaje nuevo
@@ -512,7 +549,7 @@ MUST NOT afectar la respuesta al webhook.
 - GIVEN un POST válido con uno o más mensajes (en cualquier `entry`/`change`, incluido `standby`)
 - WHEN el handler lo acepta
 - THEN escribe un registro `request` (`outcome=accepted`, `fields`, `n_messages`, `n_statuses`)
-- AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
+- AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` — `wa_<teléfono>` o `wa_<CC><id>` si solo vino el BSUID —, `user_id` (el `from_user_id` crudo, también en los `rejected`) y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
 
 #### Scenario: el ingest deja su desenlace
 

@@ -127,3 +127,18 @@ def test_the_session_list_brings_the_customer_name_and_a_preview_of_the_last_mes
     sin_nombre = by_id["wa_000000000152"]
     assert sin_nombre.get("customer_name") is None  # sin perfil: la app cae al número
     assert sin_nombre.get("last_message_preview") == "buenas"  # lo último con texto
+
+
+def test_a_customer_without_phone_is_shown_by_name_not_by_their_meta_id(client) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta>`.
+    La bandeja web usa `phone_number` como nombre de la conversación; con el id
+    crudo (`CO1502576394655843`) el operador no sabría quién es."""
+    c, vault = client
+    _seed(vault, "wa_CO1502576394655843", {"profile": {"name": "Liliana"}}, [{"role": "user", "content": "hola"}])
+    _seed(vault, "wa_US9000000000003843", None, [{"role": "user", "content": "hi"}])
+
+    by_id = {s["session_id"]: s for s in c.get("/api/dashboard/sessions").json()["sessions"]}
+
+    assert by_id["wa_CO1502576394655843"]["phone_number"] == "Liliana (sin teléfono)"
+    assert by_id["wa_US9000000000003843"]["phone_number"] == "Cliente sin teléfono ···3843"
+    assert c.get("/api/dashboard/sessions/wa_CO1502576394655843").json()["phone_number"] == "Liliana (sin teléfono)"

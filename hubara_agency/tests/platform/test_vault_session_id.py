@@ -45,7 +45,7 @@ def test_runtime_reexports_the_platform_predicate():
         "_analytics",  # directorios del vault que NO son sesiones
         "_campaigns",
         "no-wa-prefix",
-        "wa_" + "1" * 121,  # pasado el tope de largo
+        "wa_" + "1" * 131,  # pasado el tope de largo
     ],
 )
 def test_rejects_anything_that_is_not_a_session_directory_name(session_id):
@@ -59,7 +59,8 @@ def test_rejects_anything_that_is_not_a_session_directory_name(session_id):
         "wa_+15550001111",  # prefijo E.164 con `+`
         "wa_test_enum",  # sesiones de test con guion bajo
         "wa_Q1",
-        "wa_" + "1" * 120,  # justo en el tope
+        "wa_CO1502576394655843",  # cliente sin teléfono: su id de Meta (BSUID) sin el punto
+        "wa_CO" + "a" * 128,  # el id de Meta más largo (país + 128) — justo en el tope
     ],
 )
 def test_accepts_the_session_id_shapes_that_really_exist(session_id):

@@ -100,9 +100,10 @@ def atomic_write_json(path: Path, data: Any) -> None:
 # traversal -- sin `.`, sin `/`, sin `\` -- y el tope de largo evita que un
 # segmento desmedido reviente `Path.exists()` (ENAMETOOLONG). Cubre las formas
 # que existen de verdad: `wa_<digitos>` (el `from` de Meta), `wa_+<digitos>`
-# (prefijo E.164) e ids de test con guion bajo.
+# (prefijo E.164), `wa_<CC><id>` (cliente sin telefono: su id de Meta, hasta
+# 2 + 128 caracteres, sin el punto) e ids de test con guion bajo.
 _VAULT_SESSION_ID_RE = re.compile(
-    re.escape(WHATSAPP_SESSION_PREFIX) + r"[A-Za-z0-9+_]{1,120}"
+    re.escape(WHATSAPP_SESSION_PREFIX) + r"[A-Za-z0-9+_]{1,130}"
 )
 
 

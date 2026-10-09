@@ -33,6 +33,8 @@ import re
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from src.sdk.identitykit import address_from_user_id
+
 # SEC-12: `from_number` de Meta es un teléfono E.164 (solo dígitos, sin `+`).
 # Se convierte en `session_id = wa_<from>` que llega al filesystem del vault, así
 # que exigimos este shape para bloquear path traversal / injection en el id.
@@ -75,6 +77,11 @@ class WhatsAppMessage:
     # Nombre de perfil de WhatsApp de quien escribe (`value.contacts[].profile.name`), limpio. No es el
     # `contacts` de arriba (una tarjeta de contacto que el cliente compartió).
     profile_name: str | None = None
+    # El id de Meta de quien escribe (`from_user_id`, BSUID: `CO.1502576394655843`),
+    # cuando viene válido. Un cliente con nombre de usuario puede llegar SIN
+    # teléfono: entonces `from_number` es este id sin el punto
+    # (`CO1502576394655843`) — la dirección de su conversación `wa_CO1502…`.
+    wa_user_id: str | None = None
 
 
 def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
@@ -121,21 +128,28 @@ def parse_whatsapp_inbound(body: dict) -> WhatsAppMessage | None:
     if not isinstance(messages, list):
         raise ValueError("'messages' must be a list")
 
-    parsed = _parse_message(messages[0], phone_number_id)
-    name = _profile_name(value.get("contacts"), parsed.from_number) if parsed is not None else None
-    return replace(parsed, profile_name=name) if parsed is not None and name else parsed
+    return _with_profile_name(_parse_message(messages[0], phone_number_id), value.get("contacts"))
 
 
 _PROFILE_NAME_MAX = 80
 
 
-def _profile_name(contacts: Any, from_number: str) -> str | None:
-    """Nombre de perfil del contacto que escribió: el de su `wa_id` (o el único que venga), sin
-    espacios de sobra ni caracteres de control, y acotado. `None` si no hay uno usable."""
+def _with_profile_name(parsed: WhatsAppMessage | None, contacts: Any) -> WhatsAppMessage | None:
+    if parsed is None:
+        return None
+    name = _profile_name(contacts, parsed.from_number, parsed.wa_user_id)
+    return replace(parsed, profile_name=name) if name else parsed
+
+
+def _profile_name(contacts: Any, from_number: str, user_id: str | None = None) -> str | None:
+    """Nombre de perfil del contacto que escribió: el de su `wa_id` o su `user_id` (o el único que
+    venga), sin espacios de sobra ni caracteres de control, y acotado. `None` si no hay uno usable."""
     if not isinstance(contacts, list):
         return None
     candidates = [c for c in contacts if isinstance(c, dict)]
-    mine = [c for c in candidates if c.get("wa_id") == from_number] or candidates[:1]
+    mine = [
+        c for c in candidates if c.get("wa_id") == from_number or (user_id and c.get("user_id") == user_id)
+    ] or candidates[:1]
     profile = mine[0].get("profile") if mine else None
     name = profile.get("name") if isinstance(profile, dict) else None
     if not isinstance(name, str):
@@ -147,13 +161,14 @@ def _profile_name(contacts: Any, from_number: str) -> str | None:
 @dataclass(frozen=True)
 class RejectedInbound:
     """Un ítem del POST que no se pudo parsear. ``wa_message_id`` /
-    ``from_number`` van cuando el ítem los traía (para dejar rastro durable de
-    QUÉ mensaje descartamos, no solo por qué); ``None`` si el roto era el
-    envelope del change."""
+    ``from_number`` / ``user_id`` (el ``from_user_id`` crudo) van cuando el
+    ítem los traía (para dejar rastro durable de QUÉ mensaje descartamos y de
+    quién, no solo por qué); ``None`` si el roto era el envelope del change."""
 
     reason: str
     wa_message_id: str | None = None
     from_number: str | None = None
+    user_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -198,21 +213,26 @@ def parse_whatsapp_inbound_all(body: Any) -> InboundBatch:
                 continue
             for raw in raw_messages:
                 try:
-                    parsed = _parse_message(raw, phone_number_id)
+                    parsed = _with_profile_name(_parse_message(raw, phone_number_id), value.get("contacts"))
                 except ValueError as exc:
                     wamid = raw.get("id") if isinstance(raw, dict) else None
                     sender = raw.get("from") if isinstance(raw, dict) else None
+                    user_id = raw.get("from_user_id") if isinstance(raw, dict) else None
                     rejected.append(
                         RejectedInbound(
                             str(exc),
                             wa_message_id=wamid if isinstance(wamid, str) else None,
                             from_number=sender if isinstance(sender, str) else None,
+                            user_id=user_id[:_RAW_USER_ID_MAX] if isinstance(user_id, str) else None,
                         )
                     )
                     continue
                 if parsed is not None:
                     messages.append(parsed)
     return InboundBatch(messages=tuple(messages), rejected=tuple(rejected))
+
+
+_RAW_USER_ID_MAX = 140
 
 
 def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
@@ -226,16 +246,26 @@ def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
     from_number = msg.get("from")
     timestamp = msg.get("timestamp")
     msg_type = msg.get("type")
+    raw_user_id = msg.get("from_user_id")
+    user_address = address_from_user_id(raw_user_id)
+    wa_user_id = raw_user_id if user_address is not None else None
 
     if not isinstance(message_id, str):
         raise ValueError("missing 'id' on message")
-    if not isinstance(from_number, str):
+    if from_number is None and raw_user_id is not None:
+        # Cliente con nombre de usuario: Meta omite el teléfono y manda solo su
+        # id (BSUID). La dirección de la conversación es ese id sin el punto
+        # (`wa_CO1502…`): mismo charset seguro que un teléfono para el vault.
+        if user_address is None:
+            raise ValueError("'from_user_id' no es un id de usuario de Meta válido (CC.<id>)")
+        from_number = user_address
+    elif not isinstance(from_number, str):
         raise ValueError("missing 'from' on message")
     # SEC-12: `from_number` se convierte en `session_id = wa_<from>` que llega al
     # filesystem del vault (metadata + media). Exigir un teléfono E.164 (solo
     # dígitos, 6-15) evita path traversal (`../`) y command-injection en el id.
     # `fullmatch`: el `$` de `match` acepta un salto de línea final.
-    if not _PHONE_RE.fullmatch(from_number):
+    elif not _PHONE_RE.fullmatch(from_number):
         raise ValueError("'from' no es un número de teléfono válido (E.164)")
     if not isinstance(timestamp, str):
         raise ValueError("missing 'timestamp' on message")
@@ -395,6 +425,7 @@ def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
         context=context,
         contacts=contacts,
         raw=msg,
+        wa_user_id=wa_user_id,
     )
 
 

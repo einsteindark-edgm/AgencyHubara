@@ -147,3 +147,35 @@ def test_an_item_the_parser_rejects_is_recorded_with_its_reason(harness) -> None
     rejected = next(r for r in ledger.records if r.get("stage") == "rejected")
     assert rejected["error"] == "text message missing 'text.body'"
     assert rejected["session_id"] == "wa_573001234567"
+
+
+# ── ledger × clientes con nombre de usuario (sin teléfono, solo BSUID) ────────
+
+def _username_change(wamid: str, user_id: str) -> dict[str, Any]:
+    change = _change(wamid, "")
+    del change["value"]["messages"][0]["from"]
+    change["value"]["messages"][0]["from_user_id"] = user_id
+    return change
+
+
+def test_a_customer_without_phone_is_recorded_under_their_conversation(harness, monkeypatch, tmp_path) -> None:
+    """Sin esto el ledger dejaba `session_id: null`: no se podía contar
+    personas ni ubicar el chat (ledger 2026-09-25)."""
+    from src.plugins.chats.agent.sales.sender_identity_store import FilesystemSenderIdentity
+    from src.plugins.chats.api import sales as api
+
+    monkeypatch.setattr(api, "build_sender_identity", lambda: FilesystemSenderIdentity(tmp_path))
+    use, ledger = harness
+    use(_Ingest()).post("/api/webhook", json=_body(_username_change("wamid.U", "CO.1502576394655843")))
+
+    seen, ingested = [r for r in ledger.records if r["kind"] == "message"]
+    assert (seen["session_id"], seen["user_id"]) == ("wa_CO1502576394655843", "CO.1502576394655843")
+    assert ingested["session_id"] == "wa_CO1502576394655843"
+
+
+def test_a_rejected_meta_user_id_is_kept_in_the_ledger(harness) -> None:
+    use, ledger = harness
+    use(_Ingest()).post("/api/webhook", json=_body(_username_change("wamid.X", "CO.ENT.1502")))
+
+    rejected = next(r for r in ledger.records if r.get("stage") == "rejected")
+    assert rejected["user_id"] == "CO.ENT.1502"

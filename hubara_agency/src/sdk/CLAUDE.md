@@ -62,6 +62,7 @@ cd hubara_agency && MEDUSA_BASE_URL=http://medusa.invalid MEDUSA_ADMIN_TOKEN=ci-
 | `catalogkit.py` | catálogo de productos: port + DTOs + errores + predicados (portavelas) | docs/_sdk/14 |
 | `decisionkit.py` | paquetes de decisión: YAML tipado + CEL, certificador `decisions check` | docs/_sdk/17 |
 | `textkit.py` | guards puros del texto LLM→cliente, importables desde una TOOL (libre de Temporal) | docs/_sdk/15 |
+| `identitykit.py` | identidad pura del cliente de WhatsApp: teléfono o id de Meta (BSUID) sin teléfono — importable desde el parser (libre de I/O) | docs/_sdk/18 |
 
 ## Gotchas vividos en esta capa
 

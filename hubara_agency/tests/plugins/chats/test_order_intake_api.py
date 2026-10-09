@@ -468,3 +468,16 @@ def test_sesion_devuelta_al_bot_no_marca_handoff(h: _Harness) -> None:
     body = h.suggest()
 
     assert body["handoff_at_ms"] is None
+
+
+def test_un_cliente_sin_telefono_abre_el_formulario_y_el_telefono_queda_por_pedir(h: _Harness) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta>`
+    (sin teléfono). El formulario abre, y su id NO se hace pasar por teléfono."""
+    session = "wa_CO1502576394655843"
+    h.llm.reply = json.dumps({"items": [], "shipping": {"city": "Bogotá"}, "payment_method": None})
+    h.write_session(events=_conversation(), metadata=_metadata(), session=session)
+
+    body = h.suggest(session)
+
+    assert body["shipping"].get("phone") in (None, "")
+    assert "phone" in body["missing"]
