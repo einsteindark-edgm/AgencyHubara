@@ -27,6 +27,8 @@ Cobertura DEHA:
 """
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 import httpx
@@ -421,6 +423,12 @@ async def send_template(
 # =============================================================================
 
 
+#: Espera antes del único reintento de un envío que falló por algo pasajero.
+_RETRY_DELAY_S = 1.0
+#: Respuestas de Meta que dicen que el envío no se procesó (falla pasajera).
+_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
+
+
 def _addressed(data: dict[str, Any]) -> dict[str, Any]:
     to = data.get("to")
     if not isinstance(to, str):
@@ -461,20 +469,39 @@ async def _post_json(
         "Content-Type": "application/json",
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(url, headers=headers, json=data)
-    except httpx.TimeoutException as e:
-        # Timeout ≠ "no pasó nada": Meta PUEDE haber entregado el mensaje y la
-        # respuesta se perdió (lección L-1). El prefijo `timeout:` permite al
-        # caller (handoff) responder 504 "no reintentar a ciegas" en vez de 502.
-        logger.error("WhatsApp send timeout (ambiguous)", label=label, error=str(e))
-        return wa_dtos.OutboundResult(
-            wa_message_id=None, ok=False, error=f"timeout: {e}"
-        )
-    except httpx.HTTPError as e:
-        logger.error("WhatsApp send transport error", label=label, error=str(e))
-        return wa_dtos.OutboundResult(wa_message_id=None, ok=False, error=str(e))
+    # Premortem 2026-10-09: lo que seguro NO salió (un 5xx de Meta, una
+    # conexión caída) se reintenta UNA vez; antes los datos de pago o la última
+    # burbuja del bot se perdían mientras el panel los daba por enviados. Un
+    # timeout no se reintenta (Meta pudo haberlo entregado: L-1) ni un 4xx (es
+    # un rechazo de verdad).
+    response: httpx.Response | None = None
+    for attempt in (1, 2):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(url, headers=headers, json=data)
+        except httpx.TimeoutException as e:
+            # Timeout ≠ "no pasó nada": Meta PUEDE haber entregado el mensaje y la
+            # respuesta se perdió (lección L-1). El prefijo `timeout:` permite al
+            # caller (handoff) responder 504 "no reintentar a ciegas" en vez de 502.
+            logger.error("WhatsApp send timeout (ambiguous)", label=label, error=str(e))
+            return wa_dtos.OutboundResult(
+                wa_message_id=None, ok=False, error=f"timeout: {e}"
+            )
+        except httpx.HTTPError as e:
+            if attempt == 1:
+                logger.warning("WhatsApp send transport error — reintento", label=label, error=str(e))
+                await asyncio.sleep(_RETRY_DELAY_S)
+                continue
+            logger.error("WhatsApp send transport error", label=label, error=str(e))
+            return wa_dtos.OutboundResult(wa_message_id=None, ok=False, error=str(e))
+        if response.status_code in _RETRYABLE_STATUS and attempt == 1:
+            logger.warning(
+                "WhatsApp send failed (pasajero) — reintento", label=label, status=response.status_code
+            )
+            await asyncio.sleep(_RETRY_DELAY_S)
+            continue
+        break
+    assert response is not None
 
     if response.status_code != 200:
         logger.error(
