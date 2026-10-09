@@ -34,6 +34,10 @@ STORE_POLICY_ENV = (
     "SHIPPING_RATE_NATIONAL_COP", "CASH_ON_DELIVERY_MIN_COP",
     "STORE_SKU_PREFIX", "STORE_WEB_DOMAIN", "CATALOG_COLLECTION_HANDLES",
 )
+# `src.platform.config` carga el `.env` local (`load_dotenv`) al importarse: va
+# ANTES de limpiar, o el `.env` de un desarrollador devolvería las variables.
+import src.platform.config  # noqa: E402,F401
+
 for _var in STORE_POLICY_ENV:
     os.environ.pop(_var, None)
 

@@ -123,3 +123,110 @@ run "un_recargo_sin_formato_porcentaje_no_pasa_el_plan" {
   }
   expect_failures = [var.tenants]
 }
+
+# `9.000` en HCL es el número 9: llegaría al bot como «$9» (premortem 2026-10-09)
+run "un_monto_con_punto_de_miles_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { shipping_rate_local_cop = 9.000 }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+# la ciudad se busca DENTRO de la del cliente: con «Bogotá D.C.», «Bogotá» cae en la nacional
+run "una_ciudad_local_con_puntuacion_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { shipping_local_city = "Bogotá D.C." }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+# render-env escribe KEY=valor: un `#` corta el valor y `${` tumba el .env entero
+run "una_zona_con_caracteres_que_rompen_el_env_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { shipping_local_zone = "Zona #1 centro" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+# el código compara HANDLES de Medusa (minúsculas, sin espacios), no títulos
+run "una_coleccion_que_no_es_handle_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { catalog_collections = ["Vitrina Principal"] }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+# el dominio se compara en minúsculas
+run "un_dominio_con_mayusculas_no_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store         = { web_domain = "CafeAurora.co" }
+      }
+    }
+  }
+  expect_failures = [var.tenants]
+}
+
+# …y la política de otra ciudad, con tildes y sus handles, sí pasa
+run "la_politica_de_otra_ciudad_pasa_el_plan" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://t1.example.com"
+        callback_urls = ["https://t1.example.com/callback"]
+        logout_urls   = ["https://t1.example.com/"]
+        store = {
+          shipping_local_city        = "Medellín"
+          shipping_local_zone        = "Medellín y el área metropolitana"
+          shipping_rate_local_cop    = 9000
+          shipping_rate_national_cop = 18500
+          cash_on_delivery_min_cop   = 60000
+          web_domain                 = "cafeaurora.co"
+          catalog_collections        = ["vitrina", "home_new_arrivals"]
+        }
+      }
+    }
+  }
+  assert {
+    condition     = module.store_config["t1"].param_names != null
+    error_message = "Una política válida de otra ciudad tiene que pasar las validaciones."
+  }
+}

@@ -146,7 +146,7 @@ def test_medusa_seed_es_idempotente(bundle):
 
 
 def test_medusa_ssm_block_usa_el_prefijo_del_clon(bundle, capsys):
-    medusa_provision.print_ssm_block(vars_(), "https://x", {"region_id": "r", "sales_channel_id": "s"})
+    medusa_provision.print_ssm_block(vars_(), "https://x", {"region_id": "r", "sales_channel_id": "s"}, bundle)
     out = capsys.readouterr().out
     assert "--name /acme/acme/MEDUSA_BASE_URL" in out
     assert "/hubara/" not in out
@@ -237,3 +237,153 @@ def test_status_json_para_acktos_studio(bundle, tmp_path, monkeypatch, capsys):
     assert by_id["whatsapp"]["done"] is True and by_id["whatsapp"]["kind"] == "guided"
     assert by_id["clone"]["done"] is False and by_id["clone"]["kind"] == "auto"
     assert all(s["title"] for s in data["steps"])
+
+
+# ── Premortem 2026-10-09 ──────────────────────────────────────────────────────
+
+
+def test_el_token_de_medusa_no_se_imprime_queda_en_un_archivo_privado(bundle, capsys):
+    """Studio guarda en disco el canal de salida: el token impreso quedaba en
+    los logs de VS Code."""
+    seeded = {"admin_token": "sk_live_123", "region_id": "r", "sales_channel_id": "s"}
+    medusa_provision.print_ssm_block(vars_(), "https://x", seeded, bundle)
+    out = capsys.readouterr().out
+    secret = bundle / ".secret.medusa_admin_token"
+    assert "sk_live_123" not in out
+    assert secret.read_text() == "sk_live_123"
+    assert secret.stat().st_mode & 0o777 == 0o600
+    assert f"--value file://{secret}" in out
+
+
+def test_supabase_guarda_la_clave_antes_de_esperar_y_falla_si_no_queda_sana(bundle):
+    """La clave de la base de datos solo existe al crear el proyecto: si la
+    espera se cortaba (o un 503), se perdía y el paso quedaba sin arreglo."""
+
+    def fake_api(method, path, body=None, token=None):
+        if (method, path) == ("GET", "/projects"):
+            return []
+        if (method, path) == ("POST", "/projects"):
+            return {"id": "refacme"}
+        if path == "/projects/refacme":
+            assert (bundle / ".outputs.supabase.json").exists(), "la clave ya tiene que estar a salvo"
+            return {"status": "COMING_UP"}
+        raise AssertionError(f"{method} {path}")
+
+    with pytest.raises(forge.ForgeError, match="ACTIVE_HEALTHY"):
+        supabase_provision.cmd_apply(vars_(), bundle, api=fake_api, sleep=lambda s: None)
+    out = bundle / ".outputs.supabase.json"
+    assert json.loads(out.read_text())["ref"] == "refacme"
+    assert out.stat().st_mode & 0o777 == 0o600
+
+
+def test_supabase_existente_vuelve_a_esperar_que_quede_sano(bundle):
+    (bundle / ".outputs.supabase.json").write_text(json.dumps({"ref": "refacme"}))
+    statuses = iter(["COMING_UP", "ACTIVE_HEALTHY"])
+
+    def fake_api(method, path, body=None, token=None):
+        if (method, path) == ("GET", "/projects"):
+            return [{"name": "acme-medusa", "id": "refacme"}]
+        if path == "/projects/refacme":
+            return {"status": next(statuses)}
+        raise AssertionError(f"{method} {path}")
+
+    assert supabase_provision.cmd_apply(vars_(), bundle, api=fake_api, sleep=lambda s: None)["ref"] == "refacme"
+    assert next(statuses, "agotado") == "agotado", "volvió a preguntar hasta ACTIVE_HEALTHY"
+
+
+class _Run:
+    def __init__(self, rc, out):
+        self.returncode, self.stdout, self.stderr = rc, out, ""
+
+
+def test_temporal_no_adopta_un_namespace_que_no_creo(bundle, monkeypatch, capsys):
+    """La cuenta de Temporal Cloud es compartida: un namespace con ese nombre
+    que este bundle no creó es de otro proyecto, y el service account nuevo
+    recibiría permiso de escritura sobre él."""
+    monkeypatch.setattr(forge, "CLIENTS", bundle.parent)
+    monkeypatch.setattr(temporal_provision.shutil, "which", lambda b: "/usr/local/bin/tcld")
+    monkeypatch.setattr(temporal_provision.subprocess, "run", lambda c, **kw: _Run(1, "namespace already exists"))
+    assert temporal_provision.main(["apply", "acme"]) == 1
+    assert "no lo creó" in capsys.readouterr().err
+
+
+def test_temporal_reintento_del_mismo_bundle_sigue(bundle, monkeypatch):
+    monkeypatch.setattr(forge, "CLIENTS", bundle.parent)
+    monkeypatch.setattr(temporal_provision.shutil, "which", lambda b: "/usr/local/bin/tcld")
+    monkeypatch.setattr(temporal_provision.subprocess, "run", lambda c, **kw: _Run(0, "ok"))
+    assert temporal_provision.main(["apply", "acme"]) == 0
+    assert json.loads((bundle / ".outputs.temporal.json").read_text())["namespace"] == "acme"
+    monkeypatch.setattr(temporal_provision.subprocess, "run", lambda c, **kw: _Run(1, "already exists"))
+    assert temporal_provision.main(["apply", "acme"]) == 0
+
+
+def test_un_clon_sin_su_primer_commit_no_cuenta_como_forjado(bundle, tmp_path):
+    import subprocess
+
+    dest = tmp_path / "AgencyAcme"
+    dest.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    assert migrate.auto_done("clone", bundle, dest) is False
+
+
+def test_el_paso_clone_recuerda_la_carpeta_y_status_la_devuelve(bundle, tmp_path, capsys):
+    """Una migración dura días: la consola tiene que volver a encontrar el clon."""
+    dest = tmp_path / "AgencyAcme"
+
+    class R:
+        returncode = 0
+
+    assert migrate.run_step("acme", "clone", bundle, dest, False, runner=lambda a: R()) == 0
+    migrate.cmd_status("acme", bundle, None, as_json=True)
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["dest"] == str(dest.resolve())
+
+
+def test_las_guias_citan_la_carpeta_del_clon_entre_comillas():
+    guide = migrate._guide_platform(vars_(), Path("/tmp/Mis Clientes/AgencyAcme"))
+    assert "cd '/tmp/Mis Clientes/AgencyAcme/infra/terraform/platform'" in guide
+
+
+def test_migrate_rechaza_una_carpeta_con_espacios(bundle, tmp_path):
+    with pytest.raises(forge.ForgeError, match="destino"):
+        migrate.run_step("acme", "platform", bundle, tmp_path / "Mis Clientes" / "AgencyAcme", False,
+                         runner=lambda a: None)
+
+
+def test_medusa_retoma_donde_quedo_si_railway_falla_a_mitad(bundle):
+    """Un error después de crear el proyecto dejaba un proyecto Railway a medias
+    y el reintento pedía completar los outputs a mano."""
+    (bundle / ".outputs.supabase.json").write_text(
+        json.dumps({"database_url": "postgresql://postgres:x@db.ref.supabase.co:5432/postgres"})
+    )
+    created = {"projects": [], "services": 0}
+
+    def fake_gql(query, variables, fail_service=[True]):
+        if query.startswith("query($name"):
+            return {"projects": {"edges": [{"node": p} for p in created["projects"]]}}
+        if "projectCreate" in query:
+            created["projects"].append({"id": "P1", "name": variables["input"]["name"]})
+            return {"projectCreate": {"id": "P1", "environments": {"edges": [{"node": {"id": "E1", "name": "production"}}]}}}
+        if "serviceCreate" in query:
+            if fail_service[0]:
+                fail_service[0] = False
+                raise RuntimeError("502 de Railway")
+            created["services"] += 1
+            return {"serviceCreate": {"id": "S1"}}
+        if "variableCollectionUpsert" in query:
+            return {"variableCollectionUpsert": True}
+        if "serviceDomainCreate" in query:
+            return {"serviceDomainCreate": {"domain": "acme-medusa.up.railway.app"}}
+        raise AssertionError(query[:60])
+
+    with pytest.raises(RuntimeError, match="502"):
+        medusa_provision.cmd_apply(vars_(), bundle, api=fake_gql)
+    out = medusa_provision.cmd_apply(vars_(), bundle, api=fake_gql)
+    assert out["base_url"] == "https://acme-medusa.up.railway.app"
+    assert len(created["projects"]) == 1 and created["services"] == 1
+
+
+def test_un_medusa_a_medias_no_cuenta_como_hecho(bundle):
+    (bundle / ".outputs.medusa.json").write_text(json.dumps({"project_id": "P1", "environment_id": "E1"}))
+    assert migrate.auto_done("medusa", bundle, None) is False
+    (bundle / ".outputs.medusa.json").write_text(json.dumps({"project_id": "P1", "base_url": "https://x"}))
+    assert migrate.auto_done("medusa", bundle, None) is True

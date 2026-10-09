@@ -8,6 +8,13 @@ carácter. Un clon de forge pone los suyos y el bot le habla con ellos.
 """
 from __future__ import annotations
 
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from src.plugins.catalog.agent.composition import allowed_collection_handles
@@ -22,6 +29,17 @@ OTRA_TIENDA = {
     "SHIPPING_RATE_NATIONAL_COP": "18500",
     "CASH_ON_DELIVERY_MIN_COP": "60000",
 }
+#: Una tienda completa: lo que render-env-from-ssm.sh baja al .env de un clon.
+OTRA_TIENDA_COMPLETA = {
+    **OTRA_TIENDA,
+    "PAYMENT_NEQUI_NUMBER": "3001112233",
+    "PAYMENT_LINK_SURCHARGE_LOCAL": "2%",
+    "PAYMENT_LINK_SURCHARGE_OTHER": "3,1%",
+    "STORE_SKU_PREFIX": "AUR-",
+    "STORE_WEB_DOMAIN": "cafeaurora.co",
+    "CATALOG_COLLECTION_HANDLES": "vitrina,nuevos",
+}
+_BACKEND = Path(__file__).resolve().parents[4]
 
 
 # ── Hubara (sin variables): idéntico a hoy ───────────────────────────────────
@@ -107,13 +125,60 @@ def test_the_collections_that_enter_the_catalog_are_the_store_ones() -> None:
     assert allowed_collection_handles({"CATALOG_COLLECTION_HANDLES": ""}) == frozenset()
 
 
+# Las descripciones de las tools del bot de ventas se arman AL IMPORTAR: se
+# importan en otro proceso, con el .env de la otra tienda (premortem 2026-10-09:
+# `present_order_confirmation` le decía al LLM «Bogotá y cercanos $9.000»).
+_TOOL_TEXTS = """
+import importlib, json, pkgutil
+import src.plugins.chats.agent.sales.tools as pkg
+out = []
+for info in pkgutil.iter_modules(pkg.__path__):
+    mod = importlib.import_module(f"{pkg.__name__}.{info.name}")
+    for name, obj in vars(mod).items():
+        if isinstance(obj, type) and obj.__module__ == mod.__name__:
+            for attr in ("description", "parameters"):
+                value = getattr(obj, attr, None)
+                if isinstance(value, (str, dict)):
+                    out.append(f"{info.name}.{name}.{attr}: {json.dumps(value, ensure_ascii=False)}")
+print(json.dumps(out, ensure_ascii=False))
+"""
+_MOTHER_POLICY = re.compile(r"Bogot|7\.900|16\.940|45\.000|1,5 ?%|2,69 ?%")
+
+
+def test_another_store_tools_never_quote_the_mother_policy() -> None:
+    env = {**os.environ, **OTRA_TIENDA_COMPLETA, "MEDUSA_BASE_URL": "http://dummy", "MEDUSA_ADMIN_TOKEN": "dummy"}
+    proc = subprocess.run(
+        [sys.executable, "-c", _TOOL_TEXTS], cwd=_BACKEND, env=env, capture_output=True, text=True, timeout=180
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    texts = json.loads(proc.stdout.strip().splitlines()[-1])
+
+    assert len(texts) > 20  # de verdad recorrió las tools
+    assert [t for t in texts if _MOTHER_POLICY.search(t)] == []
+
+
 # ── Una política mal escrita no arranca (fail-closed, nunca un precio raro) ──
 
 
 @pytest.mark.parametrize(
     ("var", "value"),
-    [("SHIPPING_RATE_LOCAL_COP", "7.900"), ("SHIPPING_RATE_NATIONAL_COP", "0"), ("CASH_ON_DELIVERY_MIN_COP", "-1")],
+    [
+        ("SHIPPING_RATE_LOCAL_COP", "7.900"),
+        ("SHIPPING_RATE_NATIONAL_COP", "0"),
+        ("CASH_ON_DELIVERY_MIN_COP", "-1"),
+        # `9.000` en HCL es el número 9: Terraform lo baja como "9" (premortem 2026-10-09)
+        ("SHIPPING_RATE_LOCAL_COP", "9"),
+        ("CASH_ON_DELIVERY_MIN_COP", "999"),
+    ],
 )
 def test_a_bad_amount_fails_naming_the_variable(var: str, value: str) -> None:
     with pytest.raises(ValueError, match=var):
         shipping.ShippingPolicy.from_env({var: value})
+
+
+@pytest.mark.parametrize("city", ["Bogotá D.C.", "Medellín, Antioquia", "Cali 2"])
+def test_the_local_city_is_a_plain_city_name(city: str) -> None:
+    """La zona local se reconoce por la ciudad contenida en la del cliente: con
+    «Bogotá D.C.», un cliente que escribe «Bogotá» caería en la tarifa nacional."""
+    with pytest.raises(ValueError, match="SHIPPING_LOCAL_CITY"):
+        shipping.ShippingPolicy.from_env({"SHIPPING_LOCAL_CITY": city})

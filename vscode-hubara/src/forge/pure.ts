@@ -79,6 +79,8 @@ export interface MigrationStepRaw {
 export interface MigrationStatusRaw {
   slug: string;
   company: string;
+  /** la carpeta del clon que forjó el paso S1 (null si aún no) */
+  dest: string | null;
   steps: MigrationStepRaw[];
 }
 
@@ -109,6 +111,7 @@ export function parseMigrationStatus(stdout: string): MigrationStatusRaw {
   return {
     slug: String(d.slug ?? ""),
     company: String(d.company ?? ""),
+    dest: typeof d.dest === "string" && d.dest ? d.dest : null,
     steps,
   };
 }
@@ -254,7 +257,7 @@ export function clientYamlWarnings(doc: unknown, slug: string): string[] {
 
 // ── Nombres por defecto (espejo de forge.py render_vars) ─────────────────────
 
-/** `str.title()` de Python para un slug [a-z0-9_]: «mi_tienda» → «Mi_Tienda». */
+/** `str.title()` de Python para un slug: «mitienda» → «Mitienda», «tienda2» → «Tienda2». */
 export function pyTitle(s: string): string {
   return s.replace(/[A-Za-z]+/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
 }
@@ -268,6 +271,74 @@ export function defaultRepoName(repo: string, slug: string): string {
   const fromRepo = repo.includes("/") ? repo.split("/")[1] ?? "" : "";
   const name = fromRepo || `Agency${pyTitle(slug)}`;
   return name.replace(/[^A-Za-z0-9._-]/g, "") || `Agency${pyTitle(slug)}`;
+}
+
+// ── Validaciones compartidas (extensión + webview) ─────────────────────────────
+
+/**
+ * El nombre corto del cliente (espejo de forge.py `render_vars`). Termina en
+ * nombres de AWS de alcance global: los buckets S3 y el dominio de Cognito no
+ * aceptan `_`, y el más largo (`agency<slug>-<slug>-frontend-oac`) topa en 64.
+ */
+export const SLUG_RE = /^[a-z][a-z0-9]{1,19}$/;
+
+/** Nombres de parámetro cuyo valor es un secreto. */
+const SECRET_PARAM = /(TOKEN|SECRET|PASSWORD|API_?KEY|PRIVATE)/i;
+
+/**
+ * Tapa los secretos que un paso imprime antes de que lleguen al panel o al
+ * canal de salida (VS Code guarda ese canal en disco): el valor de un
+ * `--value` cuyo `--name` es un secreto (salvo `file://…`, que es la ruta) y
+ * la contraseña de una URL `esquema://usuario:clave@host`.
+ */
+export function redactSecrets(line: string): string {
+  return line
+    .replace(
+      /(--name\s+(\S+)\s.*?--value\s+)('[^']*'|"[^"]*"|\S+)/g,
+      (m: string, head: string, name: string, value: string) =>
+        SECRET_PARAM.test(name) && !/^['"]?file:\/\//.test(value) ? `${head}'••••'` : m,
+    )
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi, "$1••••@");
+}
+
+/**
+ * La carpeta destino del clon: ruta COMPLETA y sin espacios ni caracteres que
+ * la terminal interprete. Los pasos guiados la imprimen en `cd <dest>`: con un
+ * espacio el `cd` falla y los comandos siguientes corren en la carpeta donde
+ * estabas (el repo madre). null = válida.
+ */
+export function checkDestPath(dest: string): string | null {
+  if (!dest.startsWith("/")) return "indica la ruta completa de la carpeta (empieza por /)";
+  if (!/^[\p{L}\p{N}._@+\/-]+$/u.test(dest)) {
+    return "la ruta no puede tener espacios ni caracteres como ' \" $ ; & ( ) * # — usa una carpeta sin ellos";
+  }
+  return null;
+}
+
+/**
+ * Campos de `commerce` (client.yaml) que siguen en plantilla («TODO»): forge no
+ * forja sin ellos salvo un clon de prueba. Sin el bloque, falta todo.
+ */
+export function commercePending(doc: unknown): string[] {
+  const c = asRecord(doc).commerce;
+  if (!c || typeof c !== "object" || Array.isArray(c)) {
+    return ["commerce (falta el bloque: la política comercial de la tienda)"];
+  }
+  return Object.entries(c as Record<string, unknown>)
+    .filter(([, v]) => v === null || v === undefined || (typeof v === "string" && v.includes("TODO")))
+    .map(([k]) => `commerce.${k}`);
+}
+
+/**
+ * El checkout PRINCIPAL del repo (espejo de forge.py `clients_root`): si Studio
+ * corre en un worktree (`<repo>/.claude/worktrees/<x>`), los bundles de clientes
+ * (gitignored) viven igual en `<repo>/forge/clients` — borrar el worktree no se
+ * lleva el estado de una migración.
+ */
+export function mainRepoRoot(repoRoot: string): string {
+  const marker = "/.claude/worktrees/";
+  const at = repoRoot.indexOf(marker);
+  return at === -1 ? repoRoot : repoRoot.slice(0, at);
 }
 
 // ── util ─────────────────────────────────────────────────────────────────────

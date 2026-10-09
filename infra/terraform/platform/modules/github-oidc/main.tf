@@ -155,10 +155,39 @@ resource "aws_iam_role_policy_attachment" "readonly_managed" {
 # clon leería los secretos del proyecto madre (y al revés). Los parámetros de ESTE
 # proyecto son los de sus tres árboles; lo demás, Deny explícito, y el Decrypt
 # solo descifra parámetros de esos árboles (contexto PARAMETER_ARN de SSM).
+# Lo mismo con S3: el state de Terraform del otro proyecto guarda sus
+# SecureString EN CLARO, así que leerlo es saltarse el Deny de SSM. Los buckets
+# de este proyecto (state, frontends, laboratorio) llevan su prefijo.
 data "aws_iam_policy_document" "tf_readonly_extra" {
   statement {
     sid       = "StateLock"
     actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
+    resources = ["arn:aws:dynamodb:*:*:table/agencyhubara-*"]
+  }
+  statement {
+    sid     = "DenyObjectsOfOtherProjects"
+    effect  = "Deny"
+    actions = ["s3:GetObject*", "s3:ListBucket*"]
+    not_resources = [
+      "arn:aws:s3:::agencyhubara-*",
+      "arn:aws:s3:::agencyhubara-*/*",
+    ]
+  }
+  # Datos que ReadOnlyAccess deja leer y Terraform nunca pide: la salida de los
+  # comandos SSM (lo que corrió en las cajas) y los usuarios de Cognito.
+  statement {
+    sid    = "DenyCommandOutputsAndCognitoUsers"
+    effect = "Deny"
+    actions = [
+      "ssm:GetCommandInvocation",
+      "ssm:ListCommandInvocations",
+      "cognito-idp:ListUsers",
+      "cognito-idp:ListUsersInGroup",
+      "cognito-idp:AdminGetUser",
+      "cognito-idp:AdminListGroupsForUser",
+      "cognito-idp:AdminListDevices",
+      "cognito-idp:AdminListUserAuthEvents",
+    ]
     resources = ["*"]
   }
   statement {

@@ -23,6 +23,8 @@ export interface FleetClient {
   missingRequired: string[];
   /** Valores de client.yaml todavía en plantilla — avisos, NO bloquean. */
   clientWarnings: string[];
+  /** Campos de `commerce` en plantilla: bloquean el forjado (salvo clon de prueba). */
+  commercePending: string[];
   workspaceFileCount: number;
 }
 
@@ -50,7 +52,7 @@ export interface MigrationStepView {
 export interface DestState {
   /** la carpeta existe */
   exists: boolean;
-  /** hay un clon forjado (<dest>/.git) */
+  /** hay un clon forjado (<dest>/.git con su primer commit) */
   isClone: boolean;
   /** <dest>/NEXT_STEPS.md, si existe */
   nextStepsPath: string | null;
@@ -60,7 +62,7 @@ export interface DestState {
 export type ForgeInbound =
   | { type: "ready" }
   | { type: "refresh" }
-  | { type: "initClient"; slug: string }
+  | { type: "initClient"; slug: string; company: string }
   | { type: "plan"; slug: string }
   | { type: "apply"; slug: string; dest: string; allowTodos: boolean }
   | { type: "verify"; slug: string; dest: string }
@@ -70,7 +72,8 @@ export type ForgeInbound =
   | { type: "migrateDone"; slug: string; step: string; dest: string }
   | { type: "openPath"; fsPath: string }
   | { type: "openSettings" }
-  | { type: "pickDest"; slug: string };
+  | { type: "pickDest"; slug: string }
+  | { type: "cancel" };
 
 /** extensión → webview */
 export type ForgeOutbound =
@@ -87,6 +90,8 @@ export type ForgeOutbound =
       dest: string;
       destState: DestState;
       steps: MigrationStepView[] | null;
+      /** la carpeta del clon que registró el paso S1 (null si aún no hay) */
+      recordedDest: string | null;
       error: string | null;
     }
   | { type: "destPicked"; slug: string; dest: string };

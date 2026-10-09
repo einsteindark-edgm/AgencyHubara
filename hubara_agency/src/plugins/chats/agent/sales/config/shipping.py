@@ -26,6 +26,7 @@ sale de esta política.
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -41,13 +42,34 @@ def _fold(text: str) -> str:
     return stripped.casefold().strip()
 
 
+#: Un monto en pesos por debajo de esto es un error de escritura, no una tarifa:
+#: `9.000` en el tfvars es el número 9 para Terraform y llegaba como "9".
+_MIN_COP = 1_000
+#: La ciudad de la zona local: letras y espacios. Se busca DENTRO de la ciudad
+#: del cliente; con «Bogotá D.C.», quien escribe «Bogotá» caería en la nacional.
+_CITY_RE = re.compile(r"[^\W\d_]+(?: [^\W\d_]+)*")
+
+
 def _amount(env: Mapping[str, str], var: str, default: int) -> int:
     raw = (env.get(var) or "").strip()
     if not raw:
         return default
-    if not raw.isdigit() or int(raw) <= 0:
-        raise ValueError(f"{var}={raw!r}: un monto en pesos, solo dígitos y mayor que 0 (p. ej. 7900)")
+    if not raw.isdigit() or int(raw) < _MIN_COP:
+        raise ValueError(
+            f"{var}={raw!r}: un monto en pesos, solo dígitos y desde {_MIN_COP} (p. ej. 7900)"
+        )
     return int(raw)
+
+
+def _city(env: Mapping[str, str], default: str) -> str:
+    raw = (env.get("SHIPPING_LOCAL_CITY") or "").strip()
+    if not raw:
+        return default
+    if not _CITY_RE.fullmatch(raw):
+        raise ValueError(
+            f"SHIPPING_LOCAL_CITY={raw!r}: solo el nombre de la ciudad, letras y espacios (p. ej. Bogotá)"
+        )
+    return raw
 
 
 @dataclass(frozen=True)
@@ -77,7 +99,7 @@ class ShippingPolicy:
         base = cls()
         return cls(
             local_zone=(env.get("SHIPPING_LOCAL_ZONE") or "").strip() or base.local_zone,
-            local_city=(env.get("SHIPPING_LOCAL_CITY") or "").strip() or base.local_city,
+            local_city=_city(env, base.local_city),
             local_cop=_amount(env, "SHIPPING_RATE_LOCAL_COP", base.local_cop),
             national_cop=_amount(env, "SHIPPING_RATE_NATIONAL_COP", base.national_cop),
             cod_min_products_cop=_amount(env, "CASH_ON_DELIVERY_MIN_COP", base.cod_min_products_cop),
@@ -92,6 +114,8 @@ SHIPPING_RATE_NATIONAL_COP = POLICY.national_cop
 CASH_ON_DELIVERY_MIN_PRODUCTS_COP = POLICY.cod_min_products_cop
 #: Cómo se le nombra la zona local al cliente («Bogotá y municipios cercanos»).
 SHIPPING_LOCAL_ZONE = POLICY.local_zone
+#: La ciudad de esa zona («Bogotá»).
+SHIPPING_LOCAL_CITY = POLICY.local_city
 
 
 def cash_on_delivery_available(products_subtotal_cop: int, policy: ShippingPolicy = POLICY) -> bool:

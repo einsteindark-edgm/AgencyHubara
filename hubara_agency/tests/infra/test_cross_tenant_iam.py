@@ -19,6 +19,11 @@ Los nombres no alcanzan si los permisos son de cuenta entera:
   cuenta y el rol sumaba `kms:Decrypt` sobre `*`: el CI de un clon leía los
   secretos de Hubara. Deny fuera de los prefijos del proyecto + Decrypt solo
   de sus parámetros.
+* `ReadOnlyAccess` también trae `s3:Get*`/`s3:List*` de toda la cuenta: el
+  state de Terraform del OTRO proyecto guarda sus SecureString en claro, así
+  que leerlo es saltarse el Deny de SSM. Deny de objetos fuera de los buckets
+  del proyecto, el lock solo en sus tablas, y nada de salidas de comandos ni
+  usuarios de Cognito (Terraform no los lee).
 
 Se lee el HCL como texto (como test_lab_box_iam.py): sin AWS no hay otra forma.
 """
@@ -107,6 +112,36 @@ def test_ci_readonly_cannot_read_other_projects_parameters() -> None:
     assert sorted(r.split(":parameter")[-1] for r in _list(deny, "not_resources")) == sorted(
         ["/hubara/*", "/graphagents/*", "/hubara-lab/*", "/AmazonCloudWatch-agencyhubara-*"]
     )
+
+
+def test_ci_readonly_cannot_read_objects_of_other_projects_buckets() -> None:
+    [deny] = [
+        s
+        for s in _statements(_OIDC, "tf_readonly_extra")
+        if _is_deny(s) and "s3:GetObject*" in _list(s, "actions")
+    ]
+
+    assert "s3:ListBucket*" in _list(deny, "actions")
+    assert sorted(_list(deny, "not_resources")) == ["arn:aws:s3:::agencyhubara-*", "arn:aws:s3:::agencyhubara-*/*"]
+
+
+def test_ci_readonly_only_locks_its_own_state_tables() -> None:
+    [lock] = [s for s in _statements(_OIDC, "tf_readonly_extra") if "dynamodb:PutItem" in _list(s, "actions")]
+
+    assert _list(lock, "resources") == ["arn:aws:dynamodb:*:*:table/agencyhubara-*"]
+
+
+def test_ci_readonly_reads_no_command_outputs_nor_cognito_users() -> None:
+    [deny] = [
+        s
+        for s in _statements(_OIDC, "tf_readonly_extra")
+        if _is_deny(s) and "ssm:GetCommandInvocation" in _list(s, "actions")
+    ]
+
+    assert {"ssm:ListCommandInvocations", "cognito-idp:ListUsers", "cognito-idp:AdminGetUser"} <= set(
+        _list(deny, "actions")
+    )
+    assert _list(deny, "resources") == ["*"]
 
 
 def test_ci_readonly_only_decrypts_its_own_parameters() -> None:

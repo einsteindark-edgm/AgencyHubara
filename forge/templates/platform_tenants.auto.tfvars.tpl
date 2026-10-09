@@ -25,8 +25,9 @@ tenants = {
 
     # Política comercial de {{company}} (desde client.yaml → commerce): tarifas
     # de envío, contra entrega, pagos y códigos del catálogo → SSM → .env
-    # (modules/store-config). Sin payment_nequi_number el bot NO ofrece pago
-    # anticipado (el clon nace fail-closed, nunca con la llave de otro).
+    # (modules/store-config). Montos en pesos enteros SIN puntos (9000: en HCL
+    # `9.000` es el número 9). El bot ofrece SIEMPRE pago anticipado: la llave
+    # Nequi es obligatoria (el código del clon no trae ninguna, nunca la de otro).
 {{store_block}}
 
     # App Operador (Android): política de privacidad pública (Google Play la exige).

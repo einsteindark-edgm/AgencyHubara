@@ -11,6 +11,7 @@ import {
   ForgeOutbound,
   MigrationStepView,
 } from "../../../src/forge/messages";
+import { mainRepoRoot, SLUG_RE } from "../../../src/forge/pure";
 import { send } from "./vscodeApi";
 
 interface LogEntry {
@@ -39,9 +40,7 @@ function suggestDest(client: FleetClient, repoRoot: string): string {
   // Si Studio corre en un worktree (<repo>/.claude/worktrees/<x>), el parent
   // "natural" quedaría DENTRO del repo madre — subir hasta afuera del
   // checkout productivo (el CLI igual lo rechaza; esto evita sugerirlo).
-  const marker = "/.claude/worktrees/";
-  const base = repoRoot.includes(marker) ? repoRoot.slice(0, repoRoot.indexOf(marker)) : repoRoot;
-  const parent = base.replace(/\/[^/]+$/, "");
+  const parent = mainRepoRoot(repoRoot).replace(/\/[^/]+$/, "");
   return `${parent}/${client.repoName}`;
 }
 
@@ -74,7 +73,8 @@ function StepRow({
   if (busy) blocked = "hay otro proceso en curso";
   else if (!dest.trim()) blocked = "falta la carpeta destino del clon";
   else if (step.id === "clone" && destState?.isClone) blocked = "ya hay un clon en esa carpeta";
-  else if (step.id === "clone" && !canForge) blocked = "quedan TODO-BRAND o archivos requeridos — o marca «clon de prueba»";
+  else if (step.id === "clone" && !canForge)
+    blocked = "quedan TODO-BRAND, archivos requeridos o datos de la tienda — o marca «clon de prueba»";
   else if (step.kind === "auto" && step.done) blocked = "este paso ya está hecho";
   else if (step.needsClone && !destState?.isClone) blocked = "primero hay que forjar el clon (paso S1)";
   else if (missingEnv.length > 0) blocked = `falta en el entorno: ${missingEnv.map((n) => n.name).join(", ")}`;
@@ -204,7 +204,7 @@ function ClientCard({
   busy: boolean;
   tick: number;
 }) {
-  const pending = client.todoFiles.length + client.missingRequired.length;
+  const pending = client.todoFiles.length + client.missingRequired.length + client.commercePending.length;
   const ready = pending === 0;
   const defaultDest = useMemo(() => suggestDest(client, repoRoot), [client, repoRoot]);
   const [dest, setDest] = useState(defaultDest);
@@ -226,8 +226,16 @@ function ClientCard({
         touched.current = true;
         setDest(m.dest);
       }
-      if (m.type === "inspected" && m.slug === client.slug && m.dest === destRef.current) {
-        setInspection({ dest: m.dest, destState: m.destState, steps: m.steps, error: m.error });
+      if (m.type === "inspected" && m.slug === client.slug) {
+        // el clon ya forjado manda sobre la carpeta sugerida (migración de varios días)
+        if (m.recordedDest && !touched.current && m.recordedDest !== destRef.current) {
+          touched.current = true;
+          setDest(m.recordedDest);
+          return;
+        }
+        if (m.dest === destRef.current) {
+          setInspection({ dest: m.dest, destState: m.destState, steps: m.steps, error: m.error });
+        }
       }
     };
     window.addEventListener("message", onMsg);
@@ -287,6 +295,15 @@ function ClientCard({
             {client.missingRequired.length > 0 && (
               <span className="chip err" title={client.missingRequired.join("\n")}>
                 ✗ {client.missingRequired.length} requeridos faltan
+              </span>
+            )}
+            {client.commercePending.length > 0 && (
+              <span
+                className="chip warn link"
+                title={`Política comercial pendiente en client.yaml:\n${client.commercePending.join("\n")}`}
+                onClick={() => send({ type: "openPath", fsPath: client.clientYamlPath })}
+              >
+                ✎ {client.commercePending.length} datos de la tienda pendientes
               </span>
             )}
           </>
@@ -364,7 +381,7 @@ function ClientCard({
               ? "ya hay un clon en esa carpeta"
               : canForge
                 ? ""
-                : "quedan TODO-BRAND o requeridos — o marca «clon de prueba»"
+                : "quedan TODO-BRAND, requeridos o datos de la tienda — o marca «clon de prueba»"
           }
           onClick={() => send({ type: "apply", slug: client.slug, dest, allowTodos })}
         >
@@ -409,11 +426,13 @@ function ClientCard({
 
 function NewClientCard({ busy }: { busy: boolean }) {
   const [slug, setSlug] = useState("");
-  const valid = /^[a-z][a-z0-9_]*$/.test(slug);
+  const [company, setCompany] = useState("");
+  const valid = SLUG_RE.test(slug);
   const submit = () => {
     if (!valid || busy) return;
-    send({ type: "initClient", slug });
+    send({ type: "initClient", slug, company });
     setSlug("");
+    setCompany("");
   };
   return (
     <div className="card new">
@@ -433,7 +452,7 @@ function NewClientCard({ busy }: { busy: boolean }) {
       <div className="dest-row">
         <input
           type="text"
-          placeholder="nombre corto, ej. mi_tienda"
+          placeholder="nombre corto, ej. mitienda (2–20 minúsculas y dígitos)"
           value={slug}
           onChange={(e) => setSlug(e.target.value.trim())}
           onKeyDown={(e) => {
@@ -443,6 +462,17 @@ function NewClientCard({ busy }: { busy: boolean }) {
         <button className="primary" disabled={!valid || busy} onClick={submit}>
           Sembrar
         </button>
+      </div>
+      <div className="dest-row">
+        <input
+          type="text"
+          placeholder="nombre de la empresa, ej. Café Aurora (opcional)"
+          value={company}
+          onChange={(e) => setCompany(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") submit();
+          }}
+        />
       </div>
     </div>
   );
@@ -530,6 +560,11 @@ export function ForgeApp() {
           <div className="console-head">
             <span className="console-title">{busy ? `⚒ en curso: ${busyCmd}` : "salida de los comandos"}</span>
             <span className="spacer" style={{ flex: 1 }} />
+            {busy && (
+              <button title="Corta el comando en curso" onClick={() => send({ type: "cancel" })}>
+                ■ Detener
+              </button>
+            )}
             <button onClick={() => setLog([])}>limpiar</button>
           </div>
           <div className="console-log" ref={logRef}>

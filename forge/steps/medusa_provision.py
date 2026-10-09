@@ -105,60 +105,71 @@ def cmd_apply(vars_: dict, bundle: Path, api=gql) -> dict:
     database_url = json.loads(sup_file.read_text())["database_url"]
     name = f"{vars_['slug']}-medusa"
 
+    # El avance se guarda después de CADA llamada: si Railway falla a mitad, el
+    # reintento retoma donde quedó (sin un segundo proyecto ni pasos a mano).
+    out_file = bundle / ".outputs.medusa.json"
+    state = json.loads(out_file.read_text()) if out_file.exists() else {}
+    if state.get("base_url"):
+        print(f"= proyecto Railway {name} ya creado ({state['project_id']}) — no-op")
+        return state
+
+    def save() -> None:
+        out_file.write_text(json.dumps(state, indent=2))
+
     existing = api(
         "query($name:String){ projects(first:50){ edges{ node{ id name } } } }", {"name": name}
     )["projects"]["edges"]
     match = next((e["node"] for e in existing if e["node"]["name"] == name), None)
-    if match:
-        print(f"= proyecto Railway {name} ya existe ({match['id']}) — no-op")
-        out_file = bundle / ".outputs.medusa.json"
-        if out_file.exists():
-            return json.loads(out_file.read_text())
+    if match and match["id"] != state.get("project_id"):
         raise forge.ForgeError(
-            f"{name} existe pero sin outputs locales — completá {out_file} con la base_url"
+            f"el proyecto Railway {name} ({match['id']}) existe pero este bundle no lo creó (o perdió "
+            f"{out_file}): revisalo en Railway — si es de esta tienda, completá {out_file} con su base_url"
         )
-
-    project = api(
-        "mutation($input:ProjectCreateInput!){ projectCreate(input:$input){ id environments{ edges{ node{ id name } } } } }",
-        {"input": {"name": name}},
-    )["projectCreate"]
-    env_id = project["environments"]["edges"][0]["node"]["id"]
-    service = api(
-        "mutation($input:ServiceCreateInput!){ serviceCreate(input:$input){ id } }",
-        {"input": {"projectId": project["id"], "source": {"repo": repo}}},
-    )["serviceCreate"]
-    env_vars = build_env(vars_, database_url)
-    api(
-        "mutation($input:VariableCollectionUpsertInput!){ variableCollectionUpsert(input:$input) }",
-        {
-            "input": {
-                "projectId": project["id"],
-                "environmentId": env_id,
-                "serviceId": service["id"],
-                "variables": env_vars,
-            }
-        },
-    )
+    if not state.get("project_id"):
+        project = api(
+            "mutation($input:ProjectCreateInput!){ projectCreate(input:$input){ id environments{ edges{ node{ id name } } } } }",
+            {"input": {"name": name}},
+        )["projectCreate"]
+        state.update(project_id=project["id"], environment_id=project["environments"]["edges"][0]["node"]["id"])
+        save()
+    else:
+        print(f"= retomando el proyecto Railway {name} ({state['project_id']})")
+    env_id = state["environment_id"]
+    if not state.get("service_id"):
+        state["service_id"] = api(
+            "mutation($input:ServiceCreateInput!){ serviceCreate(input:$input){ id } }",
+            {"input": {"projectId": state["project_id"], "source": {"repo": repo}}},
+        )["serviceCreate"]["id"]
+        save()
+    if not state.get("variables"):
+        api(
+            "mutation($input:VariableCollectionUpsertInput!){ variableCollectionUpsert(input:$input) }",
+            {
+                "input": {
+                    "projectId": state["project_id"],
+                    "environmentId": env_id,
+                    "serviceId": state["service_id"],
+                    "variables": build_env(vars_, database_url),
+                }
+            },
+        )
+        state["variables"] = True
+        save()
     domain = api(
         "mutation($input:ServiceDomainCreateInput!){ serviceDomainCreate(input:$input){ domain } }",
-        {"input": {"environmentId": env_id, "serviceId": service["id"]}},
+        {"input": {"environmentId": env_id, "serviceId": state["service_id"]}},
     )["serviceDomainCreate"]["domain"]
     base_url = f"https://{domain}"
-    outputs = {
-        "project_id": project["id"],
-        "service_id": service["id"],
-        "environment_id": env_id,
-        "base_url": base_url,
-    }
-    (bundle / ".outputs.medusa.json").write_text(json.dumps(outputs, indent=2))
+    state["base_url"] = base_url
+    save()
+    outputs = state
     print(f"✓ Railway {name}: {base_url} (deploy corre al conectar el repo)")
     print("⚠ CORS quedó ABIERTO (*) para el arranque — cerrarlo a los dominios")
     print("  reales del cliente en las variables de Railway antes de producción.")
-    print("⚠ Railway GraphQL no verificado contra API viva: si algo falla, es")
-    print("  ruidoso y sin efectos parciales — crear proyecto/servicio a mano y")
-    print(f"  completar {bundle / '.outputs.medusa.json'} con la base_url.")
+    print("⚠ Railway GraphQL no verificado contra API viva: si algo falla, repetir el paso")
+    print(f"  retoma donde quedó (el avance está en {out_file}).")
     print("→ PASO HUMANO (una vez): crear el primer admin —")
-    print(f"  railway run --project {project['id']} npx medusa user -e <email> -p <pass>")
+    print(f"  railway run --project {state['project_id']} npx medusa user -e <email> -p <pass>")
     return outputs
 
 
@@ -220,17 +231,26 @@ def seed(vars_: dict, base_url: str, email: str, password: str, http=medusa_http
     return result
 
 
-def print_ssm_block(vars_: dict, base_url: str, seed_result: dict) -> None:
+def print_ssm_block(vars_: dict, base_url: str, seed_result: dict, bundle: Path) -> None:
     prefix = f"{vars_['ssm_prefix']}/{vars_['slug']}"
     assert not prefix.startswith("/hubara"), "guard: jamás imprimir paths de hubara"
     print("\n  Correr a mano (este CLI NO toca AWS — mismo patrón que ads-token):")
     print(f"  aws ssm put-parameter --name {prefix}/MEDUSA_BASE_URL --type SecureString --overwrite --value '{base_url}'")
     tok = seed_result.get("admin_token")
-    print(
-        f"  aws ssm put-parameter --name {prefix}/MEDUSA_ADMIN_TOKEN --type SecureString --overwrite --value '{tok}'"
-        if tok
-        else "  # MEDUSA_ADMIN_TOKEN: la key secreta ya existía — el token solo es visible al crearla (rotála si lo perdiste)"
-    )
+    if tok:
+        # El token NO se imprime: Acktos Studio guarda en disco su canal de salida.
+        # Va a un archivo solo-dueño del bundle (gitignored) y el CLI de AWS lo lee.
+        secret = bundle / ".secret.medusa_admin_token"
+        secret.touch(mode=0o600, exist_ok=True)
+        secret.chmod(0o600)
+        secret.write_text(tok, encoding="utf-8")
+        print(
+            f"  aws ssm put-parameter --name {prefix}/MEDUSA_ADMIN_TOKEN --type SecureString --overwrite "
+            f"--value file://{secret}"
+        )
+        print(f"  rm {secret}   # después de subirlo")
+    else:
+        print("  # MEDUSA_ADMIN_TOKEN: la key secreta ya existía — el token solo es visible al crearla (rotála si lo perdiste)")
     print(f"  # extras del backend: MEDUSA_REGION_ID={seed_result.get('region_id')} MEDUSA_SALES_CHANNEL_ID={seed_result.get('sales_channel_id')}")
     print("  # shipping option: crearla en el Admin UI del Medusa nuevo (requiere stock location + fulfillment set) → MEDUSA_DEFAULT_SHIPPING_OPTION_ID")
 
@@ -260,14 +280,16 @@ def main(argv: list[str] | None = None) -> int:
             out = bundle / ".outputs.medusa.json"
             if not out.exists():
                 raise forge.ForgeError("corré apply primero (falta .outputs.medusa.json)")
-            base_url = json.loads(out.read_text())["base_url"]
+            base_url = json.loads(out.read_text()).get("base_url")
+            if not base_url:
+                raise forge.ForgeError("el paso medusa quedó a medias: repetilo (retoma donde quedó)")
             email = os.environ.get("MEDUSA_ADMIN_EMAIL", "")
             password = os.environ.get("MEDUSA_ADMIN_PASSWORD", "")
             if not email or not password:
                 raise forge.ForgeError("faltan MEDUSA_ADMIN_EMAIL / MEDUSA_ADMIN_PASSWORD")
             result = seed(vars_, base_url, email, password)
             print(json.dumps({k: v for k, v in result.items() if k != "admin_token"}, indent=2))
-            print_ssm_block(vars_, base_url, result)
+            print_ssm_block(vars_, base_url, result, bundle)
     except forge.ForgeError as e:
         print(f"medusa_provision: {e}", file=sys.stderr)
         return 1

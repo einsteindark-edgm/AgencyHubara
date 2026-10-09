@@ -45,7 +45,9 @@ replacements:
     from: "tenant: [hubara]"
     to: "tenant: [{{slug}}]"
   - id: prefijo-y-tenant-juntos          # agencyhubara-hubara (verify/robotocore/comments tf, runbooks de la app)
-    files: ["infra/robotocore/**", "infra/scripts/**", "infra/terraform/**", "docs/mobile-native/**"]
+    # + el script que corre código en el API de prod: busca SU caja por el tag Name
+    files: ["infra/robotocore/**", "infra/scripts/**", "infra/terraform/**", "docs/mobile-native/**",
+            "hubara_agency/scripts/ssm_run_in_api.sh"]
     from: "agencyhubara-hubara"
     to: "{{prefix}}-{{slug}}"
   - id: bootstrap-tenant-flag            # ejemplos de uso en aws_bootstrap
@@ -97,7 +99,7 @@ replacements:
     from: "/tmp/hubara-deploy"
     to: "/tmp/{{slug}}-deploy"
   - id: compose-project
-    files: ["infra/compose/**", "infra/terraform/compute/**"]
+    files: ["infra/compose/**", "infra/terraform/compute/**", "hubara_agency/scripts/ssm_run_in_api.sh"]
     from: "hubara-prod"
     to: "{{slug}}-prod"
   - id: vault-volume
@@ -346,6 +348,55 @@ replacements:
     files: ["hubara_agency/src/**"]
     from: '"HUBARA_TENANT_ID", "hubara"'
     to: '"HUBARA_TENANT_ID", "{{slug}}"'
+  # El ssm-block de WhatsApp (S5) imprime estas tres llaves y `aws_bootstrap.py
+  # secrets` (S8) solo sube las que declara Terraform. En la madre existen fuera
+  # del state (declararlas le pediría un `terraform import` a su próximo apply);
+  # el clon nace con ellas declaradas, y su plantilla de secretos, igual.
+  - id: secretos-capi-waba
+    files: ["infra/terraform/platform/variables.tf"]
+    from: "    \"META_CATALOG_ID\",\n"
+    to: "    \"META_CATALOG_ID\",\n    # CAPI y WABA del tenant: los imprime `whatsapp_provision.py ssm-block` (S5).\n    \"WHATSAPP_BUSINESS_ACCOUNT_ID\",\n    \"META_CAPI_DATASET_ID\",\n    \"META_CAPI_ACCESS_TOKEN\",\n"
+  - id: secretos-capi-waba-plantilla
+    files: ["infra/scripts/secrets.example.env"]
+    from: "META_CATALOG_ID=\n\n"
+    to: "META_CATALOG_ID=\n\n# CAPI y WABA del tenant: los imprime `whatsapp_provision.py ssm-block` (S5).\nWHATSAPP_BUSINESS_ACCOUNT_ID=\n\nMETA_CAPI_DATASET_ID=\n\nMETA_CAPI_ACCESS_TOKEN=\n\n"
+  # Propiedades de Gradle de la App Operador: `~/.gradle/gradle.properties` le
+  # gana al proyecto, y en la máquina del operador están las de Hubara — con
+  # los mismos nombres, la app del clon cargaba su config y firmaba con su
+  # llave. El paquete Kotlin (`com.hubara.operator`) y los plugins de build
+  # (`hubara.android.*`) son del motor: no se tocan.
+  - id: gradle-apiurl
+    files: ["android_operator/**", "docs/mobile-native/**", ".github/workflows/*.yml"]
+    from: "hubara.apiUrl"
+    to: "{{slug}}.apiUrl"
+  - id: gradle-cognitoclientid
+    files: ["android_operator/**", "docs/mobile-native/**", ".github/workflows/*.yml"]
+    from: "hubara.cognitoClientId"
+    to: "{{slug}}.cognitoClientId"
+  - id: gradle-cognitoregion
+    files: ["android_operator/**", "docs/mobile-native/**", ".github/workflows/*.yml"]
+    from: "hubara.cognitoRegion"
+    to: "{{slug}}.cognitoRegion"
+  - id: gradle-privacyurl
+    files: ["android_operator/**", "docs/mobile-native/**", ".github/workflows/*.yml"]
+    from: "hubara.privacyUrl"
+    to: "{{slug}}.privacyUrl"
+  - id: gradle-configurl
+    files: ["android_operator/**", "docs/mobile-native/**", ".github/workflows/*.yml"]
+    from: "hubara.configUrl"
+    to: "{{slug}}.configUrl"
+  - id: gradle-upload
+    files: ["android_operator/**", "docs/mobile-native/**", ".github/workflows/*.yml"]
+    from: "hubara.upload."
+    to: "{{slug}}.upload."
+  - id: marca-en-la-barra-del-dashboard  # el nombre que ve el equipo de la tienda
+    files: ["frontend_dashboard/src/shared/ui/chrome/StatusBar.tsx"]
+    from: '"Hubara Dashboard"'
+    to: '"{{company}} Dashboard"'
+  - id: mba-ssm-en-mensajes             # el aviso al operador nombra SU árbol SSM
+    files: ["hubara_agency/src/plugins/mba/domain/config.py"]
+    from: "SSM /hubara/<tenant>/"
+    to: "SSM {{ssm_prefix}}/<tenant>/"
   - id: dominio-tienda-default          # sin STORE_WEB_DOMAIN, el dominio del CLIENTE
     files: ["hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py"]
     from: 'web_domain: str = "hubara"'
@@ -448,6 +499,9 @@ replacements:
     # /opt/graphagents protegido por preserve_tokens
     files:
       - "infra/compose/graphagents/render-env-from-ssm.sh"
+      # runbooks con `put-parameter --overwrite`: con el árbol de la madre, el
+      # operador del clon pisaba la llave LLM de la GraphAgents de Hubara
+      - "infra/compose/graphagents/*.md"
       - "infra/robotocore/test-local.sh"
       - "infra/terraform/platform/modules/github-oidc/**"
       - "hubara_agency/tests/infra/test_cross_tenant_iam.py"
@@ -468,10 +522,10 @@ replacements:
     files: ["hubara_agency/tests/infra/test_cross_tenant_iam.py"]
     from: '== ["graphagents"]'
     to: '== ["graphagents-{{slug}}"]'
-  - id: iam-tests-cloudwatch            # el parámetro del agente de CloudWatch lleva el prefijo de recursos
+  - id: iam-tests-prefijo-recursos      # CloudWatch, buckets S3 y tabla del lock llevan el prefijo de recursos
     files: ["hubara_agency/tests/infra/test_cross_tenant_iam.py"]
-    from: "AmazonCloudWatch-agencyhubara-"
-    to: "AmazonCloudWatch-{{prefix}}-"
+    from: "agencyhubara-"
+    to: "{{prefix}}-"
   - id: ssm-vincenzo                     # asserts de robotocore sobre el 2.º tenant de la madre
     files: ["infra/robotocore/**"]
     from: "/hubara/vincenzo/"
@@ -564,6 +618,20 @@ deletes:
 #            con este y su Terraform lo nombra. Un test exige que coincidan:
 #            promover ventas-N en Hubara = actualizar esta línea.
 # Las demás carpetas de `dir` (experimentos de la tienda madre) no viajan.
+# Política comercial de la tienda madre tal como la citan los workspaces de los
+# agentes (skills, SOUL/USER, el agente MBA): `apply` la cambia por la del
+# cliente (client.yaml → commerce) en el workspace instalado, en una sola pasada.
+# `forge init` siembra la llave Nequi como LLAVE-NEQUI (INIT_REAL_DATA). Si la
+# tienda madre cambia una cifra, cambiala acá (test_manifest_vs_repo lo exige).
+commerce_literals:
+  "$7.900": shipping_rate_local_cop
+  "$16.940": shipping_rate_national_cop
+  "$45.000": cash_on_delivery_min_cop
+  "1,5%": payment_link_surcharge_local
+  "2,69%": payment_link_surcharge_other
+  "Bogotá y municipios cercanos": shipping_local_zone
+  "LLAVE-NEQUI": payment_nequi_number
+
 decision_bundles:
   dir: "hubara_agency/src/plugins/chats/shared/decisions/bundles"
   default: ventas
@@ -645,9 +713,16 @@ scan:
     # el path SSM de la caja del laboratorio de HUBARA (el namespace/proyecto
     # `hubara-lab` dentro de la caja sí es del motor: allow_tokens)
     - '/hubara-lab\b'
+    # el árbol SSM de la GraphAgents de la madre (el del clon es /<slug>-graphagents)
+    - '(?<![\w./-])/graphagents/[A-Z_]'
+    # un id de instancia EC2 escrito en un archivo apunta a una caja de la madre
+    # (el lookbehind deja pasar los AMI: ami-0…)
+    - '(?<![a-z])i-0[0-9a-f]{16}'
   # matches de forbidden_patterns que NO son datos reales (ejemplos sintéticos
   # de tests/fixtures del motor) — clasificados explícitamente, no un bypass
   forbidden_pattern_allow:
+    - "i-0cafe000000000001"   # cajas sintéticas de test_bot_control_script.py
+    - "i-0beef000000000002"
     - "wa_573000000000"       # el normalizado por telefono-ejemplo
     - "wa_573000000001"       # el normalizado por telefono-ejemplo-2
     - "wa_573000000005"       # sintéticos de tests (reengagement + marketing #190)

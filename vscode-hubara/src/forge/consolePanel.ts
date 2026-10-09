@@ -10,8 +10,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import { ForgeService } from "./forgeService";
 import { ForgeInbound, ForgeOutbound } from "./messages";
-
-const SLUG_RE = /^[a-z][a-z0-9_]*$/;
+import { checkDestPath, SLUG_RE } from "./pure";
 
 export class ForgeConsolePanel {
   static current: ForgeConsolePanel | undefined;
@@ -93,43 +92,47 @@ export class ForgeConsolePanel {
         break;
       case "initClient":
         if (SLUG_RE.test(msg.slug)) {
-          await this.service.runForge("init", [msg.slug]);
+          // el nombre real desde el principio: domain.yaml y las voces lo citan
+          const company = msg.company.trim();
+          await this.service.runForge("init", company ? [msg.slug, "--company", company] : [msg.slug]);
         } else {
           void vscode.window.showErrorMessage(
-            `Forge: nombre corto inválido «${msg.slug}» (minúsculas, dígitos y _)`,
+            `Forge: nombre corto inválido «${msg.slug}» — de 2 a 20 minúsculas y dígitos, sin _ ni guiones ` +
+              "(va en nombres de AWS como los buckets S3, que no los aceptan)",
           );
         }
         break;
       case "plan":
         await this.service.runForge("plan", [msg.slug]);
         break;
-      case "apply": {
-        if (!this.checkDest(msg.dest)) break;
-        if (!(await this.confirmClone(msg.slug, msg.dest, msg.allowTodos))) break;
-        const args = [msg.slug, "--dest", msg.dest];
-        if (msg.allowTodos) args.push("--allow-todos");
-        await this.service.runForge("apply", args);
+      case "apply":
+        // lo mismo que el paso S1: migrate deja registrado el clon (carpeta y paso hecho)
+        await this.migrateRun(msg.slug, "clone", msg.dest, msg.allowTodos);
+        break;
+      case "verify": {
+        const dest = msg.dest.trim();
+        if (!this.requireClone(dest)) break;
+        await this.service.runForge("verify", [dest, "--client", msg.slug]);
         break;
       }
-      case "verify":
-        if (!this.requireClone(msg.dest)) break;
-        await this.service.runForge("verify", [msg.dest, "--client", msg.slug]);
-        break;
-      case "publish":
+      case "publish": {
         // publish solo IMPRIME los comandos gh (el operador los corre a mano).
-        if (!this.requireClone(msg.dest)) break;
-        await this.service.runForge("publish", [msg.dest, "--client", msg.slug]);
+        const dest = msg.dest.trim();
+        if (!this.requireClone(dest)) break;
+        await this.service.runForge("publish", [dest, "--client", msg.slug]);
         break;
+      }
       case "inspect": {
         const destState = this.service.destState(msg.dest);
         let steps = null;
+        let recordedDest: string | null = null;
         let error: string | null = null;
         try {
-          steps = await this.service.migrationSteps(msg.slug, msg.dest);
+          ({ steps, recordedDest } = await this.service.migrationStatus(msg.slug, msg.dest));
         } catch (e) {
           error = e instanceof Error ? e.message : String(e);
         }
-        this.post({ type: "inspected", slug: msg.slug, dest: msg.dest, destState, steps, error });
+        this.post({ type: "inspected", slug: msg.slug, dest: msg.dest, destState, steps, recordedDest, error });
         break;
       }
       case "migrateRun":
@@ -154,6 +157,21 @@ export class ForgeConsolePanel {
       case "openSettings":
         void vscode.commands.executeCommand("workbench.action.openSettings", "acktos.forge.python");
         break;
+      case "cancel": {
+        if (!this.service.busy) break;
+        const ok = await vscode.window.showWarningMessage(
+          `¿Detener «${this.service.busy}»?`,
+          {
+            modal: true,
+            detail:
+              "El comando se corta donde vaya. Un paso que estaba creando algo en un servicio externo " +
+              "puede dejarlo a medias: vuelve a correrlo (los pasos se pueden repetir) o revísalo en ese servicio.",
+          },
+          "Detener",
+        );
+        if (ok === "Detener") this.service.cancel();
+        break;
+      }
       case "pickDest": {
         const picked = await vscode.window.showOpenDialog({
           canSelectFiles: false,
@@ -169,11 +187,12 @@ export class ForgeConsolePanel {
     }
   }
 
-  private async migrateRun(slug: string, step: string, dest: string, allowTodos: boolean): Promise<void> {
-    if (!this.checkDest(dest)) return;
+  private async migrateRun(slug: string, step: string, rawDest: string, allowTodos: boolean): Promise<void> {
+    const dest = this.checkDest(rawDest);
+    if (dest === null) return;
     if (step === "clone") {
       if (!(await this.confirmClone(slug, dest, allowTodos))) return;
-    } else if (["supabase", "medusa", "medusa-seed"].includes(step)) {
+    } else if (["supabase", "medusa", "medusa-seed", "temporal"].includes(step)) {
       // Crean recursos REALES en cuentas de terceros (con la llave del entorno).
       const ok = await vscode.window.showWarningMessage(
         `Ejecutar el paso «${step}» para ${slug}`,
@@ -192,12 +211,15 @@ export class ForgeConsolePanel {
     await this.service.runMigrate(args);
   }
 
-  private checkDest(dest: string): boolean {
-    if (!dest.trim() || !path.isAbsolute(dest.trim())) {
-      void vscode.window.showErrorMessage("Forge: indica la carpeta destino del clon (ruta completa).");
-      return false;
+  /** La carpeta destino, sin espacios a los lados; null (y el aviso) si no sirve. */
+  private checkDest(raw: string): string | null {
+    const dest = raw.trim();
+    const problem = checkDestPath(dest);
+    if (problem) {
+      void vscode.window.showErrorMessage(`Forge: carpeta destino del clon — ${problem}.`);
+      return null;
     }
-    return true;
+    return dest;
   }
 
   private requireClone(dest: string): boolean {

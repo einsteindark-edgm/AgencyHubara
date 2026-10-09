@@ -18,12 +18,15 @@ import { readHubaraConfig } from "../config";
 import { DestState, FleetClient, MigrationStepView } from "./messages";
 import {
   clientYamlWarnings,
+  commercePending,
   defaultRepoName,
   LineSplitter,
+  mainRepoRoot,
   overlayAgents,
   OverlayAgent,
   parseMigrationStatus,
   pyTitle,
+  redactSecrets,
   stepInfo,
   todoMarker,
 } from "./pure";
@@ -63,6 +66,8 @@ type Script = "forge" | "migrate";
 export class ForgeService {
   private runSeq = 0;
   private active: string | null = null;
+  /** el proceso en curso (para «Detener») */
+  private child: ChildProcessWithoutNullStreams | null = null;
   private readonly emitter = new vscode.EventEmitter<RunEvent>();
   readonly onRun = this.emitter.event;
   private readonly fleetEmitter = new vscode.EventEmitter<void>();
@@ -82,8 +87,9 @@ export class ForgeService {
     return path.join(this.repoRoot, "forge");
   }
 
+  /** Los bundles viven en el checkout principal, como los busca el CLI. */
   get clientsDir(): string {
-    return path.join(this.forgeDir, "clients");
+    return path.join(mainRepoRoot(this.repoRoot), "forge", "clients");
   }
 
   get forgePath(): string {
@@ -112,7 +118,7 @@ export class ForgeService {
   }
 
   watch(ctx: vscode.ExtensionContext): void {
-    const pattern = new vscode.RelativePattern(this.forgeDir, "clients/**");
+    const pattern = new vscode.RelativePattern(path.dirname(this.clientsDir), "clients/**");
     this.watcher = vscode.workspace.createFileSystemWatcher(pattern);
     const fire = () => this.fleetEmitter.fire();
     ctx.subscriptions.push(
@@ -151,7 +157,9 @@ export class ForgeService {
       if (!fs.existsSync(yamlPath)) continue;
       try {
         const doc = YAML.parse(fs.readFileSync(yamlPath, "utf8")) ?? {};
-        const slug: string = typeof doc.slug === "string" && doc.slug ? doc.slug : entry.name;
+        // El CLI resuelve el bundle por el NOMBRE DE LA CARPETA (forge/clients/<slug>):
+        // la ficha usa el mismo, y un client.yaml que dice otro slug no se forja.
+        const slug = entry.name;
         const aws = doc.aws ?? {};
         const business = doc.business ?? {};
         const repo: string = typeof doc.repo === "string" ? doc.repo : "";
@@ -159,6 +167,10 @@ export class ForgeService {
         const hasDomain = fs.existsSync(domainPath);
         const warnings = clientYamlWarnings(doc, slug);
         if (!manifest) warnings.unshift("no pude leer forge/manifest.yaml — los requeridos no se revisaron");
+        const missing = this.missingRequired(bundleDir, agents, hasDomain);
+        if (doc.slug !== slug) {
+          missing.unshift(`client.yaml dice slug «${doc.slug ?? ""}» pero la carpeta es «${slug}» (deben ser iguales)`);
+        }
         out.push({
           slug,
           company: doc.company || pyTitle(slug),
@@ -174,8 +186,9 @@ export class ForgeService {
           clientYamlPath: yamlPath,
           domainYamlPath: hasDomain ? domainPath : null,
           todoFiles: this.scanTodos(bundleDir, agents, marker, hasDomain ? domainPath : null),
-          missingRequired: this.missingRequired(bundleDir, agents, hasDomain),
+          missingRequired: missing,
           clientWarnings: warnings,
+          commercePending: commercePending(doc),
           workspaceFileCount: countFiles(path.join(bundleDir, "workspace")),
         });
       } catch (e) {
@@ -234,13 +247,19 @@ export class ForgeService {
     const nextSteps = path.join(d, "NEXT_STEPS.md");
     return {
       exists: fs.existsSync(d),
-      isClone: fs.existsSync(path.join(d, ".git")),
+      isClone: hasCommit(d),
       nextStepsPath: fs.existsSync(nextSteps) ? nextSteps : null,
     };
   }
 
-  /** `migrate.py status <slug> [--dest D] --json`, enriquecido con la ficha de cada paso. */
-  async migrationSteps(slug: string, dest: string): Promise<MigrationStepView[]> {
+  /**
+   * `migrate.py status <slug> [--dest D] --json`, enriquecido con la ficha de
+   * cada paso, + la carpeta del clon que registró el paso S1.
+   */
+  async migrationStatus(
+    slug: string,
+    dest: string,
+  ): Promise<{ steps: MigrationStepView[]; recordedDest: string | null }> {
     const args = ["status", slug, "--json"];
     if (dest.trim()) args.push("--dest", dest.trim());
     const r = await this.capture("migrate", args);
@@ -248,7 +267,7 @@ export class ForgeService {
       throw new Error(lastLines(r.stderr || r.stdout) || `migrate.py salió con código ${r.code}`);
     }
     const status = parseMigrationStatus(r.stdout);
-    return status.steps.map((s) => {
+    const steps = status.steps.map((s) => {
       const info = stepInfo(s.id, s.kind);
       return {
         ...s,
@@ -261,6 +280,7 @@ export class ForgeService {
         note: info.note,
       };
     });
+    return { steps, recordedDest: status.dest };
   }
 
   /** De dónde sale el clon: rama, commit y si hay cambios sin commit. */
@@ -366,6 +386,30 @@ export class ForgeService {
     }
   }
 
+  /**
+   * Detiene el proceso en curso (y lo que haya lanzado: el grupo entero).
+   * SIGTERM y, si a los 5 s sigue vivo, SIGKILL.
+   */
+  cancel(): boolean {
+    const child = this.child;
+    if (!child || child.pid === undefined) return false;
+    const pid = child.pid;
+    const kill = (signal: NodeJS.Signals) => {
+      try {
+        if (process.platform === "win32") child.kill(signal);
+        else process.kill(-pid, signal);
+      } catch {
+        // ya terminó
+      }
+    };
+    kill("SIGTERM");
+    setTimeout(() => {
+      if (this.child === child) kill("SIGKILL");
+    }, 5_000);
+    this.emitter.fire({ kind: "notice", runId: 0, line: "Forge: deteniendo el comando en curso…", tone: "warn" });
+    return true;
+  }
+
   private setBusy(label: string | null): void {
     this.active = label;
     this.busyEmitter.fire(label);
@@ -391,7 +435,9 @@ export class ForgeService {
       let stdout = "";
       const outSplit = new LineSplitter();
       const errSplit = new LineSplitter();
-      const emit = (line: string, isErr: boolean) => {
+      const emit = (raw: string, isErr: boolean) => {
+        // el canal de salida queda en disco (logs de VS Code): ningún secreto llega ahí
+        const line = redactSecrets(raw);
         if (!isErr) stdout += line + "\n";
         this.output.appendLine(line);
         this.emitter.fire({ kind: "line", runId, line });
@@ -399,6 +445,7 @@ export class ForgeService {
       const finish = (code: number) => {
         if (settled) return;
         settled = true;
+        this.child = null;
         outSplit.flush().forEach((l) => emit(l, false));
         errSplit.flush().forEach((l) => emit(l, true));
         this.emitter.fire({ kind: "end", runId, code });
@@ -406,7 +453,13 @@ export class ForgeService {
       };
       let child: ChildProcessWithoutNullStreams;
       try {
-        child = spawn(py, argv, { cwd: this.repoRoot, env: this.childEnv() });
+        // grupo propio (POSIX): «Detener» mata también lo que el CLI lanzó
+        child = spawn(py, argv, {
+          cwd: this.repoRoot,
+          env: this.childEnv(),
+          detached: process.platform !== "win32",
+        });
+        this.child = child;
       } catch (e) {
         const msg = `No pude ejecutar «${py}»: ${e instanceof Error ? e.message : e}`;
         this.output.appendLine(msg);
@@ -460,6 +513,24 @@ export class ForgeService {
 }
 
 // ── helpers de disco ─────────────────────────────────────────────────────────
+
+/**
+ * ¿`<dest>` es un clon forjado? Tiene `.git` CON su primer commit: si `git
+ * commit` falló (firma GPG, hooks), `.git` existe pero HEAD no apunta a nada.
+ */
+function hasCommit(dest: string): boolean {
+  const gitDir = path.join(dest, ".git");
+  try {
+    const head = fs.readFileSync(path.join(gitDir, "HEAD"), "utf8").trim();
+    if (!head.startsWith("ref: ")) return /^[0-9a-f]{40}$/.test(head);
+    const ref = head.slice(5);
+    if (fs.existsSync(path.join(gitDir, ref))) return true;
+    const packed = path.join(gitDir, "packed-refs");
+    return fs.existsSync(packed) && fs.readFileSync(packed, "utf8").includes(` ${ref}\n`);
+  } catch {
+    return false;
+  }
+}
 
 function fileHas(p: string, marker: string): boolean {
   try {

@@ -518,6 +518,7 @@
     "watch": "node esbuild.mjs --watch",
     "package": "node esbuild.mjs --production",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/test.mjs",
     "vscode:prepublish": "node esbuild.mjs --production",
     "vsix": "vsce package --no-dependencies"
   },

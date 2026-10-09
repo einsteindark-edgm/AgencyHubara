@@ -118,9 +118,20 @@ variable "tenants" {
   validation {
     condition = alltrue(flatten([for t in values(var.tenants) : [
       for v in [t.store.shipping_rate_local_cop, t.store.shipping_rate_national_cop, t.store.cash_on_delivery_min_cop] :
-      v == null ? true : (v > 0 && v == floor(v))
+      v == null ? true : (v >= 1000 && v == floor(v))
     ]]))
-    error_message = "tenants.*.store: los montos (shipping_rate_*_cop, cash_on_delivery_min_cop) son pesos enteros mayores que 0, o sin definir."
+    # `9.000` en HCL es el número 9 (no nueve mil): llegaría al bot como «$9».
+    error_message = "tenants.*.store: los montos (shipping_rate_*_cop, cash_on_delivery_min_cop) son pesos enteros desde 1000 y SIN puntos (9000, no 9.000), o sin definir."
+  }
+
+  validation {
+    condition = alltrue([for t in values(var.tenants) :
+      (t.store.shipping_local_city == null || can(regex("^\\p{L}+( \\p{L}+)*$", t.store.shipping_local_city)))
+      && (t.store.shipping_local_zone == null || can(regex("^[^#$\"'\\\\\u0060{}\n\r]+$", t.store.shipping_local_zone)))
+    ])
+    # La ciudad se busca DENTRO de la del cliente (con «Bogotá D.C.», «Bogotá» cae
+    # en la nacional); render-env escribe KEY=valor (un `#` corta el valor).
+    error_message = "tenants.*.store: shipping_local_city es solo el nombre de la ciudad, letras y espacios (\"Bogotá\"); shipping_local_zone sin # $ comillas ni llaves."
   }
 
   validation {
@@ -134,9 +145,13 @@ variable "tenants" {
   validation {
     condition = alltrue([for t in values(var.tenants) :
       (t.store.sku_prefix == null || can(regex("^[A-Z0-9]{1,12}-$", t.store.sku_prefix)))
-      && (t.store.catalog_collections == null || length(coalesce(t.store.catalog_collections, [])) > 0)
+      && (t.store.web_domain == null || can(regex("^[a-z0-9.-]+$", t.store.web_domain)))
+      && (t.store.catalog_collections == null || (
+        length(coalesce(t.store.catalog_collections, [])) > 0
+        && alltrue([for h in coalesce(t.store.catalog_collections, []) : can(regex("^[a-z0-9][a-z0-9_-]*$", h))])
+      ))
     ])
-    error_message = "tenants.*.store: sku_prefix en mayúsculas terminado en guion (p.ej. \"HUB-\"); catalog_collections no vacía (sin definir = el default)."
+    error_message = "tenants.*.store: sku_prefix en mayúsculas terminado en guion (p.ej. \"HUB-\"); web_domain en minúsculas; catalog_collections no vacía y con HANDLES de Medusa (\"home_banner\", no el título)."
   }
 
   validation {
