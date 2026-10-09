@@ -1142,6 +1142,11 @@ async def _run_agent_turn_impl(
     # contesta solo con esa tarjeta (que corta el turno), el texto sale igual.
     promise_withheld_text: str | None = None
     promise_tools: set[str] = set()
+    # Las llamadas a `send_reply` que la ronda retuvo (id → texto validado y
+    # sus argumentos) y su nota: si el texto sale igual, el LLM lo recuerda
+    # como salió (revisión de compuertas, L-22). En memoria, sin comandos.
+    promise_withheld: dict[str, tuple[str, dict[str, Any]]] = {}
+    promise_note_message: dict[str, Any] | None = None
     # Bug saludo descartado (run ddd0d472): textos client-facing emitidos JUNTO
     # con tool calls. Solo manipulación de lista en memoria → no agrega commands
     # al history (replay-safe sin gate; el gate vive en el workflow que decide
@@ -1590,13 +1595,11 @@ async def _run_agent_turn_impl(
                         )
                         for tc in response.tool_calls:
                             if tc.id in batch_reply_ids:
-                                delivered_replies.pop(tc.id, None)
+                                promise_withheld[tc.id] = (delivered_replies.pop(tc.id, ""), dict(tc.arguments))
                                 withheld_reply_ids.append(tc.id)
                                 _forget_outbound_texts(outbound_tool_texts, tc.arguments)
-                        messages = [
-                            *messages,
-                            {"role": "system", "content": f"Tu send_reply NO se envió. {promise_note}"},
-                        ]
+                        promise_note_message = {"role": "system", "content": f"Tu send_reply NO se envió. {promise_note}"}
+                        messages = [*messages, promise_note_message]
                         continue
                     if contract_note:
                         extra_rounds += 1
@@ -1698,6 +1701,16 @@ async def _run_agent_turn_impl(
                     # retenido (la respuesta a lo que el cliente preguntó).
                     if promise_withheld_text and not batch_reply_texts and promise_tools & set(batch_kept):
                         final_content = promise_withheld_text
+                        # Salió: el LLM lo recuerda como salió (su `send_reply`
+                        # y después la tarjeta, sin la nota de la ronda). Solo
+                        # cambia lo que se graba: sin comandos.
+                        for call_id, (text, args) in promise_withheld.items():
+                            delivered_replies[call_id] = text
+                            if call_id in withheld_reply_ids:
+                                withheld_reply_ids.remove(call_id)
+                            outbound_tool_texts.extend(v for v in args.values() if isinstance(v, str))
+                        sent_reply_ids = list(promise_withheld)
+                        messages = [m for m in messages if m is not promise_note_message]
                         steps.append(
                             {"kind": "guard", "at_ms": _now_ms(), "name": "promised_action_text_kept",
                              "before": "", "after": final_content, "tools": batch_tool_names}

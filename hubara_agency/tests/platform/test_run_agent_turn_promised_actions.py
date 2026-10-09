@@ -46,6 +46,7 @@ class _State:
         self.calls: list[list[dict]] = []
         self.tools: list[str] = []
         self.form_rejected = False
+        self.recorded: list[dict] = []
 
 
 STATE = _State()
@@ -87,7 +88,7 @@ async def _execute_tool(inp: ExecuteToolInput) -> str:
 
 @activity.defn(name="record_turn")
 async def _record_turn(inp: RecordTurnInput) -> None:
-    return None
+    STATE.recorded = list(inp.new_messages)
 
 
 @workflow.defn(name="PromisedActionsProbeWorkflow")
@@ -190,6 +191,44 @@ async def test_the_held_text_goes_out_when_the_round_only_sends_the_form() -> No
 
     assert out["final"] == PROMISE
     assert "promised_action_round" in out["guards"]
+
+
+async def test_the_memory_keeps_the_held_text_that_went_out() -> None:
+    """Revisión de compuertas (2026-10-09, L-22): el texto retenido salió,
+    pero la memoria del LLM lo borraba y guardaba la nota «Tu send_reply NO
+    se envió»; en el turno siguiente el modelo creía que no había contestado
+    lo que el cliente preguntó. Se recuerda como salió: su `send_reply` y
+    después el formulario, sin la nota."""
+    await _turn([
+        [("send_reply", {"text": PROMISE})],
+        [("request_shipping_details", {"items": [{"handle": "calabaza", "quantity": 1}]})],
+    ])
+
+    calls = [
+        (call["function"]["name"], json.loads(call["function"]["arguments"]))
+        for m in STATE.recorded if m.get("role") == "assistant"
+        for call in m.get("tool_calls") or []
+    ]
+    assert [name for name, _ in calls] == ["send_reply", "request_shipping_details"]
+    assert calls[0][1] == {"text": PROMISE}
+    assert not any("NO se envió" in str(m.get("content")) for m in STATE.recorded)
+
+
+async def test_a_text_the_model_rewrote_is_remembered_once() -> None:
+    """Si el modelo insiste con OTRO texto, se recuerda el que salió, una
+    vez; el retenido no (nunca le llegó al cliente)."""
+    out = await _turn([
+        [("send_reply", {"text": PROMISE})],
+        [("send_reply", {"text": "Listo, ya te llega el formulario 🤍"})],
+    ])
+
+    texts = [
+        json.loads(call["function"]["arguments"]).get("text")
+        for m in STATE.recorded if m.get("role") == "assistant"
+        for call in m.get("tool_calls") or []
+    ]
+    assert out["final"] == "Listo, ya te llega el formulario 🤍"
+    assert texts == ["Listo, ya te llega el formulario 🤍"]
 
 
 async def test_no_round_on_the_last_iteration() -> None:
