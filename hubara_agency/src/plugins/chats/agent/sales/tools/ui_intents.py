@@ -63,6 +63,7 @@ from src.plugins.chats.agent.sales.card_messages import (
     shipping_form_text,
 )
 from src.plugins.chats.agent.sales.config.shipping import (
+    CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
@@ -1812,6 +1813,26 @@ class PresentOrderConfirmationTool(ToolBase):
                     "llamar present_order_confirmation con los precios EXACTOS "
                     "del catálogo (verify_order_for_checkout te los devuelve "
                     "en unit_price_cop). Nunca inventes ni negocies precios."
+                ),
+            }, ensure_ascii=False)
+
+        # Contra entrega solo desde el mínimo en productos (premortem
+        # 2026-10-09): el mínimo armaba las opciones del formulario, pero si la
+        # cantidad bajaba después, la tarjeta salía con contra entrega por
+        # debajo y el pedido se registraba así.
+        if payment_method == "cash_on_delivery" and not cash_on_delivery_available(subtotal):
+            logger.warning(
+                "🚨 [TOOL present_order_confirmation] cod_below_minimum session={} subtotal={}",
+                ctx.session_key, subtotal,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "cod_below_minimum",
+                "message": (
+                    f"Contra entrega es desde {format_cop(CASH_ON_DELIVERY_MIN_PRODUCTS_COP)} en productos y este "
+                    f"pedido suma {format_cop(subtotal)}. NO se encoló la confirmación. Dile al cliente con "
+                    "calidez que con este valor el pago es anticipado (Nequi o llave) o con link de pago, "
+                    "pregúntale cuál prefiere y vuelve a llamar present_order_confirmation con ese método."
                 ),
             }, ensure_ascii=False)
 
