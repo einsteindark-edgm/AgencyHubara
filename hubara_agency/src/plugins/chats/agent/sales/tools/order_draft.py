@@ -558,6 +558,7 @@ class SetOrderSlotTool(ToolBase):
         lines: list[dict[str, str]] = []
         rejected: list[dict[str, Any]] = []
         tones: list[str] = []
+        not_offered: set[str] = set()
         for n, line in enumerate(parsed, start=1):
             values = {k: v for k, v in shared.items() if isinstance(v, str) and v.strip()}
             values.update({k: line[k] for k in _LINE_VARIANTS if k in line})
@@ -572,10 +573,17 @@ class SetOrderSlotTool(ToolBase):
                         f"línea {n}: '{family_info['requested']}' (registrado como "
                         f"{family_info['captured']})"
                     )
+            if product is not None:
+                # Lo que el catálogo no deja elegir, también en cada línea.
+                filled, lacking = _only_options(product, values, {}, [])
+                values.update(filled)
+                not_offered.update(lacking)
             lines.append({**values, "cantidad": line["cantidad"]})
         if rejected:
             return producto, None, rejected
         set_product_lines(data, producto=producto, lines=lines, now_ms=now_ms)
+        if not_offered and product is not None:
+            _mark_not_offered(data, product, sorted(not_offered), producto)
         if tones:
             # El tono pedido queda para el operador (empaque), como en un ítem.
             note = f"{producto}: tono de color pedido por el cliente, " + "; ".join(tones)
@@ -1004,7 +1012,7 @@ class SetOrderSlotTool(ToolBase):
         if wrote:
             update_order_draft(data, slots=provided, now_ms=now_ms)
             if not_offered and product is not None:
-                _mark_not_offered(data, product, not_offered)
+                _mark_not_offered(data, product, not_offered, provided.get("producto"))
         if wrote or lines_written is not None:
             self._store.write_merged(ctx.session_key, base=base, ours=data)
         wrote = wrote or lines_written is not None
@@ -1191,15 +1199,18 @@ def _only_options(
     return filled, not_offered
 
 
-def _mark_not_offered(data: dict[str, Any], product: Any, kinds: list[str]) -> None:
-    """`order_draft[NOT_OFFERED_KEY][producto] = atributos sin opciones`."""
+def _mark_not_offered(data: dict[str, Any], product: Any, kinds: list[str], name: Any) -> None:
+    """`order_draft[NOT_OFFERED_KEY][producto] = atributos sin opciones`, con
+    el nombre que quedó en el ítem (la etapa lo busca así: con el handle, la
+    marca por título no se encontraba — revisión del premortem 2026-10-09),
+    el título y el handle."""
     draft = get_active_draft(data)
     if not isinstance(draft, dict):
         return
     marks = draft.get(NOT_OFFERED_KEY)
     marks = dict(marks) if isinstance(marks, dict) else {}
-    key = product_key(product.title)
-    marks[key] = sorted(set(marks.get(key) or []) | set(kinds))
+    for key in {product_key(name), product_key(product.title), product_key(product.handle)} - {""}:
+        marks[key] = sorted(set(marks.get(key) or []) | set(kinds))
     draft[NOT_OFFERED_KEY] = marks
 
 

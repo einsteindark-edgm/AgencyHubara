@@ -178,3 +178,36 @@ async def test_a_product_past_the_thirtieth_is_still_found(tmp_path: Path) -> No
     result = await _set(tool, producto="Trilogía del Terror", cantidad="1")
 
     assert result.get("auto_filled") == {"aroma": "Frutos rojos", "color": "Blanco"}
+
+
+# ── Revisión del premortem (2026-10-09) ──────────────────────────────────
+# La marca de «sin opciones» se guardaba con el título del catálogo y la
+# etapa la busca con el nombre anotado: con el handle se quedaba en
+# variantes. Y las `lineas` (un producto repartido) no traían la opción única.
+
+
+@pytest.mark.asyncio
+async def test_a_product_named_by_its_handle_does_not_wait_for_what_it_lacks(tmp_path: Path) -> None:
+    await _set(_tool(tmp_path), producto="vela-de-soya", aroma="Coco", cantidad="2")
+
+    assert resolve_funnel_stage(_meta(tmp_path)) == STAGE_DATOS_ENVIO
+
+
+@pytest.mark.asyncio
+async def test_each_line_carries_the_only_aroma(tmp_path: Path) -> None:
+    lines = [{"color": "verde", "cantidad": "1"}, {"color": "Blanco", "cantidad": "1"}]
+
+    await _set(_tool(tmp_path), producto="Velón Amor Eterno", lineas=lines)
+
+    items = draft_items(_meta(tmp_path)["episodes"][-1]["order_draft"])
+    assert [i.get("aroma") for i in items] == ["Lavanda", "Lavanda"]
+    assert resolve_funnel_stage(_meta(tmp_path)) == STAGE_DATOS_ENVIO
+
+
+@pytest.mark.asyncio
+async def test_lines_of_a_product_without_colors_do_not_wait_for_one(tmp_path: Path) -> None:
+    lines = [{"aroma": "Coco", "cantidad": "1"}, {"aroma": "Vainilla", "cantidad": "1"}]
+
+    await _set(_tool(tmp_path), producto="Vela de Soya", lineas=lines)
+
+    assert resolve_funnel_stage(_meta(tmp_path)) == STAGE_DATOS_ENVIO
