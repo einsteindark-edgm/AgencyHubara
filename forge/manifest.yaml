@@ -21,6 +21,8 @@ copy_exclude:
 # frontend los referencian FUERA del scope de marca-en-agente.
 preserve_tokens:
   - "HubaraSalesSessionWorkflow"
+  - "HubaraEtaSessionWorkflow"
+  - "HubaraRemarketingWorkflow"
   # path DENTRO de la caja GraphAgents — debe coincidir entre cloud-init,
   # deploy workflow y render script; las reglas de /graphagents no lo tocan
   - "/opt/graphagents"
@@ -42,14 +44,18 @@ replacements:
     files: [".github/workflows/*.yml"]
     from: "tenant: [hubara]"
     to: "tenant: [{{slug}}]"
-  - id: prefijo-y-tenant-juntos          # agencyhubara-hubara (verify/robotocore/comments tf)
-    files: ["infra/robotocore/**", "infra/scripts/**", "infra/terraform/**"]
+  - id: prefijo-y-tenant-juntos          # agencyhubara-hubara (verify/robotocore/comments tf, runbooks de la app)
+    files: ["infra/robotocore/**", "infra/scripts/**", "infra/terraform/**", "docs/mobile-native/**"]
     from: "agencyhubara-hubara"
     to: "{{prefix}}-{{slug}}"
   - id: bootstrap-tenant-flag            # ejemplos de uso en aws_bootstrap
     files: ["infra/scripts/**"]
     from: "--tenant hubara "
     to: "--tenant {{slug}} "
+  - id: bootstrap-tenant-flag-docs       # runbooks de la App Operador (push/Play)
+    files: ["docs/mobile-native/**"]
+    from: "--tenant hubara"
+    to: "--tenant {{slug}}"
   - id: secrets-env-file
     files: ["infra/scripts/**", "infra/whatsapp-provisioning/**"]
     from: "secrets.hubara.env"
@@ -78,8 +84,8 @@ replacements:
     files: ["infra/terraform/platform/modules/auth/**"]
     from: "<tenant>-hubara.auth."
     to: "{{prefix}}-<tenant>.auth."
-  - id: ssm-doble-hubara                 # /hubara/hubara/... (verify hardcodeado)
-    files: ["infra/robotocore/**", "infra/scripts/**"]
+  - id: ssm-doble-hubara                 # /hubara/hubara/... (verify hardcodeado, READMEs)
+    files: ["infra/**"]
     from: "/hubara/hubara/"
     to: "{{ssm_prefix}}/{{slug}}/"
   - id: opt-hubara                      # + infra/scripts: bot_control.sh corre en la caja (2026-10-06)
@@ -99,7 +105,7 @@ replacements:
     from: "hubara-vault"
     to: "{{slug}}-vault"
   - id: gh-repo
-    files: ["infra/terraform/**", "infra/scripts/**"]
+    files: ["infra/terraform/**", "infra/scripts/**", "docs/mobile-native/**"]
     from: "einsteindark-edgm/AgencyHubara"
     to: "{{repo}}"
   - id: dlm-tag
@@ -110,10 +116,12 @@ replacements:
     files: ["hubara_agency/src/plugins/chats/agent/**"]
     from: "HUB-hubara-"
     to: "{{ref_prefix}}-{{slug}}-"
-  - id: eip-hubara-en-frontend        # tauri.conf CSP + runbook Android: la URL
-    files: ["frontend_dashboard/**"]   # REAL del cliente si client.yaml trae api_url
-    from: "98-88-237-207.sslip.io"
-    to: "{{api_host}}"
+  - id: instagram-marca                 # el handle de Instagram de Hubara ES su
+    # dominio: sin esta regla (antes de dominio-marca) quedaría
+    # instagram.com/<dominio-del-cliente>
+    files: ["**"]
+    from: "instagram.com/hubara.com.co"
+    to: "instagram.com/{{instagram}}"
   - id: dominio-marca
     # global: el dominio del cliente también vive en platform code (meta_catalog
     # dtos/mapper, media_url), docs y features — lo encontró el ratchet E2E
@@ -134,8 +142,87 @@ replacements:
     files: ["**"]
     from: "wa_573229041190"
     to: "wa_573000000001"
-  - id: catalog-skill
-    files: ["hubara_agency/src/plugins/chats/agent/**"]
+  - id: nequi-default-vacio             # la llave Nequi de HUBARA no puede ser el
+    # default del clon: el bot del cliente le pediría a sus clientes pagarle a
+    # Hubara. Vacío = sin pago anticipado (fail-closed) hasta que la tienda
+    # ponga su llave en Terraform (tenants.<t>.store.payment_nequi_number →
+    # SSM PAYMENT_NEQUI_NUMBER, NEXT_STEPS.md F3). ANTES de telefono-nequi-crudo.
+    files: ["hubara_agency/src/plugins/chats/agent/sales/config/payments.py"]
+    from: 'PAYMENT_NEQUI_NUMBER_DEFAULT = "3229041190"'
+    to: 'PAYMENT_NEQUI_NUMBER_DEFAULT = ""  # {{company}}: tenants.<t>.store.payment_nequi_number (Terraform)'
+  - id: nequi-flow-envio                # el Flow de datos de envío (se publica en
+    # Meta con `whatsapp_provision.py flows`): la llave de Hubara no viaja; el
+    # cliente recibe sus datos de pago al registrar el pedido
+    files: ["hubara_agency/docs/whatsapp_flows/*.json"]
+    from: "Nequi o llave 3229041190."
+    to: "Nequi o llave (te enviamos los datos al registrar el pedido)."
+  - id: telefono-operador-formatos     # el mismo número del operador en
+    # formatos sin `wa_` (tests de resolución de teléfono, ETA, comentarios)
+    files: ["**"]
+    from: "312-567-1604"
+    to: "300-000-0000"
+  - id: telefono-operador-espacios
+    files: ["**"]
+    from: "312 567 1604"
+    to: "300 000 0000"
+  - id: telefono-operador-crudo
+    files: ["**"]
+    from: "3125671604"
+    to: "3000000000"
+  - id: telefono-nequi-espacio          # "+57 322 9041190" (comentarios del catálogo)
+    files: ["**"]
+    from: "322 9041190"
+    to: "300 0000001"
+  - id: telefono-nequi-crudo            # la llave Nequi de Hubara en tests,
+    # fixtures y comentarios. El VALOR que usa el bot vive en el dominio de
+    # la tienda (domain.yaml: commerce), que el clon recibe del cliente.
+    files: ["**"]
+    from: "3229041190"
+    to: "3000000001"
+  # ── App Operador nativa (android_operator/): el applicationId es único en
+  # Google Play y en el proyecto Firebase — el clon publica SU app. El
+  # namespace Kotlin `com.hubara.operator` es del motor y no se toca. ──────
+  - id: app-operador-id
+    files: ["**"]
+    from: "com.acktos.operator"
+    to: "{{android_app_id}}"
+  - id: app-operador-nombre             # ficha de Play, política de privacidad, runbooks
+    files: ["android_operator/release/**", "docs/mobile-native/**"]
+    from: "Hubara Operador"
+    to: "{{company}} Operador"
+  - id: app-operador-firebase           # proyecto Firebase / llave de subida en los runbooks
+    files: ["android_operator/**", "docs/mobile-native/**"]
+    from: "hubara-operador"
+    to: "{{slug}}-operador"
+  - id: app-operador-privacy-tfvars
+    files: ["android_operator/release/**"]
+    from: "tenants.hubara."
+    to: "tenants.{{slug}}."
+  # ── IDs REALES de Meta de Hubara que entraron a tests/docs/código: a
+  # sintéticos del mismo largo (los tests que los comparan siguen coherentes).
+  # También en scan.forbidden. ──────────────────────────────────────────────
+  - id: meta-phone-number-id
+    files: ["**"]
+    from: "1234091093112024"
+    to: "1000000000000002"
+  - id: meta-ad-account
+    files: ["**"]
+    from: "1010393601284112"
+    to: "1000000000000003"
+  - id: meta-phone-number-id-viejo
+    files: ["**"]
+    from: "2507823826404263"
+    to: "1000000000000004"
+  - id: meta-flow-id
+    files: ["**"]
+    from: "951293630651590"
+    to: "100000000000005"
+  - id: meta-catalog-id-2
+    files: ["**"]
+    from: "1468134707823015"
+    to: "1000000000000006"
+  - id: catalog-skill                   # el skill de catálogo del overlay se instala como <slug>_catalog
+    files: ["hubara_agency/src/plugins/chats/agent/**", "hubara_agency/tests/**"]
     from: "hubara_catalog"
     to: "{{slug}}_catalog"
   - id: flow-name
@@ -170,6 +257,145 @@ replacements:
     files: ["hubara_agency/src/plugins/chats/agent/**"]   # prompts, translate
     from: "Hubara"
     to: "{{company}}"
+  - id: propuesta-de-valor             # burbuja 1 del saludo (la ve el cliente):
+    # la propuesta de valor es del cliente → neutral (marca-en-agente pone el nombre)
+    files: ["hubara_agency/src/plugins/chats/agent/sales/first_contact_greeting.py"]
+    from: |-
+      , velas artesanales hechas a base de cera de palma, "
+          "a mano en Colombia."
+    to: |-
+      ."
+  - id: catalogo-toca-producto          # guía de la tarjeta del catálogo (la ve el cliente)
+    files: ["hubara_agency/src/plugins/chats/agent/sales/activities/flush_ui_intents.py"]
+    from: "Toca una vela para ver sus fotos"
+    to: "Toca un producto para ver sus fotos"
+  - id: back-office-rubro               # prompt de order_intake (LLM)
+    files: ["hubara_agency/src/plugins/chats/shared/order_intake.py"]
+    from: "de Hubara (velas artesanales, Colombia)"
+    to: "de {{company}}"
+  - id: vision-producto                  # prompts de visión: el producto ya no es una vela
+    files: ["hubara_agency/src/platform/vision/**"]
+    from: "no muestra una vela"
+    to: "no muestra un producto de la tienda"
+  - id: vision-rubro
+    files: ["hubara_agency/src/platform/vision/**"]
+    from: "un chat de ventas de velas artesanales"
+    to: "un chat de ventas de {{company}}"
+  - id: vision-foto-producto
+    files: ["hubara_agency/src/platform/vision/**"]
+    from: "foto o captura de una vela, un objeto"
+    to: "foto o captura de un producto, un objeto"
+  - id: marca-fuera-del-agente          # tools/prompts del motor que nombran la tienda
+    files:
+      - "hubara_agency/src/platform/tools/escalation.py"
+      - "hubara_agency/src/plugins/mba/tools/session.py"
+      - "hubara_agency/src/plugins/eta/agent/eta/prompts.py"
+      - "hubara_agency/src/plugins/catalog/agent/contracts.py"
+      - "hubara_agency/src/platform/meta_catalog/dtos.py"
+      - "hubara_agency/src/platform/meta_catalog/mapper.py"
+      - "frontend_dashboard/index.html"
+      - "frontend_dashboard/src/app/providers/LoginScreen.tsx"
+      - "frontend_dashboard/src/app/providers/MobileAuthGate.tsx"
+      - "frontend_dashboard/src/plugins/mba/frontend/**"
+      - "GraphAgents/graphs/ctwa_report.py"
+      - "ads-analytics-engine/src/ads_engine/report.py"
+    from: "Hubara"
+    to: "{{company}}"
+  - id: marca-en-evals                  # el scorecard busca la marca del CLIENTE (scorecard-marca):
+    # las trayectorias de prueba y los goldens hablan como su bot
+    files: ["hubara_agency/tests/evals/**"]
+    from: "Hubara"
+    to: "{{company}}"
+  - id: encabezado-del-prompt            # exoclaw-temporal arma TODO system prompt con
+    # "# Agente de Hubara" — el LLM del clon creería ser el de Hubara. El
+    # dashboard (TraceStepDetail) y los tests parten el prompt por ese título.
+    files: ["**"]
+    from: "Agente de Hubara"
+    to: "Agente de {{company}}"
+  - id: marca-en-tests-de-la-voz         # tests que leen la voz del cliente (workspace,
+    # saludo, avisos ETA): su texto esperado es el del clon
+    files:
+      - "hubara_agency/tests/plugins/chats/sales/test_portavelas_color_policy.py"
+      - "hubara_agency/tests/plugins/chats/sales/test_workspace_returning_customer.py"
+      - "hubara_agency/tests/test_conversation_identity.py"
+      - "hubara_agency/tests/plugins/eta/test_eta_agent.py"
+      - "hubara_agency/tests/plugins/eta/test_shipping_cost_notification.py"
+      - "hubara_agency/scripts/golden_eval.py"
+    from: "Hubara"
+    to: "{{company}}"
+  - id: saludo-en-test                   # mismo cambio que propuesta-de-valor + marca
+    files: ["hubara_agency/tests/plugins/chats/sales/test_first_contact_greeting.py"]
+    from: |-
+      Bienvenido a *Hubara*, velas artesanales hechas a "
+              "base de cera de palma, a mano en Colombia."
+    to: |-
+      Bienvenido a *{{company}}*."
+  - id: telefono-enmascarado-test        # display_phone_number enmascarado (los 4 últimos)
+    files: ["hubara_agency/tests/**"]
+    from: '"***1190"'
+    to: '"***0001"'
+  - id: guion-mayusculas                 # rúbrica del juez de calidad
+    files: ["hubara_agency/src/plugins/chats/agent/sales_eval/**"]
+    from: "GUION DE VENTAS HUBARA"
+    to: "GUION DE VENTAS {{company}}"
+  - id: scorecard-marca                  # el chequeo de apertura busca la marca del cliente
+    files: ["hubara_agency/src/plugins/chats/agent/sales_eval/evals/script_rubric.py"]
+    from: 'BRAND_RE = re.compile(r"hubara", re.IGNORECASE)'
+    to: 'BRAND_RE = re.compile(r"{{company}}", re.IGNORECASE)'
+  - id: tenant-id-analitica              # etiqueta de tenant en analytics
+    files: ["hubara_agency/src/**"]
+    from: '"HUBARA_TENANT_ID", "hubara"'
+    to: '"HUBARA_TENANT_ID", "{{slug}}"'
+  - id: foto-link-tienda                 # un link de la tienda en una foto = el dominio del cliente
+    files: ["hubara_agency/src/plugins/chats/agent/sales/use_cases/photo_product.py"]
+    from: '_OUR_STORE = "hubara"'
+    to: '_OUR_STORE = "{{primary_domain}}".lower()'
+  - id: ads-meta-ssm                     # token de Ads en SSM: prefijo y tenant del CLON
+    # (sin esto el clon leería /hubara/hubara/meta/oauth: el token de Hubara)
+    files: ["hubara_agency/src/plugins/ads/meta/settings.py", "hubara_agency/tests/plugins/ads/**"]
+    from: '/hubara/{self.tenant}/meta/oauth'
+    to: '{{ssm_prefix}}/{self.tenant}/meta/oauth'
+  - id: ads-meta-ssm-tests
+    files: ["hubara_agency/tests/plugins/ads/**"]
+    from: '"/hubara/hubara/meta/oauth"'
+    to: '"{{ssm_prefix}}/{{slug}}/meta/oauth"'
+  - id: ads-meta-tenant-default
+    files: ["hubara_agency/src/plugins/ads/meta/settings.py"]
+    from: 'os.getenv("META_ADS_TENANT", "hubara")'
+    to: 'os.getenv("META_ADS_TENANT", "{{slug}}")'
+  - id: lab-tag-assign                   # el tag de la caja del laboratorio es único A NIVEL
+    # CUENTA: con `Role=lab` el backend del clon arrancaría/despacharía la caja de Hubara
+    files: ["infra/terraform/compute/modules/lab-instance/**"]
+    from: 'Role = "lab"'
+    to: 'Role = "lab-{{slug}}"'
+  - id: lab-tag-values
+    files: ["infra/terraform/compute/modules/lab-instance/**"]
+    from: 'values   = ["lab"]'
+    to: 'values   = ["lab-{{slug}}"]'
+  - id: lab-tag-backend
+    files: ["hubara_agency/src/platform/lab/launcher.py"]
+    from: 'LAB_INSTANCE_TAG = "lab"'
+    to: 'LAB_INSTANCE_TAG = "lab-{{slug}}"'
+  - id: lab-tag-tests                   # el filtro que asierta el test del lanzador
+    files: ["hubara_agency/tests/platform/lab/**"]
+    from: '"Values": ["lab"]'
+    to: '"Values": ["lab-{{slug}}"]'
+  - id: plantillas-ejemplos-cotizacion   # ejemplos que ve Meta al aprobar las plantillas
+    files: ["infra/whatsapp-provisioning/definitions/*.json"]
+    from: "kit aroma rosas"
+    to: "kit de regalo"
+  - id: plantillas-ejemplos-coleccion
+    files: ["infra/whatsapp-provisioning/definitions/*.json"]
+    from: "colección de velas artesanales"
+    to: "colección de la tienda"
+  - id: plantillas-ejemplos-producto
+    files: ["infra/whatsapp-provisioning/definitions/*.json"]
+    from: "una vela aromática Patchouli"
+    to: "el producto que viste"
+  - id: plantillas-ejemplos-personalizado
+    files: ["infra/whatsapp-provisioning/definitions/*.json"]
+    from: "de la vela personalizada con foto"
+    to: "del producto personalizado"
   - id: marca-en-paquetes                # comentarios y ejemplos de los paquetes de
     files: ["hubara_agency/src/plugins/chats/shared/decisions/bundles/**"]   # decisión (la despedida)
     from: "Hubara"
@@ -222,6 +448,7 @@ replacements:
     # /opt/graphagents protegido por preserve_tokens
     files:
       - "infra/compose/graphagents/render-env-from-ssm.sh"
+      - "infra/robotocore/test-local.sh"
       - "infra/terraform/platform/modules/graphagents-secrets/**"
       - "infra/terraform/compute/modules/graphagents-instance/**"
     from: "/graphagents"
@@ -231,6 +458,18 @@ replacements:
     from: "tenants/hubara.env"
     to: "tenants/{{slug}}.env"
   # ── genéricos al final ──────────────────────────────────────────────────
+  - id: ssm-vincenzo                     # asserts de robotocore sobre el 2.º tenant de la madre
+    files: ["infra/robotocore/**"]
+    from: "/hubara/vincenzo/"
+    to: "{{ssm_prefix}}/{{slug}}/"
+  - id: ssm-tests-infra                  # tests del bootstrap de secretos
+    files: ["hubara_agency/tests/infra/**"]
+    from: "/hubara/nuevo/"
+    to: "{{ssm_prefix}}/nuevo/"
+  - id: lab-tenants-tests                # el bloque lab del compute tfvars nombra al tenant
+    files: ["hubara_agency/tests/infra/test_lab_box_iam.py"]
+    from: 'tenants\s*=\s*\["hubara"\]'
+    to: 'tenants\s*=\s*\["{{slug}}"\]'
   - id: ssm-prefix
     files:
       - "infra/terraform/**"
@@ -253,15 +492,16 @@ replacements:
     from: "ghcr.io/einsteindark-edgm/agencyhubara"
     to: "ghcr.io/{{repo_owner}}/{{image}}"
   - id: prefijo-recursos                # agencyhubara-* y dlm-agencyhubara
-    files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**", "infra/compose/**"]
+    files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**", "infra/compose/**", "docs/mobile-native/**"]
     from: "agencyhubara"
     to: "{{prefix}}"
-  - id: caja-laboratorio               # /hubara-lab/* (SSM), proyecto compose y namespace del lab
-    # DESPUÉS de prefijo-recursos: si corriera antes, "agencyhubara-lab"
-    # (bucket, rol, SG, tags de la caja) quedaría "agency{{slug}}-lab"
-    files: ["infra/compose/**", "infra/terraform/compute/**"]
-    from: "hubara-lab"
-    to: "{{slug}}-lab"
+  - id: caja-laboratorio               # /hubara-lab/* (SSM) — único A NIVEL CUENTA.
+    # El namespace Temporal y el proyecto compose `hubara-lab` viven DENTRO de
+    # la caja (nombre del motor; el guard del worker lo exige): no se tocan.
+    # DESPUÉS de prefijo-recursos ("agencyhubara-lab" = bucket/rol/SG).
+    files: ["**"]
+    from: "/hubara-lab"
+    to: "/{{slug}}-lab"
   - id: nombre-proyecto-titulo          # descripciones/comentarios en tf/scripts
     files: ["infra/terraform/**", "infra/scripts/**", "infra/robotocore/**"]
     from: "AgencyHubara"
@@ -288,20 +528,35 @@ deletes:
   - "infra/DEPLOY_RUNBOOK.md"          # ídem — NEXT_STEPS.md del clon lo reemplaza
   - "infra/SERVICIOS_AWS_Y_SCHEDULERS.md"
   - "infra/PENDING_IMPLEMENTATION.md"
-  # Versiones de prueba del paquete de decisión de ESTA tienda (PAQUETES_DE_DECISION.md
-  # F6/F7): el clon recibe solo `ventas/` con un dominio neutral (`templates:`).
-  # Si una se promueve a default, el template del dominio pasa a apuntarle.
-  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-2"
-  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-3"
-  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-4"
   - "infra/VAULT_EBS_MIGRATION_PLAN.md"  # plan de migración del vault VIVO de Hubara (vol/EBS IDs, pasos op)
   - "SECURITY_AUDIT_fable.md"          # auditoría interna de Hubara con hallazgos ancla archivo:línea
+  # App Tauri (congelada; la reemplaza la App Operador nativa android_operator/,
+  # docs/mobile-native F5 = retirarla). Su identidad (com.hubara.dashboard,
+  # "Hubara Dashboard") está cableada en el proyecto Android generado: el clon
+  # no la hereda — su app es la nativa con applicationId propio.
+  - ".github/workflows/forge-gates.yml"   # forge/ no viaja: el gate fallaría en cada PR del clon
+  - "MBA_PRODUCTION_ROADMAP.md"            # bitácora operativa de MBA en Hubara (IDs reales, agente id)
+  - "frontend_dashboard/src-tauri"
+  - "frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md"
+
+# Paquetes de decisión (PAQUETES_DE_DECISION.md). La INTELIGENCIA del motor
+# (preguntas a Jev, umbrales, política del turno) es del motor y viaja; el
+# DOMINIO (`domain.yaml`: nombre, despedida, ejemplos que ve el agente) es el
+# concepto de la tienda y sale del bundle del cliente (clients/<slug>/domain.yaml,
+# sembrado por `init` desde templates/sales_domain.yaml.tpl).
+#   default: el del código (store_pack.DEFAULT_BUNDLE) — tests y dev local.
+#   store:   el que corre HOY la tienda madre (`tenants.hubara.lab.decisions_bundle`
+#            en infra/terraform/platform/tenants.auto.tfvars); el clon arranca
+#            con este y su Terraform lo nombra. Un test exige que coincidan:
+#            promover ventas-N en Hubara = actualizar esta línea.
+# Las demás carpetas de `dir` (experimentos de la tienda madre) no viajan.
+decision_bundles:
+  dir: "hubara_agency/src/plugins/chats/shared/decisions/bundles"
+  default: ventas
+  store: ventas-4
 
 # Archivos REGENERADOS desde forge/templates/ (no editados).
 templates:
-  # El dominio de la tienda (F5): nombre, despedida aprobada y los ejemplos del
-  # agente, neutrales hasta que la tienda escriba los suyos.
-  "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas/domain.yaml": sales_domain.yaml.tpl
   "infra/terraform/platform/tenants.auto.tfvars": platform_tenants.auto.tfvars.tpl
   "infra/terraform/platform/project.auto.tfvars": project.auto.tfvars.tpl
   "infra/terraform/compute/tenants.auto.tfvars": compute_tenants.auto.tfvars.tpl
@@ -325,6 +580,16 @@ workspace_overlay:
       required:
         - agent.yaml
         - skills/persona-y-tono.md
+    # Agente de seguimiento de pedidos (avisos ETA): su identidad y el negocio
+    # que describe (USER.md) son del cliente — le habla al cliente final.
+    eta:
+      path: "hubara_agency/src/plugins/eta/agent/eta/workspace"
+      required:
+        - IDENTITY.md
+        - SOUL.md
+        - AGENTS.md
+        - TOOLS.md
+        - USER.md
   catalog_skill_dirname: catalog
   required:
     - IDENTITY.md
@@ -352,8 +617,20 @@ scan:
     - "i-07ebe6296b9e50865"
     - "us-east-1_tj9egBufy"   # Cognito pool hubara
     - "d1hvhzkh01tri0"        # CloudFront hubara
+    - "1234091093112024"      # phone_number_id de WhatsApp (línea actual)
+    - "2507823826404263"      # phone_number_id viejo
+    - "1010393601284112"      # cuenta publicitaria (Ads)
+    - "951293630651590"       # flow_id
+    - "1468134707823015"      # catálogo Meta (2.º)
   forbidden_patterns:
     - 'wa_57\d{10}'           # teléfonos colombianos reales en fixtures/seeds
+    # los dos números REALES de Hubara (operador y llave Nequi) en cualquier
+    # formato: crudo, con +57, con espacios o guiones
+    - '312[\s.-]?567[\s.-]?1604'
+    - '322[\s.-]?904[\s.-]?1190'
+    # el path SSM de la caja del laboratorio de HUBARA (el namespace/proyecto
+    # `hubara-lab` dentro de la caja sí es del motor: allow_tokens)
+    - '/hubara-lab\b'
   # matches de forbidden_patterns que NO son datos reales (ejemplos sintéticos
   # de tests/fixtures del motor) — clasificados explícitamente, no un bypass
   forbidden_pattern_allow:
@@ -389,6 +666,8 @@ scan:
     - ".github/**"
     - "hubara_agency/src/plugins/chats/agent/*/workspace/**"
     - "hubara_agency/src/plugins/mba/agents/*/**"
+    - "hubara_agency/src/plugins/eta/agent/*/workspace/**"
+    - "hubara_agency/src/plugins/chats/shared/decisions/bundles/**"
     - "hubara_agency/src/plugins/chats/agent/sales/tools/*.py"
     - "hubara_agency/src/plugins/chats/agent/remarketing/tools/*.py"
   critical_exclude_globs:
@@ -404,6 +683,9 @@ scan:
     - "HubaraSalesSessionWorkflow"
     - "hubara-dev"
     - "hubara-api"
+    - "hubara-lab"            # namespace Temporal + proyecto compose DENTRO de la caja del lab
+    - "HubaraEtaSessionWorkflow"
+    - "HubaraRemarketingWorkflow"
 
   # Marcas de redacción pendiente en el workspace: bloquean apply salvo
   # --allow-todos (para forjar clones de prueba).

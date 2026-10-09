@@ -68,6 +68,14 @@ variable "tenants" {
       min_version_code = optional(number, 0)  # versionCode mínimo; una app más vieja pide actualizarse
     }), {})
 
+    # Datos comerciales PÚBLICOS de la tienda (modules/store-config → SSM String
+    # /hubara/<tenant>/<VAR>). payment_nequi_number: la llave Nequi/Bre-B que el
+    # bot le da al cliente para el pago anticipado; null = no se crea el
+    # parámetro y manda el default del código.
+    store = optional(object({
+      payment_nequi_number = optional(string)
+    }), {})
+
     # Laboratorio de conversaciones y capas del bot con clasificador
     # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
     # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
@@ -90,6 +98,11 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
     error_message = "tenants.*.api_url: https://… sin espacios, comillas ni '#' (entra al agent.yaml de MBA)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : t.store.payment_nequi_number == null || can(regex("^[0-9]{7,15}$", t.store.payment_nequi_number))])
+    error_message = "tenants.*.store.payment_nequi_number: solo dígitos (p.ej. 3001234567), o sin definir."
   }
 
   validation {

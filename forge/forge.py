@@ -41,6 +41,10 @@ CLIENTS = ROOT / "clients"
 ENABLED_PLUGINS_DEFAULT = (
     "ads,agents_admin,catalog,chats,eta,marketing,mba,order_sentinel,orders,reengagement,system_map"
 )
+#: La App Operador de hubara (Google Play/Firebase): ningún clon la reusa.
+HUBARA_ANDROID_APP_ID = "com.acktos.operator"
+#: El concepto de la tienda para el motor de decisiones, en el bundle del cliente.
+DOMAIN_FILE = "domain.yaml"
 PHONE_CC = {"CO": "57", "MX": "52", "AR": "54", "US": "1"}
 # Palabra alrededor de un match de "hubara" — incluye '/' y '.' para que los
 # paths (hubara_agency/docs/...) cuenten como una sola palabra clasificable.
@@ -110,9 +114,20 @@ def render_vars(client: dict) -> dict:
     api_url = (client.get("api_url") or "https://TODO-EIP.sslip.io").rstrip("/")
     if "hubara" in api_url.lower() or "98-88-237-207" in api_url:
         raise ForgeError(f"api_url {api_url!r} apunta al backend productivo de hubara — prohibido")
+    # App Operador (android_operator/): applicationId propio — es único en
+    # Google Play y en el proyecto Firebase del cliente.
+    android_app_id = client.get("android_app_id") or f"com.acktos.{slug}"
+    if not re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", android_app_id):
+        raise ForgeError(f"android_app_id inválido {android_app_id!r}: p.ej. com.acktos.{slug}")
+    if android_app_id == HUBARA_ANDROID_APP_ID:
+        raise ForgeError(
+            f"android_app_id {android_app_id!r} es la App Operador de hubara en Google Play — "
+            "el clon publica la suya"
+        )
     return {
         "slug": slug,
         "company": client.get("company") or slug.title(),
+        "android_app_id": android_app_id,
         "repo": repo,
         "repo_owner": repo_owner,
         "repo_name": repo_name,
@@ -124,6 +139,7 @@ def render_vars(client: dict) -> dict:
         "image": repo_name.lower(),
         "ref_prefix": slug[:3].upper(),
         "primary_domain": domains[0] if domains else "TODO-BRAND.example.com",
+        "instagram": (business.get("instagram") or "TODO-instagram").strip("@/ "),
         "country": business.get("country") or "CO",
         "currency": business.get("currency") or "COP",
         "phone_cc": PHONE_CC.get(business.get("country") or "CO", "57"),
@@ -257,6 +273,11 @@ def stage_overlay(
             text = _read_text(f)
             if text and todo in text:
                 todos.append(str(f.relative_to(client_dir)))
+    domain = Path(client_dir) / DOMAIN_FILE
+    if not domain.is_file():
+        missing.append(f"{DOMAIN_FILE} (el concepto de la tienda para el motor de decisiones)")
+    elif todo in (_read_text(domain) or ""):
+        todos.append(DOMAIN_FILE)
     if missing:
         raise ForgeError(
             "overlay de workspace incompleto — faltan: " + ", ".join(sorted(missing))
@@ -277,6 +298,27 @@ def stage_overlay(
             catalog.rename(target / "skills" / f"{vars_['slug']}_catalog")
         installed[agent] = ws_rel
     return {"installed": installed, "todos": todos}
+
+
+def stage_bundles(dest: Path, client_dir: Path, manifest: dict) -> dict:
+    """Paquetes de decisión: viajan el del código y el que corre la tienda madre
+    (la inteligencia del motor); cada uno recibe el `domain.yaml` del cliente
+    (el concepto de la tienda). Las demás versiones no viajan."""
+    db = manifest["decision_bundles"]
+    root = dest / db["dir"]
+    keep = {db["default"], db["store"]}
+    missing = sorted(b for b in keep if not (root / b / "bundle.yaml").is_file())
+    if missing:
+        raise ForgeError(f"el motor no trae los paquetes {missing} (decision_bundles en manifest.yaml)")
+    pruned = []
+    for d in sorted(p for p in root.iterdir() if (p / "bundle.yaml").is_file()):
+        if d.name not in keep:
+            shutil.rmtree(d)
+            pruned.append(d.name)
+    domain = (Path(client_dir) / DOMAIN_FILE).read_text(encoding="utf-8")
+    for b in sorted(keep):
+        (root / b / "domain.yaml").write_text(domain, encoding="utf-8")
+    return {"kept": sorted(keep), "store": db["store"], "pruned": pruned}
 
 
 def _mask(text: str, tokens: list[str]) -> str:
@@ -410,6 +452,7 @@ def run_apply(
             "el clon vive afuera, nunca mezclado con hubara"
         )
     vars_ = render_vars(load_client(client_dir))
+    vars_["store_bundle"] = manifest["decision_bundles"]["store"]
     dirty = subprocess.run(
         ["git", "-C", str(src), "status", "--porcelain"], capture_output=True, text=True
     ).stdout.strip()
@@ -423,6 +466,7 @@ def run_apply(
     report: dict = {"engine_sha": vars_["engine_sha"], "stages": {}}
     report["stages"]["pruned"] = stage_prune(dest, manifest)
     report["stages"]["overlay"] = stage_overlay(dest, client_dir, manifest, vars_, allow_todos)
+    report["stages"]["bundles"] = stage_bundles(dest, client_dir, manifest)
     report["stages"]["templates"] = stage_templates(dest, manifest, vars_)
     report["stages"]["replacements"] = stage_replacements(dest, manifest, vars_)
     report["stages"]["renames"] = stage_renames(dest, manifest, vars_)
@@ -491,11 +535,30 @@ def _todo_banner(path: Path, company: str) -> str:
     return TODO_BANNER.format(company=company)
 
 
+def _with_banner(text: str, banner: str) -> str:
+    """El banner va después del frontmatter `---` de una skill: antes lo
+    rompería (el cargador espera el frontmatter en la primera línea)."""
+    if text.startswith("---\n"):
+        end = text.find("\n---\n", 4)
+        if end != -1:
+            cut = end + len("\n---\n")
+            return text[:cut] + "\n" + banner + text[cut:].lstrip("\n")
+    return banner + text
+
+
 INIT_SKIP = {"__pycache__", ".DS_Store"}
+#: Datos REALES de hubara que el workspace del motor cita (la llave Nequi en
+#: las políticas, el teléfono del operador). El bundle sembrado los deja como
+#: marca pendiente: apply bloquea hasta que la tienda ponga los suyos.
+INIT_REAL_DATA = {
+    "3229041190": "TODO-BRAND-NEQUI",
+    "3125671604": "TODO-BRAND-TELEFONO",
+}
 
 
 def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CLIENTS) -> Path:
     client_dir = Path(clients_dir) / slug
+    render_vars({"slug": slug})  # guards anti-hubara ANTES de escribir nada
     if client_dir.exists():
         raise ForgeError(f"{client_dir} ya existe — editálo o borralo")
     company = slug.title()
@@ -509,6 +572,8 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                 # backend del cliente: completar cuando exista (S8) o si ya hay
                 # dominio propio — cablea móvil (CSP), platform tfvars y webhook
                 "api_url": "",
+                # App Operador (Android): id propio en Google Play + Firebase
+                "android_app_id": f"com.acktos.{slug}",
                 "aws": {
                     "region": "us-east-1",
                     "resource_prefix": f"agency{slug}",
@@ -533,6 +598,11 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
         ),
         encoding="utf-8",
     )
+    domain_tpl = (ROOT / "templates" / "sales_domain.yaml.tpl").read_text(encoding="utf-8")
+    domain = _render(domain_tpl, render_vars(load_client(client_dir)))
+    (client_dir / DOMAIN_FILE).write_text(
+        _todo_banner(client_dir / DOMAIN_FILE, company) + domain, encoding="utf-8"
+    )
     ov = manifest["workspace_overlay"]
     preserve = manifest.get("preserve_tokens", [])
     for agent, (ws_rel, _) in overlay_agents(manifest).items():
@@ -552,6 +622,8 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                 shutil.copy2(f, target)
                 continue
             text = _mask(text, preserve)
+            for real, pending in INIT_REAL_DATA.items():
+                text = text.replace(real, pending)
             text = (
                 text.replace("Hubara", company)
                 .replace("hubara_catalog", f"{slug}_catalog")
@@ -559,7 +631,7 @@ def run_init(slug: str, manifest: dict, src: Path = REPO, clients_dir: Path = CL
                 .replace("hubara-commerce", f"{slug}-commerce")
             )
             text = _unmask(text, preserve)
-            target.write_text(_todo_banner(f, company) + text, encoding="utf-8")
+            target.write_text(_with_banner(text, _todo_banner(f, company)), encoding="utf-8")
     return client_dir
 
 
@@ -618,6 +690,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"✓ clon forjado en {a.dest} (motor {report['engine_sha']}) — ver NEXT_STEPS.md")
         elif a.cmd == "verify":
             vars_ = render_vars(load_client(_client_dir(a.client)))
+            if not Path(a.dest).is_dir():
+                raise ForgeError(f"el clon {a.dest} no existe — forjalo primero (apply)")
             scan = scan_residuals(Path(a.dest), manifest, vars_)
             print(yaml.safe_dump(scan, sort_keys=False, allow_unicode=True))
             return 1 if scan["forbidden"] or scan["critical"] else 0

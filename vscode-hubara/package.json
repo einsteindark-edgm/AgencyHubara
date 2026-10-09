@@ -2,7 +2,7 @@
   "name": "acktos-studio",
   "displayName": "Acktos Studio",
   "description": "Grafos, certificaciones y ejecuciones de AgencyHubara + GraphAgents dentro de VS Code.",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "acktos",
   "private": true,
   "license": "UNLICENSED",
@@ -252,14 +252,15 @@
           },
           {
             "id": "forge",
-            "title": "Forge — migrar a un cliente nuevo",
-            "description": "Silo por cliente: nuevo repo + infra + Medusa. Vive en su PROPIO ícono 🔥 en la barra de actividad (separado de Studio).\n[Abrir Forge Console](command:forge.openConsole)",
+            "title": "Forge — migrar el motor a un cliente nuevo",
+            "description": "Un clon independiente por cliente: sembrar el bundle (client.yaml + domain.yaml + la voz de cada agente), forjar el repo, verificar, publicar y seguir la migración paso a paso (S2–S9) en la consola. Vive en su propio ícono 🔥 en la barra de actividad.\n[Abrir Forge Console](command:forge.openConsole)",
             "media": {
               "markdown": "walkthrough/forge.md"
             },
             "completionEvents": [
               "onCommand:forge.openConsole"
-            ]
+            ],
+            "when": "acktos.forge.available"
           }
         ]
       }
@@ -288,18 +289,36 @@
         {
           "id": "forge.fleetTree",
           "name": "Flota de clientes",
-          "icon": "$(flame)"
+          "icon": "$(flame)",
+          "when": "acktos.forge.available"
         }
       ]
     },
     "viewsWelcome": [
       {
         "view": "forge.fleetTree",
-        "contents": "Migración de clientes (silo + forge): cada cliente vive en su propio repo, infra y Medusa — acá se administra la flota.\n[Abrir Forge Console](command:forge.openConsole)\n[Sembrar un cliente nuevo](command:forge.initClient)\nConcepto separado del desarrollo de agentes/plugins (eso vive en Acktos Studio)."
+        "contents": "Migración de clientes (silo + forge): cada cliente vive en su propio repo, infra y Medusa — acá se administra la flota.\n[Abrir Forge Console](command:forge.openConsole)\n[Sembrar un cliente nuevo](command:forge.initClient)\nConcepto separado del desarrollo de agentes/plugins (eso vive en Acktos Studio).",
+        "when": "acktos.forge.available"
       }
     ],
     "menus": {
       "commandPalette": [
+        {
+          "command": "forge.openConsole",
+          "when": "acktos.forge.available"
+        },
+        {
+          "command": "forge.refreshFleet",
+          "when": "acktos.forge.available"
+        },
+        {
+          "command": "forge.initClient",
+          "when": "acktos.forge.available"
+        },
+        {
+          "command": "forge.planClient",
+          "when": "acktos.forge.available"
+        },
         {
           "command": "acktos.focusNode",
           "when": "false"
@@ -340,17 +359,17 @@
       "view/title": [
         {
           "command": "forge.openConsole",
-          "when": "view == forge.fleetTree",
+          "when": "view == forge.fleetTree && acktos.forge.available",
           "group": "navigation@0"
         },
         {
           "command": "forge.initClient",
-          "when": "view == forge.fleetTree",
+          "when": "view == forge.fleetTree && acktos.forge.available",
           "group": "navigation@1"
         },
         {
           "command": "forge.refreshFleet",
-          "when": "view == forge.fleetTree",
+          "when": "view == forge.fleetTree && acktos.forge.available",
           "group": "navigation@2"
         },
         {
@@ -387,7 +406,7 @@
       "view/item/context": [
         {
           "command": "forge.planClient",
-          "when": "view == forge.fleetTree && viewItem == forgeClient",
+          "when": "view == forge.fleetTree && viewItem == forgeClient && acktos.forge.available",
           "group": "inline@0"
         },
         {
@@ -485,6 +504,11 @@
           "type": "string",
           "default": "agentspan server start",
           "markdownDescription": "Comando que levanta AgentSpan (:6767) — lo corre el botón *Iniciar AgentSpan* en una terminal visible. Cambialo si tu infra durable arranca distinto (docker compose, script, etc.)."
+        },
+        "acktos.forge.python": {
+          "type": "string",
+          "default": "python3",
+          "markdownDescription": "Intérprete de Python para Forge (`forge/forge.py` y `forge/migrate.py`). Necesita PyYAML: si falta, la Forge Console lo avisa con el comando para instalarlo (`<python> -m pip install pyyaml`)."
         }
       }
     }

@@ -222,3 +222,18 @@ def test_migrate_rechaza_cliente_hubara(tmp_path):
     (b / "client.yaml").write_text(yaml.safe_dump({**CLIENT, "slug": "hubara"}), encoding="utf-8")
     with pytest.raises(forge.ForgeError, match="hubara"):
         migrate.run_step("hubara", "supabase", b, None, False, runner=lambda a: None)
+
+
+def test_status_json_para_acktos_studio(bundle, tmp_path, monkeypatch, capsys):
+    """Acktos Studio pinta los steps desde `status --json` (no parsea íconos)."""
+    monkeypatch.setattr(forge, "CLIENTS", bundle.parent)
+    migrate.mark(bundle, "whatsapp", "done")
+    assert migrate.main(["status", "acme", "--json"]) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["slug"] == "acme" and data["company"] == "Acme"
+    ids = [s["id"] for s in data["steps"]]
+    assert ids == migrate.STEP_IDS
+    by_id = {s["id"]: s for s in data["steps"]}
+    assert by_id["whatsapp"]["done"] is True and by_id["whatsapp"]["kind"] == "guided"
+    assert by_id["clone"]["done"] is False and by_id["clone"]["kind"] == "auto"
+    assert all(s["title"] for s in data["steps"])

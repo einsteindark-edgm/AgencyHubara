@@ -83,3 +83,19 @@ def test_apply_desde_worktree_rechaza_dest_dentro_del_repo_principal(tmp_path):
     dest = main / "AgencyAcme"  # dentro del repo productivo — prohibido
     with pytest.raises(forge.ForgeError, match="repo madre|productivo"):
         forge.run_apply(src=src, dest=dest, client_dir=tmp_path, manifest=forge.load_manifest())
+
+
+def test_init_rechaza_slug_hubara_sin_crear_nada(tmp_path):
+    with pytest.raises(forge.ForgeError, match="hubara"):
+        forge.run_init("hubara", forge.load_manifest(), clients_dir=tmp_path)
+    assert not (tmp_path / "hubara").exists()
+
+
+def test_verify_sobre_carpeta_inexistente_no_da_verde(tmp_path, capsys):
+    import yaml
+
+    (tmp_path / "acme").mkdir()
+    (tmp_path / "acme" / "client.yaml").write_text(yaml.safe_dump(_client()), encoding="utf-8")
+    code = forge.main(["verify", str(tmp_path / "no-existe"), "--client", str(tmp_path / "acme")])
+    assert code == 1
+    assert "no existe" in capsys.readouterr().err

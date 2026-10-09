@@ -60,3 +60,20 @@ def test_workspaces_del_overlay_existen(plan):
         for req in required:
             real = req.replace("catalog/", "hubara_catalog/")
             assert (forge.REPO / ws / real).exists(), f"{agent}: {real} ya no existe en el motor"
+
+
+def test_el_paquete_del_clon_es_el_que_corre_la_tienda_madre():
+    """Promover un paquete en Hubara (`tenants.hubara.lab.decisions_bundle`)
+    sin avisarle a forge dejaría a los clones con la inteligencia vieja."""
+    import re
+
+    db = forge.load_manifest()["decision_bundles"]
+    tfvars = (forge.REPO / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    running = re.findall(r'^\s*decisions_bundle\s*=\s*"([^"]+)"', tfvars, re.M)
+    assert running == [db["store"]], (
+        f"la tienda madre corre {running} y forge clona {db['store']!r}: "
+        "actualizar decision_bundles.store en forge/manifest.yaml"
+    )
+    bundles = forge.REPO / db["dir"]
+    for b in {db["default"], db["store"]}:
+        assert (bundles / b / "bundle.yaml").is_file(), f"no existe el paquete {b}"

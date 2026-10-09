@@ -125,6 +125,8 @@ async def test_with_ventas_4_the_turn_answers_about_the_card_product(monkeypatch
 
 async def test_with_ventas_3_the_turn_still_asks_to_choose(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que pasó en producción: por eso el arreglo se promueve con el paquete."""
+    if not (V3 / "bundle.yaml").is_file():
+        pytest.skip("clon de forge: ventas-3 (experimento de esta tienda) no viaja")
     note = await _turn_note(monkeypatch, "ventas-3")
 
     assert CHOOSE_ONE in note and "Calabaza" not in note
