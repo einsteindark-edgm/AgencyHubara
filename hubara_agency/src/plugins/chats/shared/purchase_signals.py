@@ -32,16 +32,14 @@ from src.plugins.chats.shared.funnel import active_episode
 
 SIGNAL_KEY = "last_inbound_signal"
 
+#: El cliente aplaza en primera persona: cuenta aunque lo diga preguntando
+#: («¿te confirmo mañana?»).
 _DEFERRAL_PATTERNS = [
     re.compile(p)
     for p in (
         r"\ben camino\b",
-        r"\bluego\b",
-        r"\bmas tarde",
-        r"\bdespues\b",
         r"\bahora no\b",
         r"\bahorita no\b",
-        r"\ben un rato\b",
         r"\bcuando llegue\b",
         r"\bdejame\b",
         r"\bdeja(me)? (que )?(miro|reviso|pienso|veo)\b",
@@ -51,10 +49,22 @@ _DEFERRAL_PATTERNS = [
         r"\b(te|les|le) aviso\b",
         r"\b(te|les|le) escribo\b",
         r"\b(te|les|le) confirmo\b",
-        r"\bmanana\b",
         r"\bestoy ocupad",
         r"\bme ocup[eo]\b",
         r"\bno puedo ahora\b",
+    )
+]
+#: Solo un momento («mañana», «después», «luego»): aplaza en una afirmación
+#: («mañana lo hago»), no en una pregunta («¿me llega mañana?», «¿y después
+#: cómo pago?» — premortem 2026-10-09: la regla frenaba el formulario).
+_DEFERRAL_TIME_PATTERNS = [
+    re.compile(p)
+    for p in (
+        r"\bluego\b",
+        r"\bmas tarde",
+        r"\bdespues\b",
+        r"\ben un rato\b",
+        r"\bmanana\b",
         r"\ben la noche\b",
         r"\bmas tardecito\b",
     )
@@ -80,11 +90,19 @@ def _normalize(text: str) -> str:
 
 
 def detect_deferral(text: str | None) -> bool:
-    """True si el cliente está aplazando ("luego", "voy en camino", "mañana")."""
+    """True si el cliente está aplazando ("luego", "voy en camino", "mañana").
+
+    Una pregunta solo aplaza si lo dice en primera persona («¿te confirmo
+    mañana?»); «¿me llega mañana?» pregunta cuándo, no aplaza.
+    """
     if not text:
         return False
     norm = _normalize(text)
-    return any(p.search(norm) for p in _DEFERRAL_PATTERNS)
+    if any(p.search(norm) for p in _DEFERRAL_PATTERNS):
+        return True
+    if "?" in norm or "¿" in norm:
+        return False
+    return any(p.search(norm) for p in _DEFERRAL_TIME_PATTERNS)
 
 
 def detect_purchase_affirmation(text: str | None) -> bool:

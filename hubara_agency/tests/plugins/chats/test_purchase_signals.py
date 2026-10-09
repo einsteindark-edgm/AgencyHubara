@@ -41,6 +41,29 @@ def test_non_deferral_phrases_are_not_flagged(text: str) -> None:
 
 @pytest.mark.parametrize(
     "text",
+    [
+        "¿Me llega mañana?",
+        "Y después de llenarlo cómo pago?",
+        "¿Puedo pagar después?",
+        "Osea q si hago el pedido hoy llega el martes? Por el fds y como el lunes es festivo",
+        "¿Luego de pagar qué hago?",
+    ],
+)
+def test_a_question_about_when_is_not_a_deferral(text: str) -> None:
+    """Premortem 2026-10-09: la regla leía «mañana» / «después» / «luego» en
+    una PREGUNTA como aplazamiento. Jev lo corrige, pero si cae, decide la
+    regla: el formulario quedaba frenado y el bot le decía «aquí te espero»
+    a un cliente que preguntaba cuándo le llega."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize("text", ["¿Te confirmo mañana?", "¿Te aviso luego?", "¿Lo pienso y te escribo?"])
+def test_a_question_that_defers_in_first_person_still_defers(text: str) -> None:
+    assert detect_deferral(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
     ["sí", "Si", "dale", "listo, así está bien", "lo quiero", "me lo llevo", "confirmo", "de una", "Dame 2", "quiero 3", "hágale"],
 )
 def test_purchase_affirmations_are_detected(text: str) -> None:
