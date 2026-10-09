@@ -35,7 +35,9 @@ _LUZ = CatalogProductDTO(
     variants=[CatalogVariantDTO(id="v1", title="Lavanda / Blanco", options={"Aroma": "Lavanda", "Color": "Blanco"},
                                 prices=[CatalogPriceDTO(amount="29000", currency_code="cop")])],
     options={"Aroma": ["Lavanda"], "Color": ["Blanco"]},
-    tags=["aroma:Lavanda", "color:Blanco"],
+    # Dos colores: el caso es del borrador que escribe MBA, no de la opción
+    # única que `set_order_slot` anota sola (test_order_slot_single_option.py).
+    tags=["aroma:Lavanda", "aroma:Coco", "color:Blanco", "color:Negro"],
 )
 _ZODIAC = CatalogProductDTO(
     id="p2", handle="duo-zodiacal", title="Dúo Zodiacal", status="published", description="Set con portavelas.",
@@ -136,7 +138,7 @@ def test_draft_writes_the_slots_into_the_active_episode(h: _Harness) -> None:
     # sobrescribe + valida contra el catálogo (color inexistente → rechazado con los válidos)
     r = h.client.post(_url("draft"), json={"color": "Verde"})
     assert r.status_code == 200
-    assert [x["field"] for x in r.json()["rejected"]] == ["color"] and r.json()["rejected"][0]["available"] == ["Blanco"]
+    assert [x["field"] for x in r.json()["rejected"]] == ["color"] and r.json()["rejected"][0]["available"] == ["Blanco", "Negro"]
     assert "color" not in h.meta()["episodes"][-1]["order_draft"]["slots"]
 
 

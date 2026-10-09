@@ -739,7 +739,8 @@ migrarse en la primera escritura.
 
 #### Scenario: lo que ve el LLM y lo que mide el scorecard
 
-- THEN `[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE]` lista un renglón por producto con SUS variantes; la etapa `variantes` dura hasta que CADA producto tenga aroma, color y cantidad
+- THEN `[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE]` lista un renglón por producto con SUS variantes; la etapa `variantes` dura hasta que CADA producto tenga aroma, color y cantidad, menos lo que el catálogo no le ofrece (`order_draft.sin_opciones`)
+- AND un producto con UNA sola opción de aroma o de color la trae anotada por `set_order_slot` (`auto_filled`, la paleta real de `metadata.colores` manda sobre los tags) si el modelo no la dio, no la borró y no se la rechazaron (incidente del 2026-10-09: con un solo aroma y un solo color, la etapa se quedó en `variantes` todo el episodio)
 - AND la captura determinista de cantidad escribe en el producto en curso y NUNCA pisa la cantidad de otro
 - AND `quitar=true` saca un producto del pedido (el cliente lo descartó o lo cambió)
 - AND un `set_order_slot` que no guardó nada se traza como fallo (`slots_rejected`), no en verde
