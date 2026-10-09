@@ -62,7 +62,7 @@ y el resto se perdía en silencio.
 Si el cliente activó su nombre de usuario y el negocio no habló con él en los
 últimos 30 días (el caso de un lead nuevo de anuncio), Meta omite el teléfono
 (`messages[].from`, `contacts[].wa_id`) y manda solo su id de Meta
-(`from_user_id` / `contacts[].user_id`, BSUID: `CO.1502576394655843`). Bug
+(`from_user_id` / `contacts[].user_id`, BSUID: `CO.9990000000000002`). Bug
 (ledger 2026-09-25 y 2026-10-09): el parser exigía `from`, respondía 400 y el
 cliente nunca llegaba al bot (Halloween 07–08 oct: 3 de las 8 conversaciones
 que contó Meta).

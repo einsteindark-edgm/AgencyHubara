@@ -1529,6 +1529,6 @@ def test_get_audience_conversation_de_un_cliente_sin_telefono(client: TestClient
     """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta
     sin punto>`. Entra en la audiencia como cualquier otro (la plantilla le
     llega con `recipient`), así que el visor no puede devolverle 422."""
-    res = client.get("/api/marketing/audience/wa_CO1502576394655843/conversation")
+    res = client.get("/api/marketing/audience/wa_CO9990000000000002/conversation")
     assert res.status_code == 200
     assert client.get("/api/marketing/audience/wa_CO.1502/conversation").status_code == 422

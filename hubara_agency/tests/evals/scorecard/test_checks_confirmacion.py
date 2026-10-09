@@ -13,32 +13,44 @@ def run(cid, t):
 
 
 # CON-01 ─────────────────────────────────────────────────────────────────────
-def test_con01_form_after_explicit_yes_passes() -> None:
-    t = traj(T(1, inbound="sí, lo quiero", signal="affirmation", confirmed=True),
-             T(2, tools=[tool("request_shipping_details")]))
+# v10 (incidente del 2026-10-09, criterio del operador): el formulario no
+# espera un «sí»; sale con el producto elegido y sin un aplazamiento vigente.
+_CHOSEN = {"producto": "Cubo Love", "cantidad": "1"}
+
+
+def test_con01_form_with_the_product_chosen_passes_without_a_yes() -> None:
+    t = traj(T(1, inbound="el primero azulito", draft=_CHOSEN),
+             T(2, inbound="El contra entrega, y cuánto se demora en llegar?", draft={**_CHOSEN, "metodo_pago": "contra entrega"},
+               tools=[tool("request_shipping_details")]))
     assert run("CON-01", t).verdict == "pasa"
 
 
 def test_con01_form_after_confirm_button_passes() -> None:
-    t = traj(T(1, inbound="[el cliente tocó el botón: ✅ Confirmar]", tools=[tool("request_shipping_details")]))
+    t = traj(T(1, inbound="[el cliente tocó el botón: ✅ Confirmar]", draft=_CHOSEN, tools=[tool("request_shipping_details")]))
     assert run("CON-01", t).verdict == "pasa"
 
 
-def test_con01_form_without_confirmation_fails_on_form_turn() -> None:
-    t = traj(T(1, inbound="el primero azulito"), T(2, inbound="ok", tools=[tool("request_shipping_details")]))
+def test_con01_form_without_a_product_fails_on_form_turn() -> None:
+    t = traj(T(1, inbound="hola"), T(2, inbound="ok", tools=[tool("request_shipping_details")]))
     r = run("CON-01", t)
     assert (r.verdict, r.turn) == ("falla", 2)
 
 
-def test_con01_later_deferral_cancels_an_earlier_yes() -> None:
-    t = traj(T(1, inbound="sí", signal="affirmation"),
-             T(2, inbound="mejor luego", signal="deferral", tools=[tool("request_shipping_details")]))
+def test_con01_form_after_a_deferral_fails() -> None:
+    t = traj(T(1, inbound="sí", signal="affirmation", draft=_CHOSEN),
+             T(2, inbound="mejor luego", signal="deferral", draft=_CHOSEN, tools=[tool("request_shipping_details")]))
     r = run("CON-01", t)
     assert (r.verdict, r.turn) == ("falla", 2)
+
+
+def test_con01_a_yes_after_the_deferral_lets_the_form_go() -> None:
+    t = traj(T(1, inbound="luego te escribo", signal="deferral", draft=_CHOSEN),
+             T(2, inbound="ya, dale", signal="affirmation", draft=_CHOSEN, tools=[tool("request_shipping_details")]))
+    assert run("CON-01", t).verdict == "pasa"
 
 
 def test_con01_rejected_form_is_not_applicable() -> None:
-    t = traj(T(1, tools=[tool("request_shipping_details", ok=False, error="purchase_not_confirmed")]))
+    t = traj(T(1, tools=[tool("request_shipping_details", ok=False, error="customer_deferred")]))
     assert run("CON-01", t).verdict == "no_aplica"
 
 

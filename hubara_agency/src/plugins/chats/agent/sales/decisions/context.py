@@ -27,7 +27,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.shared.draft_items import draft_items, missing_variants
 from src.plugins.chats.shared.funnel import active_episode
 
 MAX_EVENTS = 8
@@ -224,7 +224,6 @@ def order_facts(metadata: Mapping[str, Any], *, stage: str) -> tuple[str, ...]:
 
 #: Datos de envío que exige la etapa (los mismos que `resolve_funnel_stage`).
 SHIPPING_SLOTS: tuple[str, ...] = ("ciudad", "direccion", "telefono", "nombre_recibe", "metodo_pago")
-_VARIANT_FIELDS: tuple[str, ...] = ("aroma", "color", "cantidad")
 
 
 def missing_for_stage(metadata: Mapping[str, Any], stage: str) -> tuple[str, ...]:
@@ -238,9 +237,8 @@ def missing_for_stage(metadata: Mapping[str, Any], stage: str) -> tuple[str, ...
         items = draft_items(draft) if isinstance(draft, dict) else []
         out: list[str] = []
         for k, item in enumerate(items, 1):
-            for field in _VARIANT_FIELDS:
-                if not str(item.get(field) or "").strip():
-                    out.append(field if len(items) == 1 else f"{field} (ítem {k})")
+            for field in missing_variants(draft if isinstance(draft, dict) else None, item):
+                out.append(field if len(items) == 1 else f"{field} (ítem {k})")
         return tuple(out)
     return ()
 

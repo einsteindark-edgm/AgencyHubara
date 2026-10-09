@@ -77,10 +77,10 @@ class WhatsAppMessage:
     # Nombre de perfil de WhatsApp de quien escribe (`value.contacts[].profile.name`), limpio. No es el
     # `contacts` de arriba (una tarjeta de contacto que el cliente compartió).
     profile_name: str | None = None
-    # El id de Meta de quien escribe (`from_user_id`, BSUID: `CO.1502576394655843`),
+    # El id de Meta de quien escribe (`from_user_id`, BSUID: `CO.9990000000000002`),
     # cuando viene válido. Un cliente con nombre de usuario puede llegar SIN
     # teléfono: entonces `from_number` es este id sin el punto
-    # (`CO1502576394655843`) — la dirección de su conversación `wa_CO1502…`.
+    # (`CO9990000000000002`) — la dirección de su conversación `wa_CO9990…`.
     wa_user_id: str | None = None
 
 
@@ -255,7 +255,7 @@ def _parse_message(msg: Any, phone_number_id: str) -> WhatsAppMessage | None:
     if from_number is None and raw_user_id is not None:
         # Cliente con nombre de usuario: Meta omite el teléfono y manda solo su
         # id (BSUID). La dirección de la conversación es ese id sin el punto
-        # (`wa_CO1502…`): mismo charset seguro que un teléfono para el vault.
+        # (`wa_CO9990…`): mismo charset seguro que un teléfono para el vault.
         if user_address is None:
             raise ValueError("'from_user_id' no es un id de usuario de Meta válido (CC.<id>)")
         from_number = user_address

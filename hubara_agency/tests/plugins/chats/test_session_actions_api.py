@@ -35,7 +35,9 @@ _LUZ = CatalogProductDTO(
     variants=[CatalogVariantDTO(id="v1", title="Lavanda / Blanco", options={"Aroma": "Lavanda", "Color": "Blanco"},
                                 prices=[CatalogPriceDTO(amount="29000", currency_code="cop")])],
     options={"Aroma": ["Lavanda"], "Color": ["Blanco"]},
-    tags=["aroma:Lavanda", "color:Blanco"],
+    # Dos colores: el caso es del borrador que escribe MBA, no de la opción
+    # única que `set_order_slot` anota sola (test_order_slot_single_option.py).
+    tags=["aroma:Lavanda", "aroma:Coco", "color:Blanco", "color:Negro"],
 )
 _ZODIAC = CatalogProductDTO(
     id="p2", handle="duo-zodiacal", title="Dúo Zodiacal", status="published", description="Set con portavelas.",
@@ -136,7 +138,7 @@ def test_draft_writes_the_slots_into_the_active_episode(h: _Harness) -> None:
     # sobrescribe + valida contra el catálogo (color inexistente → rechazado con los válidos)
     r = h.client.post(_url("draft"), json={"color": "Verde"})
     assert r.status_code == 200
-    assert [x["field"] for x in r.json()["rejected"]] == ["color"] and r.json()["rejected"][0]["available"] == ["Blanco"]
+    assert [x["field"] for x in r.json()["rejected"]] == ["color"] and r.json()["rejected"][0]["available"] == ["Blanco", "Negro"]
     assert "color" not in h.meta()["episodes"][-1]["order_draft"]["slots"]
 
 
@@ -765,7 +767,7 @@ def test_a_customer_without_phone_can_be_escalated_and_tagged(h: _Harness) -> No
     """Cliente con nombre de usuario de WhatsApp: su conversación es
     `wa_<id de Meta sin punto>`. La guarda solo aceptaba `wa_<dígitos>` y el
     operador (o MBA) no podía escalar, etiquetar ni registrar su pedido."""
-    session = "wa_CO1502576394655843"
+    session = "wa_CO9990000000000002"
     r = h.client.post(_url("escalate", session), json={"reason_category": "EXPLICIT_REQUEST", "summary": "quiere humano"})
     assert r.status_code == 200, r.text
     assert h.meta(session)["active_route"] == ROUTE_HUMANO

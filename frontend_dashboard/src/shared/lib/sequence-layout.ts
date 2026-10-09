@@ -115,6 +115,8 @@ export const GUARD_LABELS: Record<string, string> = {
   contract_extra_round: "retuvo la respuesta: antes debía consultar una herramienta",
   turn_policy_extra_round: "pidió una ronda más por un asunto pendiente",
   send_reply_retry: "no mandó la respuesta: otra herramienta del mismo paso falló",
+  promised_action_round: "retuvo la respuesta: prometía algo que todavía no hizo",
+  promised_action_text_kept: "mandó la respuesta retenida: lo prometido ya salió",
 };
 
 /** Lo que decidió Jev al revisar si la respuesta cubre cada asunto. */

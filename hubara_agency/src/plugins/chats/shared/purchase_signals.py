@@ -32,33 +32,52 @@ from src.plugins.chats.shared.funnel import active_episode
 
 SIGNAL_KEY = "last_inbound_signal"
 
+#: Frases que aplazan solas (también preguntando: «¿lo pienso y te escribo?»).
+#: Premortem 2026-10-09: la regla es el respaldo cuando Jev duda o cae, así
+#: que solo lleva lo inequívoco. «Déjame una de lavanda», «te confirmo:
+#: lavanda», «les escribo la dirección» o «cuando llegue pago en efectivo» son
+#: compras, no aplazamientos.
 _DEFERRAL_PATTERNS = [
     re.compile(p)
     for p in (
         r"\ben camino\b",
-        r"\bluego\b",
-        r"\bmas tarde",
-        r"\bdespues\b",
         r"\bahora no\b",
         r"\bahorita no\b",
-        r"\ben un rato\b",
-        r"\bcuando llegue\b",
-        r"\bdejame\b",
-        r"\bdeja(me)? (que )?(miro|reviso|pienso|veo)\b",
-        r"\blo pienso\b",
-        # "te / les / le": al negocio se le habla en plural ("les escribo la
-        # otra semana" — incidente runs 337efe8c / ee3cec91).
-        r"\b(te|les|le) aviso\b",
-        r"\b(te|les|le) escribo\b",
-        r"\b(te|les|le) confirmo\b",
-        r"\bmanana\b",
+        r"\bno puedo ahora\b",
         r"\bestoy ocupad",
         r"\bme ocup[eo]\b",
-        r"\bno puedo ahora\b",
-        r"\ben la noche\b",
-        r"\bmas tardecito\b",
+        r"\blo pienso\b",
+        r"\bpensarlo\b",
+        r"\blo voy a pensar\b",
+        r"\bdeja(me)? (que )?(lo )?(miro|mirar|reviso|revisar|pienso|pensar|veo|ver|consulto|consultar)\b",
     )
 ]
+#: «cuando llegue a la casa lo veo» aplaza; «lo pago cuando llegue a la casa»
+#: dice cuándo paga (premortem 2026-10-09): no cuenta si el mensaje habla de pagar.
+_ARRIVAL_RE = re.compile(r"\bcuando llegue a\b")
+_PAYS_RE = re.compile(r"\b(?:pago|pagar|pagamos|pagaria|pague|consigno|transfiero)\b")
+#: Dejarlo para después: «te aviso / te confirmo / te escribo» o «lo hago /
+#: lo pido / lo miro» con un momento («luego», «mañana», «más tarde»)…
+_LATER_VERB_RE = re.compile(
+    r"\b(?:te|les|le) (?:aviso|escribo|confirmo|digo|cuento|hablo)\b"
+    r"|\b(?:lo|la|los|las) (?:hago|pido|compro|reviso|veo|miro|confirmo|decido)\b"
+    r"|\b(?:hablamos|seguimos|nos hablamos|lo vemos)\b"
+)
+#: Los momentos que dejan algo para después. «Ahorita» no: en Colombia es ya
+#: mismo («la compro ahorita»).
+_LATER_TIMES = (
+    r"luego|despues|mas tarde|mas tardecito|en un rato|al rato|manana|en la noche|esta noche|"
+    r"en la tarde|otro dia|la otra semana|el (?:lunes|martes|miercoles|jueves|viernes|sabado|domingo)"
+)
+_LATER_TIME_RE = re.compile(rf"\b(?:cuando|{_LATER_TIMES})\b")
+#: Un mensaje que SOLO dice un momento («Luego», «Mañana») o un momento y lo
+#: que hará («Luego miro», «Más tarde reviso», «Sí, mañana lo miro»).
+_ONLY_LATER_RE = re.compile(
+    rf"^(?:(?:si|ok|bueno|listo|vale|dale)\s+)?(?:{_LATER_TIMES})"
+    r"(?:\s+(?:lo\s+|la\s+)?(?:miro|reviso|veo|decido|pienso|confirmo))?$"
+)
+#: … o el «te aviso» / «te confirmo» con que se cierra el mensaje.
+_LATER_AT_END_RE = re.compile(r"\b(?:te|les|le) (?:aviso|confirmo|escribo|digo)\W*$")
 
 _AFFIRMATION_START = re.compile(
     r"^\W*(si|dale|listo|de una|hagale|claro|perfecto|vale|ok|okay|va|bueno|confirmo|confirmado)\b"
@@ -80,11 +99,24 @@ def _normalize(text: str) -> str:
 
 
 def detect_deferral(text: str | None) -> bool:
-    """True si el cliente está aplazando ("luego", "voy en camino", "mañana")."""
+    """True si el cliente está aplazando ("voy en camino", "lo pienso", "luego
+    te digo", "mañana te confirmo", "te aviso").
+
+    Una palabra de tiempo sola no aplaza («¿me llega mañana?», «mañana estoy
+    en casa»): tiene que dejar algo para después (te aviso, lo pido…).
+    """
     if not text:
         return False
     norm = _normalize(text)
-    return any(p.search(norm) for p in _DEFERRAL_PATTERNS)
+    if any(p.search(norm) for p in _DEFERRAL_PATTERNS):
+        return True
+    if _ARRIVAL_RE.search(norm) and not _PAYS_RE.search(norm):
+        return True
+    if _LATER_AT_END_RE.search(norm):
+        return True
+    if _ONLY_LATER_RE.match(" ".join(re.sub(r"[^\w\s]", " ", norm).split())):
+        return True
+    return bool(_LATER_VERB_RE.search(norm) and _LATER_TIME_RE.search(norm))
 
 
 def detect_purchase_affirmation(text: str | None) -> bool:

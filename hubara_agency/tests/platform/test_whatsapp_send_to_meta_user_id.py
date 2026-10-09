@@ -32,9 +32,9 @@ async def _sent_payload(monkeypatch, send) -> dict[str, Any]:
 
 @pytest.mark.asyncio
 async def test_text_to_a_customer_without_phone_goes_to_their_meta_id(monkeypatch) -> None:
-    payload = await _sent_payload(monkeypatch, lambda: wa_client.send_text("PNID", "CO1502576394655843", "hola"))
+    payload = await _sent_payload(monkeypatch, lambda: wa_client.send_text("PNID", "CO9990000000000002", "hola"))
 
-    assert payload["recipient"] == "CO.1502576394655843"
+    assert payload["recipient"] == "CO.9990000000000002"
     assert "to" not in payload
 
 
@@ -48,9 +48,9 @@ async def test_text_to_a_phone_customer_still_goes_to_their_phone(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_the_legacy_text_send_also_reaches_a_customer_without_phone(monkeypatch) -> None:
-    payload = await _sent_payload(monkeypatch, lambda: wa_client.send_message("PNID", "CO1502576394655843", "hola"))
+    payload = await _sent_payload(monkeypatch, lambda: wa_client.send_message("PNID", "CO9990000000000002", "hola"))
 
-    assert payload["recipient"] == "CO.1502576394655843"
+    assert payload["recipient"] == "CO.9990000000000002"
     assert "to" not in payload
 
 
@@ -60,8 +60,8 @@ async def test_buttons_reach_a_customer_without_phone(monkeypatch) -> None:
         body="¿Cuál te gusta?", buttons=[wa_dtos.ReplyButton(id="a", title="A")]
     )
     payload = await _sent_payload(
-        monkeypatch, lambda: wa_client.send_interactive_buttons("PNID", "CO1502576394655843", buttons)
+        monkeypatch, lambda: wa_client.send_interactive_buttons("PNID", "CO9990000000000002", buttons)
     )
 
-    assert payload["recipient"] == "CO.1502576394655843"
+    assert payload["recipient"] == "CO.9990000000000002"
     assert "to" not in payload

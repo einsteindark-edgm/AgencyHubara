@@ -44,7 +44,9 @@ _DUO = CatalogProductDTO(
     handle="duo-zodiacal",
     title="Duo Zodiacal",
     status="published",
-    tags=["Aroma: Lavanda", "Color: Blanco"],
+    # Dos opciones de cada una: el caso es de ruteo (la opción única se
+    # anota sola: test_order_slot_single_option.py).
+    tags=["Aroma: Lavanda", "Aroma: Coco", "Color: Blanco", "Color: Negro"],
     options={"Signo": ["Aries", "Leo", "Escorpio"]},
 )
 
