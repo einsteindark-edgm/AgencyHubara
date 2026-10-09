@@ -60,3 +60,58 @@ def test_workspaces_del_overlay_existen(plan):
         for req in required:
             real = req.replace("catalog/", "hubara_catalog/")
             assert (forge.REPO / ws / real).exists(), f"{agent}: {real} ya no existe en el motor"
+
+
+def test_el_paquete_del_clon_es_el_que_corre_la_tienda_madre():
+    """Promover un paquete en Hubara (`tenants.hubara.lab.decisions_bundle`)
+    sin avisarle a forge dejaría a los clones con la inteligencia vieja."""
+    import re
+
+    db = forge.load_manifest()["decision_bundles"]
+    tfvars = (forge.REPO / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    running = re.findall(r'^\s*decisions_bundle\s*=\s*"([^"]+)"', tfvars, re.M)
+    assert running == [db["store"]], (
+        f"la tienda madre corre {running} y forge clona {db['store']!r}: "
+        "actualizar decision_bundles.store en forge/manifest.yaml"
+    )
+    bundles = forge.REPO / db["dir"]
+    for b in {db["default"], db["store"]}:
+        assert (bundles / b / "bundle.yaml").is_file(), f"no existe el paquete {b}"
+
+
+def test_las_cifras_de_commerce_literals_son_las_de_la_tienda_madre():
+    """`commerce_literals` es la política de la tienda madre tal como la citan
+    sus workspaces (premortem 2026-10-09): si una tarifa cambia en el código y
+    no acá, la voz del agente del clon heredaría la vieja."""
+    import re
+
+    sales = forge.REPO / "hubara_agency/src/plugins/chats/agent/sales/config"
+    shipping = (sales / "shipping.py").read_text(encoding="utf-8")
+    payments = (sales / "payments.py").read_text(encoding="utf-8")
+
+    def amount(name: str) -> str:
+        return forge.commerce_text(int(re.search(rf"{name}: int = ([\d_]+)", shipping).group(1).replace("_", "")))
+
+    def text(src: str, name: str) -> str:
+        return re.search(rf'{name}: str = "([^"]+)"', src).group(1)
+
+    expected = {
+        amount("local_cop"): "shipping_rate_local_cop",
+        amount("national_cop"): "shipping_rate_national_cop",
+        amount("cod_min_products_cop"): "cash_on_delivery_min_cop",
+        text(payments, "link_surcharge_local"): "payment_link_surcharge_local",
+        text(payments, "link_surcharge_other"): "payment_link_surcharge_other",
+        text(shipping, "local_zone"): "shipping_local_zone",
+        forge.INIT_REAL_DATA["3229041190"]: "payment_nequi_number",
+    }
+    manifest = forge.load_manifest()
+    assert manifest["commerce_literals"] == expected
+    voices = "".join(
+        p.read_text(encoding="utf-8")
+        for ws, _ in forge.overlay_agents(manifest).values()
+        for p in sorted((forge.REPO / ws).rglob("*"))
+        if p.is_file() and p.suffix in {".md", ".yaml"}
+    )
+    for literal, field in expected.items():
+        if field != "payment_nequi_number":  # la llave se siembra como marca (INIT_REAL_DATA)
+            assert literal in voices, f"{literal} ({field}) ya no está en los workspaces: la regla sobra"

@@ -24,7 +24,8 @@ Subcomandos
 Secretos de un tenant nuevo
 ---------------------------
   Terraform crea los NOMBRES (`secret_keys`, con placeholder); los VALORES se
-  cargan aquí, nunca en git ni en el state:
+  cargan aquí, nunca en git (el refresh de Terraform sí los deja en claro en su
+  state: ese bucket se protege como un secreto):
     cp secrets.example.env secrets.<tenant>.env        # git lo ignora; llena los valores
     python3 aws_bootstrap.py secrets --tenant <tenant> --file secrets.<tenant>.env
     python3 aws_bootstrap.py verify  --tenant <tenant> # lo que falta antes del deploy

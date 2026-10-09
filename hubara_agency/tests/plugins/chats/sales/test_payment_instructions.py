@@ -245,7 +245,11 @@ async def test_register_transfer_failure_queues_nothing(ctx, vault):
 # ----------------------------------------------------------------------
 
 
+#: Llave Nequi sintética: las pruebas no dependen del default de la tienda
+#: (en un clon de forge nace vacío, fail-closed, y cada tienda pone la suya).
+_NEQUI = "3001234567"
 _ENV = {
+    "PAYMENT_NEQUI_NUMBER": _NEQUI,
     "PAYMENT_TRANSFER_BANK": "Bancolombia",
     "PAYMENT_TRANSFER_ACCOUNT_TYPE": "Cuenta de ahorros",
     "PAYMENT_TRANSFER_ACCOUNT_NUMBER": "123-456789-01",
@@ -253,7 +257,7 @@ _ENV = {
     "PAYMENT_TRANSFER_HOLDER_ID": "NIT 901.234.567-8",
 }
 # Env keys que el renderer lee — se limpian TODAS antes de cada test.
-_ALL_ENV_KEYS = tuple(_ENV) + ("PAYMENT_NEQUI_NUMBER",)
+_ALL_ENV_KEYS = tuple(_ENV)
 
 
 def _set_env(monkeypatch, env: dict) -> None:
@@ -286,7 +290,7 @@ async def test_dispatch_renders_nequi_plus_bank_details_from_env(monkeypatch):
     text = wa_client.send_text.await_args.args[2]
     # Pago anticipado: la llave/Nequi va PRIMERO (requisito 2026-08-31)
     assert "Nequi o llave" in text
-    assert "3229041190" in text
+    assert _NEQUI in text
     # Todos los datos bancarios vienen VERBATIM de la config
     assert "Bancolombia" in text
     assert "Cuenta de ahorros" in text
@@ -304,6 +308,10 @@ async def test_dispatch_without_env_renders_nequi_default(monkeypatch):
     """Sin NINGÚN env: la llave Nequi default (dato público del negocio,
     requisito 2026-08-31) igual sale — pero CERO datos bancarios (esos
     siguen siendo env-only, jamás inventados)."""
+    from src.plugins.chats.agent.sales.config.payments import PAYMENT_NEQUI_NUMBER_DEFAULT
+
+    if not PAYMENT_NEQUI_NUMBER_DEFAULT:
+        pytest.skip("clon de forge: la llave nace vacía y la tienda la pone en SSM")
     _set_env(monkeypatch, {})
     wa_client = SimpleNamespace(
         send_text=AsyncMock(
@@ -323,7 +331,7 @@ async def test_dispatch_without_env_renders_nequi_default(monkeypatch):
     assert result is not None and result.ok is True
     text = wa_client.send_text.await_args.args[2]
     assert "Nequi o llave" in text
-    assert "3229041190" in text
+    assert PAYMENT_NEQUI_NUMBER_DEFAULT in text
     assert "$47.000" in text
     # Sin config bancaria NO aparece ningún bloque de banco/cuenta
     assert "*Banco*" not in text
@@ -350,7 +358,7 @@ async def test_dispatch_nequi_env_override_wins(monkeypatch):
     )
     text = wa_client.send_text.await_args.args[2]
     assert "3001112233" in text
-    assert "3229041190" not in text
+    assert _NEQUI not in text
 
 
 @pytest.mark.asyncio
@@ -389,7 +397,7 @@ async def test_dispatch_payment_link_notice_informs_surcharge(monkeypatch):
     # El aviso del link NO lleva datos de cuenta ni Nequi (el link llega
     # después, generado por el humano)
     assert "123-456789-01" not in text
-    assert "3229041190" not in text
+    assert _NEQUI not in text
     assert "**" not in text
 
 
@@ -493,7 +501,7 @@ async def test_dispatch_partial_bank_config_omits_bank_block(monkeypatch):
     )
     assert result is not None and result.ok is True
     text = wa_client.send_text.await_args.args[2]
-    assert "3229041190" in text
+    assert _NEQUI in text
     assert "*Banco*" not in text
     assert "Bancolombia" not in text
 

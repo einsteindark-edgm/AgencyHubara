@@ -25,6 +25,14 @@ import forge  # noqa: E402
 SALES_WS = "hubara_agency/src/plugins/chats/agent/sales/workspace"
 RMKT_WS = "hubara_agency/src/plugins/chats/agent/remarketing/workspace"
 MBA_WS = "hubara_agency/src/plugins/mba/agents/sales"
+BUNDLES = "hubara_agency/src/plugins/chats/shared/decisions/bundles"
+ETA_WS = "hubara_agency/src/plugins/eta/agent/eta/workspace"
+ETA_FILES = ("IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md")
+ACME_DOMAIN = (
+    "store_name: Acme\n"
+    'farewell_order_registered: "Listo, tu pedido quedó registrado. Gracias por elegir a Acme."\n'
+    "vocabulary:\n  product_example: \"'Café Huila'\"\n"
+)
 
 FIXTURE_FILES = {
     "infra/terraform/platform/tenants.auto.tfvars": (
@@ -34,7 +42,10 @@ FIXTURE_FILES = {
     ),
     "infra/terraform/platform/variables.tf": (
         'variable "github_repo" {\n  default = "einsteindark-edgm/AgencyHubara"\n}\n'
+        'variable "secret_keys" {\n  default = [\n    "MEDUSA_ADMIN_TOKEN",\n    "META_CATALOG_ID",\n'
+        '    "META_FLOW_ID_SHIPPING",\n  ]\n}\n'
     ),
+    "infra/scripts/secrets.example.env": "MEDUSA_ADMIN_TOKEN=\n\nMETA_CATALOG_ID=\n\nMETA_FLOW_ID_SHIPPING=\n",
     "infra/terraform/compute/tenants.auto.tfvars": (
         'ssh_public_key = "ssh-ed25519 AAAA hubara-ops"\nami_id = "ami-07ab13a91f7d7a8af"\n'
         'tenants = {\n  hubara = {\n    instance_type = "t3.medium"\n'
@@ -56,6 +67,8 @@ FIXTURE_FILES = {
         '  statement {\n    resources = [\n'
         '      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}",\n'
         '      "arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/*",\n    ]\n  }\n}\n'
+        'statement {\n  sid = "SendCommandToGraphAgentsBoxOnly"\n  condition {\n'
+        '    variable = "ssm:resourceTag/Role"\n    values   = ["graphagents"]\n  }\n}\n'
         'resource "aws_instance" "app" {\n'
         '  volume_tags = {\n    Name   = "agencyhubara-${var.tenant}-app-root"\n'
         '    Backup = "daily"\n  }\n}\n'
@@ -192,11 +205,91 @@ FIXTURE_FILES = {
     # Meta Business Agent: el agente autorado (agent.yaml + skills/*.md) es voz del cliente
     f"{MBA_WS}/agent.yaml": (
         "id: sales\ndisplay_name: Asesor de Ventas\nskills: [persona-y-tono]\n"
-        "business_info:\n  business_description: Hubara vende velas artesanales.\n"
+        "business_info:\n  business_description: |\n    Hubara vende velas artesanales.\n"
         "connector:\n  name: hubara-commerce\n  description: API de Hubara.\n"
     ),
     f"{MBA_WS}/skills/persona-y-tono.md": (
         "---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n\nEres el asesor de Hubara.\n"
+    ),
+    # Paquetes de decisión: `ventas` (el del código) + las versiones de la
+    # tienda madre; `ventas-4` es el que corre hoy (manifest decision_bundles).
+    **{
+        f"{BUNDLES}/{b}/{f}": text
+        for b in ("ventas", "ventas-2", "ventas-3", "ventas-4")
+        for f, text in (
+            ("bundle.yaml", f"# Paquete de decisión de Hubara (velas)\nid: {b}\n"),
+            ("domain.yaml", "store_name: Hubara\nproduct_example: \"'Luz Serena'\"\n"),
+            ("capabilities/portavelas.yaml", "expect: \"Gracias por elegir a Hubara.\"\n"),
+        )
+    },
+    f"{BUNDLES}/builtins.yaml": "domain:\n  store_name: string\n",
+    # App Operador nativa (Android): el applicationId es único en Google Play
+    "android_operator/app/build.gradle.kts": (
+        'android {\n    namespace = "com.hubara.operator"\n'
+        '    defaultConfig {\n        applicationId = "com.acktos.operator"\n    }\n}\n'
+        'val configUrl = providers.gradleProperty("hubara.configUrl").getOrElse("")\n'
+        'val uploadStoreFile = providers.gradleProperty("hubara.upload.storeFile").orNull\n'
+    ),
+    "android_operator/e2e/run_suite.py": 'PACKAGE = "com.acktos.operator"\n',
+    "android_operator/release/ficha-play-store.md": "# Hubara Operador\nFicha de Hubara Operador.\n",
+    "hubara_agency/src/platform/push/composition.py": 'DEFAULT_ANDROID_PACKAGE = "com.acktos.operator"\n',
+    "docs/mobile-native/activar-avisos-push.html": (
+        "<p>Proyecto Firebase hubara-operador</p>\n"
+        "<code>python3 infra/scripts/aws_bootstrap.py secrets --tenant hubara</code>\n"
+        "<code>pool agencyhubara-hubara</code>\n"
+        "<a href=\"https://github.com/einsteindark-edgm/AgencyHubara/pull/385\">PR</a>\n"
+    ),
+    # Datos de pago REALES de Hubara: el Nequi no puede viajar como default
+    "hubara_agency/src/plugins/chats/agent/sales/config/payments.py": (
+        '# 2026-08-31 ("Pago anticipado por Nequi o mi llave 3229041190").\n'
+        'PAYMENT_NEQUI_NUMBER_DEFAULT = "3229041190"\n'
+    ),
+    "hubara_agency/tests/plugins/orders/test_phone_resolution.py": (
+        'assert _phone_match_key("+57 312-567-1604") == "3125671604"\n'
+        'assert key("573125671604") == key("wa_573125671604")\n'
+    ),
+    # Agente ETA (avisos de pedidos): voz del cliente → overlay
+    **{f"{ETA_WS}/{f}": f"# {f} — Asistente de Seguimiento de Hubara\n" for f in ETA_FILES},
+    "hubara_agency/src/plugins/eta/agent/eta/prompts.py": (
+        'TEXT = f"{_hola(name)} Soy tu asistente de seguimiento de Hubara. "\n'
+        '@workflow.defn(name="HubaraEtaSessionWorkflow")\n'
+    ),
+    "hubara_agency/src/plugins/ads/meta/settings.py": (
+        '        return f"/hubara/{self.tenant}/meta/oauth"\n'
+        '        tenant=os.getenv("META_ADS_TENANT", "hubara"),\n'
+    ),
+    "hubara_agency/src/platform/lab/launcher.py": 'LAB_INSTANCE_TAG = "lab"\n',
+    "infra/terraform/compute/modules/lab-instance/main.tf": (
+        'tags = { Role = "lab" }\ncondition {\n  values   = ["lab"]\n}\n'
+        'resources = ["arn:aws:ssm:*:*:parameter/hubara-lab/*"]\n'
+    ),
+    "infra/compose/lab/docker-compose.lab.yml": (
+        "name: hubara-lab\nservices:\n  temporal:\n    command: [--namespace, hubara-lab]\n"
+    ),
+    "hubara_agency/src/plugins/chats/agent/sales_lab/guard.py": 'LAB_NAMESPACE = "hubara-lab"\n',
+    "hubara_agency/src/plugins/chats/agent/sales/tools/links.py": (
+        'ALLOWED = ["https://instagram.com/hubara.com.co", "https://hubara.com.co/"]\n'
+    ),
+    "hubara_agency/tests/plugins/mba/conftest.py": 'PHONE_NUMBER_ID = "1234091093112024"\n',
+    ".github/workflows/forge-gates.yml": "name: forge-gates\n",
+    "hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py": (
+        'class StoreCodes:\n    sku_prefix: str = "HUB-"\n    web_domain: str = "hubara"\n'
+    ),
+    # Aislamiento IAM entre proyectos de la cuenta: los árboles SSM y el tag de
+    # la caja GraphAgents que permiten las políticas son los DEL PROYECTO
+    "infra/terraform/platform/modules/github-oidc/main.tf": (
+        'not_resources = [\n  "arn:aws:ssm:*:*:parameter/hubara/*",\n'
+        '  "arn:aws:ssm:*:*:parameter/graphagents/*",\n  "arn:aws:ssm:*:*:parameter/hubara-lab/*",\n]\n'
+        'resources = ["arn:aws:dynamodb:*:*:table/agencyhubara-*"]\n'
+        'not_resources = ["arn:aws:s3:::agencyhubara-*", "arn:aws:s3:::agencyhubara-*/*"]\n'
+    ),
+    "hubara_agency/tests/infra/test_cross_tenant_iam.py": (
+        'assert _list(lock, "resources") == ["arn:aws:dynamodb:*:*:table/agencyhubara-*"]\n'
+        'BUCKETS = ["arn:aws:s3:::agencyhubara-*", "arn:aws:s3:::agencyhubara-*/*"]\n'
+        'CW = "/AmazonCloudWatch-agencyhubara-${var.tenant}-app"\n'
+    ),
+    "infra/compose/graphagents/NARRATIVE_LLM_RUNBOOK.md": (
+        "aws ssm put-parameter --overwrite --type SecureString --name /graphagents/GRAPHAGENTS_LLM_API_KEY\n"
     ),
     "docs/cartagena/plan.md": "# Vertical hotelero de otro cliente\n",
     # App móvil Tauri: viaja al clon, pero la EIP de hubara en el CSP no
@@ -242,7 +335,19 @@ ACME_CLIENT = {
         "currency": "COP",
         "product_description": "cafés de origen",
         "domains": ["acme.example.com"],
-        "instagram": "",
+        "instagram": "acme.cafe",
+    },
+    "commerce": {
+        "payment_nequi_number": "3001234567",
+        "payment_link_surcharge_local": "2%",
+        "payment_link_surcharge_other": "3,1%",
+        "shipping_local_zone": "Medellín y el área metropolitana",
+        "shipping_local_city": "Medellín",
+        "shipping_rate_local_cop": 9000,
+        "shipping_rate_national_cop": 18500,
+        "cash_on_delivery_min_cop": 60000,
+        "sku_prefix": "ACM-",
+        "catalog_collections": ["vitrina"],
     },
 }
 
@@ -281,16 +386,21 @@ def acme_bundle(tmp_path: Path) -> Path:
         "workspace/mba_sales/skills/persona-y-tono.md",
         "---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n\nEres el asesor de Acme.\n",
     )
+    for f in ETA_FILES:
+        _overlay_file(bundle, f"workspace/eta/{f}", f"# {f} — seguimiento de pedidos de Acme\n")
+    # El concepto de la tienda para el motor de decisiones (domain.yaml)
+    _overlay_file(bundle, "domain.yaml", ACME_DOMAIN)
     return bundle
 
 
-def _apply(mini_repo: Path, acme_bundle: Path, tmp_path: Path):
+def _apply(mini_repo: Path, acme_bundle: Path, tmp_path: Path, allow_todos: bool = False):
     dest = tmp_path / "AgencyAcme"
     report = forge.run_apply(
         src=mini_repo,
         dest=dest,
         client_dir=acme_bundle,
         manifest=forge.load_manifest(),
+        allow_todos=allow_todos,
     )
     return dest, report
 
@@ -399,10 +509,10 @@ def test_apply_renombra_infra_y_deja_clon_limpio(mini_repo, acme_bundle, tmp_pat
 
     # App móvil + platform + webhook: la EIP de hubara se reemplaza por la URL
     # REAL del cliente cuando client.yaml define api_url (placeholder si no)
-    tauri = (dest / "frontend_dashboard/src-tauri/tauri.conf.json").read_text()
-    assert "https://api.acme.example.com" in tauri and "98-88-237-207" not in tauri
-    runbook = (dest / "frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md").read_text()
-    assert "98-88-237-207" not in runbook
+    # la app Tauri (congelada, identidad com.hubara.dashboard) no viaja: la
+    # app del clon es la nativa (android_operator/) con applicationId propio
+    assert not (dest / "frontend_dashboard/src-tauri").exists()
+    assert not (dest / "frontend_dashboard/MOBILE_ANDROID_RUNBOOK.md").exists()
     assert 'api_url = "https://api.acme.example.com"' in plat
     wa_env = (dest / "infra/whatsapp-provisioning/tenants/acme.env.example").read_text()
     assert "CALLBACK_URL=https://api.acme.example.com/api/chats/webhook" in wa_env
@@ -472,8 +582,6 @@ def test_sin_api_url_todo_queda_en_placeholder(mini_repo, acme_bundle, tmp_path)
     (acme_bundle / "client.yaml").write_text(_yaml.safe_dump(client), encoding="utf-8")
     dest = tmp_path / "SinApi"
     forge.run_apply(src=mini_repo, dest=dest, client_dir=acme_bundle, manifest=forge.load_manifest())
-    tauri = (dest / "frontend_dashboard/src-tauri/tauri.conf.json").read_text()
-    assert "TODO-EIP.sslip.io" in tauri and "98-88-237-207" not in tauri
     plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
     assert "TODO-EIP.sslip.io" in plat
 
@@ -550,13 +658,14 @@ def test_init_siembra_el_agente_mba_con_yaml_valido(mini_repo, tmp_path):
     bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=clients_dir)
     agent_path = bundle / "workspace" / "mba_sales" / "agent.yaml"
     text = agent_path.read_text()
-    assert "Acme vende" in text and "Hubara" not in text
+    # la marca queda como marcador (apply la llena con el client.yaml de ese día)
+    assert "{{company}} vende" in text and "Hubara" not in text
     assert "TODO-BRAND" in text
-    # la marca de redacción pendiente NO puede romper el YAML del agente
+    # ni la marca de redacción pendiente ni el marcador pueden romper el YAML del agente
     spec = _yaml.safe_load(text)
     assert spec["display_name"] == "Asesor de Ventas"
     skill = (bundle / "workspace" / "mba_sales" / "skills" / "persona-y-tono.md").read_text()
-    assert "asesor de Acme" in skill and "TODO-BRAND" in skill
+    assert "asesor de {{company}}" in skill and "TODO-BRAND" in skill
 
 
 def test_init_mas_apply_dejan_el_clon_mba_sin_residuales(mini_repo, tmp_path):
@@ -573,3 +682,486 @@ def test_init_mas_apply_dejan_el_clon_mba_sin_residuales(mini_repo, tmp_path):
     )
     assert report["scan"]["forbidden"] == []
     assert report["scan"]["critical"] == [], report["scan"]["critical"]
+
+
+# ── Paquete de decisión: el clon arranca con el que corre la tienda madre ─────
+
+
+def test_clon_viaja_con_el_paquete_de_la_tienda_y_el_del_codigo(mini_repo, acme_bundle, tmp_path):
+    """La inteligencia del motor (preguntas a Jev, umbrales, política del
+    turno) es del MOTOR: el clon corre la versión que corre hoy la tienda
+    madre (`decision_bundles.store`), no la v1. Las versiones intermedias son
+    experimentos de la tienda madre y no viajan."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    store = forge.load_manifest()["decision_bundles"]["store"]
+    kept = sorted(p.name for p in (dest / BUNDLES).iterdir() if p.is_dir())
+    assert kept == sorted({"ventas", store})
+    assert (dest / BUNDLES / "builtins.yaml").exists()  # catálogo del motor, intacto
+
+
+def test_el_dominio_de_cada_paquete_es_el_concepto_del_cliente(mini_repo, acme_bundle, tmp_path):
+    """`domain.yaml` (nombre, despedida, ejemplos que ve el agente) es el
+    concepto de la tienda: sale del bundle del cliente a TODOS los paquetes
+    que viajan — ningún paquete del clon habla de velas ni de Hubara."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    for b in (p for p in (dest / BUNDLES).iterdir() if p.is_dir()):
+        assert (b / "domain.yaml").read_text() == ACME_DOMAIN, b.name
+        assert "Hubara" not in (b / "capabilities/portavelas.yaml").read_text()
+
+
+def test_terraform_del_clon_nombra_el_paquete_de_la_tienda(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    store = forge.load_manifest()["decision_bundles"]["store"]
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    import re
+
+    assert re.search(rf'decisions_bundle\s+= "{store}"', plat)
+
+
+def test_sin_domain_yaml_el_apply_falla_pidiendo_el_concepto(mini_repo, acme_bundle, tmp_path):
+    (acme_bundle / "domain.yaml").unlink()
+    with pytest.raises(forge.ForgeError, match="domain.yaml"):
+        _apply(mini_repo, acme_bundle, tmp_path)
+
+
+def test_init_siembra_el_dominio_neutral_con_todo_brand(mini_repo, tmp_path):
+    import yaml as _yaml
+
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "c")
+    text = (bundle / "domain.yaml").read_text()
+    assert "TODO-BRAND" in text and "Hubara" not in text and "velas" not in text.lower()
+    dom = _yaml.safe_load(text)
+    # el nombre queda como marcador: apply lo llena con el client.yaml de ese día
+    assert dom["store_name"] == "{{company}}"
+    assert dom["farewell_order_registered"].endswith("Gracias por elegir a {{company}}.")
+
+
+# ── App Operador + datos reales de Hubara ─────────────────────────────────────
+
+
+def test_app_operador_tiene_identidad_propia(mini_repo, acme_bundle, tmp_path):
+    """El applicationId es único en Google Play/Firebase: el clon publica su
+    propia app. El namespace Kotlin (`com.hubara.operator`) es del motor."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    gradle = (dest / "android_operator/app/build.gradle.kts").read_text()
+    assert 'applicationId = "com.acktos.acme"' in gradle
+    assert 'namespace = "com.hubara.operator"' in gradle
+    assert 'PACKAGE = "com.acktos.acme"' in (dest / "android_operator/e2e/run_suite.py").read_text()
+    push = (dest / "hubara_agency/src/platform/push/composition.py").read_text()
+    assert '"com.acktos.acme"' in push
+    ficha = (dest / "android_operator/release/ficha-play-store.md").read_text()
+    assert "Acme Operador" in ficha and "Hubara" not in ficha
+    doc = (dest / "docs/mobile-native/activar-avisos-push.html").read_text()
+    for gone in ("hubara-operador", "--tenant hubara", "agencyhubara", "AgencyHubara"):
+        assert gone not in doc, gone
+    assert "acme-operador" in doc and "--tenant acme" in doc
+    nxt = (dest / "NEXT_STEPS.md").read_text()
+    assert "com.acktos.acme" in nxt and "FCM_SERVICE_ACCOUNT_JSON" in nxt
+
+
+def test_app_id_de_hubara_rechazado():
+    client = dict(ACME_CLIENT, android_app_id="com.acktos.operator")
+    with pytest.raises(forge.ForgeError, match="com.acktos.operator"):
+        forge.render_vars(client)
+
+
+def test_el_nequi_de_hubara_no_viaja_y_los_telefonos_reales_se_normalizan(
+    mini_repo, acme_bundle, tmp_path
+):
+    """El Nequi del clon nace vacío (fail-closed: el bot no ofrece pago
+    anticipado hasta que la tienda ponga PAYMENT_NEQUI_NUMBER en SSM), y los
+    teléfonos reales de Hubara en cualquier formato pasan a sintéticos."""
+    dest, report = _apply(mini_repo, acme_bundle, tmp_path)
+    pay = (dest / "hubara_agency/src/plugins/chats/agent/sales/config/payments.py").read_text()
+    assert 'PAYMENT_NEQUI_NUMBER_DEFAULT = ""' in pay
+    assert "3229041190" not in pay
+    phones = (dest / "hubara_agency/tests/plugins/orders/test_phone_resolution.py").read_text()
+    assert "3125671604" not in phones and "312-567-1604" not in phones
+    # el test sigue siendo coherente: el mismo número en sus tres formatos
+    assert '"+57 300-000-0000") == "3000000000"' in phones
+    # la llave de la tienda nace en Terraform (tenants.<t>.store), no a mano
+    assert "store = { payment_nequi_number" in (dest / "NEXT_STEPS.md").read_text()
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    assert "payment_nequi_number" in plat
+
+
+def test_scanner_bloquea_los_telefonos_reales_sin_prefijo(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    (dest / "leak.md").write_text("Nequi 3229041190 · +57 312 567 1604\n", encoding="utf-8")
+    scan = forge.scan_residuals(dest, forge.load_manifest(), forge.render_vars(ACME_CLIENT))
+    assert any("3229041190" in v for v in scan["forbidden"])
+    assert any("312 567 1604" in v for v in scan["forbidden"])
+
+
+# ── Agentes y config del motor que nombran a la tienda ────────────────────────
+
+
+def test_agente_eta_habla_como_el_cliente(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    for f in ETA_FILES:
+        assert "Acme" in (dest / ETA_WS / f).read_text()
+    prompts = (dest / "hubara_agency/src/plugins/eta/agent/eta/prompts.py").read_text()
+    assert "seguimiento de Acme" in prompts
+    assert 'name="HubaraEtaSessionWorkflow"' in prompts  # nombre del motor intacto
+
+
+def test_ads_lee_el_token_del_clon_no_el_de_hubara(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    st = (dest / "hubara_agency/src/plugins/ads/meta/settings.py").read_text()
+    assert 'f"/acme/{self.tenant}/meta/oauth"' in st
+    assert '"META_ADS_TENANT", "acme"' in st
+
+
+def test_caja_del_laboratorio_con_identidad_propia(mini_repo, acme_bundle, tmp_path):
+    """Tag y SSM únicos a nivel cuenta: renombrados. Namespace/proyecto dentro
+    de la caja: del motor, intactos (el guard del worker los exige iguales)."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    tf = (dest / "infra/terraform/compute/modules/lab-instance/main.tf").read_text()
+    assert 'Role = "lab-acme"' in tf and 'values   = ["lab-acme"]' in tf
+    assert "parameter/acme-lab/*" in tf
+    assert 'LAB_INSTANCE_TAG = "lab-acme"' in (dest / "hubara_agency/src/platform/lab/launcher.py").read_text()
+    compose = (dest / "infra/compose/lab/docker-compose.lab.yml").read_text()
+    guard = (dest / "hubara_agency/src/plugins/chats/agent/sales_lab/guard.py").read_text()
+    assert "--namespace, hubara-lab" in compose and '"hubara-lab"' in guard
+
+
+def test_instagram_y_dominio_del_cliente(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    links = (dest / "hubara_agency/src/plugins/chats/agent/sales/tools/links.py").read_text()
+    assert "https://instagram.com/acme.cafe" in links and "https://acme.example.com/" in links
+
+
+def test_ids_reales_de_meta_pasan_a_sinteticos(mini_repo, acme_bundle, tmp_path):
+    dest, report = _apply(mini_repo, acme_bundle, tmp_path)
+    assert "1234091093112024" not in (dest / "hubara_agency/tests/plugins/mba/conftest.py").read_text()
+    assert report["scan"]["forbidden"] == []
+
+
+def test_el_gate_de_forge_no_viaja_al_clon(mini_repo, acme_bundle, tmp_path):
+    """forge/ no viaja; su workflow de CI fallaría en cada PR del clon."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    assert not (dest / ".github/workflows/forge-gates.yml").exists()
+
+
+def test_init_deja_el_frontmatter_de_las_skills_al_principio(mini_repo, tmp_path):
+    """Una skill (MBA o del workspace) empieza con su frontmatter `---`: si el
+    banner TODO-BRAND va antes, el cargador no lee su `description` y la skill
+    queda rota. El banner va DESPUÉS del frontmatter."""
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "c")
+    skill = (bundle / "workspace" / "mba_sales" / "skills" / "persona-y-tono.md").read_text()
+    assert skill.startswith("---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n")
+    assert "TODO-BRAND" in skill
+
+
+# ── Política comercial: client.yaml → commerce → Terraform del clon ───────────
+
+
+def test_la_politica_comercial_del_cliente_llega_a_su_terraform(mini_repo, acme_bundle, tmp_path):
+    """Tarifas, contra entrega, pagos y códigos del catálogo son del cliente:
+    viajan de client.yaml al bloque `store` del tfvars (→ SSM → .env)."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    for line in (
+        'payment_nequi_number = "3001234567"',
+        'payment_link_surcharge_local = "2%"',
+        'shipping_local_zone = "Medellín y el área metropolitana"',
+        "shipping_rate_local_cop = 9000",
+        "shipping_rate_national_cop = 18500",
+        "cash_on_delivery_min_cop = 60000",
+        'sku_prefix = "ACM-"',
+        'web_domain = "acme.example.com"',  # sale de business.domains
+        'catalog_collections = ["vitrina"]',
+    ):
+        assert line in " ".join(plat.split()), line
+
+
+def test_sin_politica_comercial_el_apply_real_falla_y_dice_que_falta(mini_repo, acme_bundle, tmp_path):
+    import yaml as _yaml
+
+    client = dict(ACME_CLIENT, commerce={"sku_prefix": "ACM-", "shipping_rate_local_cop": "TODO"})
+    (acme_bundle / "client.yaml").write_text(_yaml.safe_dump(client), encoding="utf-8")
+    with pytest.raises(forge.ForgeError, match="shipping_rate_local_cop"):
+        _apply(mini_repo, acme_bundle, tmp_path)
+    # clon de prueba: lo pendiente queda fuera (manda el default del motor)
+    dest = tmp_path / "Prueba"
+    forge.run_apply(src=mini_repo, dest=dest, client_dir=acme_bundle, manifest=forge.load_manifest(), allow_todos=True)
+    plat = (dest / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    assert 'sku_prefix = "ACM-"' in " ".join(plat.split()) and "shipping_rate_local_cop" not in plat
+
+
+def test_una_politica_mal_escrita_falla_antes_de_forjar(mini_repo, acme_bundle, tmp_path):
+    import yaml as _yaml
+
+    bad = dict(ACME_CLIENT["commerce"], shipping_rate_local_cop="7.900")
+    (acme_bundle / "client.yaml").write_text(_yaml.safe_dump(dict(ACME_CLIENT, commerce=bad)), encoding="utf-8")
+    with pytest.raises(forge.ForgeError, match="shipping_rate_local_cop"):
+        _apply(mini_repo, acme_bundle, tmp_path, allow_todos=True)
+
+
+def test_init_siembra_la_politica_comercial_pendiente(mini_repo, tmp_path):
+    import yaml as _yaml
+
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "c")
+    commerce = _yaml.safe_load((bundle / "client.yaml").read_text())["commerce"]
+    assert set(commerce) >= {
+        "shipping_rate_local_cop", "cash_on_delivery_min_cop", "sku_prefix", "payment_nequi_number", "catalog_collections"
+    }
+    # todo pendiente, la llave Nequi y las colecciones también (premortem 2026-10-09)
+    assert {commerce[k] for k in ("shipping_rate_local_cop", "payment_nequi_number", "catalog_collections")} == {"TODO"}
+
+
+def test_el_dominio_por_defecto_del_clon_es_el_del_cliente(mini_repo, acme_bundle, tmp_path):
+    """Sin STORE_WEB_DOMAIN (dev, tests) un enlace de SU tienda en una foto
+    sigue siendo suyo: el default del clon es su dominio, no `hubara`."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    codes = (dest / "hubara_agency/src/plugins/chats/agent/sales/config/store_codes.py").read_text()
+    assert 'web_domain: str = "acme.example.com".lower()' in codes
+
+
+def test_el_aislamiento_iam_del_clon_usa_sus_propios_arboles_y_tags(mini_repo, acme_bundle, tmp_path):
+    """El CI del clon solo lee SUS parámetros y su caja de app solo le manda
+    comandos a SU GraphAgents: los nombres de Hubara no sobreviven."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    oidc = (dest / "infra/terraform/platform/modules/github-oidc/main.tf").read_text()
+    for tree in ("parameter/acme/*", "parameter/acme-graphagents/*", "parameter/acme-lab/*"):
+        assert tree in oidc, tree
+    assert "parameter/hubara" not in oidc and "parameter/graphagents" not in oidc
+    app = (dest / "infra/terraform/compute/modules/app-instance/main.tf").read_text()
+    assert 'values   = ["graphagents-acme"]' in app
+
+
+# ── Premortem 2026-10-09: lo que la tienda configura llega igual a todas partes ──
+
+
+def test_el_nombre_de_la_tienda_se_toma_al_forjar_no_al_sembrar(mini_repo, tmp_path):
+    """`forge init` sembraba domain.yaml con el nombre de ese día (el slug) y la
+    tienda ponía su nombre real después: los ejemplos del paquete esperan la
+    despedida con el nombre de HOY, así que `decisions check` fallaba y el bot
+    de ventas del clon no arrancaba."""
+    import yaml
+
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "clients")
+    client = yaml.safe_load((bundle / "client.yaml").read_text())
+    client["company"] = "Café Acme"
+    client["commerce"] = ACME_CLIENT["commerce"]
+    (bundle / "client.yaml").write_text(yaml.safe_dump(client, allow_unicode=True), encoding="utf-8")
+    dest = tmp_path / "AgencyAcmeRename"
+    forge.run_apply(src=mini_repo, dest=dest, client_dir=bundle, manifest=forge.load_manifest(), allow_todos=True)
+    for b in ("ventas", forge.load_manifest()["decision_bundles"]["store"]):
+        domain = yaml.safe_load((dest / BUNDLES / b / "domain.yaml").read_text())
+        assert domain["store_name"] == "Café Acme", b
+        assert domain["farewell_order_registered"].endswith("Gracias por elegir a Café Acme."), b
+    # …y la voz de los agentes también (el cierre y la bienvenida citan la marca)
+    assert "Asesor Exclusivo de Ventas de Café Acme" in (dest / SALES_WS / "IDENTITY.md").read_text()
+    agent = (dest / MBA_WS / "agent.yaml").read_text()
+    assert "Café Acme vende" in agent and yaml.safe_load(agent)["business_info"]
+
+
+def test_un_marcador_mal_escrito_en_la_voz_no_forja(mini_repo, acme_bundle, tmp_path):
+    """Lo que quede como `{{…}}` en el workspace instalado lo diría el bot tal cual."""
+    _overlay_file(acme_bundle, "workspace/sales/USER.md", "Bienvenido a {{compnay}}.\n")
+    with pytest.raises(forge.ForgeError, match="compnay"):
+        _apply(mini_repo, acme_bundle, tmp_path)
+
+
+def test_init_acepta_el_nombre_de_la_empresa(mini_repo, tmp_path):
+    import yaml
+
+    bundle = forge.run_init(
+        "acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "clients", company="Café Acme"
+    )
+    assert yaml.safe_load((bundle / "client.yaml").read_text())["company"] == "Café Acme"
+    identity = (bundle / "workspace/sales/IDENTITY.md").read_text()
+    assert "para Café Acme" in identity  # el aviso de redacción ya nombra a la tienda
+    assert "Asesor Exclusivo de Ventas de {{company}}" in identity
+
+
+def test_la_despedida_que_esperan_los_ejemplos_del_paquete_no_se_cambia(mini_repo, acme_bundle, tmp_path):
+    """Los ejemplos de `portavelas` esperan la despedida de la madre con el
+    nombre de la tienda, palabra por palabra: otra despedida hace fallar
+    `decisions check` (el bot de ventas no arranca). forge lo dice al forjar."""
+    farewell = "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+    for b in ("ventas", "ventas-2", "ventas-3", "ventas-4"):
+        (mini_repo / BUNDLES / b / "domain.yaml").write_text(
+            f'store_name: Hubara\nfarewell_order_registered: "{farewell}"\n', encoding="utf-8"
+        )
+        (mini_repo / BUNDLES / b / "capabilities/portavelas.yaml").write_text(
+            f'examples:\n  - {{items: [], expect: "{farewell}"}}\n', encoding="utf-8"
+        )
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qam", "despedida"], cwd=mini_repo, check=True)
+    with pytest.raises(forge.ForgeError, match="farewell_order_registered"):
+        _apply(mini_repo, acme_bundle, tmp_path)  # ACME_DOMAIN trae otra despedida
+    _overlay_file(
+        acme_bundle,
+        "domain.yaml",
+        'store_name: "{{company}}"\n'
+        'farewell_order_registered: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a {{company}}."\n',
+    )
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path / "2")
+    assert "Gracias por elegir a Acme." in (dest / BUNDLES / "ventas" / "domain.yaml").read_text()
+
+
+def test_la_voz_del_agente_dice_la_politica_comercial_de_la_tienda(mini_repo, acme_bundle, tmp_path):
+    """Los workspaces de la madre citan sus tarifas, recargos, zona y llave
+    Nequi (skills, SOUL, el agente MBA): al forjar se cambian por las de
+    client.yaml → commerce, y la voz del agente no contradice a sus tools."""
+    import yaml
+
+    _overlay_file(
+        acme_bundle,
+        "workspace/sales/USER.md",
+        "Envío: Bogotá y municipios cercanos $7.900, nacional $16.940. Contra entrega desde "
+        "$45.000 COP. Link: 1,5% / 2,69%. Pago anticipado por Nequi o llave LLAVE-NEQUI.\n",
+    )
+    _overlay_file(
+        acme_bundle,
+        "workspace/mba_sales/agent.yaml",
+        "id: sales\ndisplay_name: Asesor Acme\nskills: [persona-y-tono]\nbusiness_info:\n"
+        "  business_description: Acme vende cafés de origen.\n  delivery_and_shipping: |\n"
+        "    Tarifas MÍNIMAS: Bogotá y municipios cercanos $7.900; nivel nacional $16.940.\n",
+    )
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    assert (dest / SALES_WS / "USER.md").read_text() == (
+        "Envío: Medellín y el área metropolitana $9.000, nacional $18.500. Contra entrega desde "
+        "$60.000 COP. Link: 2% / 3,1%. Pago anticipado por Nequi o llave 3001234567.\n"
+    )
+    agent = yaml.safe_load((dest / MBA_WS / "agent.yaml").read_text())
+    assert "Medellín y el área metropolitana $9.000; nivel nacional $18.500" in agent["business_info"]["delivery_and_shipping"]
+
+
+def test_una_tarifa_igual_a_otra_de_la_madre_no_se_reemplaza_dos_veces():
+    literals = forge.load_manifest()["commerce_literals"]
+    values = {"shipping_rate_local_cop": 16_940, "shipping_rate_national_cop": 20_000}
+    assert forge.commerce_substitute("$7.900 local y $16.940 nacional", literals, values) == (
+        "$16.940 local y $20.000 nacional"
+    )
+
+
+def test_el_init_siembra_la_llave_nequi_como_marca_que_apply_llena(mini_repo, tmp_path):
+    (mini_repo / SALES_WS / "skills/sales_script/SKILL.md").write_text(
+        "Pago anticipado por Nequi o llave 3229041190.\n", encoding="utf-8"
+    )
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "clients")
+    script = (bundle / "workspace/sales/skills/sales_script/SKILL.md").read_text()
+    assert "3229041190" not in script and "llave LLAVE-NEQUI" in script
+
+
+def test_el_clon_no_puede_empujar_al_repo_madre(mini_repo, acme_bundle, tmp_path):
+    """El remoto `hubara` sirve para traer el motor; empujar ahí subía el repo
+    del cliente (su workspace, su política) al repo madre, que es público."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    url = lambda *a: subprocess.run(  # noqa: E731
+        ["git", "-C", str(dest), "remote", "get-url", *a, "hubara"], capture_output=True, text=True
+    ).stdout.strip()
+    assert url() == str(mini_repo)
+    assert url("--push") != url() and "DISABLED" in url("--push")
+
+
+def test_el_primer_commit_del_clon_no_depende_del_git_del_operador(mini_repo, acme_bundle, tmp_path, monkeypatch):
+    """Con firma GPG obligatoria o un hook que falla, el commit no se hacía,
+    quedaba `.git` sin HEAD y la consola daba el clon por forjado."""
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    (hooks / "pre-commit").write_text("#!/bin/sh\nexit 1\n")
+    (hooks / "pre-commit").chmod(0o755)
+    cfg = tmp_path / "gitconfig"
+    cfg.write_text(f"[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = false\n[core]\n\thooksPath = {hooks}\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(cfg))
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    assert subprocess.run(["git", "-C", str(dest), "rev-parse", "--verify", "-q", "HEAD"]).returncode == 0
+
+
+def test_la_llave_nequi_y_las_colecciones_son_obligatorias():
+    """Sin llave, el bot ofrecía «Pago anticipado (Nequi)» y no mandaba ningún
+    dato de pago; sin colecciones, las de la madre escondían los productos."""
+    commerce = {k: v for k, v in ACME_CLIENT["commerce"].items() if k not in {"payment_nequi_number", "catalog_collections"}}
+    client = dict(ACME_CLIENT, commerce=commerce)
+    with pytest.raises(forge.ForgeError, match="payment_nequi_number.*catalog_collections"):
+        forge.commerce_values(client, forge.render_vars(client), allow_todos=False)
+    # sin colecciones a propósito: `[]` (solo productos sin colección) no va al tfvars
+    client = dict(ACME_CLIENT, commerce=dict(ACME_CLIENT["commerce"], catalog_collections=[]))
+    assert "catalog_collections" not in forge.commerce_values(client, forge.render_vars(client), allow_todos=False)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("shipping_rate_local_cop", 9),  # `9.000` en YAML/HCL es 9: el bot cobraría «$9»
+        ("shipping_local_city", "Bogotá D.C."),  # se busca DENTRO de la ciudad del cliente
+        ("shipping_local_zone", "Zona #1: centro"),  # `#` corta el .env; `: ` rompe el YAML del agente
+        ("catalog_collections", ["Vitrina Principal"]),  # handles de Medusa, no títulos
+        ("payment_nequi_number", "300 123 4567"),
+    ],
+)
+def test_una_politica_que_romperia_el_bot_no_forja(field, value):
+    client = dict(ACME_CLIENT, commerce=dict(ACME_CLIENT["commerce"], **{field: value}))
+    with pytest.raises(forge.ForgeError, match=field):
+        forge.commerce_values(client, forge.render_vars(client), allow_todos=True)
+
+
+def test_el_dominio_web_por_defecto_va_en_minusculas():
+    business = dict(ACME_CLIENT["business"], domains=["Acme.Example.com"])
+    commerce = {k: v for k, v in ACME_CLIENT["commerce"].items()}
+    client = dict(ACME_CLIENT, business=business, commerce=commerce)
+    assert forge.commerce_values(client, forge.render_vars(client), allow_todos=False)["web_domain"] == "acme.example.com"
+
+
+def test_el_aislamiento_iam_del_clon_tambien_cubre_s3_y_el_lock(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    oidc = (dest / "infra/terraform/platform/modules/github-oidc/main.tf").read_text()
+    assert "s3:::agencyacme-*" in oidc and "table/agencyacme-*" in oidc
+    iam_test = (dest / "hubara_agency/tests/infra/test_cross_tenant_iam.py").read_text()
+    assert "agencyhubara" not in iam_test
+    assert "table/agencyacme-*" in iam_test and "s3:::agencyacme-*" in iam_test
+    assert "AmazonCloudWatch-agencyacme-" in iam_test
+
+
+def test_los_runbooks_de_graphagents_del_clon_nombran_su_arbol(mini_repo, acme_bundle, tmp_path):
+    """Seguir el runbook del clon con creds de admin pisaba la llave LLM de la
+    GraphAgents de la madre (`/graphagents/…` es SU árbol en la cuenta)."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    runbook = (dest / "infra/compose/graphagents/NARRATIVE_LLM_RUNBOOK.md").read_text()
+    assert "--name /acme-graphagents/GRAPHAGENTS_LLM_API_KEY" in runbook
+
+
+def test_el_scanner_bloquea_el_arbol_ssm_de_graphagents_de_la_madre(mini_repo, acme_bundle, tmp_path):
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    (dest / "docs").mkdir(exist_ok=True)
+    (dest / "docs/x.md").write_text("aws ssm get-parameter --name /graphagents/AGENTSPAN_MASTER_KEY\n")
+    scan = forge.scan_residuals(dest, forge.load_manifest(), forge.render_vars(ACME_CLIENT))
+    assert any("x.md" in str(v) for v in scan["forbidden"])
+
+
+def test_el_clon_declara_las_llaves_de_capi_y_waba_que_imprime_el_paso_s5(mini_repo, acme_bundle, tmp_path):
+    """`whatsapp_provision.py ssm-block` (S5) imprime WHATSAPP_BUSINESS_ACCOUNT_ID
+    y las de CAPI, y `aws_bootstrap.py secrets` (S8) solo sube las que declara
+    Terraform: sin ellas el paso se negaba a subir nada."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    variables = (dest / "infra/terraform/platform/variables.tf").read_text()
+    template = (dest / "infra/scripts/secrets.example.env").read_text()
+    for key in ("WHATSAPP_BUSINESS_ACCOUNT_ID", "META_CAPI_DATASET_ID", "META_CAPI_ACCESS_TOKEN"):
+        assert f'    "{key}",' in variables, key
+        assert f"\n{key}=\n" in template, key
+
+
+def test_la_app_operador_del_clon_lee_sus_propias_propiedades_de_gradle(mini_repo, acme_bundle, tmp_path):
+    """En la máquina del operador, `~/.gradle/gradle.properties` le gana al
+    proyecto: con los nombres de la madre (`hubara.configUrl`, `hubara.upload.*`)
+    la app del clon cargaba la configuración de Hubara y se firmaba con su llave."""
+    dest, _ = _apply(mini_repo, acme_bundle, tmp_path)
+    gradle = (dest / "android_operator/app/build.gradle.kts").read_text()
+    assert 'gradleProperty("acme.configUrl")' in gradle and 'gradleProperty("acme.upload.storeFile")' in gradle
+    assert 'namespace = "com.hubara.operator"' in gradle  # el paquete Kotlin del motor no cambia
+
+
+def test_un_yaml_que_el_marcador_romperia_se_siembra_con_el_nombre(mini_repo, tmp_path):
+    """En YAML, `{{company}}` al principio de un valor sin comillas abre un mapa:
+    ese archivo se siembra con el nombre de la tienda, nunca roto."""
+    import yaml as _yaml
+
+    (mini_repo / MBA_WS / "agent.yaml").write_text(
+        "id: sales\ndisplay_name: Hubara Asesor\nskills: [persona-y-tono]\n", encoding="utf-8"
+    )
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "c")
+    spec = _yaml.safe_load((bundle / "workspace" / "mba_sales" / "agent.yaml").read_text())
+    assert spec["display_name"] == "Acme Asesor"

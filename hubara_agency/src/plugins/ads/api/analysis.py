@@ -33,26 +33,28 @@ router = APIRouter()
 
 #: El envelope crudo de `ads_get_ad_entities` (MCP) — lo que la tool de Meta devuelve. El
 #: agente lee `ad_entities` como STRING JSON (así viaja por el MCP), por eso lo armamos con
-#: `json.dumps`. Es el mismo payload del caso `dia-del-padre-flujo` del viewer de GraphAgents.
+#: `json.dumps`. Datos SINTÉTICOS con la forma del caso `dia-del-padre-flujo` del viewer de
+#: GraphAgents: el ejemplo del dashboard viaja a cada clon de forge y no puede llevar las
+#: campañas ni el gasto reales de una tienda.
 _AD_ENTITIES = [
     {
-        "id": "120238728477970317", "name": "Duo zodiacal", "objective": "OUTCOME_ENGAGEMENT",
-        "amount_spent": "$ 896.823 COP",
-        "results": {"value": "205 (Messaging conversations started)"},
-        "cost_per_result": {"value": "$ 4.375 COP (Messaging conversations started)"},
+        "id": "120000000000000001", "name": "Campaña A · conversaciones", "objective": "OUTCOME_ENGAGEMENT",
+        "amount_spent": "$ 500.000 COP",
+        "results": {"value": "100 (Messaging conversations started)"},
+        "cost_per_result": {"value": "$ 5.000 COP (Messaging conversations started)"},
         "date_start": "20 de mayo de 2026", "date_stop": "18 de junio de 2026",
-        "actions:link_click": "571",
+        "actions:link_click": "300",
     },
     {
-        "id": "120243118818600317", "name": "Día del padre 2026 - mundia", "objective": "OUTCOME_SALES",
-        "amount_spent": "$ 239.433 COP",
+        "id": "120000000000000002", "name": "Campaña B · ventas", "objective": "OUTCOME_SALES",
+        "amount_spent": "$ 250.000 COP",
         "results": {"value": "0 (Meta purchases)"},
         "cost_per_result": {"value": "$ 0 COP (Meta purchases)"},
         "date_start": "20 de mayo de 2026", "date_stop": "18 de junio de 2026",
-        "actions:link_click": "446",
+        "actions:link_click": "200",
     },
     {
-        "id": "120240351877200317", "name": "Dia de la madre", "objective": "OUTCOME_ENGAGEMENT",
+        "id": "120000000000000003", "name": "Campaña C · pausada", "objective": "OUTCOME_ENGAGEMENT",
         "amount_spent": "$ 0 COP",
         "results": {"value": "0 (Messaging conversations started)"},
         "cost_per_result": {"value": "$ 0 COP (Messaging conversations started)"},
@@ -61,8 +63,9 @@ _AD_ENTITIES = [
     },
 ]
 
-#: El seed REAL del pod `ads-analytics` (el mismo del caso `dia-del-padre-flujo`): Graph
-#: /insights de las campañas + ventas manuales + el envelope crudo de entities. El CLI de la
+#: El seed del pod `ads-analytics` con la forma del caso `dia-del-padre-flujo` (datos
+#: sintéticos): Graph /insights de las campañas + ventas manuales + el envelope crudo de
+#: entities. El CLI de la
 #: caja lo envuelve en `{acc: seed}` para el supervisor secuencial.
 _ADS_ANALYTICS_INPUT = {
     "meta_insights": {
@@ -70,7 +73,7 @@ _ADS_ANALYTICS_INPUT = {
         "data": [
             {
                 "date_start": "2026-06-15", "date_stop": "2026-06-15",
-                "campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+                "campaign_id": "120000000000000001", "campaign_name": "Campaña A · conversaciones",
                 "spend": "120000", "inline_link_clicks": "80",
                 "actions": [
                     {"action_type": "link_click", "value": "80"},
@@ -79,7 +82,7 @@ _ADS_ANALYTICS_INPUT = {
             },
             {
                 "date_start": "2026-06-16", "date_stop": "2026-06-16",
-                "campaign_id": "120238728477970317", "campaign_name": "Duo zodiacal",
+                "campaign_id": "120000000000000001", "campaign_name": "Campaña A · conversaciones",
                 "spend": "100000", "inline_link_clicks": "50",
                 "actions": [
                     {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "30"},
@@ -87,15 +90,15 @@ _ADS_ANALYTICS_INPUT = {
             },
             {
                 "date_start": "2026-06-15", "date_stop": "2026-06-15",
-                "campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026",
-                "spend": "176294", "inline_link_clicks": "344",
+                "campaign_id": "120000000000000002", "campaign_name": "Campaña B · ventas",
+                "spend": "150000", "inline_link_clicks": "344",
                 "actions": [
                     {"action_type": "onsite_conversion.messaging_conversation_started_7d", "value": "120"},
                 ],
             },
             {
                 "date_start": "2026-06-16", "date_stop": "2026-06-16",
-                "campaign_id": "120243118818600317", "campaign_name": "Día del padre 2026",
+                "campaign_id": "120000000000000002", "campaign_name": "Campaña B · ventas",
                 "spend": "90000", "inline_link_clicks": "60",
                 "actions": [],
             },
@@ -118,7 +121,7 @@ _ADS_ANALYTICS_INPUT = {
 
 #: El catálogo del botón "Analizar con IA". UN agente: el pod `ads-analytics` (supervisor
 #: secuencial de 5 nodos: 2 extractores → embudo CTWA → blended-economics → numbers-QA →
-#: reporter). El `example_input` pre-carga el textarea con el seed real del viewer.
+#: reporter). El `example_input` pre-carga el textarea con un seed sintético.
 _AGENTS = [
     {
         "id": "ads-analytics",

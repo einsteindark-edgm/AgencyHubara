@@ -66,6 +66,8 @@ from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATE_BOGOTA_COP,
     SHIPPING_RATE_NATIONAL_COP,
     SHIPPING_FLOW_PLACEHOLDER,
+    SHIPPING_LOCAL_CITY,
+    SHIPPING_LOCAL_ZONE,
     SHIPPING_RATE_RULE,
     SHIPPING_RATES_MESSAGE,
     cash_on_delivery_available,
@@ -1579,7 +1581,7 @@ class PresentOrderConfirmationTool(ToolBase):
         "'Por confirmar' (lo recalcula la transportadora antes de "
         "despachar) y NO se muestra total; con pago anticipado o link se "
         "muestra el envío como tarifa mínima + total. `shipping_cop` es la "
-        f"tarifa mínima (Bogotá y cercanos {format_cop(SHIPPING_RATE_BOGOTA_COP)} / "
+        f"tarifa mínima ({SHIPPING_LOCAL_CITY} y cercanos {format_cop(SHIPPING_RATE_BOGOTA_COP)} / "
         f"nacional {format_cop(SHIPPING_RATE_NATIONAL_COP)}). "
         "Llámala SOLO después de que `verify_order_for_checkout` retornó "
         "verified=True y discrepancy=False. Si hay discrepancia, primero "
@@ -1626,7 +1628,7 @@ class PresentOrderConfirmationTool(ToolBase):
             "shipping_address_summary": {
                 "type": "string",
                 "maxLength": 400,
-                "description": "Resumen de dirección, ej: 'Cl 100 #15-20, Chapinero, Bogotá'.",
+                "description": f"Resumen de dirección, ej: 'Cl 100 #15-20, Chapinero, {SHIPPING_LOCAL_CITY}'.",
             },
             "payment_method": {
                 "type": "string",
@@ -2057,7 +2059,7 @@ class SendShippingRatesTool(ToolBase):
     name = "send_shipping_rates"
     description = (
         "Envía al cliente el mensaje estándar con las tarifas mínimas de "
-        "envío (Bogotá y municipios cercanos / nivel nacional) y la "
+        f"envío ({SHIPPING_LOCAL_ZONE} / nivel nacional) y la "
         "aclaración de que el valor definitivo se confirma al despachar. "
         "Úsala SIEMPRE que el cliente pregunte cuánto vale, cuánto cuesta o "
         "cuánto cobran el envío/domicilio — en vez de escribir las tarifas "

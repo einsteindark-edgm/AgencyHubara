@@ -519,6 +519,7 @@ async def test_shipping_flow_placeholder_sends_plain_text_not_buttons(
     NO se mandan botones (especialmente NO 'Compartir ubicación'), se
     manda un mensaje de texto enumerando los campos."""
     monkeypatch.delenv("META_FLOW_ID_SHIPPING", raising=False)
+    monkeypatch.setenv("PAYMENT_NEQUI_NUMBER", "3001234567")
     wa_client = _make_wa_client_mock()
 
     result = await _dispatch_intent(
@@ -552,7 +553,7 @@ async def test_shipping_flow_placeholder_sends_plain_text_not_buttons(
     assert "Método de pago" in text
     # Formas de pago informadas con sus condiciones (requisito 2026-08-31)
     assert "Nequi" in text
-    assert "3229041190" in text
+    assert "3001234567" in text
     assert "llave" in text.lower()
     assert "1,5%" in text
     assert "2,69%" in text

@@ -1,6 +1,7 @@
 // Vista "Flota" del contenedor Forge: un nodo por cliente (bundle en
 // forge/clients/), con su estado de redacción (TODO-BRAND pendientes,
-// archivos requeridos faltantes). Read-only: las acciones (plan/apply) viven
+// archivos requeridos faltantes — incluido domain.yaml — y avisos de
+// client.yaml). Read-only: las acciones (plan/apply) viven
 // en los comandos del título/contexto y en la Forge Console.
 
 import * as vscode from "vscode";
@@ -29,7 +30,7 @@ class ClientNode extends vscode.TreeItem {
 }
 
 class DetailNode extends vscode.TreeItem {
-  constructor(label: string, icon: string, opts?: { file?: string; color?: string }) {
+  constructor(label: string, icon: string, opts?: { file?: string; color?: string; folder?: boolean }) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.iconPath = new vscode.ThemeIcon(
       icon,
@@ -37,7 +38,7 @@ class DetailNode extends vscode.TreeItem {
     );
     if (opts?.file) {
       this.command = {
-        command: "vscode.open",
+        command: opts.folder ? "revealInExplorer" : "vscode.open",
         title: "Abrir",
         arguments: [vscode.Uri.file(opts.file)],
       };
@@ -68,10 +69,16 @@ export class FleetTreeProvider implements vscode.TreeDataProvider<Node>, vscode.
     const c = node.client;
     const out: Node[] = [
       new DetailNode("client.yaml", "gear", { file: c.clientYamlPath }),
+    ];
+    if (c.domainYamlPath) {
+      out.push(new DetailNode("domain.yaml (la tienda)", "symbol-namespace", { file: c.domainYamlPath }));
+    }
+    out.push(
       new DetailNode(`workspace (${c.workspaceFileCount} archivos)`, "folder", {
         file: c.bundleDir + "/workspace",
+        folder: true,
       }),
-    ];
+    );
     for (const missing of c.missingRequired) {
       out.push(new DetailNode(`falta ${missing}`, "error", { color: "testing.iconFailed" }));
     }
@@ -79,6 +86,14 @@ export class FleetTreeProvider implements vscode.TreeDataProvider<Node>, vscode.
       out.push(
         new DetailNode(`TODO-BRAND: ${todo}`, "edit", {
           file: `${c.bundleDir}/${todo}`,
+          color: "list.warningForeground",
+        }),
+      );
+    }
+    for (const warning of c.clientWarnings) {
+      out.push(
+        new DetailNode(`aviso: ${warning}`, "info", {
+          file: c.clientYamlPath,
           color: "list.warningForeground",
         }),
       );

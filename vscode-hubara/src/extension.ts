@@ -63,39 +63,47 @@ export function activate(ctx: vscode.ExtensionContext): void {
   // ── Forge Console — migración/clonación de CLIENTES (silo + forge). Concepto
   // deliberadamente SEPARADO del desarrollo de agentes/plugins: contenedor
   // propio en la activity bar, webview propio, cero acoplamiento con BridgeHub
-  // ni con los paneles de arriba. Piel sobre infra/forge/forge.py.
+  // ni con los paneles de arriba. Piel sobre forge/forge.py + forge/migrate.py.
+  // En un clon forjado forge/ no existe: el context key esconde vista,
+  // comandos y paso del walkthrough.
   const forgeService = new ForgeService(repoRoot(), output);
   ctx.subscriptions.push(forgeService);
+  const syncForgeContext = () =>
+    void vscode.commands.executeCommand("setContext", "acktos.forge.available", forgeService.available());
+  syncForgeContext();
   forgeService.watch(ctx);
   const fleetTree = new FleetTreeProvider(forgeService);
+  const forgeRun = async (run: () => Promise<unknown>) => {
+    // el panel encola lo que llega antes de que el webview diga "ready":
+    // el stream de un run lanzado desde un comando no se pierde
+    ForgeConsolePanel.open(ctx, forgeService);
+    await run();
+  };
   ctx.subscriptions.push(
     fleetTree,
     vscode.window.registerTreeDataProvider("forge.fleetTree", fleetTree),
-    vscode.commands.registerCommand("forge.openConsole", () =>
-      ForgeConsolePanel.open(ctx, forgeService),
-    ),
-    vscode.commands.registerCommand("forge.refreshFleet", () => fleetTree.refresh()),
+    vscode.commands.registerCommand("forge.openConsole", () => {
+      ForgeConsolePanel.open(ctx, forgeService);
+    }),
+    vscode.commands.registerCommand("forge.refreshFleet", () => {
+      syncForgeContext();
+      fleetTree.refresh();
+    }),
     vscode.commands.registerCommand("forge.initClient", async () => {
       const slug = await vscode.window.showInputBox({
-        prompt: "Slug del cliente nuevo (ej. vincenzo)",
+        prompt: "Nombre corto del cliente nuevo (minúsculas, sin espacios; ej. mi_tienda)",
         validateInput: (v) =>
           /^[a-z][a-z0-9_]*$/.test(v) ? undefined : "minúsculas, dígitos y _ solamente",
       });
-      if (slug) {
-        ForgeConsolePanel.open(ctx, forgeService);
-        await forgeService.run("init", [slug]);
-      }
+      if (slug) await forgeRun(() => forgeService.runForge("init", [slug]));
     }),
     vscode.commands.registerCommand(
       "forge.planClient",
       async (node?: { client?: { slug: string } }) => {
         const slug =
           node?.client?.slug ??
-          (await vscode.window.showInputBox({ prompt: "Slug del cliente a planear" }));
-        if (slug) {
-          ForgeConsolePanel.open(ctx, forgeService);
-          await forgeService.run("plan", [slug]);
-        }
+          (await vscode.window.showInputBox({ prompt: "Nombre corto del cliente a revisar (plan)" }));
+        if (slug) await forgeRun(() => forgeService.runForge("plan", [slug]));
       },
     ),
   );

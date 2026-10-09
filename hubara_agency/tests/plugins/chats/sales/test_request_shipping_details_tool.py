@@ -170,11 +170,12 @@ async def test_payment_options_includes_cod_over_45k(ctx, seeded_vault, tool):
 
 
 @pytest.mark.asyncio
-async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault, tool):
+async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault, tool, monkeypatch):
     """Requisito 2026-08-31 — cada forma de pago se informa con su condición:
     contra entrega → el valor lo calcula la transportadora; anticipado →
     Nequi o llave 3229041190; link de pago → recargo 1,5% (Nequi/
     Bancolombia) o 2,69% (otros bancos)."""
+    monkeypatch.setenv("PAYMENT_NEQUI_NUMBER", "3001234567")
     await tool.execute_with_context(ctx, items=_items("velas-grandes", 2))
 
     intent = _read_intent(seeded_vault, ctx.session_key)
@@ -182,7 +183,7 @@ async def test_payment_options_descriptions_inform_terms(ctx, seeded_vault, tool
     desc = {opt["id"]: opt["description"] for opt in options}
     assert "transportadora" in desc["cash_on_delivery"].lower()
     assert "Nequi" in desc["transfer"]
-    assert "3229041190" in desc["transfer"]
+    assert "3001234567" in desc["transfer"]
     assert "llave" in desc["transfer"].lower()
     assert "1,5%" in desc["payment_link"]
     assert "2,69%" in desc["payment_link"]

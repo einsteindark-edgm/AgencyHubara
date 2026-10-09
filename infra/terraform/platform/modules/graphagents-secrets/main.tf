@@ -3,7 +3,8 @@
 # ../../compute) los lee con su instance profile (`/graphagents/*`).
 #
 # Igual que el módulo `secrets`: Terraform crea la clave con placeholder; el valor
-# real se setea fuera de banda (no entra al state ni a git). `ignore_changes`.
+# real se setea fuera de banda (nunca en git) y `ignore_changes` no lo pisa. El
+# refresh lo deja EN CLARO en el state (ver el módulo `secrets`).
 
 variable "secret_keys" { type = list(string) }
 

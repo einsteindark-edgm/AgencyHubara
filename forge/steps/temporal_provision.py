@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step S5 — Temporal Cloud del cliente: namespace + service account + API key.
+"""Step S6 — Temporal Cloud del cliente: namespace + service account + API key.
 
 Temporal Cloud SÍ tiene namespaces (a diferencia de Supabase): la cuenta se
 comparte (decisión D-2 del plan — un solo piso de facturación) y cada cliente
@@ -17,6 +17,7 @@ IMPRIMEN con el prefijo del clon.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -64,8 +65,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     cmd, slug = args
     try:
-        vars_ = forge.render_vars(forge.load_client(forge.CLIENTS / slug))  # guards
+        bundle = forge.CLIENTS / slug
+        vars_ = forge.render_vars(forge.load_client(bundle))  # guards
         commands = build_commands(vars_["slug"])
+        record = bundle / ".outputs.temporal.json"
+        ours = json.loads(record.read_text()).get("namespace") if record.exists() else None
         if cmd == "plan" or not shutil.which("tcld"):
             if cmd == "apply":
                 print("tcld no está instalado (brew install temporalio/brew/tcld) — comandos a correr:")
@@ -75,12 +79,25 @@ def main(argv: list[str] | None = None) -> int:
             print("  # ⚠ sintaxis NO verificada contra tcld vivo — confirmar flags con")
             print("  #   `tcld namespace create --help` o usar la consola web (cloud.temporal.io)")
         else:
-            for c in commands[:2]:
+            for i, c in enumerate(commands[:2]):
                 print("$ " + " ".join(c))
                 r = subprocess.run(c, capture_output=True, text=True)
                 print(r.stdout.strip() or r.stderr.strip())
-                if r.returncode != 0 and "already exists" not in (r.stdout + r.stderr):
+                if r.returncode == 0:
+                    if i == 0:  # el namespace es de esta tienda: un reintento lo reconoce
+                        record.write_text(json.dumps({"namespace": vars_["slug"]}))
+                        ours = vars_["slug"]
+                    continue
+                if "already exists" not in (r.stdout + r.stderr):
                     raise forge.ForgeError(f"tcld falló: {' '.join(c)}")
+                # La cuenta de Temporal Cloud es compartida: un namespace con ese
+                # nombre que este bundle no creó es de OTRO proyecto, y el service
+                # account nuevo recibiría escritura sobre él.
+                if ours != vars_["slug"]:
+                    raise forge.ForgeError(
+                        f"el namespace {vars_['slug']!r} ya existe en Temporal Cloud y este bundle no lo creó "
+                        "(es de otro proyecto de la cuenta): elegí otro slug o revisalo a mano"
+                    )
             print("→ la API key requiere el id del service account (tcld service-account list):")
             print("  " + " ".join(commands[2]))
         print_ssm_block(vars_)
