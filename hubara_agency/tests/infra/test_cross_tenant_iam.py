@@ -74,11 +74,18 @@ def _deny_reads(path: Path, policy: str) -> str:
     ("module", "policy", "own_tree"),
     [
         # + la config del agente de CloudWatch (monitoring.tf): el agente la lee
-        # con el rol de la caja; sin ella se apaga la métrica de memoria y su alarma
+        # con el rol de la caja; sin ella se apaga la métrica de memoria y su alarma.
+        # + CloudWatchAgentEnableWorkloadDetection: config del agente A NIVEL CUENTA
+        # (la creó la consola, no es secreto de nadie); el agente puede consultarla.
         (
             "app-instance",
             "ssm_read",
-            ["/hubara/${var.tenant}", "/hubara/${var.tenant}/*", "/AmazonCloudWatch-agencyhubara-${var.tenant}-app"],
+            [
+                "/hubara/${var.tenant}",
+                "/hubara/${var.tenant}/*",
+                "/AmazonCloudWatch-agencyhubara-${var.tenant}-app",
+                "/CloudWatchAgentEnableWorkloadDetection",
+            ],
         ),
         ("graphagents-instance", "ssm_read", ["/graphagents", "/graphagents/*"]),
     ],

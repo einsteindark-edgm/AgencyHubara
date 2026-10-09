@@ -115,6 +115,9 @@ data "aws_iam_policy_document" "ssm_read" {
       # la config del agente de CloudWatch (monitoring.tf): sin ella se apaga la
       # métrica de memoria de la caja y su alarma
       "arn:aws:ssm:*:*:parameter/AmazonCloudWatch-agencyhubara-${var.tenant}-app",
+      # config del agente A NIVEL CUENTA (la creó la consola de CloudWatch, no es
+      # secreto de ningún proyecto): el agente puede consultarla al arrancar
+      "arn:aws:ssm:*:*:parameter/CloudWatchAgentEnableWorkloadDetection",
     ]
   }
   statement {
