@@ -28,6 +28,7 @@ Patron LLM (ver `workspace/TOOLS.md`):
     borrar un dato que quedo indefinido, mandalo como string vacio.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import copy
@@ -309,7 +310,7 @@ class SetOrderSlotTool(ToolBase):
         if self._catalog is None:
             return None
         try:
-            result = await self._catalog.search(q="", limit=30)
+            result = await self._catalog.search(q="", limit=WHOLE_CATALOG)
         except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar abierto
             logger.warning(
                 "📝 [TOOL set_order_slot] catálogo no disponible para validar "

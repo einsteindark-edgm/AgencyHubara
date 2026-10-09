@@ -36,6 +36,7 @@ DEHA:
     NO debe cambiar el `closed_at_ms` del episodio.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import copy
@@ -331,8 +332,6 @@ async def ensure_promised_handoff_activity(session_id: str, text: str) -> bool:
     return escalated
 
 
-#: Cuántos productos del snapshot se leen para cruzar el borrador.
-_CATALOG_LIMIT = 200
 
 
 def _delivered_rows(session_id: str) -> list[dict[str, Any]]:
@@ -379,7 +378,7 @@ async def _ensure_promised_shipping_form(session_id: str, text: str, data: dict[
         return False
     catalog = _catalog_client()
     try:
-        page = await catalog.search("", limit=_CATALOG_LIMIT)
+        page = await catalog.search("", limit=WHOLE_CATALOG)
     except Exception as exc:  # noqa: BLE001 — sin catálogo no se adivina el pedido
         activity.logger.warning(
             "ensure_promised_shipping_form: catálogo no disponible (%s)", exc, extra={"session_id": session_id}

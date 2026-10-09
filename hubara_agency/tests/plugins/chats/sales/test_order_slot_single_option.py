@@ -149,3 +149,32 @@ async def test_without_the_catalog_nothing_is_guessed(tmp_path: Path) -> None:
 
     assert not _item(tmp_path).get("aroma") and not _item(tmp_path).get("color")
     assert "auto_filled" not in result
+
+
+class _BigCatalog:
+    """Como el snapshot real: respeta `limit`. 30 velas antes de la Trilogía
+    (el catálogo ya tenía 31 productos el 2026-10-06)."""
+
+    async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+        fillers = [
+            CatalogProductDTO(id=f"p{i}", handle=f"vela-{i}", title=f"Vela {i}", status="published",
+                              tags=["Aroma: Coco", "Aroma: Canela", "Color: Rojo", "Color: Azul"])
+            for i in range(30)
+        ]
+        products = [*fillers, _TRILOGIA][:limit]
+        return SearchResult(
+            query=q, count=len(products), truncated=False, stale=False,
+            manifest=CatalogManifestDTO(version="v1", fetched_at="2026-10-09T00:00:00Z", product_count=31),
+            results=products,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_product_past_the_thirtieth_is_still_found(tmp_path: Path) -> None:
+    """Premortem 2026-10-09: las lecturas de todo el catálogo pedían 30
+    productos; el 31 no se validaba ni traía sus opciones únicas."""
+    tool = SetOrderSlotTool(workspace=tmp_path, vault_dir=tmp_path / "vault", catalog=_BigCatalog())
+
+    result = await _set(tool, producto="Trilogía del Terror", cantidad="1")
+
+    assert result.get("auto_filled") == {"aroma": "Frutos rojos", "color": "Blanco"}

@@ -35,6 +35,7 @@ Cada tool devuelve un envelope JSON con:
   * `summary` — texto para el LLM
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import contextlib
@@ -873,7 +874,7 @@ class PresentProductsTool(ToolBase):
 _MAX_ROWS = wa_limits.MAX_PRODUCT_LIST_ITEMS_TOTAL
 _MAX_SECTIONS = wa_limits.MAX_PRODUCT_LIST_SECTIONS
 #: Tope de la lectura del catálogo completo de la copia local.
-_WHOLE_CATALOG = 10_000
+_WHOLE_CATALOG = WHOLE_CATALOG
 
 
 def _group_title(product: Any, group_by: str) -> str:
@@ -2617,7 +2618,7 @@ class SendQuickRepliesTool(ToolBase):
         from src.platform.catalog import normalize_label
 
         try:
-            result = await self._catalog.search(q="", limit=30)
+            result = await self._catalog.search(q="", limit=_WHOLE_CATALOG)
             products = list(result.results)
         except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar al chequeo por id
             logger.warning(
@@ -2902,7 +2903,7 @@ class PresentVariantPickerTool(ToolBase):
                 product = await self._catalog.get_by_handle(handle)
                 products = [product]
             else:
-                result = await self._catalog.search(q="", limit=30)
+                result = await self._catalog.search(q="", limit=_WHOLE_CATALOG)
                 products = list(result.results)
         except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar abierto
             logger.warning(

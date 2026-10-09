@@ -22,6 +22,7 @@ from typing import Any
 from exoclaw.agent.tools import ToolBase, ToolContext
 from loguru import logger
 
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.decisions.guards import (
     clean_llm_text,
     customer_reply_text,
@@ -203,7 +204,7 @@ class SendReplyTool(ToolBase):
         if self._catalog is None or self._vault_dir is None or self._held_before(session_key, _LIST_CHECK_KEY):
             return None
         try:
-            result = await self._catalog.search(q="", limit=30)
+            result = await self._catalog.search(q="", limit=WHOLE_CATALOG)
             aromas, colors = catalog_variant_labels(result.results)
             listed = await option_list(
                 text, aromas=aromas, colors=colors, session_id=session_key, vault_dir=self._vault_dir
