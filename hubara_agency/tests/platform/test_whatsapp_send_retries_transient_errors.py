@@ -5,9 +5,11 @@ Todo envío sale por `_post_json`: el texto del bot, el formulario, la tarjeta
 del pedido y los datos de pago. Un 5xx de Meta o una conexión caída dejaban
 al cliente sin los datos de pago (el flush los saca de la cola sin
 reintentar) o sin la última burbuja del bot, mientras el panel y la memoria
-del LLM los daban por enviados. Se reintenta UNA vez lo que seguro no salió
-(5xx, conexión). Un timeout no: Meta pudo haberlo entregado y se duplicaría.
-Un 4xx tampoco: es un rechazo de verdad (plantilla, número, ventana).
+del LLM los daban por enviados. Se reintenta UNA vez lo que seguro no salió:
+500/502/503 o una conexión que nunca se abrió. Lo que pudo haber llegado a
+Meta no (se duplicaría, por ejemplo, los datos de pago): un timeout, un 504,
+una conexión que se cortó a mitad del envío (revisión de compuertas). Un
+4xx tampoco: es un rechazo de verdad (plantilla, número, ventana).
 """
 from __future__ import annotations
 
@@ -70,4 +72,22 @@ async def test_a_real_rejection_is_not_retried(monkeypatch) -> None:
     result, post = await _send(monkeypatch, _response(400))
 
     assert not result.ok and result.error.startswith("http_400")
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_connection_cut_mid_send_is_not_retried(monkeypatch) -> None:
+    """El POST pudo haber llegado a Meta: reintentar duplicaría el mensaje."""
+    result, post = await _send(monkeypatch, httpx.ReadError("reset by peer"))
+
+    assert not result.ok
+    assert post.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_gateway_timeout_is_not_retried(monkeypatch) -> None:
+    """504: Meta pudo haberlo procesado detrás del proxy."""
+    result, post = await _send(monkeypatch, _response(504))
+
+    assert not result.ok and result.error.startswith("http_504")
     assert post.await_count == 1

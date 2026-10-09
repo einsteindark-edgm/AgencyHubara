@@ -426,7 +426,8 @@ async def send_template(
 #: Espera antes del único reintento de un envío que falló por algo pasajero.
 _RETRY_DELAY_S = 1.0
 #: Respuestas de Meta que dicen que el envío no se procesó (falla pasajera).
-_RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
+#: El 504 no: Meta pudo haberlo procesado detrás del proxy (se duplicaría).
+_RETRYABLE_STATUS = frozenset({500, 502, 503})
 
 
 def _addressed(data: dict[str, Any]) -> dict[str, Any]:
@@ -469,11 +470,12 @@ async def _post_json(
         "Content-Type": "application/json",
     }
 
-    # Premortem 2026-10-09: lo que seguro NO salió (un 5xx de Meta, una
-    # conexión caída) se reintenta UNA vez; antes los datos de pago o la última
-    # burbuja del bot se perdían mientras el panel los daba por enviados. Un
-    # timeout no se reintenta (Meta pudo haberlo entregado: L-1) ni un 4xx (es
-    # un rechazo de verdad).
+    # Premortem 2026-10-09: lo que seguro NO salió (500/502/503 de Meta, una
+    # conexión que nunca se abrió) se reintenta UNA vez; antes los datos de
+    # pago o la última burbuja del bot se perdían mientras el panel los daba
+    # por enviados. Lo que pudo haber llegado a Meta no se reintenta (se
+    # duplicaría): un timeout (L-1), un 504, una conexión que se cortó a mitad
+    # del envío. Un 4xx tampoco (es un rechazo de verdad).
     response: httpx.Response | None = None
     for attempt in (1, 2):
         try:
@@ -487,12 +489,15 @@ async def _post_json(
             return wa_dtos.OutboundResult(
                 wa_message_id=None, ok=False, error=f"timeout: {e}"
             )
-        except httpx.HTTPError as e:
+        except httpx.ConnectError as e:
             if attempt == 1:
-                logger.warning("WhatsApp send transport error — reintento", label=label, error=str(e))
+                logger.warning("WhatsApp send sin conexión — reintento", label=label, error=str(e))
                 await asyncio.sleep(_RETRY_DELAY_S)
                 continue
             logger.error("WhatsApp send transport error", label=label, error=str(e))
+            return wa_dtos.OutboundResult(wa_message_id=None, ok=False, error=str(e))
+        except httpx.HTTPError as e:
+            logger.error("WhatsApp send transport error (ambiguous)", label=label, error=str(e))
             return wa_dtos.OutboundResult(wa_message_id=None, ok=False, error=str(e))
         if response.status_code in _RETRYABLE_STATUS and attempt == 1:
             logger.warning(
