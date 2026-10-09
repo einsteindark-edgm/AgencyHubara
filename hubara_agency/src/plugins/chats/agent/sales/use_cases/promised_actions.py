@@ -153,10 +153,11 @@ _CONDITIONAL_AFTER_RE = re.compile(
     r"|\bcuando\s+(?:me\s+|lo\s+|la\s+)?(?:digas|confirmes|elijas|escojas|decidas|definas|indiques|avises)\b"
 )
 _ALREADY_SENT_RE = re.compile(r"\barriba\b|\bque\s+te\s+(?:envie|mande|pase|deje|comparti)\b")
-# «Dime el color y te paso el formulario»: primero pide algo, la promesa depende de eso.
-_ASK_THEN_RE = re.compile(
-    r"\b(?:dime|digame|cuentame|confirmame|elige|escoge|avisame|indicame|mandame|enviame|pasame|regalame)\b"
-    r".*\by\s*$"
+# «Dime el color y te paso el formulario»: primero pide algo, la promesa depende
+# de eso. En tuteo y con tilde: el texto se compara sin tildes (`_plain`).
+_ASK_VERBS = (
+    "dime", "dígame", "cuéntame", "confírmame", "elige", "escoge", "avísame",
+    "indícame", "mándame", "envíame", "pásame", "regálame",
 )
 # Corta en . ! ? y salto de línea, nunca en el punto de un monto («$45.000»);
 # una pregunta empieza en «¿».
@@ -166,6 +167,9 @@ _SENTENCE_SPLIT_RE = re.compile(r"(?<=[!?\n])|(?<=\.)(?!\d)|(?=¿)")
 def _plain(text: str) -> str:
     folded = unicodedata.normalize("NFD", text or "")
     return " ".join("".join(c for c in folded if not unicodedata.combining(c)).lower().split())
+
+
+_ASK_THEN_RE = re.compile(rf"\b(?:{'|'.join(_plain(v) for v in _ASK_VERBS)})\b.*\by\s*$")
 
 
 def _sentences(text: str) -> list[str]:
