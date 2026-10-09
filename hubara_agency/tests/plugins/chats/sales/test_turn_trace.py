@@ -491,6 +491,19 @@ def test_the_product_the_customer_wrote_from_has_its_own_name() -> None:
     assert tt.context_note_names([note(CATALOG_ORIGIN), note("web")]) == ["catalog_card", "web_product"]
 
 
+def test_the_trace_stage_matches_the_bot_right_after_a_purchase() -> None:
+    """Caso 2026-10-09 (pedido #64): el episodio que abre con el pedido
+    anterior en curso es post-venta para el bot (`resolve_funnel_stage`); la
+    traza (y el scorecard) dice lo mismo, hasta que el cliente elige otro
+    producto."""
+    after = {"order_id": "order_64", "display_id": "#64"}
+
+    assert tt.project_stage({"episode_id": "ep_002", "after_order": after}) == "postcierre"
+    assert tt.project_stage({
+        "episode_id": "ep_002", "after_order": after, "order_draft": {"slots": {"producto": "luz-serena"}},
+    }) == "variantes"
+
+
 def test_the_quoted_message_note_has_its_own_name() -> None:
     """Caso 2026-10-09 (pedido #64): el cliente citó su comprobante y la
     traza no decía si el turno vio la cita. Se arma con su productor real."""

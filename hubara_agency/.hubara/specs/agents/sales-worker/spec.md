@@ -1725,7 +1725,9 @@ Cuando el cliente responde citando un mensaje (`context.id` del webhook), el ing
 Cuando un mensaje abre un episodio nuevo y el anterior cerró con un pedido (COMPRA_EXITOSA, CONFIRMADO_PAGO_PENDIENTE, CONFIRMADO_SIN_DATOS) de los últimos 30 días, el ingest SHALL leer ese pedido en OrderFacts (con tope de 3 s; nunca la copia del vault). Si el pedido sigue en curso (ni entregado ni cancelado):
 
 - la nota del episodio nuevo SHALL decir el número del pedido, su etapa y si el pago está confirmado; MUST NOT pedir «saluda con calidez y pregunta en qué puedes ayudar hoy» ni afirmar que el pago está en verificación cuando ya está pagado; con cortesía, la respuesta breve y cálida de siempre;
-- el episodio SHALL quedar marcado con `after_order` (solo `order_id` y `display_id`) y `resolve_funnel_stage` SHALL dar `etapa_postcierre` hasta que el cliente elija un producto (ahí es una venta nueva).
+- el episodio SHALL quedar marcado con `after_order` (solo `order_id` y `display_id`) y `resolve_funnel_stage` SHALL dar `etapa_postcierre` hasta que el cliente elija un producto (ahí es una venta nueva); la traza (`project_stage`) SHALL decir la misma etapa;
+- con `ventas-6` (política `turno-v5`), si Jev lee que el cliente manda o menciona el comprobante, la guía SHALL pedir mirar el pago con `check_order_status` y decir lo que diga, nunca «el equipo revisa el pago» a ciegas;
+- la calificación (TAG-09) SHALL aceptar «tu pedido quedó confirmado» en ese episodio: el pedido es el de `after_order`.
 
 Sin datos del pedido (Medusa caído o lento), o con el pedido entregado o cancelado, la nota y la etapa son las de siempre.
 

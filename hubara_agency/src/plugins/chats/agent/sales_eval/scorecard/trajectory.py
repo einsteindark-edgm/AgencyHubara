@@ -174,6 +174,9 @@ class Trajectory:
     closed_at_ms: int | None = None
     # Modo turno (laboratorio): el turno que se juzga; el resto es contexto.
     focus_turn: int | None = None
+    # El episodio abrió con el pedido anterior en curso (`after_order`, caso
+    # pedido #64): ese pedido existe aunque no se registró en este episodio.
+    after_order_id: str | None = None
 
     @property
     def first_contact(self) -> bool | None:
@@ -282,7 +285,14 @@ def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
         "closing_motivo": episode.get("closing_motivo"),
         "started_at_ms": _as_int(episode.get("started_at_ms")),
         "closed_at_ms": _as_int(episode.get("closed_at_ms")),
+        "after_order_id": _after_order_id(episode),
     }
+
+
+def _after_order_id(episode: dict[str, Any]) -> str | None:
+    after = episode.get("after_order")
+    order_id = after.get("order_id") if isinstance(after, dict) else None
+    return str(order_id) if order_id else None
 
 
 #: El encuadre con que la plataforma entrega un turno que es SOLO un traspaso

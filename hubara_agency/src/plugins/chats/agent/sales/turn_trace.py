@@ -175,7 +175,8 @@ def project_stage(episode: dict[str, Any] | None) -> str:
         return "postcierre"
     slots = draft_slots(episode)
     if not slots.get("producto"):
-        return "descubrimiento"
+        # El episodio que abrió con el pedido anterior en curso (caso pedido #64).
+        return "postcierre" if episode.get("after_order") else "descubrimiento"
     draft = (episode or {}).get("order_draft")
     items = draft_items(draft)
     if not items or any(missing_variants(draft if isinstance(draft, dict) else None, item) for item in items):

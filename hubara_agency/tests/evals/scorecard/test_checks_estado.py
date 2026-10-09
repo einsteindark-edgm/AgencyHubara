@@ -205,6 +205,15 @@ def test_tag09_saying_the_order_is_registered_needs_the_order() -> None:
     assert run("TAG-09", registered_before).verdict == "pasa"
 
 
+def test_tag09_after_a_purchase_the_previous_order_backs_the_claim() -> None:
+    """Caso 2026-10-09 (pedido #64): el cliente escribe tras comprar y el bot
+    le confirma su pedido. El pedido es del episodio anterior (`after_order`):
+    afirmarlo no es una promesa rota."""
+    claim = "¡Gracias! Tu pedido #64 ya está confirmado y en preparación 🤍"
+
+    assert run("TAG-09", traj(T(1, sent=[claim]), after_order_id="order_64")).verdict == "pasa"
+
+
 def test_tag09_without_promises_is_not_judged() -> None:
     t = traj(T(1, sent=["¿Te paso el formulario para los datos de envío?"]))
 
