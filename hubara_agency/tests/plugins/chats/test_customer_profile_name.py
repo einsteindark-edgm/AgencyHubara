@@ -134,11 +134,11 @@ def test_a_customer_without_phone_is_shown_by_name_not_by_their_meta_id(client) 
     La bandeja web usa `phone_number` como nombre de la conversación; con el id
     crudo (`CO9990000000000002`) el operador no sabría quién es."""
     c, vault = client
-    _seed(vault, "wa_CO9990000000000002", {"profile": {"name": "Liliana"}}, [{"role": "user", "content": "hola"}])
+    _seed(vault, "wa_CO9990000000000002", {"profile": {"name": "Valeria"}}, [{"role": "user", "content": "hola"}])
     _seed(vault, "wa_US9000000000003843", None, [{"role": "user", "content": "hi"}])
 
     by_id = {s["session_id"]: s for s in c.get("/api/dashboard/sessions").json()["sessions"]}
 
-    assert by_id["wa_CO9990000000000002"]["phone_number"] == "Liliana (sin teléfono)"
+    assert by_id["wa_CO9990000000000002"]["phone_number"] == "Valeria (sin teléfono)"
     assert by_id["wa_US9000000000003843"]["phone_number"] == "Cliente sin teléfono ···3843"
-    assert c.get("/api/dashboard/sessions/wa_CO9990000000000002").json()["phone_number"] == "Liliana (sin teléfono)"
+    assert c.get("/api/dashboard/sessions/wa_CO9990000000000002").json()["phone_number"] == "Valeria (sin teléfono)"

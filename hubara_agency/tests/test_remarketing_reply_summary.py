@@ -9,7 +9,7 @@ from src.plugins.chats.agent.remarketing.workflows.remarketing import reply_summ
 
 
 def test_a_long_reply_reaches_sales_whole() -> None:
-    reply = "Sí, mándamela a la Calle 140 # 7-20, apto 502, torre 2, Cedritos, Bogotá; recibe Ana Pérez"
+    reply = "Sí, mándamela a la Calle 123 # 45-67, apto 101, torre 1, Barrio Ejemplo, Bogotá; recibe Ana Prueba"
 
     assert reply_summary(reply) == "Usuario respondió: " + reply
 

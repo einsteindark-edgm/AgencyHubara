@@ -59,7 +59,7 @@ def resolve_local_timezone(session_id: str) -> ZoneInfo:
 
     Heurística: los primeros 1-3 dígitos del número (post-`+`) son el country
     code; longest-match contra `COUNTRY_CODE_TO_TZ`. Un cliente sin teléfono
-    (`wa_CO1502…`) se resuelve por su país ISO. Sin match → UTC.
+    (`wa_CO9990…`) se resuelve por su país ISO. Sin match → UTC.
     """
     if not session_id.startswith(WHATSAPP_SESSION_PREFIX):
         return ZoneInfo("UTC")

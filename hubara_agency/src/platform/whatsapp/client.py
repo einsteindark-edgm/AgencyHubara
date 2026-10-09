@@ -457,7 +457,7 @@ async def _post_json(
     El destinatario se traduce ACÁ, el único punto por donde sale todo envío:
     los callers ponen en `to` la dirección de la conversación (`wa_<dirección>`
     sin el prefijo) y, si es el id de Meta de un cliente sin teléfono
-    (`CO1502…`), sale como `recipient: "CO.1502…"`.
+    (`CO9990…`), sale como `recipient: "CO.9990…"`.
     """
     data = _addressed(data)
     if not WHATSAPP_ACCESS_TOKEN:

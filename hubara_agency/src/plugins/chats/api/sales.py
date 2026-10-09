@@ -251,7 +251,7 @@ def _in_their_conversation(parsed: Any) -> Any:
 
     Un cliente con nombre de usuario de WhatsApp llega con su id de Meta
     (BSUID) y, según el momento, con o sin teléfono. La primera conversación
-    que abrió es la suya: si empezó sin teléfono (`wa_CO1502…`) se queda ahí
+    que abrió es la suya: si empezó sin teléfono (`wa_CO9990…`) se queda ahí
     cuando Meta empieza a mandar el teléfono, y si empezó con teléfono
     (`wa_57…`) se queda ahí cuando llega solo con el BSUID. Un teléfono que ya
     tiene su conversación no se vuelve alias de otra."""

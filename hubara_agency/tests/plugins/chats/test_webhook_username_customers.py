@@ -80,11 +80,11 @@ def test_a_customer_without_phone_reaches_the_bot_under_their_meta_id(harness) -
 
 def test_the_profile_name_of_a_customer_without_phone_comes_from_their_contact(harness) -> None:
     client, ingest = harness
-    contacts = [{"profile": {"name": "  Liliana​  ", "username": "lili.velas"}, "user_id": _BSUID}]
+    contacts = [{"profile": {"name": "  Valeria​  ", "username": "valeria.prueba"}, "user_id": _BSUID}]
 
     client.post("/api/webhook", json=_body(_msg("wamid.U1", user_id=_BSUID), contacts))
 
-    assert ingest.calls[0].profile_name == "Liliana"
+    assert ingest.calls[0].profile_name == "Valeria"
 
 
 def test_the_profile_name_of_a_phone_customer_reaches_the_ingest(harness) -> None:
