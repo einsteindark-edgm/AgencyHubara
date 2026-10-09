@@ -253,7 +253,7 @@ describe("CreateOrderAction", () => {
     media_id: "m1",
     kind: "comprobante_pago",
     received_at_ms: Date.UTC(2026, 9, 9, 17, 26),
-    description: "Comprobante de pago por $52.900,00 a la llave Nequi",
+    description: "Comprobante de pago por $48.500,00 a la llave Nequi",
   };
 
   it("si el cliente ya mandó el comprobante, lo avisa y no le manda los datos de pago", async () => {

@@ -97,7 +97,7 @@ async def _turn_note(monkeypatch: pytest.MonkeyPatch, bundle: str) -> str:
     registry.reset()
     _jev(monkeypatch)
     context = TurnContext(
-        window=Window(lines=(), quoted="[el cliente envió un comprobante de pago: Comprobante por $52.900]"),
+        window=Window(lines=(), quoted="[el cliente envió un comprobante de pago: Comprobante por $48.500]"),
         facts=("Etapa: post-cierre",),
         stage="etapa_postcierre",
     )

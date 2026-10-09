@@ -172,7 +172,7 @@ async def test_a_quoted_receipt_gets_the_quote_note_like_in_production(tmp_path:
     el laboratorio, con la cita del evento del dashboard."""
     from src.plugins.chats.agent.sales_lab.sandbox.readings import ingest_burst
 
-    receipt = "[el cliente envió un comprobante de pago: Comprobante de pago por $52.900]"
+    receipt = "[el cliente envió un comprobante de pago: Comprobante de pago por $48.500]"
     message = {"text": "…", "kind": "text", "ts_ms": T0 + 60_000, "wamid": "wamid.Q"}
     record = {"role": "user", "content": "…", "timestamp": "2026-10-09T20:01:37+00:00", "wamid": "wamid.Q",
               "reply_to": {"id": "wamid.R", "author": "user", "text": receipt}}

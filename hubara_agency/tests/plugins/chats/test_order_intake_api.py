@@ -438,7 +438,7 @@ def test_el_formulario_sabe_que_el_cliente_ya_mando_el_comprobante(h: _Harness) 
         media_index=[{"media_id": "m1", "filename": "m1.jpg", "episode_id": "ep_001",
                       "kind": "comprobante_pago", "created_at_ms": 1_758_000_400_000}],
         recent_image_descriptions=[{"media_id": "m1", "kind": "comprobante_pago", "episode_id": "ep_001",
-                                    "description": "Comprobante de pago por $52.900,00 a la llave Nequi"}],
+                                    "description": "Comprobante de pago por $48.500,00 a la llave Nequi"}],
     )
     h.write_session(events=_conversation(), metadata=meta)
 
@@ -446,7 +446,7 @@ def test_el_formulario_sabe_que_el_cliente_ya_mando_el_comprobante(h: _Harness) 
 
     assert body["payment_receipt"] == {
         "media_id": "m1", "kind": "comprobante_pago", "received_at_ms": 1_758_000_400_000,
-        "description": "Comprobante de pago por $52.900,00 a la llave Nequi",
+        "description": "Comprobante de pago por $48.500,00 a la llave Nequi",
     }
 
 

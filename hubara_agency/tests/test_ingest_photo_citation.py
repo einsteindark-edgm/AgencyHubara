@@ -157,7 +157,7 @@ async def test_message_without_context_injects_no_note():
 # contra el historial (y las burbujas del bot en `outbound_text_index`): el
 # evento queda con `reply_to.text` (lo que lee Jev) y el LLM recibe la nota.
 
-_RECEIPT_TEXT = "[el cliente envió un comprobante de pago: Comprobante de pago por $52.900,00 a la llave Nequi]"
+_RECEIPT_TEXT = "[el cliente envió un comprobante de pago: Comprobante de pago por $48.500,00 a la llave Nequi]"
 
 
 class _HistoryWithEvents:
@@ -210,7 +210,7 @@ async def test_reply_quoting_the_customer_receipt_reaches_the_bot_and_jev():
     (call,) = loader.calls
     note = "\n".join(call.extra_context or [])
     assert "citando" in note.lower() and "un mensaje suyo" in note
-    assert "comprobante de pago por $52.900" in note.lower()
+    assert "comprobante de pago por $48.500" in note.lower()
 
 
 @pytest.mark.asyncio

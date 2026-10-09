@@ -249,7 +249,7 @@ def _just_bought(minutes_ago: int = 6) -> _Store:
 def _facts(stage: str = "preparing", pay_status: str = "paid"):
     from src.sdk.connectorkit import OrderFacts
 
-    return OrderFacts(order_id="order_64", display_id="#64", total_cop=52_900, currency_code="cop",
+    return OrderFacts(order_id="order_64", display_id="#64", total_cop=48_500, currency_code="cop",
                       pay_status=pay_status, stage=stage, customer="Cliente", is_draft=False)
 
 
