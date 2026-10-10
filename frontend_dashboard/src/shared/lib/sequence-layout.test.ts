@@ -186,10 +186,13 @@ describe("layoutSequence", () => {
     ]);
 
     expect(rows.map((r) => [r.from, r.to, r.short])).toEqual([
-      [1, 1, "el cliente escribió mientras pensaba"],
+      [1, 1, "se interrumpe: el cliente escribió mientras pensaba"],
       [1, 1, "vuelve a empezar · +1 mensaje"],
       [1, 1, "espera al cliente"],
     ]);
+    // Un corte que vuelve a empezar no es el fin del turno (…7392, 2026-10-08).
+    expect(rows[0]).toMatchObject({ kind: "Interrupción", title: "Se interrumpe: el cliente escribió mientras pensaba" });
+    expect(rows[2]).toMatchObject({ kind: "Fin del turno", title: "Fin del turno: espera al cliente" });
   });
 
   it("el corte antes de grabar y el del cierre dicen lo que pasó de verdad (ráfagas, 2026-10-06)", () => {
@@ -199,9 +202,71 @@ describe("layoutSequence", () => {
     ]);
 
     expect(rows.map((r) => r.short)).toEqual([
-      "el cliente siguió escribiendo antes del envío",
+      "se interrumpe: el cliente siguió escribiendo antes del envío",
       "el cliente escribió: el cierre no se envía",
     ]);
+  });
+
+  // Turno 1 de …7392 (2026-10-08): el modelo pidió `present_products` y el
+  // cliente escribió antes de que corriera. El diagrama solo decía «pide
+  // mostrar productos» y después «Fin del turno»: no se veía que no salió.
+  const cutBeforeTools: TraceStep[] = [
+    { i: 4, at_ms: 3821, dur_ms: 369, kind: "tool", name: "search_products", ok: true, args: { q: "halloween" }, notes: ["count:4"] },
+    { i: 5, at_ms: 4190, dur_ms: 1867, kind: "llm", round: 2, finish: "tool_calls", tool_calls: ["present_products"], text_fate: "none" },
+    { i: 6, at_ms: 6057, kind: "cut", reason: "checkpoint_a" },
+    { i: 7, at_ms: 6234, kind: "restart", reason: "checkpoint_a", attempt: 1, drained: 1 },
+  ];
+
+  it("lo que el modelo pidió y el corte no dejó correr va hacia las herramientas, punteado y en rojo", () => {
+    const { rows } = layoutSequence(cutBeforeTools);
+
+    expect(rows.map((r) => [r.from, r.to, r.short])).toEqual([
+      [1, 4, "search_products · «halloween»"],
+      [4, 1, "4 productos"],
+      [1, 3, "ronda 2"],
+      [3, 1, "pide mostrar productos"],
+      [1, 1, "se interrumpe: el cliente escribió mientras pensaba"],
+      [1, 4, "present_products · no se ejecutó"],
+      [1, 1, "vuelve a empezar · +1 mensaje"],
+    ]);
+    // La flecha abre el detalle del corte (el que sabe por qué no corrió).
+    expect(rows[5]).toMatchObject({
+      status: "bad",
+      dashed: true,
+      code: "present_products",
+      stepIndex: 2,
+      kind: "Herramienta",
+      title: "Mostrar productos · no se ejecutó: el turno se interrumpió",
+    });
+  });
+
+  it("una traza nueva trae en el corte lo que no corrió; lo que sí corrió no se marca", () => {
+    const { rows } = layoutSequence([
+      { i: 1, at_ms: 0, kind: "llm", round: 1, tool_calls: ["present_products", "set_order_slot"] },
+      {
+        i: 2,
+        at_ms: 10,
+        kind: "cut",
+        reason: "checkpoint_a",
+        skipped: [
+          { name: "present_products", args: { handles: ["calabaza", "momia"] } },
+          { name: "set_order_slot", args: { producto: "Calabaza" } },
+        ],
+      },
+    ]);
+
+    expect(rows.slice(3).map((r) => r.short)).toEqual(["present_products · no se ejecutó", "set_order_slot · no se ejecutó"]);
+    expect(layoutSequence(newBotTurn).rows.some((r) => r.short.includes("no se ejecutó"))).toBe(false);
+  });
+
+  it("el texto que retuvo una protección no se dibuja como el texto final", () => {
+    const { rows } = layoutSequence([
+      { i: 1, at_ms: 0, kind: "llm", round: 2, finish: "stop", tool_calls: [], text_fate: "discarded_contract", text: "Tenemos 4 piezas…" },
+      { i: 2, at_ms: 10, kind: "llm", round: 3, finish: "stop", tool_calls: [], text_fate: "final", text: "Tenemos 4 piezas…" },
+    ]);
+
+    expect(rows[1]).toMatchObject({ short: "escribe un texto que no sale", title: "Escribe un texto que no sale", status: "warn" });
+    expect(rows[3]).toMatchObject({ short: "escribe el texto final", status: "info" });
   });
 
   it("un reinicio que esperó la foto lo dice (texto antes de la foto, 2026-09-30)", () => {

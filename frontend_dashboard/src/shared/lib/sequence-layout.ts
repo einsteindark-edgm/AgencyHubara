@@ -15,7 +15,9 @@
  *  - `llm`: Bot → Modelo ("ronda N") y Modelo → Bot (lo que pidió).
  *  - `tool`: Bot → Herramientas y de vuelta: las tools las ejecuta el BOT
  *    (`execute_tool` de exoclaw) después de que el modelo las pide.
- *  - `plan`, `guard`, `cut`, `restart`: una caja dentro del Bot.
+ *  - `plan`, `guard`, `cut`, `restart`: una caja dentro del Bot. Lo que el
+ *    modelo pidió y un corte no dejó correr va del Bot a las Herramientas,
+ *    punteado y en rojo: «no se ejecutó» (turno 1 de …7392, 2026-10-08).
  *  - `outbound`: Bot → Cliente.
  * Las tools se nombran por lo que hacen (`sales-tools.ts`). La flecha hacia
  * las herramientas dice cuál se ejecutó (operador, 2026-09-30): lo que pidió el
@@ -23,6 +25,7 @@
  */
 
 import { describeTool, toolActionPhrase } from "./sales-tools";
+import { skippedByCut } from "./trace-rounds";
 
 export type TraceStep = {
   i?: number;
@@ -100,6 +103,9 @@ const CUT_LABELS: Record<string, string> = {
   before_record: "el cliente siguió escribiendo antes del envío",
 };
 
+/** Cortes que no terminan el turno: vuelve a empezar con el mensaje nuevo. */
+const INTERRUPTIONS = new Set(["checkpoint_a", "before_record"]);
+
 /** Lo que hizo cada guarda con el texto del modelo. */
 export const GUARD_LABELS: Record<string, string> = {
   variant_enumeration_guard: "cambió una lista de opciones por un selector",
@@ -126,7 +132,7 @@ const VERIFY_DECISIONS: Record<string, string> = {
   pending: "pendiente",
 };
 
-type Draft = Omit<SeqRow, "index" | "y" | "dashed">;
+type Draft = Omit<SeqRow, "index" | "y" | "dashed"> & { dashed?: boolean };
 
 function seconds(ms: number): string {
   return (ms / 1000).toFixed(1).replace(".", ",");
@@ -161,7 +167,7 @@ function outboundStatus(step: TraceStep): StepStatus {
   return "warn";
 }
 
-function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
+function rowsFor(step: TraceStep, stepIndex: number, steps: TraceStep[]): Draft[] {
   const base = { stepIndex, dur: null as string | null };
   const time = at(step.at_ms);
   const back = at(step.at_ms, typeof step.dur_ms === "number" ? step.dur_ms : 0);
@@ -200,10 +206,12 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
       const round = typeof step.round === "number" ? step.round : 1;
       const asked = names(step.tool_calls);
       const withText = textDiscarded(step) || step.text_fate === "pre_tool_message";
+      // Un texto que retuvo una protección no es el texto final.
+      const written = textDiscarded(step) ? "escribe un texto que no sale" : "escribe el texto final";
       const short = asked.length
         ? `pide ${toolActionPhrase(asked[0])}${asked.length > 1 ? ` +${asked.length - 1}` : ""}${withText ? " + texto" : ""}`
-        : "escribe el texto final";
-      const title = asked.length ? `Pide ${asked.map(toolActionPhrase).join(", ")}` : "Escribe el texto final";
+        : written;
+      const title = asked.length ? `Pide ${asked.map(toolActionPhrase).join(", ")}` : written.charAt(0).toUpperCase() + written.slice(1);
       return [
         { ...base, dur: duration(step), from: WORKFLOW, to: LLM, status: "info", short: `ronda ${round}`, title: `Ronda ${round} del modelo`, kind: "Modelo de IA", t: time },
         { ...base, from: LLM, to: WORKFLOW, status: textDiscarded(step) ? "warn" : "info", short, title, kind: "Modelo de IA", t: back },
@@ -228,7 +236,22 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
     case "cut": {
       const reason = typeof step.reason === "string" ? step.reason : "";
       const label = CUT_LABELS[reason] ?? (reason || "fin del turno");
-      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: label, title: `Fin del turno: ${label}`, kind: "Fin del turno", t: time }];
+      const box: Draft = INTERRUPTIONS.has(reason)
+        ? { ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: `se interrumpe: ${label}`, title: `Se interrumpe: ${label}`, kind: "Interrupción", t: time }
+        : { ...base, from: WORKFLOW, to: WORKFLOW, status: "neutral", short: label, title: `Fin del turno: ${label}`, kind: "Fin del turno", t: time };
+      const skipped: Draft[] = skippedByCut(steps, stepIndex).map(({ name }) => ({
+        ...base,
+        from: WORKFLOW,
+        to: TOOLS,
+        status: "bad",
+        short: `${name} · no se ejecutó`,
+        code: name,
+        title: `${describeTool({ name }).action} · no se ejecutó: el turno se interrumpió`,
+        kind: "Herramienta",
+        t: time,
+        dashed: true,
+      }));
+      return [box, ...skipped];
     }
     case "restart": {
       const attempt = typeof step.attempt === "number" ? step.attempt : 1;
@@ -247,12 +270,12 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
 }
 
 export function layoutSequence(steps: TraceStep[], opts: { classifierLabel?: string } = {}): SequenceLayout {
-  const drafts = steps.flatMap((step, i) => rowsFor(step, i));
+  const drafts = steps.flatMap((step, i) => rowsFor(step, i, steps));
   const rows: SeqRow[] = drafts.map((d, index) => ({
     ...d,
     index,
     y: SEQ_Y0 + index * SEQ_DY,
-    dashed: d.to < d.from && d.to !== CLIENT,
+    dashed: d.dashed ?? (d.to < d.from && d.to !== CLIENT),
   }));
   return {
     lanes: ["Cliente", "Bot", opts.classifierLabel ?? "Jev", "Modelo de IA", "Herramientas"],

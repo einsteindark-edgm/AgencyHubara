@@ -240,6 +240,44 @@ async def test_a_restarted_turn_keeps_the_aborted_attempt_and_the_restart(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_a_cut_before_the_tools_keeps_what_the_model_asked_for(tmp_path: Path) -> None:
+    """Turno 1 de …7392 (2026-10-08): el modelo pidió `present_products` y el
+    cliente escribió antes de que corriera. El corte no ejecuta el paso, y el
+    «Paso a paso» no tenía cómo decir qué iba a mandar: el corte guarda lo
+    que el modelo pidió y no corrió, con sus argumentos."""
+    tracker = Tracker()
+
+    def hooks(box: dict) -> dict:
+        async def _signal_mid_llm() -> None:
+            await box["handle"].signal(HubaraSalesSessionWorkflow.send_message, args=["qué viene incluido", None, None])
+
+        return {1: _signal_mid_llm}
+
+    asked = {"handles": ["calabaza", "momia", "fantasma", "trilogia"], "intro_text": "Esta es la colección 🎃"}
+    await _run(
+        tracker,
+        tmp_path,
+        messages=["info de la colección de Halloween"],
+        llm_responses=[
+            LLMResponseData(
+                content="",
+                finish_reason="tool_calls",
+                has_tool_calls=True,
+                tool_calls=[ToolCallData(id="call_1", name="present_products", arguments=asked)],
+            ),
+            _final_resp("colección y lo que incluye"),
+        ],
+        llm_call_hooks_factory=hooks,
+    )
+
+    trace = _customer_trace(tracker)
+    cut = next(s for s in trace["steps"] if s["kind"] == "cut")
+    assert cut["reason"] == "checkpoint_a"
+    assert cut.get("skipped") == [{"name": "present_products", "args": asked}]
+    assert not any(s["kind"] == "tool" for s in trace["steps"])
+
+
+@pytest.mark.asyncio
 async def test_turn_that_waits_for_the_customer_records_the_cut_and_the_flush(tmp_path: Path) -> None:
     """L-11: el selector de variantes deja la conversación esperando al cliente
     y el turno se corta ahí. El flush entrega el componente con su wamid."""
