@@ -14,6 +14,7 @@ Los plugins lo usan por `src.sdk.labkit`.
 | Promociones y cupones (Medusa)        | `promotions.json` exportado con el banco         |
 | Registrar pedido (draft order real)   | `StubOrderRegistration` (id ficticio `HUB-…`)    |
 | Estado de pedido (Medusa en vivo)     | vacío (`EmptyOrderQuery`) (*)                     |
+| Pedidos de la persona (su número)     | ninguno (`NoCustomerOrders`): decide el banco     |
 | Color de la vela de una foto (visión) | no se pregunta: la foto sale sin color           |
 
 (*) El laboratorio (`sales_lab`) no llega a este puerto en los turnos del
@@ -105,6 +106,7 @@ def installed_sandbox_ports(*, promotions_path: Path, catalog: Any) -> Iterator[
     import src.platform.medusa.composition as medusa
     import src.platform.orders.composition as orders
     import src.platform.promotions.composition as promos
+    from src.platform.orders.customer_orders import NoCustomerOrders
     from src.platform.orders.empty_query import EmptyOrderQuery
     from src.platform.orders.facts import OrderFactsStore
     from src.platform.orders.stub import StubOrderRegistration
@@ -112,6 +114,7 @@ def installed_sandbox_ports(*, promotions_path: Path, catalog: Any) -> Iterator[
     promotions = FakePromotionsPort(load_promotions(promotions_path))
     query = EmptyOrderQuery()
     facts = OrderFactsStore(query)
+    customer_orders = NoCustomerOrders()
     registration = StubOrderRegistration()
     live = SnapshotLiveMedusa(catalog)
     replacements: list[tuple[Any, str, Any]] = [
@@ -122,6 +125,7 @@ def installed_sandbox_ports(*, promotions_path: Path, catalog: Any) -> Iterator[
         (orders, "get_order_registration_port", lambda: registration),
         (orders, "get_order_query_port", lambda: query),
         (orders, "get_order_facts_port", lambda: facts),
+        (orders, "get_customer_orders_port", lambda: customer_orders),
         (orders, "_raw_order_query", lambda: query),
         (photo_colors, "color_of_photo", _no_photo_color),
     ]

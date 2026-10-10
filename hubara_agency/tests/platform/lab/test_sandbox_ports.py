@@ -140,3 +140,42 @@ async def test_the_photo_color_is_never_read_inside_a_case(tmp_path: Path) -> No
                                      store=None, reader=_Reader(), fetch=fetch)
 
     assert color is None and calls == []
+
+
+async def test_a_case_never_asks_medusa_for_the_orders_of_the_person(tmp_path: Path, monkeypatch) -> None:
+    """El cupón de bienvenida (2026-10-09) pregunta a Medusa por los pedidos de
+    la persona. Un caso no tiene Medusa: ahí la persona no tiene pedidos
+    (decide lo que registró la conversación del banco), aunque el puerto real
+    ya se hubiera armado antes en el proceso (la fábrica cachea)."""
+    import src.platform.orders.composition as orders
+    from src.platform.medusa.settings import MedusaSettings
+    from src.platform.orders.customer_orders import NoCustomerOrders
+    from src.platform.orders.medusa_order_query import MedusaOrderQuery
+
+    class _Medusa:
+        DEFAULT_ORDER_LIST_FIELDS = "id"
+
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def list_customers(self, **kwargs):
+            self.calls.append(kwargs)
+            return {"customers": []}
+
+    medusa = _Medusa()
+    settings = MedusaSettings(base_url="http://medusa.test", admin_token="sk")  # type: ignore[call-arg]
+    monkeypatch.setattr(orders, "_raw_order_query", lambda: MedusaOrderQuery(medusa, settings))  # type: ignore[arg-type]
+    monkeypatch.setattr(orders, "get_medusa_client", lambda: medusa)
+    orders.get_customer_orders_port.cache_clear()
+    orders.get_customer_orders_port()  # el puerto real queda en el caché del proceso
+    try:
+        with installed_sandbox_ports(promotions_path=tmp_path / "promotions.json", catalog=_Catalog({})):
+            from src.sdk.connectorkit import get_customer_orders_port
+
+            port = get_customer_orders_port()
+            assert isinstance(port, NoCustomerOrders)
+            assert await port.orders_of("wa_573001112233") == ()
+    finally:
+        orders.get_customer_orders_port.cache_clear()
+
+    assert medusa.calls == []

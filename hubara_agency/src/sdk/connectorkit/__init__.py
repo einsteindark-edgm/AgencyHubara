@@ -114,6 +114,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderFactsReadPort": "src.platform.orders.facts",
     "OrderFactsSnapshot": "src.platform.orders.facts",
     "InMemoryOrderFacts": "src.platform.orders.facts",
+    # Los pedidos de UNA persona (su número), con el mapeo de OrderFacts — el
+    # cupón de bienvenida (caso 2026-10-09) mira si ya compró:
+    "CustomerOrdersPort": "src.platform.orders.customer_orders",
+    "CustomerOrdersUnavailableError": "src.platform.orders.customer_orders",
+    "InMemoryCustomerOrders": "src.platform.orders.customer_orders",
     "OrderRegistrationPort": "src.platform.orders.port",
     # Reparto del cupón por ítem (L-26): viaja con el port de registro.
     "DiscountedUnits": "src.platform.orders.port",
@@ -130,6 +135,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DiscountResult": "src.platform.promotions.rules",
     "LineDiscount": "src.platform.promotions.rules",
     "compute_discount": "src.platform.promotions.rules",
+    "coupon_problem": "src.platform.promotions.rules",
     "normalize_coupon_code": "src.platform.promotions.rules",
     "resolve_coupon": "src.platform.promotions.rules",
     # Central de cupones (Marketing → Cupones, CUPONES_PLAN.md): comandos a
@@ -188,6 +194,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_facts_port": "src.platform.orders.composition",
+    "get_customer_orders_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
     "get_promotions_port": "src.platform.promotions.composition",
     "get_promotions_admin_port": "src.platform.promotions.composition",

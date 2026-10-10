@@ -623,8 +623,16 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 #### Scenario: Promociones vigentes
 
 - WHEN el cliente pregunta "¿tienen descuentos?" y el bot llama `list_promotions`
-- THEN el envelope lista código, descuento y productos de cada cupón activo (no automático)
+- THEN el envelope lista código, descuento y productos de cada cupón que rige hoy (no automático)
 - AND con lista vacía el bot dice que no hay promociones (no inventa) y solo escala si el cliente insiste en negociar
+
+#### Scenario: Un cupón vencido no se ofrece (venta del 2026-10-09)
+
+- GIVEN un cupón cuya campaña ya terminó (Medusa lo sigue marcando `active`), uno que todavía no empieza y uno sin presupuesto
+- WHEN el bot llama `list_promotions`
+- THEN ninguno de los tres aparece: se lista solo lo que `apply_coupon` aplicaría ahora (`coupon_problem`: activo, ya empezó, no venció, con presupuesto, alcance legible y no de envío)
+- AND si no queda ninguno, el resumen dice que no hay promociones vigentes
+- AND el builder de campañas (`GET /api/marketing/promotions`) tampoco ofrece el vencido ni el agotado; el que todavía no empieza sí, para programar la campaña de su inicio
 
 #### Scenario: Cupón con mínimo de compra o sin productos aplicables
 
@@ -675,9 +683,11 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - GIVEN la central de cupones creó `BIENVENIDA` (5 %, todo el catálogo) con «Solo primera compra»: la condición vive en el vault (`_promotions/conditions/BIENVENIDA.json`), se escribe ANTES de crear el cupón en Medusa y el lector de promociones la pega en el `PromotionDTO` (`first_purchase_only`)
 - WHEN el cliente pide «el descuento de la primera compra» (o «el de la página») y el bot llama `list_promotions`
 - THEN el resumen nombra el cupón con su nombre y su condición y le dice al bot que lo aplique con su código aunque el cliente no lo sepa
-- AND `apply_coupon` lo aplica si la conversación no tiene un pedido anterior que cuente (registrado antes del episodio activo, ni cancelado ni de prueba, según OrderFacts)
-- AND a quien ya compró se le responde `applied=false`, `reason="first_purchase_only"`, y `list_promotions` lo marca `applies_to_customer=false`
-- AND si OrderFacts no confirma un pedido anterior, `reason="first_purchase_unknown"` y el cupón NO se aplica; una puerta que valide cupones sin poder mirar las compras (la campaña que aplica su cupón sola) tampoco lo aplica y le deja el `apply_coupon` al bot
+- AND `apply_coupon` lo aplica si la PERSONA no tiene un pedido anterior que cuente (ni cancelado ni de prueba): ni uno de los que registró la conversación antes del episodio activo (OrderFacts), ni ninguno de los pedidos y borradores de su número en Medusa (`get_customer_orders_port`: el cliente `wa+<sesión>@hubara.local` del bot y «Crear pedido», y todo cliente cuyo teléfono termine en sus 10 dígitos), aunque vengan de otra conversación o los haya cargado el operador
+- AND el pedido del episodio activo no cuenta: es justamente la primera compra (el colega pudo crearlo antes de prometer el descuento)
+- AND a quien ya compró se le responde `applied=false`, `reason="first_purchase_only"`, y `list_promotions` lo marca `applies_to_customer=false`; «Aplicar cupón» de la app del operador usa la misma vara
+- AND si Medusa no confirma sus pedidos, `reason="first_purchase_unknown"` y el cupón NO se aplica; una puerta que valide cupones sin poder mirar las compras (la campaña que aplica su cupón sola) tampoco lo aplica y le deja el `apply_coupon` al bot
+- AND un caso del laboratorio no le pregunta a Medusa: ahí la persona no tiene pedidos y decide lo que registró la conversación del banco
 - AND una condición ilegible deja el cupón `scope_unresolved` (no se ofrece ni se aplica)
 
 ### Requirement: Hilo de cada turno del bot en el chat (laboratorio, PR 17)

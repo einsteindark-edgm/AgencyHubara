@@ -60,6 +60,7 @@ from src.sdk.connectorkit import (
     ProductNotFoundError,
     get_catalog_client,
     get_coupon_sales_reader,
+    get_customer_orders_port,
     get_order_facts_port,
     get_promo_quota_store,
     get_promotions_port,
@@ -118,6 +119,8 @@ class OperatorToolsDeps:
     now_ms: Callable[[], int]
     #: OrderFacts: si el cliente ya compró (cupón de bienvenida, 2026-10-09).
     order_facts: Any | None = None
+    #: Los pedidos de la persona en Medusa (su número), para el mismo cupón.
+    customer_orders: Any | None = None
     #: El color de la vela de cada foto del catálogo (2026-10-09).
     photo_colors: Any | None = None
 
@@ -152,6 +155,7 @@ def get_operator_tools_deps() -> OperatorToolsDeps:
         flush=flush_pending_ui_intents,
         now_ms=_now_ms,
         order_facts=_try("order_facts", get_order_facts_port),
+        customer_orders=_try("customer_orders", get_customer_orders_port),
         photo_colors=_try("photo_colors", _photo_color_reader),
     )
 
@@ -184,6 +188,7 @@ def _bot_tools(deps: OperatorToolsDeps) -> dict[str, Callable[[], Any]]:
         "apply_coupon": lambda: ApplyCouponTool(
             ws, promotions=deps.promotions, metadata_store=store, catalog=deps.catalog,
             quotas=deps.quotas, sales=deps.sales, order_facts=deps.order_facts,
+            customer_orders=deps.customer_orders,
         ),
     }
 

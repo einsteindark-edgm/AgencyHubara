@@ -174,6 +174,16 @@ y moneda de un pedido se leen de `OrderFacts`**. El vault guarda el *vínculo*
   la marca.
 - *Fake oficial:* `InMemoryOrderFacts` (`available=False` simula Medusa
   caído). La contract suite corre contra ambos.
+- *Los pedidos de una persona (2026-10-09):* `get_customer_orders_port()
+  .orders_of(session_key)` devuelve los `OrderFacts` de todos los pedidos y
+  borradores de los clientes de Medusa de ese número: el de la sesión
+  (`wa+<sesión>@hubara.local`, el del bot y «Crear pedido») y cualquiera cuyo
+  teléfono termine en sus 10 dígitos (`HttpMedusaClient.list_customers(q=…)`
+  + `list_orders/list_draft_orders(customer_id=[…])`). Mismo mapeo que
+  Órdenes (`MedusaOrderQuery.summary_of`). Si Medusa no responde levanta
+  `CustomerOrdersUnavailableError`: quien pregunta «¿ya compró?» no adivina.
+  Sin Medusa configurado: ninguno. Fake: `InMemoryCustomerOrders`
+  (`available=False`).
 
 **Cómo se usa** (endpoint sync de un plugin):
 
@@ -258,7 +268,7 @@ leyendo con `PromotionsPort`; los comandos solo los usa la API.
 | `QuotaStatus`, `quota_statuses`, `QuotaLine`, `allocate_units`, `quota_exhausted`, `REASON_QUOTA_EXHAUSTED` | dominio puro: cuántas quedan y el reparto de un pedido (parcial si no alcanza; falla cerrada sin color/aroma), con el mismo redondeo por unidad que la línea con descuento |
 | `QuotaSheet`, `QuotaStoreError`, `FakePromoQuotaStore`, `get_promo_quota_store()` | el cupo vive en el vault (`_promotions/quotas/<promotion_id>.json`, flock): la API de Medusa no deja escribir metadata en promociones. `counting_since` fija desde cuándo se cuentan las vendidas y nunca avanza. `updated_at` es la versión (estrictamente creciente): `replace(..., expected_updated_at=...)` la compara bajo el candado y, si otra persona guardó después, levanta `QuotaStoreError` con `reason="changed"` (la API responde 409 `units_changed`). `prune_to_products` quita las filas de productos que salieron del cupón. Un archivo ilegible levanta `QuotaStoreError` (`reason="unreadable"`): NO es "sin cupo"; claves desconocidas de un formato más nuevo se ignoran |
 | `sold_units_by_quota`, `coupon_results`, `CouponResults`, `quota_board`, `get_coupon_sales_reader()` | las VENDIDAS se derivan de los pedidos y drafts de Medusa (`items[].metadata.coupon_quota_id` de la línea con descuento; `coupon_code`/`discount_unit_cop` para los resultados); cancelados, de prueba y duplicados no cuentan. `exclude={(session_key, order_fingerprint)}` deja afuera el draft del MISMO pedido que se reintenta (L-28). El lector pide a Medusa solo lo creado desde el inicio (`created_at[$gte]`, `HttpMedusaClient.list_orders/list_draft_orders(created_gte=...)`); si Medusa no acepta el filtro (400) lee todo y corta de este lado. Sin Medusa: `PromotionsUnavailableError` (falla cerrada) |
-| `CouponConditions`, `CouponConditionsError`, `FakeCouponConditionsStore`, `get_coupon_conditions_store()` | condiciones de Hubara por cupón (hoy: `first_purchase_only`, el descuento de bienvenida) en el vault (`_promotions/conditions/<CÓDIGO>.json`, por código normalizado): la central las escribe ANTES de crear el cupón en Medusa. `get_promotions_port()` las pega en cada `PromotionDTO` (`first_purchase_only`); una condición ilegible deja el cupón `scope_unresolved` (no se ofrece ni se aplica). Quién compró antes lo decide el plugin (conversación + OrderFacts), no el port |
+| `CouponConditions`, `CouponConditionsError`, `FakeCouponConditionsStore`, `get_coupon_conditions_store()` | condiciones de Hubara por cupón (hoy: `first_purchase_only`, el descuento de bienvenida) en el vault (`_promotions/conditions/<CÓDIGO>.json`, por código normalizado): la central las escribe ANTES de crear el cupón en Medusa. `get_promotions_port()` las pega en cada `PromotionDTO` (`first_purchase_only`); una condición ilegible deja el cupón `scope_unresolved` (no se ofrece ni se aplica). Quién compró antes lo decide el plugin (lo que registró la conversación + los pedidos de la persona de `get_customer_orders_port()`), no el port. `coupon_problem(promo, now_ms=)` es la vara de vigencia (activo, empezó, no venció, con presupuesto, alcance legible, no de envío): la usan `resolve_coupon` y todo lo que LISTA cupones |
 | `FakeCouponAuditLog`, `get_coupon_audit_log()` | registro de cambios append-only (`_promotions/audit.jsonl`) con el actor de `castkit.current_actor` |
 | `get_quota_lock()`, `QuotaLockTimeout` | candado async por código (flock, nunca bloquea el event loop): `register_order` relee lo vendido y recalcula el reparto bajo él — la última unidad no se vende dos veces |
 | `match_option` (junto a `parse_variant_tags`) | el matching de color/aroma contra la lista cerrada del producto |

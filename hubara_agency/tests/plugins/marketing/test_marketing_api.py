@@ -1128,6 +1128,7 @@ def test_get_promotions_lista_los_cupones_vigentes_de_medusa(
         budget_type=None, budget_limit=None, budget_used=None, description="Madres",
     )
     monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    monkeypatch.setattr(api_mod, "_now_ms", lambda: 1_791_590_000_000)
     res = client.get("/api/marketing/promotions")
     assert res.status_code == 200
     body = res.json()
@@ -1159,6 +1160,31 @@ def test_get_promotions_no_ofrece_cupones_de_envio(client: TestClient, monkeypat
     )
     res = client.get("/api/marketing/promotions")
     assert [p["code"] for p in res.json()["promotions"]] == ["AMOR26"]
+
+
+def test_get_promotions_no_ofrece_cupones_vencidos_ni_agotados(
+    client: TestClient, monkeypatch
+) -> None:
+    """Venta del 2026-10-09: un cupón cuya campaña terminó sigue «active» en
+    Medusa. El builder no lo ofrece (ninguna campaña puede anunciarlo); uno
+    que todavía no empieza sí, para programar la campaña de su inicio."""
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    now = 1_791_590_000_000
+    monkeypatch.setattr(api_mod, "_now_ms", lambda: now)
+    monkeypatch.setattr(
+        api_mod, "get_promotions_port",
+        lambda: FakePromotionsPort(
+            [
+                _promo_dto("MAMA15"),
+                _promo_dto("FERIA10", ends_at_ms=now - 1),
+                _promo_dto("AGOTADO", budget_type="usage", budget_limit=5, budget_used=5),
+                _promo_dto("NAVIDAD", starts_at_ms=now + 86_400_000),
+            ]
+        ),
+    )
+    res = client.get("/api/marketing/promotions")
+    assert [p["code"] for p in res.json()["promotions"]] == ["MAMA15", "NAVIDAD"]
 
 
 def test_get_promotions_con_medusa_caido_es_vacio_y_lo_dice(

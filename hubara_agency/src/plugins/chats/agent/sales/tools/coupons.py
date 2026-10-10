@@ -19,6 +19,7 @@ from src.sdk.connectorkit import (
     PromotionsPort,
     PromotionsUnavailableError,
     compute_discount,
+    coupon_problem,
     normalize_coupon_code,
 )
 
@@ -110,11 +111,15 @@ class ListPromotionsTool(ToolBase):
         sales: Any = None,
         metadata_store: Any = None,
         order_facts: Any = None,
+        now_ms: Callable[[], int] | None = None,
+        customer_orders: Any = None,
     ) -> None:
         """`quotas`/`sales`: cupo por unidad (almacén + lector de vendidas del
         SDK). Sin ellos, los cupones se listan como siempre.
-        `metadata_store`/`order_facts`: para decir si un cupón de primera
-        compra le aplica a ESTE cliente (sin ellos, se lista su condición)."""
+        `metadata_store`/`order_facts`/`customer_orders`: para decir si un
+        cupón de primera compra le aplica a ESTE cliente (lo registrado en la
+        conversación + los pedidos de su número; sin el store, se lista su
+        condición). `now_ms`: el reloj con que se decide qué cupones rigen."""
         self._workspace = Path(workspace)
         self._promotions = promotions
         self._catalog = catalog
@@ -122,13 +127,20 @@ class ListPromotionsTool(ToolBase):
         self._sales = sales
         self._store = metadata_store
         self._order_facts = order_facts
+        self._customer_orders = customer_orders
+        self._now_ms = now_ms or (lambda: int(time.time() * 1000))
 
     async def _applies_to_customer(self, session_key: str) -> bool | None:
         """¿Un cupón de primera compra le aplica? None = no se sabe."""
         if self._store is None:
             return None
         try:
-            return not await bought_before(self._store.read(session_key), self._order_facts)
+            return not await bought_before(
+                self._store.read(session_key),
+                self._order_facts,
+                customer_orders=self._customer_orders,
+                session_key=session_key,
+            )
         except FirstPurchaseUnknown:
             return None
 
@@ -146,12 +158,11 @@ class ListPromotionsTool(ToolBase):
                 ensure_ascii=False,
             )
         out = []
+        now_ms = self._now_ms()
         for promo in promotions:
-            if promo.scope_unresolved:
-                # Reglas ilegibles: no sabemos a qué aplica — no se ofrece.
-                continue
-            if promo.target_type == "shipping_methods":
-                # El envío lo cobra la transportadora sin descuentos: no se ofrece.
+            if coupon_problem(promo, now_ms=now_ms) is not None:
+                # Lo que `apply_coupon` rechazaría no se ofrece: vencido, sin
+                # empezar, agotado, de envío o con reglas ilegibles.
                 continue
             entry: dict[str, Any] = {
                 "code": promo.code,
@@ -236,13 +247,15 @@ class ApplyCouponTool(ToolBase):
         quotas: Any = None,
         sales: Any = None,
         order_facts: Any = None,
+        customer_orders: Any = None,
     ) -> None:
         """`metadata_store`: store de `metadata.json` del vault (DI desde la
         composición — `build_session_metadata_store`; las tools no importan
         platform ni el runtime del SDK, que arrastra temporalio: R-DIP).
         `quotas`/`sales`: cupo por unidad (sin ellos, como siempre).
-        `order_facts`: OrderFacts para los cupones de primera compra (sin él,
-        un pedido registrado antes cuenta como compra)."""
+        `order_facts`/`customer_orders`: para los cupones de primera compra,
+        lo registrado en la conversación y los pedidos de su número (sin
+        OrderFacts, un pedido registrado antes cuenta como compra)."""
         self._workspace = Path(workspace)
         self._promotions = promotions
         self._catalog = catalog
@@ -251,6 +264,7 @@ class ApplyCouponTool(ToolBase):
         self._quotas = quotas
         self._sales = sales
         self._order_facts = order_facts
+        self._customer_orders = customer_orders
 
     async def execute_with_context(
         self, ctx: ToolContext, code: str, items: list[dict[str, Any]] | None = None
@@ -279,7 +293,12 @@ class ApplyCouponTool(ToolBase):
         now_ms = self._now_ms()
 
         async def _bought_before() -> bool:
-            return await bought_before(store.read(ctx.session_key), self._order_facts)
+            return await bought_before(
+                store.read(ctx.session_key),
+                self._order_facts,
+                customer_orders=self._customer_orders,
+                session_key=ctx.session_key,
+            )
 
         application = await resolve_coupon_application(
             normalized,

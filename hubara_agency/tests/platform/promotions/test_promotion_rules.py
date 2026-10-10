@@ -22,6 +22,7 @@ from src.platform.promotions.rules import (
     COUPON_CODE_RE,
     LineDiscount,
     compute_discount,
+    coupon_problem,
     resolve_coupon,
 )
 
@@ -122,6 +123,24 @@ def test_resolve_coupon_razones_de_rechazo() -> None:
         resolve_coupon("MAMA15", [_promo(is_automatic=True)], now_ms=_NOW).reason
         == "not_found"
     )
+
+
+def test_coupon_problem_es_la_misma_vara_para_listar_y_para_aplicar() -> None:
+    """Venta del 2026-10-09: `list_promotions` ofreció un cupón vencido porque
+    solo miraba el estado. Lo que se lista pasa por la misma regla con la que
+    `resolve_coupon` rechaza un código."""
+    assert coupon_problem(_promo(), now_ms=_NOW) is None
+    cases = {
+        "inactive": _promo(status="inactive"),
+        "not_started": _promo(starts_at_ms=_NOW + _DAY),
+        "expired": _promo(ends_at_ms=_NOW - 1),
+        "budget_exhausted": _promo(budget_type="usage", budget_limit=3, budget_used=3),
+        "scope_unresolved": _promo(scope_unresolved=True),
+        "shipping_not_supported": _promo(target_type="shipping_methods"),
+    }
+    for reason, promo in cases.items():
+        assert coupon_problem(promo, now_ms=_NOW) == reason
+        assert resolve_coupon("MAMA15", [promo], now_ms=_NOW).reason == reason
 
 
 def test_resolve_coupon_rejects_a_shipping_coupon() -> None:

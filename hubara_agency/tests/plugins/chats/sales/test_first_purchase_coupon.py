@@ -23,7 +23,7 @@ from src.platform.promotions.port import FakePromotionsPort
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.tools.coupons import ApplyCouponTool, ListPromotionsTool
 from src.plugins.chats.agent.sales.use_cases.coupon_application import resolve_coupon_application
-from src.sdk.connectorkit import InMemoryOrderFacts, OrderFacts
+from src.sdk.connectorkit import InMemoryCustomerOrders, InMemoryOrderFacts, OrderFacts
 from tests.plugins.chats.sales.test_coupon_tools import KEY, FakeCatalog, _md, _promo, _seed
 
 _WELCOME = _promo(id="promo_bienvenida", code="BIENVENIDA", value=5, description="Descuento de bienvenida",
@@ -103,6 +103,48 @@ async def test_when_the_purchases_cannot_be_checked_the_coupon_is_not_applied(ct
     assert env["applied"] is False
     assert env["reason"] == "first_purchase_unknown"
     assert "applied_coupon" not in _md(path)["episodes"][-1]
+
+
+def _bought_elsewhere() -> InMemoryCustomerOrders:
+    """La misma persona compró antes con un pedido que esta conversación no
+    registró (otra conversación del número, o cargado a mano en Medusa)."""
+    return InMemoryCustomerOrders({
+        KEY: [OrderFacts(order_id="order_09WEB", display_id="12", total_cop=60000, currency_code="cop",
+                         pay_status="paid", stage="delivered", customer="Cliente", is_draft=False)]
+    })
+
+
+@pytest.mark.asyncio
+async def test_a_person_who_bought_in_another_conversation_does_not_get_it(ctx, _isolate_vault_dir):
+    path = _seed(_isolate_vault_dir)
+    orders = _bought_elsewhere()
+    tool = ApplyCouponTool(
+        workspace=str(_isolate_vault_dir), metadata_store=FilesystemMetadataStore(_isolate_vault_dir),
+        promotions=FakePromotionsPort([_WELCOME]), catalog=FakeCatalog(), order_facts=InMemoryOrderFacts(),
+        customer_orders=orders,
+    )
+
+    env = json.loads(await tool.execute_with_context(ctx, code="BIENVENIDA"))
+
+    assert env["applied"] is False
+    assert env["reason"] == "first_purchase_only"
+    assert orders.calls == [KEY]
+    assert "applied_coupon" not in _md(path)["episodes"][-1]
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_looks_at_every_order_of_the_person(ctx, _isolate_vault_dir):
+    _seed(_isolate_vault_dir)
+    tool = ListPromotionsTool(
+        workspace=str(_isolate_vault_dir), promotions=FakePromotionsPort([_WELCOME]), catalog=FakeCatalog(),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir), order_facts=InMemoryOrderFacts(),
+        customer_orders=_bought_elsewhere(),
+    )
+
+    env = json.loads(await tool.execute_with_context(ctx))
+
+    assert env["promotions"][0]["applies_to_customer"] is False
+    assert "ya compró" in env["summary"]
 
 
 @pytest.mark.asyncio

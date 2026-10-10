@@ -94,10 +94,16 @@ from src.platform.orders.command_port import (
     OrderCommandPort as OrderCommandPort,
 )
 from src.platform.orders.composition import (
+    get_customer_orders_port as get_customer_orders_port,
     get_order_command_port as get_order_command_port,
     get_order_facts_port as get_order_facts_port,
     get_order_query_port as get_order_query_port,
     get_order_registration_port as get_order_registration_port,
+)
+from src.platform.orders.customer_orders import (
+    CustomerOrdersPort as CustomerOrdersPort,
+    CustomerOrdersUnavailableError as CustomerOrdersUnavailableError,
+    InMemoryCustomerOrders as InMemoryCustomerOrders,
 )
 from src.platform.orders.facts import (
     InMemoryOrderFacts as InMemoryOrderFacts,
@@ -183,6 +189,7 @@ from src.platform.promotions.rules import (
     DiscountResult as DiscountResult,
     LineDiscount as LineDiscount,
     compute_discount as compute_discount,
+    coupon_problem as coupon_problem,
     normalize_coupon_code as normalize_coupon_code,
     resolve_coupon as resolve_coupon,
 )

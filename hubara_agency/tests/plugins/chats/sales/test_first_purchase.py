@@ -14,7 +14,9 @@ from src.plugins.chats.agent.sales.use_cases.first_purchase import (
     bought_before,
     previous_order_ids,
 )
-from src.sdk.connectorkit import InMemoryOrderFacts, OrderFacts
+from src.sdk.connectorkit import InMemoryCustomerOrders, InMemoryOrderFacts, OrderFacts
+
+SESSION = "wa_573001112233"
 
 
 def _facts(order_id: str, *, stage: str = "delivered", pay_status: str = "paid", is_test: bool = False) -> OrderFacts:
@@ -79,3 +81,51 @@ async def test_when_medusa_cannot_answer_it_is_unknown_not_a_guess() -> None:
 async def test_without_order_facts_a_registered_order_counts() -> None:
     assert await bought_before(_metadata(), None) is True
     assert await bought_before(_metadata(previous=None), None) is False
+
+
+# --- la persona, no solo la conversación -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_purchase_of_the_same_person_in_another_conversation_counts() -> None:
+    """La persona es su número: un pedido a su nombre que esta conversación no
+    registró (otra conversación, o cargado a mano en Medusa) también es «ya
+    compró»."""
+    orders = InMemoryCustomerOrders({SESSION: [_facts("order_09WEB", stage="delivered")]})
+
+    assert await bought_before(
+        _metadata(previous=None), InMemoryOrderFacts(), customer_orders=orders, session_key=SESSION
+    ) is True
+    assert orders.calls == [SESSION]
+
+
+@pytest.mark.asyncio
+async def test_the_order_in_progress_is_not_a_previous_purchase() -> None:
+    """El pedido del episodio activo es justamente la primera compra (caso del
+    2026-10-09: el colega creó el pedido y después prometió el descuento)."""
+    orders = InMemoryCustomerOrders({SESSION: [_facts("order_02NOW", stage="new", pay_status="pending")]})
+
+    assert await bought_before(
+        _metadata(previous=None, current="order_02NOW"), InMemoryOrderFacts(),
+        customer_orders=orders, session_key=SESSION,
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_or_test_orders_of_the_person_do_not_count() -> None:
+    orders = InMemoryCustomerOrders(
+        {SESSION: [_facts("order_A", stage="cancelled"), _facts("order_B", is_test=True)]}
+    )
+
+    assert await bought_before(
+        _metadata(previous=None), InMemoryOrderFacts(), customer_orders=orders, session_key=SESSION
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_when_medusa_cannot_list_the_orders_of_the_person_it_is_unknown() -> None:
+    with pytest.raises(FirstPurchaseUnknown):
+        await bought_before(
+            _metadata(previous=None), InMemoryOrderFacts(),
+            customer_orders=InMemoryCustomerOrders(available=False), session_key=SESSION,
+        )

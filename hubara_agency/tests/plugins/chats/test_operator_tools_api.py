@@ -599,6 +599,28 @@ def test_apply_coupon_stores_it_on_the_order_without_sending_anything(h: _Harnes
     assert (unknown.status_code, unknown.json()["error"], unknown.json()["reason"]) == (422, "tool_rejected", "not_found")
 
 
+def test_the_welcome_coupon_from_the_operator_looks_at_every_order_of_the_person(h: _Harness) -> None:
+    """El operador aplica el de bienvenida con la misma vara que el bot (caso
+    2026-10-09): si la persona ya compró, aunque sea en otra conversación de
+    su número, se rechaza con la razón."""
+    from dataclasses import replace
+
+    from src.sdk.connectorkit import FakePromotionsPort, InMemoryCustomerOrders, InMemoryOrderFacts, OrderFacts
+
+    h.deps.promotions = FakePromotionsPort([replace(_promo("BIENVENIDA"), first_purchase_only=True)])
+    h.deps.order_facts = InMemoryOrderFacts()
+    h.deps.customer_orders = InMemoryCustomerOrders({_S: [OrderFacts(
+        order_id="order_09WEB", display_id="#12", total_cop=60000, currency_code="cop", pay_status="paid",
+        stage="delivered", customer="Cliente", is_draft=False,
+    )]})
+    h.seed(_human(episodes=_draft(_CHOSEN)))
+
+    r = h.run("apply_coupon", {"code": "bienvenida"}, cid="act-bienvenida")
+
+    assert (r.status_code, r.json()["reason"]) == (422, "first_purchase_only")
+    assert "applied_coupon" not in h.meta()["episodes"][-1]
+
+
 def test_missing_catalog_or_promotions_is_503_not_a_crash(h: _Harness) -> None:
     h.seed(_human())
     h.deps.catalog = None

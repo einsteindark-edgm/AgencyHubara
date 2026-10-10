@@ -1,15 +1,21 @@
 """¿El cliente ya compró antes? — para los cupones de primera compra.
 
-Caso del 2026-10-09: la página ofrece un 5 % de bienvenida en la primera
-compra. Medusa no lo puede saber (los pedidos del bot son borradores y no
-cuentan usos), así que lo decide la conversación: los pedidos que registró
-ANTES del episodio activo (el del episodio en curso es justamente la primera
-compra), leídos en OrderFacts (regla: el vault guarda el vínculo, nunca el
-estado del pedido). Cuenta un pedido que siguió adelante, pagado o no; uno
-cancelado, de prueba o borrado en Medusa no cuenta.
+Caso del 2026-10-09: la página ofrece un 5 % «para nuevos clientes en su primer
+pedido». Medusa no lo puede saber por sí sola (los pedidos del bot son
+borradores y no cuentan usos), así que se mira a la PERSONA:
 
-Lo que no se ve: compras de otro número de WhatsApp, pedidos cargados a mano
-en Medusa Admin y lo vendido antes del bot.
+  * todos los pedidos de su número en Medusa (`customer_orders`): los de
+    cualquier conversación y los cargados para un cliente con su teléfono;
+  * los que registró esta conversación, leídos en OrderFacts (regla: el vault
+    guarda el vínculo, nunca el estado del pedido).
+
+El pedido del episodio activo no cuenta: es justamente la primera compra.
+Cuenta un pedido que siguió adelante, pagado o no; uno cancelado, de prueba o
+borrado en Medusa no cuenta. Si Medusa no confirma lo que podría contar, no se
+adivina (`FirstPurchaseUnknown`: el cupón no se aplica).
+
+Lo que no se ve: compras de otro número de WhatsApp, un pedido de otro cliente
+que solo trae el teléfono en la dirección de envío y lo vendido antes del bot.
 """
 from __future__ import annotations
 
@@ -51,10 +57,32 @@ def previous_order_ids(metadata: dict[str, Any]) -> tuple[str, ...]:
     return tuple(out)
 
 
-async def bought_before(metadata: dict[str, Any], order_facts: Any = None) -> bool:
-    """True si un pedido anterior cuenta como compra. Levanta
-    `FirstPurchaseUnknown` si Medusa no confirmó un pedido que podría contar.
-    Sin `order_facts` (no hay cómo mirar), un pedido registrado cuenta."""
+def _counts(fact: Any) -> bool:
+    """Un pedido que siguió adelante: ni cancelado ni de prueba."""
+    return fact.stage != "cancelled" and not fact.is_test
+
+
+async def bought_before(
+    metadata: dict[str, Any],
+    order_facts: Any = None,
+    *,
+    customer_orders: Any = None,
+    session_key: str | None = None,
+) -> bool:
+    """True si un pedido anterior de la persona cuenta como compra.
+
+    `customer_orders` + `session_key`: los pedidos de su número en Medusa
+    (`CustomerOrdersPort`). Levanta `FirstPurchaseUnknown` si Medusa no
+    confirmó un pedido que podría contar. Sin `order_facts` (no hay cómo
+    mirar), un pedido registrado en la conversación cuenta."""
+    current = (get_active_episode(metadata) or {}).get("order_id")
+    if customer_orders is not None and session_key:
+        try:
+            orders = await asyncio.wait_for(customer_orders.orders_of(session_key), timeout=ORDER_FACTS_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — Medusa lento o caído: no se adivina
+            raise FirstPurchaseUnknown(f"los pedidos de la persona no respondieron: {type(exc).__name__}") from exc
+        if any(_counts(fact) for fact in orders if fact.order_id != current):
+            return True
     ids = previous_order_ids(metadata)
     if not ids:
         return False
@@ -70,7 +98,7 @@ async def bought_before(metadata: dict[str, Any], order_facts: Any = None) -> bo
         if fact is None:
             unknown = unknown or order_id in snapshot.unresolved
             continue
-        if fact.stage != "cancelled" and not fact.is_test:
+        if _counts(fact):
             return True
     if unknown:
         raise FirstPurchaseUnknown("un pedido anterior no se pudo confirmar en Medusa")

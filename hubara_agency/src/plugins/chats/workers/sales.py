@@ -182,6 +182,7 @@ _catalog = get_catalog_client()
 # SOLO a esas combinaciones producto + color + aroma.
 from src.sdk.connectorkit import (  # noqa: E402
     get_coupon_sales_reader,
+    get_customer_orders_port,
     get_order_facts_port,
     get_promo_quota_store,
     get_promotions_port,
@@ -204,6 +205,18 @@ def _order_facts_port():
         return None
 
 
+def _customer_orders_port():
+    """Los pedidos de la PERSONA en Medusa (todos los de su número), para el
+    mismo cupón: un pedido de otra conversación también es «ya compró». Se
+    resuelve al armar la tool; si no se puede, None y decide lo que registró
+    la conversación."""
+    try:
+        return get_customer_orders_port()
+    except Exception as exc:  # noqa: BLE001 — sin Medusa la tool degrada
+        logger.warning("Pedidos de la persona no disponibles para el cupón de bienvenida: {}", exc)
+        return None
+
+
 register_tool_extension(
     "sales.list_promotions",
     lambda workspace: ListPromotionsTool(
@@ -214,6 +227,7 @@ register_tool_extension(
         sales=_coupon_sales,
         metadata_store=build_session_metadata_store(),
         order_facts=_order_facts_port(),
+        customer_orders=_customer_orders_port(),
     ),
 )
 register_tool_extension(
@@ -226,6 +240,7 @@ register_tool_extension(
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
         order_facts=_order_facts_port(),
+        customer_orders=_customer_orders_port(),
     ),
 )
 
