@@ -2844,8 +2844,9 @@ class PresentVariantPickerTool(ToolBase):
         f"cuando vayas a presentar 4 o más opciones de {_V['variant_dimensions']} de un "
         "producto. El emoji por opción se asigna automáticamente desde el "
         "registry Hubara — **tú NO pasas emojis, solo el nombre literal "
-        "del envelope**. Si el cliente ya eligió la variante, NO uses esta "
-        "tool — continúa hacia el cierre."
+        "del envelope**. Con `handle`, el cliente ve TODAS las opciones del "
+        "producto: el sistema agrega las que no pases. Si el cliente ya eligió "
+        "la variante, NO uses esta tool — continúa hacia el cierre."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -3020,6 +3021,16 @@ class PresentVariantPickerTool(ToolBase):
                     ),
                 }, ensure_ascii=False)
 
+        # El selector de UN producto muestra todas sus opciones: el cliente lo
+        # lee como todo lo que hay (caso del 2026-10-09: salieron 3 de los 11
+        # colores, no el café de la foto que tenía delante, y preguntó «¿no
+        # viene en este color?»). Lo que el LLM no pasó va al final.
+        added: list[str] = []
+        if handle and valid_labels is not None:
+            shown = {lbl.casefold() for lbl in labels}
+            added = [lbl for lbl in valid_labels if lbl.casefold() not in shown]
+            labels = labels + added
+
         # Cupón con cupo en este producto: sus combinaciones van ARRIBA
         # (conversación de prueba del 2026-09-24: salieron los 11 aromas y el
         # cupón valía en 5 combinaciones).
@@ -3058,6 +3069,12 @@ class PresentVariantPickerTool(ToolBase):
                 "catálogo y NO se mostraron: "
                 + ", ".join(removed_invalid)
                 + ". No las ofrezcas ni las aceptes si el cliente las pide."
+            )
+        if added:
+            envelope["added_options"] = added
+            envelope["summary"] += (
+                " El cliente ve TODAS las opciones del producto: se agregaron "
+                "las que no pasaste (" + ", ".join(added) + ")."
             )
         if coupon is not None:
             envelope["summary"] += coupon["summary"]
