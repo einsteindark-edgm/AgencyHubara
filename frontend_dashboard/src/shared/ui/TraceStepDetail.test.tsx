@@ -179,6 +179,41 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText("typesafe/jev-1.13")).toBeInTheDocument();
   });
 
+  // Turno 1 de …7392 (2026-10-08): el modelo pidió la lista de productos y el
+  // cliente escribió antes de que corriera.
+  const cutBeforeTools: TraceStep[] = [
+    { i: 5, at_ms: 0, dur_ms: 1867, kind: "llm", round: 2, finish: "tool_calls", tool_calls: ["present_products"], text_fate: "none" },
+    {
+      i: 6,
+      at_ms: 1867,
+      kind: "cut",
+      reason: "checkpoint_a",
+      skipped: [{ name: "present_products", args: { intro_text: "Esta es la colección 🎃", handles: ["calabaza", "momia"] } }],
+    },
+  ];
+
+  it("lo que pidió el modelo y no corrió dice que no se ejecutó y con qué iba", () => {
+    show(cutBeforeTools, 1); // Modelo → Bot: pide mostrar productos
+
+    expect(screen.getByText("no se ejecutó: el cliente escribió y el turno volvió a empezar")).toBeVisible();
+    expect(screen.getByText("Esta es la colección 🎃")).toBeVisible();
+  });
+
+  it("la flecha de lo que no corrió abre el corte: por qué se interrumpió y qué no alcanzó a hacer", () => {
+    show(cutBeforeTools, 3); // Bot ⇢ Herramientas: no se ejecutó
+
+    expect(screen.getByText("Por qué se interrumpió")).toBeVisible();
+    expect(screen.getByText("No alcanzó a ejecutar")).toBeVisible();
+    expect(screen.getByText("present_products")).toBeVisible();
+    expect(screen.getByText("Esta es la colección 🎃")).toBeVisible();
+  });
+
+  it("el texto que retuvo el contrato del turno lo dice en palabras", () => {
+    show([{ i: 1, at_ms: 0, dur_ms: 1400, kind: "llm", round: 2, finish: "stop", tool_calls: [], text_fate: "discarded_contract", text: "Tenemos 4 piezas" }], 1);
+
+    expect(screen.getByText("No se envió: lo retuvo el contrato del turno")).toBeVisible();
+  });
+
   it("el corte antes de grabar dice que la respuesta no salió y que el turno vuelve a empezar (ráfagas, 2026-10-06)", () => {
     show([{ i: 1, at_ms: 0, kind: "cut", reason: "before_record", text: "¿Me confirmas el barrio?" }], 0);
 
