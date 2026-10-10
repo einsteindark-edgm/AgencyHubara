@@ -936,13 +936,18 @@ async def _dispatch_intent(
             ),
         )
         if media_log is not None and result and result.ok and result.wa_message_id:
-            media_log.append({
+            entry = {
                 "wa_message_id": result.wa_message_id,
                 "handle": params.get("handle"),
                 "title": params.get("title"),
                 "image_url": link,
                 "label": params.get("design"),
-            })
+            }
+            # El color de la vela de la foto (caso 2026-10-09: «¿no viene en
+            # este color?» citando la foto): la cita lo nombra.
+            if params.get("color"):
+                entry["color"] = params["color"]
+            media_log.append(entry)
         return result
 
     if kind == "payment_instructions":
@@ -1345,19 +1350,19 @@ async def _dispatch_intent(
         labeled_images = params.get("images")
         if labeled_images:
             gallery = [
-                (img.get("url"), img.get("label"))
+                (img.get("url"), img.get("label"), img.get("color"))
                 for img in labeled_images
                 if img.get("url")
             ]
         else:
-            gallery = [(url, None) for url in (params.get("image_urls") or [])]
+            gallery = [(url, None, None) for url in (params.get("image_urls") or [])]
         gallery = gallery[:_GALLERY_MAX_IMAGES]
         if not gallery:
             return None
         lead_caption = params.get("lead_caption")
         last_result = None
         all_ok = True
-        for idx, (url, label) in enumerate(gallery):
+        for idx, (url, label, color) in enumerate(gallery):
             if idx > 0:
                 # Pausa para que no se vea robótico (burst de imágenes).
                 # El @with_heartbeat sigue dando keepalive aunque haya sleep.
@@ -1384,13 +1389,16 @@ async def _dispatch_intent(
                 and result.ok
                 and result.wa_message_id
             ):
-                media_log.append({
+                entry = {
                     "wa_message_id": result.wa_message_id,
                     "handle": params.get("handle"),
                     "title": params.get("title"),
                     "image_url": url,
                     "label": label,
-                })
+                }
+                if color:
+                    entry["color"] = color  # la cita de esta foto lo nombra
+                media_log.append(entry)
             last_result = result
             if not result or not result.ok:
                 all_ok = False

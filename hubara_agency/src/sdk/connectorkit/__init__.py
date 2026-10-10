@@ -83,6 +83,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PhotoPick": "src.platform.vision.photo_match",
     "FakePhotoMatchAdapter": "src.platform.vision.photo_match",
     "NullPhotoMatchAdapter": "src.platform.vision.photo_match",
+    # El color de la vela en una foto del catálogo (caso 2026-10-09):
+    "PhotoColorPort": "src.platform.vision.photo_color",
+    "ColorPick": "src.platform.vision.photo_color",
+    "FakePhotoColorAdapter": "src.platform.vision.photo_color",
+    "NullPhotoColorAdapter": "src.platform.vision.photo_color",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
     # Central de la Graph API (host + versión únicos) — stdlib-pura, sin vendor:
     "META_GRAPH_API_VERSION": "src.platform.meta.graph",
@@ -179,6 +184,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_image_vision_port": "src.platform.vision.composition",
     "get_image_embedding_port": "src.platform.vision.composition",
     "get_photo_match_port": "src.platform.vision.composition",
+    "get_photo_color_port": "src.platform.vision.composition",
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_facts_port": "src.platform.orders.composition",

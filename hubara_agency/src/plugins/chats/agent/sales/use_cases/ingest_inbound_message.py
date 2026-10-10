@@ -25,6 +25,7 @@ isinstance check).
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
@@ -2967,6 +2968,10 @@ def _build_reply_kwargs(
     return kwargs
 
 
+#: Un nombre de archivo exportado con su resolución («hero desktop 2560x1440»).
+_EXPORT_FILE_NAME = re.compile(r"\b\d{3,5}\s*x\s*\d{3,5}\b")
+
+
 def build_photo_citation_note(
     context: dict[str, Any] | None, metadata: dict[str, Any]
 ) -> str | None:
@@ -2994,17 +2999,26 @@ def build_photo_citation_note(
     title = entry.get("title") or entry.get("handle") or "producto"
     handle = entry.get("handle")
     label = entry.get("label")
+    # El nombre del archivo de un banner («Copia de hero desktop 2560x1440»)
+    # no es un diseño (caso 2026-10-09): no se le presenta al LLM como tal.
+    if isinstance(label, str) and _EXPORT_FILE_NAME.search(label):
+        label = None
+    color = entry.get("color")
     detail = f"«{title}»"
     if label:
         detail += f", diseño «{label}»"
     if handle:
         detail += f" (handle: {handle})"
+    if isinstance(color, str) and color:
+        # «¿No viene en este color?» citando la foto (caso 2026-10-09).
+        detail += f"; la vela de esa foto es color «{color}»"
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         "El cliente escribió este mensaje RESPONDIENDO (citando) a una foto "
         f"que le enviaste: {detail}. Si dice 'esta', 'esa' o 'la de la "
         "foto', se refiere EXACTAMENTE a esa foto/diseño — no asumas otro "
         "diseño ni vuelvas a preguntar cuál."
+        + (" Si pregunta por «este color» o «el de la foto», es ese color." if isinstance(color, str) and color else "")
     )
 
 

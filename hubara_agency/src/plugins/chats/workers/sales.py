@@ -78,6 +78,7 @@ from src.plugins.chats.agent.sales.tools.catalog import (
     SearchProductsTool,
 )
 from src.plugins.chats.agent.sales.composition import (
+    build_photo_color_reader,
     build_session_history_reader,
     build_session_metadata_store,
     build_vault_dir,
@@ -357,10 +358,12 @@ register_tool_extension(
 # renderiza al cliente como mensaje WA nativo (imagen, botones, lista,
 # Flow, reacción, etc.) DESPUÉS del texto del LLM. Patrón documentado en
 # `workspace/TOOLS.md` sección "UI Tools — Decision tools (HU-002)".
+# El color de la vela de cada foto (caso 2026-10-09): se lee una vez por foto.
+_photo_colors = build_photo_color_reader()
 register_tool_extension(
     "sales.present_product_detail",
     lambda workspace: PresentProductDetailTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors
     ),
 )
 register_tool_extension(
@@ -416,7 +419,7 @@ register_tool_extension(
 register_tool_extension(
     "sales.present_product_gallery",
     lambda workspace: PresentProductGalleryTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors
     ),
 )
 # HU-002 / fix sesión a56bfaa9: botones genéricos. Usados en el saludo

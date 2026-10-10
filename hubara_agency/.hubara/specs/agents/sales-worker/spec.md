@@ -1712,6 +1712,24 @@ notas del turno en ambos casos.
 - WHEN escriben el operador y un cliente
 - THEN solo el turno del operador lleva las notas en el mensaje; el del cliente, en las instrucciones
 
+### Requirement: El bot sabe de qué color es la vela de la foto que manda (2026-10-09)
+
+`present_product_detail` y `present_product_gallery` SHALL preguntar el color de
+la vela de cada foto que mandan (lista cerrada = los colores del producto) y
+decírselo al bot; el color viaja en el intent y queda en
+`outbound_media_index`, así la cita de esa foto lo nombra. Se lee UNA vez por
+foto (`<snapshot>/photo_colors/`, alias `gemini-photo-match`) y se vuelve a
+leer solo si cambia la paleta del producto. Una foto que no permite decirlo
+(varias velas de colores distintos) no lleva color. La foto nunca espera más
+de `PHOTO_COLOR_TIMEOUT_S` (4 s) por el color.
+
+#### Scenario: «¿No viene en este color?» citando la foto
+
+- GIVEN el bot mandó la foto de Encanto Silvestre (una ardilla café) y la visión la leyó como «Café»
+- WHEN el cliente responde citando esa foto «¿no viene en este color?»
+- THEN la nota de la cita dice «la vela de esa foto es color «Café»» y que «este color» o «el de la foto» es ese color
+- AND la nota no presenta el nombre del archivo del banner («Copia de hero desktop 2560x1440») como un diseño
+
 ### Requirement: El bot ve lo que un colega le escribió al cliente (2026-10-09)
 
 Los mensajes del equipo desde el chat (`sender: human`) van solo al JSONL del
