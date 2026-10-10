@@ -655,7 +655,7 @@ y validarse DENTRO de la tool (activity), nunca en el workflow.
 - WHEN llega el cierre por ghosting
 - THEN el aviso de ghosting y el guion (`TOOLS.md`, `sales_script`) piden `INTERESADO` con un motivo que diga qué falta, sin escalar
 - AND el episodio sigue abierto con el pedido guardado y el Window Strategist lo retoma (gancho transaccional: 30–75 min de silencio)
-- AND ningún silencio pasa solo al equipo (decisión del operador); `CONFIRMADO_SIN_DATOS` + relevo queda solo si una lectura del paquete `cierre` lo elige, hasta su versión nueva
+- AND ningún silencio pasa solo al equipo (decisión del operador); desde `ventas-6` la lectura del paquete `cierre` también decide `INTERESADO` cuando Jev lee «confirmó sin datos» (con `ventas-5` todavía era `CONFIRMADO_SIN_DATOS` + relevo)
 
 ### Requirement: Lo que no salió, el LLM no lo recuerda (run b06636a6 → 5ed9af2d)
 
