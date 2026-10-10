@@ -65,6 +65,8 @@ class Tracker:
     def __init__(self) -> None:
         self.build_prompt_calls: list[BuildPromptInput] = []
         self.llm_calls: int = 0
+        # Lo que recibió el modelo en cada llamada, en orden.
+        self.llm_inputs: list[list[dict]] = []
         self.send_whatsapp_calls: list[tuple[str, str]] = []
         # Por envío: si el workflow dijo que el texto lo decidió el motor (V2).
         self.send_decided_by_engine: list[bool] = []
@@ -215,6 +217,7 @@ def _make_fake_activities(
     @activity.defn(name="llm_chat")
     async def fake_llm(input: LLMChatInput) -> LLMResponseData:
         tracker.llm_calls += 1
+        tracker.llm_inputs.append(list(input.messages))
         # Hook por número de llamada (1-based): permite al test inyectar un
         # side-effect MIENTRAS el "LLM piensa" (ej. signalear el workflow con
         # un mensaje nuevo del cliente — Fase 1 interrupción). El hook corre

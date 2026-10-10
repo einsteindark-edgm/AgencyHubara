@@ -70,6 +70,8 @@ def _promotion_summary(p: dict[str, Any]) -> str:
 
 class ListPromotionsTool(ToolBase):
     name = "list_promotions"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Lista los cupones/promociones VIGENTES (código, descuento, productos a "
         "los que aplica, vigencia). Úsala cuando el cliente pregunta si hay "

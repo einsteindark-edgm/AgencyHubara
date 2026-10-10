@@ -1217,6 +1217,59 @@ hora de Bogotá es `clock`; las demás notas del turno, `turn_context`).
 - WHEN el cliente contesta mientras el turno termina (el outbox de Meta, la traza)
 - THEN su mensaje forma el turno siguiente SIN la nota de continuación: es su respuesta
 
+### Requirement: El reinicio no repite lo que ya leyó y la nota del contrato dice qué falta (2026-10-09)
+
+Turno 1 de …7392 (2026-10-08, bot nuevo): el modelo buscó la colección de
+Halloween (`search_products`) y pidió la lista con botones (`present_products`);
+el cliente escribió («Que viene incluido») antes de que corriera y el turno
+volvió a empezar desde cero. El reinicio repitió la búsqueda (una ronda más,
+~2 s y ~29 mil tokens), contestó con un texto que listaba los productos, la
+segunda puerta lo retuvo con «… No le escribas al cliente hasta tener el dato
+de la herramienta» y el modelo, que ya tenía el dato, volvió a escribir el
+mismo texto: el catálogo con botones no salió. El bot nuevo
+(`HubaraSalesSessionWorkflowV2`):
+- SHALL pasarle al reinicio de un turno cortado (Checkpoint A o antes de
+  grabar) las llamadas a las tools que solo leen (`sales/read_only_tools.py`:
+  `search_products`, `get_product_by_handle`, `list_categories`,
+  `list_promotions`, `check_order_status`, `load_skill`; cada clase lo declara
+  con `read_only = True`), cada una con su resultado, si no falló. El modelo
+  las ve como hechas y no las repite, cuentan como usadas para el contrato
+  del turno, quedan en el historial del turno y la traza las muestra (paso
+  `carry`: «ya tenía: …»). Lo que muestra o cambia algo (las tarjetas,
+  `set_order_slot`, `send_reply`) no viaja: el mensaje nuevo puede cambiar
+  qué hay que hacer;
+- SHALL decirle al modelo que su respuesta no salió también cuando la segunda
+  puerta retiene un texto suelto («Tu respuesta NO se envió. [CONTRATO DEL
+  TURNO] …»), como ya lo hacía con `send_reply`;
+- SHALL cerrar la nota de la segunda puerta según lo que falta: si la fila
+  acepta una tool que solo lee, pide un dato («No le escribas al cliente hasta
+  tener el dato de la herramienta.»); si no, pide mostrarle algo al cliente
+  («Esa herramienta es la que se lo muestra al cliente: llámala en esta misma
+  respuesta, tu texto solo no basta.»). Si faltan de las dos, las dos frases.
+El V1 no cambia. Las sesiones vivas del V2 re-juegan igual: el reinicio con
+lecturas va detrás del gate `restart-carries-reads-v1` (dentro de
+`run_agent_turn`), protegido por dos historias congeladas con control negativo.
+El «Paso a paso» dibuja lo que el modelo pidió y el corte no dejó correr como
+«no se ejecutó» (PR #419).
+
+#### Scenario: El cliente escribe después de la búsqueda
+
+- GIVEN el modelo buscó en el catálogo y está pensando la siguiente ronda
+- WHEN el cliente escribe y el turno vuelve a empezar
+- THEN la búsqueda no se repite: el modelo la recibe hecha y responde con los dos mensajes
+
+#### Scenario: Lo que el turno cortado iba a mostrar no viaja
+
+- GIVEN el modelo pidió la lista de productos y anotó el producto en el pedido
+- WHEN el turno se corta antes de que la lista salga
+- THEN el reinicio recibe solo la búsqueda; la lista y la anotación las decide de nuevo
+
+#### Scenario: El contrato pide el catálogo y el modelo contesta con texto
+
+- GIVEN la fila del contrato solo acepta tools que le muestran algo al cliente (`present_products`) y el modelo ya tiene los productos
+- WHEN cierra con un texto que los lista
+- THEN el texto no sale y la nota le dice que no se envió y que esa herramienta es la que se los muestra
+
 ### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
 
 Cada ítem del carrito de WhatsApp (`product_retailer_id`: SKU o id de variante)

@@ -20,6 +20,15 @@ export interface RequestedCall {
   name: string;
   /** El paso que ejecutó ese pedido; null si la traza no lo trae. */
   step: TraceStep | null;
+  /** El corte no lo dejó correr, con los argumentos que guardó (vacíos en
+   *  una traza anterior al 2026-10-09). */
+  skipped?: { args: Record<string, unknown> };
+}
+
+/** Lo que el modelo pidió y un corte no dejó correr. */
+export interface SkippedCall {
+  name: string;
+  args: Record<string, unknown>;
 }
 
 export interface ModelRound {
@@ -72,16 +81,50 @@ function previousLlm(steps: TraceStep[], before: number): number {
   return -1;
 }
 
+function requestedNames(step: TraceStep | undefined): string[] {
+  return Array.isArray(step?.tool_calls) ? step.tool_calls.filter((n): n is string => typeof n === "string") : [];
+}
+
+/** El corte que no deja correr lo pedido: el cliente escribió mientras el
+ *  modelo pensaba (Checkpoint A, ANTES de ejecutar el paso). Los demás cortes
+ *  pasan después de las herramientas. */
+const CUT_BEFORE_TOOLS = "checkpoint_a";
+
+/**
+ * Lo que el modelo pidió y el corte `cutIndex` no dejó correr (turno 1 de
+ * …7392, 2026-10-08: `present_products` no se veía en el diagrama). Desde el
+ * 2026-10-09 el corte lo guarda con sus argumentos (`skipped`); en una traza
+ * anterior sale de la ronda del modelo que lo precede, sin argumentos.
+ */
+export function skippedByCut(steps: TraceStep[], cutIndex: number): SkippedCall[] {
+  const cut = steps[cutIndex];
+  if (cut?.kind !== "cut" || cut.reason !== CUT_BEFORE_TOOLS) return [];
+  if (Array.isArray(cut.skipped)) {
+    return cut.skipped.map(obj).filter((c) => str(c.name)).map((c) => ({ name: str(c.name), args: obj(c.args) }));
+  }
+  const llm = previousLlm(steps, cutIndex);
+  if (llm === -1 || steps.slice(llm + 1, cutIndex).some((s) => s.kind === "tool")) return [];
+  return requestedNames(steps[llm]).map((name) => ({ name, args: {} }));
+}
+
 export function modelRound(steps: TraceStep[], stepIndex: number): ModelRound {
-  const step = steps[stepIndex];
-  const names = Array.isArray(step?.tool_calls) ? step.tool_calls.filter((n): n is string => typeof n === "string") : [];
-  const rest = steps.slice(stepIndex + 1, nextLlm(steps, stepIndex));
+  const end = nextLlm(steps, stepIndex);
+  const rest = steps.slice(stepIndex + 1, end);
   const tools = rest.filter((s) => s.kind === "tool");
+  const cutAt = steps.findIndex((s, i) => i > stepIndex && i < end && s.kind === "cut");
+  const skipped = cutAt === -1 ? [] : skippedByCut(steps, cutAt);
   const used = new Set<TraceStep>();
-  const calls = names.map((name) => {
+  const usedSkips = new Set<SkippedCall>();
+  const calls = requestedNames(steps[stepIndex]).map((name): RequestedCall => {
     const found = tools.find((t) => t.name === name && !used.has(t)) ?? null;
-    if (found) used.add(found);
-    return { name, step: found };
+    if (found) {
+      used.add(found);
+      return { name, step: found };
+    }
+    const skip = skipped.find((c) => c.name === name && !usedSkips.has(c));
+    if (!skip) return { name, step: null };
+    usedSkips.add(skip);
+    return { name, step: null, skipped: { args: skip.args } };
   });
   return { calls, after: rest.filter((s) => s.kind === "guard" || s.kind === "cut" || s.kind === "restart") };
 }
