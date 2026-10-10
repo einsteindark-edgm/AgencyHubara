@@ -1,5 +1,9 @@
 # yaml-language-server: $schema=../../../../../../../schemas/decision-turn.schema.json
 #
+# El turno del paquete `ventas-6`: el de `ventas-5` con la política `turno-v5`,
+# la fila `catalogo` del contrato y el cuestionario `rafaga-v7` (venta del
+# 2026-10-09, Encanto Silvestre) con la fila de `aroma.notas`. Ver `bundle.yaml`.
+#
 # El turno del paquete `ventas-4`: el de `ventas-3` con la política `turno-v4`
 # (2026-10-07, ficha de la Calabaza): en la etapa de descubrimiento, si el
 # cliente escribe desde un producto (ficha del catálogo o página de la web),
@@ -57,7 +61,7 @@ thresholds:
 # el tiempo quedó sin respuesta. Con esta pregunta el contrato pide la tarjeta
 # solo cuando preguntan el costo (el banco de referencia califica por id).
 questionnaire:
-  id: rafaga-v6
+  id: rafaga-v7
 
   topics:
     - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos"}
@@ -80,7 +84,9 @@ questionnaire:
     - {id: promocion, label: "promociones o cupones", hint: "pregunta por promociones, descuentos o un cupón"}
     # ventas-3: etiqueta descriptiva sin imperativo (es una opción del
     # clasificador y la lee ③); la instrucción de recomendar está en el guion.
-    - {id: gusto, label: "lo que le gusta o para quién es (espera una recomendación)", hint: "dice qué le gusta o para quién es (un gusto, un regalo, una persona o una ocasión)"}
+    # ventas-6 (rafaga-v7): «me regalas…» es como se pide algo en Colombia
+    # (2026-10-09: «Me regalas también la de encanto silvestre» se leía `gusto` 0,95).
+    - {id: gusto, label: "lo que le gusta o para quién es (espera una recomendación)", hint: "dice qué le gusta o para quién es (un gusto, un regalo, una persona o una ocasión); NO cuenta «me regalas…» ni «regálame…»: así se pide un producto en Colombia, es pedir algo, no un regalo"}
 
   questions:
     - each_topic:
@@ -120,6 +126,13 @@ questionnaire:
       when: {has_context: true}
       text: "¿El precio de lo que el cliente pregunta ya aparece en lo que vio antes (CONTEXTO)?"
       criteria: {"true": "sí, ya lo vio", "false": "no aparece"}
+    # ventas-6 (rafaga-v7, 2026-10-09, turno 9): «¿Este qué esencia tiene?»
+    # citando la recomendación del Caballero de la noche. Preguntar a qué huele
+    # un aroma no es pedir la lista ni elegir.
+    - id: aroma.notas
+      kind: noul
+      text: "¿En ESTE TURNO el cliente pregunta cómo huele un aroma concreto (a qué huele, qué esencia o qué notas tiene), lo nombre o cite el mensaje donde aparece, en vez de pedir los aromas que hay o elegir uno?"
+      criteria: {"true": "sí, pregunta a qué huele un aroma concreto", "false": "no (pide ver los aromas, elige uno o habla de otra cosa)"}
     - id: envio.costo
       kind: noul
       text: "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?"
@@ -309,6 +322,12 @@ contract:
   - topic: variante
     any_of: [present_variant_picker, present_product_detail, get_product_by_handle]
     nudge: "Los colores y aromas salen del catálogo: para que escoja uno usa present_variant_picker con el handle del producto; para mostrarle el producto, present_product_detail."
+  # ventas-6 (2026-10-09, turno 9): preguntar a qué huele un aroma se responde
+  # con sus notas (`notas_olfativas`), en cualquier etapa: no pide el selector
+  # ni la ficha (antes la segunda puerta llevaba a mandar otra vez los aromas).
+  - topic: aroma
+    when: "'aroma.notas' in p && p['aroma.notas'] >= th['given']"
+    any_of: []
   - topic: aroma
     when: "inp.stage == 'etapa_variantes'"
     any_of: [present_variant_picker]
@@ -383,6 +402,10 @@ examples:
     # los aromas que pidió ver, sí.
     - {topics: [aroma, gusto], input: {stage: etapa_descubrimiento}, expect: [{topic: aroma, any_of: [present_variant_picker, present_product_detail, get_product_by_handle]}]}
     - {topics: [gusto], expect: []}
+    # ventas-6: a qué huele un aroma no pide herramienta, en ninguna etapa; elegirlo sí.
+    - {topics: [aroma], answers: {aroma.notas: 0.85}, input: {stage: etapa_variantes}, expect: []}
+    - {topics: [aroma], answers: {aroma.notas: 0.85}, input: {stage: etapa_descubrimiento}, expect: []}
+    - {topics: [aroma], answers: {aroma.notas: 0.84}, input: {stage: etapa_variantes}, expect: [{topic: aroma, any_of: [present_variant_picker]}]}
   verify:
     - {topics: [precio, envio], answers: {cover.precio: 0.70, cover.envio: 0.95}, expect: {decision: send}}
     - {topics: [precio, envio], answers: {cover.precio: 0.30000000000000004, cover.envio: 0.5}, expect: {decision: complement, missing: [precio]}}

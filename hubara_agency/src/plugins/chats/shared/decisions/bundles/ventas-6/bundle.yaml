@@ -14,6 +14,16 @@
 # Y la fila `catalogo` del contrato (turno 1 de …7392, 2026-10-08): pide
 # `present_products` o la galería (ya no `list_categories`, que no le muestra
 # nada al cliente) y que el texto vaya en `intro_text`.
+# Y el cuestionario del turno `rafaga-v7` con su fila del contrato (venta del
+# 2026-10-09, Encanto Silvestre):
+#   - «Me regalas también la de encanto silvestre» es PEDIR el producto: Jev lo
+#     leía como `gusto` (un regalo) y el bot hacía una recomendación que nadie pidió;
+#   - preguntar a qué huele un aroma (`aroma.notas`, pregunta nueva) no pide el
+#     selector: «¿Este qué esencia tiene?» citando el Caballero de la noche se
+#     responde con sus notas, no mandando otra vez la lista.
+#   Sonda (Jev real, frases sintéticas): «me regalas…» `gusto` 0,45–0,94 → 0,10;
+#   regalos de verdad 0,90–0,96; `aroma.notas` 0,96–0,98 al preguntar a qué huele
+#   y 0,02–0,05 al elegir o pedir la lista.
 #
 # ventas-5:
 # Es `ventas-4@4` con dos preguntas reescritas (incidente del 2026-10-09 y su

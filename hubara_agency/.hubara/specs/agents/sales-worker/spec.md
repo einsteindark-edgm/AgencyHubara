@@ -1839,6 +1839,18 @@ Cuando el cliente responde citando un mensaje (`context.id` del webhook), el ing
 - WHEN responde «…» citando ese mensaje
 - THEN el evento queda con la cita resuelta y el turno lleva la nota con el texto del comprobante
 
+#### Scenario: Preguntar a qué huele el aroma citado no trae otra vez la lista (`ventas-6`, cuestionario `rafaga-v7`)
+
+- GIVEN el bot recomendó el Caballero de la noche y el cliente cita esa burbuja: «¿Este qué esencia tiene?»
+- WHEN Jev lee el turno con la cita (`aroma.notas` ≥ `given`)
+- THEN la fila del asunto `aroma` no pide herramienta: el bot responde con las notas del aroma (`notas_olfativas`) y la segunda puerta no lo empuja al selector
+- AND con `ventas-5` la misma lectura pedía el selector o la ficha
+
+#### Scenario: «Me regalas…» es pedir, no un regalo (`ventas-6`, cuestionario `rafaga-v7`)
+
+- WHEN el cliente escribe «Me regalas también la de encanto silvestre»
+- THEN Jev no lo lee como `gusto` (sonda: 0,94 → 0,10) y el turno no pide recomendar; «es para regalarle a mi mamá» sigue siendo `gusto` (0,95)
+
 ### Requirement: El cliente que escribe justo después de comprar está en post-venta (2026-10-09)
 
 Cuando un mensaje abre un episodio nuevo y el anterior cerró con un pedido (COMPRA_EXITOSA, CONFIRMADO_PAGO_PENDIENTE, CONFIRMADO_SIN_DATOS) de los últimos 30 días, el ingest SHALL leer ese pedido en OrderFacts (con tope de 3 s; nunca la copia del vault). Si el pedido sigue en curso (ni entregado ni cancelado):

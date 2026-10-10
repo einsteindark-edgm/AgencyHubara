@@ -22,6 +22,15 @@ modelo (no le muestra nada al cliente), y su nota no decía dónde va el texto.
 Ahora pide `present_products` (o la galería) y que lo que iba a escribir vaya
 en `intro_text`.
 
+Y el cuestionario del turno `rafaga-v7` (venta del 2026-10-09, Encanto
+Silvestre): «Me regalas también la de encanto silvestre» es PEDIR el producto
+(Jev lo leía `gusto` 0,95 y el bot recomendó dos aromas que nadie pidió), y
+preguntar a qué huele un aroma («¿Este qué esencia tiene?» citando el
+Caballero de la noche) no pide el selector: pregunta nueva `aroma.notas` y su
+fila del contrato, sin herramienta. Sonda con Jev real (frases sintéticas):
+«me regalas…» 0,45–0,94 → 0,10; regalos de verdad 0,90–0,96; `aroma.notas`
+0,96–0,98 al preguntar a qué huele y 0,02–0,05 al elegir o pedir la lista.
+
 En un clon de forge `ventas-6` no viaja (experimento de esta tienda): se salta.
 """
 from __future__ import annotations
@@ -46,7 +55,7 @@ IN_FORGE_CLONE = not (Path(__file__).resolve().parents[6] / "forge").is_dir()
 #: Lo que cambia cada archivo (llaves de primer nivel); el resto es idéntico.
 CHANGED = {
     "bundle.yaml": {"id", "version"},
-    "turn.yaml": {"policy", "contract", "examples"},
+    "turn.yaml": {"policy", "questionnaire", "contract", "examples"},
     "capabilities/cierre.yaml": {"decide", "examples"},
 }
 TEAM_CHECKS = "confirma que el equipo revisa el pago"
@@ -89,10 +98,19 @@ def test_ventas_6_is_ventas_5_with_turno_v5_and_the_close_table_and_nothing_else
         assert changed == CHANGED.get(rel, set()), rel
     assert {**_load(V6 / "bundle.yaml"), "id": "ventas-5", "version": 5} == _load(V5 / "bundle.yaml")
     assert (_load(V5 / "turn.yaml")["policy"], _load(V6 / "turn.yaml")["policy"]) == ("turno-v4", "turno-v5")
-    # Del contrato cambia solo la fila del catálogo (y su ejemplo).
+    # Del contrato cambian la fila del catálogo y la nueva del aroma (y sus ejemplos).
     old_turn, new_turn = _load(V5 / "turn.yaml"), _load(V6 / "turn.yaml")
     assert [r for r in old_turn["contract"] if r["topic"] != "catalogo"] == [
-        r for r in new_turn["contract"] if r["topic"] != "catalogo"
+        r for r in new_turn["contract"] if r["topic"] != "catalogo" and "aroma.notas" not in r.get("when", "")
+    ]
+    # Del cuestionario: la pista de `gusto` y la pregunta nueva, con otro id.
+    assert (old_turn["questionnaire"]["id"], new_turn["questionnaire"]["id"]) == ("rafaga-v6", "rafaga-v7")
+    old_q = {q["id"]: q for q in old_turn["questionnaire"]["questions"] if "id" in q}
+    new_q = {q["id"]: q for q in new_turn["questionnaire"]["questions"] if "id" in q}
+    assert set(new_q) - set(old_q) == {"aroma.notas"}
+    assert all(old_q[k] == new_q[k] for k in old_q)
+    assert [t for t in new_turn["questionnaire"]["topics"] if t["id"] != "gusto"] == [
+        t for t in old_turn["questionnaire"]["topics"] if t["id"] != "gusto"
     ]
     assert {k: v for k, v in old_turn["examples"].items() if k != "contract"} == {
         k: v for k, v in new_turn["examples"].items() if k != "contract"
@@ -240,3 +258,66 @@ async def test_with_ventas_5_an_unfinished_order_goes_to_the_team(
     notice = await _ghost_notice(monkeypatch, _isolate_vault_dir, "ventas-5")
 
     assert notice == build_decided_ghosting_prompt("CONFIRMADO_SIN_DATOS")
+
+
+# ── la venta del 2026-10-09: «me regalas» y «¿Este qué esencia tiene?» ────────
+
+
+def _gusto_hint(bundle: Path) -> str:
+    return next(t for t in _load(bundle / "turn.yaml")["questionnaire"]["topics"] if t["id"] == "gusto")["hint"]
+
+
+def test_me_regalas_is_asking_for_something_not_a_gift() -> None:
+    _need_v6()
+
+    hint = _gusto_hint(V6)
+
+    assert hint.startswith(_gusto_hint(V5).removesuffix(")"))
+    assert "NO cuenta «me regalas…» ni «regálame…»" in hint and "es pedir algo, no un regalo" in hint
+
+
+QUOTED = "Si prefieres algo más cálido y envolvente para la noche, el *Caballero de la noche* es el más elegido."
+
+
+async def _aroma_rows(monkeypatch: pytest.MonkeyPatch, bundle: str, *, notas: float, stage: str) -> list[list[str]]:
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", bundle)
+    registry.reset()
+    answers = (
+        TypedAnswer(id="topic.aroma", kind="noul", p=0.91),
+        TypedAnswer(id="aroma.notas", kind="noul", p=notas),
+        TypedAnswer(id="thread.bot_asked", kind="choice", choice="pregunta_abierta",
+                    probs=(("pregunta_abierta", 0.9),), confidence=0.9),
+        TypedAnswer(id="thread.answer", kind="choice", choice="otra", probs=(("otra", 0.95),), confidence=0.95),
+    )
+    fake = FakePerceptionAdapter({a.id: a for a in answers})
+    monkeypatch.setattr(connectorkit, "get_perception_port", lambda _oracle: fake)
+    out = await engine.perceive(
+        PerceiveInput(session_id="wa_573001234567", profile="jev-v5",
+                      messages=[{"text": "Este que esencia tiene?", "ts_ms": 1_791_597_699_000}]),
+        context=TurnContext(window=Window(lines=(f"[asesor] {QUOTED}",), quoted=QUOTED),
+                            facts=("Etapa: variantes",), stage=stage),
+    )
+    assert out.ok, out.error
+    return [r["any_of"] for r in (out.tools or {}).get("required") or [] if r.get("topic") == "aroma"]
+
+
+@pytest.mark.parametrize("stage", ["etapa_variantes", "etapa_datos_envio", "etapa_descubrimiento"])
+async def test_asking_how_an_aroma_smells_does_not_push_the_picker(monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    _need_v6()
+
+    assert await _aroma_rows(monkeypatch, "ventas-6", notas=0.93, stage=stage) in ([], [[]])
+
+
+async def test_choosing_or_listing_aromas_still_goes_through_the_picker(monkeypatch: pytest.MonkeyPatch) -> None:
+    _need_v6()
+
+    rows = await _aroma_rows(monkeypatch, "ventas-6", notas=0.05, stage="etapa_variantes")
+
+    assert rows == [["present_variant_picker"]]
+
+
+async def test_with_ventas_5_the_same_question_pushed_the_picker(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lo que pasaba el 2026-10-09: por eso el arreglo va con el paquete."""
+    rows = await _aroma_rows(monkeypatch, "ventas-5", notas=0.93, stage="etapa_variantes")
+
+    assert rows == [["present_variant_picker"]]
