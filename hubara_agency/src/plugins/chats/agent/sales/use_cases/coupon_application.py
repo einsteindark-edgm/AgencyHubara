@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from src.sdk.connectorkit import (
     PromotionDTO,
@@ -32,7 +32,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
 
 #: Motivos pasajeros (Medusa o el cupo no respondieron): volver a intentarlo
 #: con `apply_coupon` tiene sentido. El resto es definitivo.
-TRANSIENT_REASONS = frozenset({"unavailable", "quota_unavailable"})
+TRANSIENT_REASONS = frozenset({"unavailable", "quota_unavailable", "first_purchase_unknown"})
 
 
 #: Por qué un cupón no se aplica — para que el bot se lo diga al cliente.
@@ -49,6 +49,14 @@ COUPON_REASON_TEXT = {
     "shipping_not_supported": (
         "Ese cupón es de envío y el envío lo cobra la transportadora a su tarifa, "
         "sin descuentos: no se aplica."
+    ),
+    "first_purchase_only": (
+        "Ese cupón es de bienvenida: aplica solo en la primera compra, y este "
+        "cliente ya nos compró antes."
+    ),
+    "first_purchase_unknown": (
+        "No pude confirmar si es su primera compra, así que no apliqué el cupón "
+        "de bienvenida."
     ),
 }
 
@@ -94,9 +102,15 @@ async def resolve_coupon_application(
     sales: Any,
     catalog: Any,
     now_ms: int,
+    bought_before: Callable[[], Awaitable[bool]] | None = None,
 ) -> CouponApplication:
     """Valida `code` contra Medusa y su cupo. No escribe nada: el que llama
-    decide dónde guardarlo (`store_coupon_application`)."""
+    decide dónde guardarlo (`store_coupon_application`).
+
+    `bought_before`: si el cliente ya compró (`first_purchase.bought_before`
+    sobre la conversación). Un cupón de primera compra NO se aplica sin él ni
+    si falla (falla cerrada): toda puerta nueva que valide cupones tiene que
+    poder mirarlo (L-32)."""
     normalized = normalize_coupon_code(code)
     try:
         active = await promotions.list_active()
@@ -112,6 +126,16 @@ async def resolve_coupon_application(
         return CouponApplication(normalized, resolution.reason or "not_found")
 
     promotion = resolution.promotion
+    if promotion.first_purchase_only:
+        # Caso del 2026-10-09: el descuento de bienvenida de la página.
+        if bought_before is None:
+            return CouponApplication(promotion.code, "first_purchase_unknown", promotion)
+        try:
+            already = await bought_before()
+        except Exception:  # noqa: BLE001 — no se adivina: el cupón no se aplica
+            return CouponApplication(promotion.code, "first_purchase_unknown", promotion)
+        if already:
+            return CouponApplication(promotion.code, "first_purchase_only", promotion)
     offer = await quota_offer(promotion, quotas=quotas, sales=sales, catalog=catalog)
     if offer.reason is not None:
         return CouponApplication(

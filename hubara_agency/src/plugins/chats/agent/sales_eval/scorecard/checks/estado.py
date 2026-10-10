@@ -208,7 +208,8 @@ def tag_08(traj: Trajectory, ctx: CheckContext) -> CheckResult:
 # «Te paso el formulario para los datos de envío» dos turnos seguidos sin el
 # formulario. El mismo detector del bot (`use_cases/promised_actions.py`):
 # lo prometido sale en ese turno (una tool que lo hizo o la red que lo mandó);
-# «tu pedido quedó registrado» exige una orden registrada.
+# «tu pedido quedó registrado» exige una orden registrada (en el episodio, o la
+# que abrió el episodio post-venta: `after_order`).
 
 
 @code_check("TAG-09")
@@ -222,7 +223,9 @@ def tag_09(traj: Trajectory, ctx: CheckContext) -> CheckResult:
             for kind in sorted(promised_kinds(text)):
                 promise = catalog[kind]
                 if kind == "registro":
-                    kept = registered_order_turn(traj, t.turn) is not None
+                    # El pedido de este episodio o el que el cliente acaba de
+                    # comprar (episodio post-venta, caso pedido #64).
+                    kept = registered_order_turn(traj, t.turn) is not None or traj.after_order_id is not None
                 else:
                     kept = bool(set(promise.intents) & set(t.intents)) or any(
                         t.tool_ok(name) for name in promise.tools

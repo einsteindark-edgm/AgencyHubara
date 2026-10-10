@@ -42,6 +42,8 @@ class LoadSkillTool(ToolBase):
     """Devuelve el contenido de una skill del workspace del agente."""
 
     name = "load_skill"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Carga una skill de conocimiento del workspace y devuelve su "
         "contenido para que lo uses en esta conversación. Úsala SOLO cuando "

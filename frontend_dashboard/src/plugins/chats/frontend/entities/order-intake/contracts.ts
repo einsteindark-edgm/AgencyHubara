@@ -69,6 +69,16 @@ export const paymentMethodSchema = z.enum([
   "cash_on_delivery",
 ]);
 
+/** El comprobante que el cliente ya mandó en este episodio (foto leída por la
+ *  visión o un PDF). Caso pedido #64: con él no se le piden los datos de pago. */
+export const paymentReceiptSchema = z.object({
+  media_id: z.string(),
+  /** `comprobante_pago` (foto) · `pdf_document`. */
+  kind: z.string(),
+  received_at_ms: z.number().nullable().default(null),
+  description: z.string().nullable().default(null),
+});
+
 export const orderSuggestionSchema = z.object({
   session_key: z.string(),
   phone_number: z.string(),
@@ -98,6 +108,8 @@ export const orderSuggestionSchema = z.object({
   catalog: z.array(catalogOptionSchema).default([]),
   /** La sesión YA tiene un pedido registrado (aviso anti-duplicado). */
   already_registered_order_id: z.string().nullable().default(null),
+  /** El cliente ya pagó: el formulario abre con los datos de pago apagados. */
+  payment_receipt: paymentReceiptSchema.nullable().default(null),
   model: z.string().default(""),
   /** El LLM no respondió: el formulario abre con lo que anotó el bot. */
   degraded: z.boolean().default(false),
@@ -123,6 +135,9 @@ export const createOrderResultSchema = z.object({
   /** Solo en el cálculo (dry run): el cupón aplicado (`null` = ninguno). */
   coupon_code: z.string().nullable().default(null),
   payment_instructions_sent: z.boolean().default(false),
+  /** Por qué NO salieron los datos de pago: `receipt_received` (el cliente ya
+   *  mandó su comprobante) · `operator` (el formulario lo apagó). */
+  payment_instructions_skipped: z.string().nullable().default(null),
   /** El intento quedó guardado y la reconciliación lo reintenta sola. */
   saved_for_retry: z.boolean().default(false),
 });
@@ -132,5 +147,6 @@ export type OrderIntakeShipping = z.infer<typeof orderIntakeShippingSchema>;
 export type OrderSuggestion = z.infer<typeof orderSuggestionSchema>;
 export type CatalogOption = z.infer<typeof catalogOptionSchema>;
 export type PaymentMethod = z.infer<typeof paymentMethodSchema>;
+export type PaymentReceipt = z.infer<typeof paymentReceiptSchema>;
 export type CreateOrderResult = z.infer<typeof createOrderResultSchema>;
 export type IntakeFieldSource = z.infer<typeof intakeFieldSourceSchema>;

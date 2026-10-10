@@ -460,7 +460,7 @@
    }
   },
   "ui_intents.PresentVariantPickerTool": {
-   "description": "Envía un mensaje de texto bonito al cliente con las opciones de variante (aromas / colores / tamaños), con un emoji distintivo por opción agrupadas por categoría. El cliente lee y **responde por texto** la que prefiere (ej: 'lavanda', 'el morado'). Úsala cuando vayas a presentar 4 o más opciones de aroma/color de un producto. El emoji por opción se asigna automáticamente desde el registry Hubara — **tú NO pasas emojis, solo el nombre literal del envelope**. Si el cliente ya eligió la variante, NO uses esta tool — continúa hacia el cierre.",
+   "description": "Envía un mensaje de texto bonito al cliente con las opciones de variante (aromas / colores / tamaños), con un emoji distintivo por opción agrupadas por categoría. El cliente lee y **responde por texto** la que prefiere (ej: 'lavanda', 'el morado'). Úsala cuando vayas a presentar 4 o más opciones de aroma/color de un producto. El emoji por opción se asigna automáticamente desde el registry Hubara — **tú NO pasas emojis, solo el nombre literal del envelope**. Con `handle`, el cliente ve TODAS las opciones del producto: el sistema agrega las que no pases. Si el cliente ya eligió la variante, NO uses esta tool — continúa hacia el cierre.",
    "name": "present_variant_picker",
    "parameters": {
     "properties": {

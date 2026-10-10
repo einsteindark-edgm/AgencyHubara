@@ -178,3 +178,24 @@ def test_stage_names_are_skill_dir_names() -> None:
         assert '"always": true' not in content, (
             f"{stage} debe ser always:false (se inyecta por etapa, no siempre)"
         )
+
+
+# ── Episodio que abre justo después de una compra (caso 2026-10-09, pedido #64) ──
+#
+# El humano vendió, «Confirmar pago» devolvió la conversación al bot y el
+# cliente escribió 6 minutos después: el episodio nuevo no tiene borrador, así
+# que salía descubrimiento y la guía pedía «ayúdale a escoger un producto».
+# Con el pedido aún en curso (el ingest lo marca: `after_order`), es post-venta.
+
+
+def test_a_new_episode_right_after_an_order_in_course_is_postcierre() -> None:
+    meta = {"episodes": [{"id": "ep_002", "opened_at_ms": 1, "after_order": {"order_id": "order_1"}}]}
+
+    assert resolve_funnel_stage(meta) == STAGE_POSTCIERRE
+
+
+def test_choosing_a_new_product_after_the_order_is_a_new_sale() -> None:
+    meta = _meta_with_slots({"producto": "luz-serena"})
+    meta["episodes"][0]["after_order"] = {"order_id": "order_1"}
+
+    assert resolve_funnel_stage(meta) == STAGE_VARIANTES

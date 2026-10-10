@@ -181,8 +181,53 @@ def build_ingest_use_case() -> IngestInboundMessage:
         photo_identifier=build_photo_identifier(catalog),
         # Texto antes de la foto: el workflow de ventas espera la foto.
         photo_notifier=load_session.notify_photo_reading,
+        # El cliente que escribe tras comprar: post-venta con el pedido real.
+        order_facts=build_order_facts_reader(),
     )
     return _INGEST_USE_CASE
+
+
+#: Tope para leer un pedido en el webhook: sin datos a tiempo, la nota de siempre.
+_ORDER_FACTS_TIMEOUT_S = 3.0
+
+
+def _order_facts_port() -> Any:
+    from src.sdk.connectorkit import get_order_facts_port
+
+    return get_order_facts_port()
+
+
+def build_order_facts_reader() -> Callable[[str], Awaitable[Any]]:
+    """OrderFacts de UN pedido (``None`` si Medusa no lo conoce), con tope:
+    el ingest corre en el webhook y nunca espera más que esto."""
+    import asyncio
+
+    async def read(order_id: str) -> Any:
+        snapshot = await asyncio.wait_for(_order_facts_port().get_facts([order_id]), timeout=_ORDER_FACTS_TIMEOUT_S)
+        return snapshot.facts.get(order_id)
+
+    return read
+
+
+def build_photo_color_reader() -> Callable[[str, str, Any], Awaitable[str | None]] | None:
+    """De qué color es la vela de una foto del catálogo (caso 2026-10-09:
+    «¿no viene en este color?» citando la foto de una ardilla café). Se lee
+    una vez por foto y queda junto al snapshot (`<snapshot>/photo_colors`).
+    None si la visión no se puede armar en este proceso: la foto va sin color.
+    Lo usan `present_product_detail` del worker y el de la app del operador."""
+    from src.sdk.catalogkit import color_of_photo, get_photo_color_store
+    from src.sdk.connectorkit import get_photo_color_port
+
+    try:
+        store, reader = get_photo_color_store(), get_photo_color_port()
+    except Exception as exc:  # noqa: BLE001 — el color es un extra
+        logger.warning("Sin lector del color de las fotos: {}", f"{type(exc).__name__}: {exc}"[:200])
+        return None
+
+    async def _read(url: str, title: str, palette: Any) -> str | None:
+        return await color_of_photo(url, title=title, palette=palette, store=store, reader=reader)
+
+    return _read
 
 
 def build_photo_identifier(catalog: Any) -> PhotoIdentifier:

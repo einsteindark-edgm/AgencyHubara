@@ -228,6 +228,14 @@ describe("TraceStepDetail", () => {
     expect(screen.queryByText(/vuelve a empezar/)).not.toBeInTheDocument();
   });
 
+  it("lo que el reinicio ya tenía dice qué consultas no repite", () => {
+    show([{ i: 1, at_ms: 0, kind: "carry", tools: ["search_products"] }], 0);
+
+    expect(screen.getByText("Lo que ya había consultado")).toBeVisible();
+    expect(screen.getByText("search_products")).toBeVisible();
+    expect(screen.getByText(/no se vuelve a pedir/)).toBeVisible();
+  });
+
   it("el reinicio dice cuánto esperó a que el cliente terminara de escribir", () => {
     show([{ i: 1, at_ms: 0, kind: "restart", attempt: 3, drained: 2, reason: "before_record", settle_ms: 1500 }], 0);
 

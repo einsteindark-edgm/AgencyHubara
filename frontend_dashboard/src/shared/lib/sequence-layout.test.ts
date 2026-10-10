@@ -275,6 +275,22 @@ describe("layoutSequence", () => {
     expect(rows[0].short).toBe("vuelve a empezar · esperó la foto");
   });
 
+  it("el reinicio que trae lo que ya había consultado lo dice (…7392, 2026-10-08)", () => {
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "restart", attempt: 1, drained: 1 },
+      { i: 1, at_ms: 5, kind: "carry", tools: ["search_products"] },
+    ]);
+
+    expect(rows[1]).toMatchObject({
+      from: 1,
+      to: 1,
+      status: "ok",
+      short: "ya tenía: buscar en el catálogo",
+      title: "No lo vuelve a consultar: Buscar en el catálogo",
+      kind: "Reinicio",
+    });
+  });
+
   it("una traza v1 sin tiempos deja el tiempo vacío y sigue dibujando", () => {
     const { rows } = layoutSequence([
       { i: 1, at_ms: null, kind: "inbound", messages: [{ text: "hola" }] },

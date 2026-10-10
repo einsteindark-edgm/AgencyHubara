@@ -209,6 +209,27 @@ class InboxMsg:
     is_handoff: bool = False
 
 
+# Turno 1 de …7392 (2026-10-08): el reinicio recibe lo que el intento cortado
+# ya leyó (la búsqueda del catálogo) en vez de repetirlo.
+CARRY_READS_PATCH = "restart-carries-reads-v1"
+
+
+@dataclass(frozen=True)
+class CarriedReads:
+    """Lo que un intento cortado ya leyó (turno 1 de …7392, 2026-10-08): las
+    llamadas a las tools que el caller dice que solo leen (`read_only_tools`),
+    con su resultado, y sus eventos para la traza. El reinicio las recibe
+    (`carried`) y no las repite. Lo que muestra o cambia algo no viaja: el
+    mensaje nuevo del cliente puede cambiar qué hay que hacer."""
+
+    messages: tuple[dict[str, Any], ...] = ()
+    events: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def names(self) -> list[str]:
+        return [str(e.get("name") or "") for e in self.events]
+
+
 @dataclass
 class TurnResult:
     """Resultado de un turno LLM-tool-LLM.
@@ -283,6 +304,9 @@ class TurnResult:
     # (los veredictos del egreso: qué texto sale, si se frenó, el saludo…).
     # None sin gancho: el turno de siempre (V1, remarketing, ETA).
     egress: dict[str, Any] | None = None
+    # Turno cortado (`interrupted`): lo que ya leyó, para el reinicio. None
+    # sin `read_only_tools` o sin lecturas. En memoria (replay-safe).
+    carried: CarriedReads | None = None
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -422,6 +446,40 @@ def _forget_outbound_texts(outbound_tool_texts: list[str], args: Any) -> None:
     for value in args.values():
         if isinstance(value, str) and value in outbound_tool_texts:
             outbound_tool_texts.remove(value)
+
+
+def _reads_to_carry(
+    added: list[dict[str, Any]], events: list[dict[str, Any]], read_only: frozenset[str]
+) -> CarriedReads | None:
+    """Las lecturas de un intento cortado (`added`: lo que el intento sumó a
+    `messages`): las llamadas a `read_only` que tienen su resultado y no
+    fallaron, cada una con su resultado, y sus eventos. Lo demás (lo que
+    muestra o cambia algo, las notas, el texto) no viaja. Puro."""
+    if not read_only:
+        return None
+    ok_ids = {
+        str(m.get("tool_call_id"))
+        for m in added
+        if m.get("role") == "tool"
+        and m.get("name") in read_only
+        and not (_try_parse_decision_payload(str(m.get("content") or "")) or {}).get("error")
+    }
+    kept: list[dict[str, Any]] = []
+    for message in added:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            calls = [c for c in message["tool_calls"] if str(c.get("id")) in ok_ids]
+            if calls:
+                kept.append({**message, "tool_calls": calls})
+        elif message.get("role") == "tool" and str(message.get("tool_call_id")) in ok_ids:
+            kept.append(message)
+    if not kept:
+        return None
+    reads = [
+        e for e in events
+        if e.get("name") in read_only
+        and not (_try_parse_decision_payload(str(e.get("result") or "")) or {}).get("error")
+    ]
+    return CarriedReads(messages=tuple(kept), events=tuple(reads))
 
 
 def _without_calls(recorded: list[dict[str, Any]], call_ids: list[str]) -> list[dict[str, Any]]:
@@ -909,8 +967,16 @@ async def run_agent_turn(
     turn_policy: TurnPolicy | None = None,
     egress: EgressHook | None = None,
     interrupt_before_record: bool = False,
+    read_only_tools: frozenset[str] = frozenset(),
+    carried: CarriedReads | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `read_only_tools` / `carried` (turno 1 de …7392, 2026-10-08): si el turno
+    se corta (`interrupted`), devuelve en `carried` las llamadas a esas tools
+    (las que solo leen) con su resultado; el caller se las pasa al reinicio,
+    que las ve como hechas: no se repiten, cuentan como usadas para el
+    contrato y quedan en el historial del turno. Default: el turno de hoy.
 
     `interrupt_before_record` (ráfagas sin cortes, incidente 2026-10-06): con
     `has_new_input`, el turno se revisa una vez más justo antes de grabarse
@@ -1015,6 +1081,8 @@ async def run_agent_turn(
         turn_policy=turn_policy,
         egress=egress,
         interrupt_before_record=interrupt_before_record,
+        read_only_tools=read_only_tools,
+        carried=carried,
     )
 
 
@@ -1067,6 +1135,8 @@ async def _run_agent_turn_impl(
     turn_policy: TurnPolicy | None = None,
     egress: EgressHook | None = None,
     interrupt_before_record: bool = False,
+    read_only_tools: frozenset[str] = frozenset(),
+    carried: CarriedReads | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1206,6 +1276,19 @@ async def _run_agent_turn_impl(
     turn_cached_tokens = 0
     # Hasta dónde llegaba `messages` en la ronda anterior (0 = primera).
     sent_until = 0
+    # Lo que un intento cortado ya leyó (turno 1 de …7392, 2026-10-08): el
+    # modelo lo ve como hecho y no lo repite; cuenta como usado (contrato) y
+    # queda en el historial y en la traza. Desde `attempt_from`, lo que este
+    # intento agrega (si también se corta, lo que leyó viaja al siguiente).
+    attempt_from = len(messages)
+    # Cambia lo que cuenta como usado para el contrato (otra cantidad de
+    # rondas): las histories sin el marcador reinician como antes.
+    # `patched()` solo cuando hay algo que llevar.
+    if carried is not None and carried.messages and workflow.patched(CARRY_READS_PATCH):
+        messages = [*messages, *carried.messages]
+        tools_used.extend(carried.names)
+        tool_events.extend(dict(e) for e in carried.events)
+        steps.append({"kind": "carry", "at_ms": _now_ms(), "tools": carried.names})
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -1284,7 +1367,8 @@ async def _run_agent_turn_impl(
                     session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
                 )
             return TurnResult(
-                final_content="", tools_used=tools_used, interrupted=True, steps=steps
+                final_content="", tools_used=tools_used, interrupted=True, steps=steps,
+                carried=_reads_to_carry(messages[attempt_from:], tool_events, read_only_tools),
             )
 
         if response.has_tool_calls:
@@ -1886,7 +1970,9 @@ async def _run_agent_turn_impl(
                     {"kind": "guard", "at_ms": _now_ms(), "name": "contract_extra_round",
                      "before": final_content, "after": contract_note, "tools": list(tools_used)}
                 )
-                messages = [*messages, {"role": "system", "content": contract_note}]
+                # Como con `send_reply`: el modelo sabe que su texto no salió
+                # (turno 1 de …7392, 2026-10-08: sin eso repitió el mismo).
+                messages = [*messages, {"role": "system", "content": f"Tu respuesta NO se envió. {contract_note}"}]
                 final_content = ""
                 final_raw = None
                 continue
@@ -2135,7 +2221,10 @@ async def _run_agent_turn_impl(
         await _record_cut_attempt_cost(
             session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
         )
-        return TurnResult(final_content="", tools_used=tools_used, interrupted=True, steps=steps)
+        return TurnResult(
+            final_content="", tools_used=tools_used, interrupted=True, steps=steps,
+            carried=_reads_to_carry(messages[attempt_from:], tool_events, read_only_tools),
+        )
 
     skip_record = (
         skip_record_when is not None

@@ -83,6 +83,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PhotoPick": "src.platform.vision.photo_match",
     "FakePhotoMatchAdapter": "src.platform.vision.photo_match",
     "NullPhotoMatchAdapter": "src.platform.vision.photo_match",
+    # El color de la vela en una foto del catálogo (caso 2026-10-09):
+    "PhotoColorPort": "src.platform.vision.photo_color",
+    "ColorPick": "src.platform.vision.photo_color",
+    "FakePhotoColorAdapter": "src.platform.vision.photo_color",
+    "NullPhotoColorAdapter": "src.platform.vision.photo_color",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
     # Central de la Graph API (host + versión únicos) — stdlib-pura, sin vendor:
     "META_GRAPH_API_VERSION": "src.platform.meta.graph",
@@ -109,6 +114,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "OrderFactsReadPort": "src.platform.orders.facts",
     "OrderFactsSnapshot": "src.platform.orders.facts",
     "InMemoryOrderFacts": "src.platform.orders.facts",
+    # Los pedidos de UNA persona (su número), con el mapeo de OrderFacts — el
+    # cupón de bienvenida (caso 2026-10-09) mira si ya compró:
+    "CustomerOrdersPort": "src.platform.orders.customer_orders",
+    "CustomerOrdersUnavailableError": "src.platform.orders.customer_orders",
+    "InMemoryCustomerOrders": "src.platform.orders.customer_orders",
     "OrderRegistrationPort": "src.platform.orders.port",
     # Reparto del cupón por ítem (L-26): viaja con el port de registro.
     "DiscountedUnits": "src.platform.orders.port",
@@ -125,6 +135,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DiscountResult": "src.platform.promotions.rules",
     "LineDiscount": "src.platform.promotions.rules",
     "compute_discount": "src.platform.promotions.rules",
+    "coupon_problem": "src.platform.promotions.rules",
     "normalize_coupon_code": "src.platform.promotions.rules",
     "resolve_coupon": "src.platform.promotions.rules",
     # Central de cupones (Marketing → Cupones, CUPONES_PLAN.md): comandos a
@@ -153,6 +164,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "QuotaSheet": "src.platform.promotions.quota_store",
     "QuotaStoreError": "src.platform.promotions.quota_store",
     "FakePromoQuotaStore": "src.platform.promotions.quota_store",
+    # Condiciones de Hubara por cupón («solo primera compra», caso 2026-10-09):
+    "CouponConditions": "src.platform.promotions.conditions",
+    "CouponConditionsError": "src.platform.promotions.conditions",
+    "FakeCouponConditionsStore": "src.platform.promotions.conditions",
     "FakeCouponAuditLog": "src.platform.promotions.audit",
     "CouponResults": "src.platform.promotions.coupon_sales",
     "coupon_results": "src.platform.promotions.coupon_sales",
@@ -175,13 +190,16 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_image_vision_port": "src.platform.vision.composition",
     "get_image_embedding_port": "src.platform.vision.composition",
     "get_photo_match_port": "src.platform.vision.composition",
+    "get_photo_color_port": "src.platform.vision.composition",
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_facts_port": "src.platform.orders.composition",
+    "get_customer_orders_port": "src.platform.orders.composition",
     "get_order_registration_port": "src.platform.orders.composition",
     "get_promotions_port": "src.platform.promotions.composition",
     "get_promotions_admin_port": "src.platform.promotions.composition",
     "get_promo_quota_store": "src.platform.promotions.composition",
+    "get_coupon_conditions_store": "src.platform.promotions.composition",
     "get_coupon_audit_log": "src.platform.promotions.composition",
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",

@@ -83,6 +83,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
     get_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.payment_receipts import payment_receipt_in_active_episode
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.agent.sales.use_cases.tag_reconcile import TagDecision, reconcile_tag_proposal
 from src.plugins.chats.shared.contracts.events import EpisodeClosedEvent
@@ -274,8 +275,9 @@ class OrderBody(BaseModel):
     #: link + recargo). Default ``True`` = comportamiento histórico, el que
     #: usa Meta Business Agent (no manda el campo). Lo apaga el formulario
     #: "Crear pedido" del chat cuando el OPERADOR ya acordó el pago a mano y
-    #: el mensaje automático encima sería ruido. El intent se encola igual
-    #: (auditoría); lo que se saltea es el flush.
+    #: el mensaje automático encima sería ruido. Apagado (o con un comprobante
+    #: del cliente en el episodio, aunque venga en ``True``) el intent sale de
+    #: la cola: no se manda ni ahora ni en un flush posterior.
     send_payment_instructions: bool = True
     #: Solo calcular (subtotal, envío, descuento del cupón y total) con estos
     #: ítems, sin registrar ni guardar nada: el formulario lo pide tras editar
@@ -581,6 +583,9 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     # solo si el último episodio de la sesión ya la tiene anotada (el mismo
     # pedido semanas después, en un episodio nuevo, es una venta nueva).
     data_before = store.read(session)
+    # El comprobante que el cliente ya mandó en este episodio (caso pedido
+    # #64): con él, el pedido no le pide el pago otra vez.
+    receipt = payment_receipt_in_active_episode(data_before)
     variants, invalid = await resolve_item_variants(
         deps.catalog, items_with_attrs, data_before,
         strict_products=quota_product_ids(data_before, deps.quotas),
@@ -754,15 +759,27 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         await _notify(deps, session, outcome.get("closed_id"), PAYMENT_PENDING_TAG)
 
     sent = 0
-    if not already and body.send_payment_instructions and body.payment_method in ("transfer", "payment_link"):
-        try:
-            sent = await deps.flush(session)
-        except Exception as exc:  # noqa: BLE001 — el pedido ya está registrado; el intent queda encolado
-            logger.warning("[chats.session_actions] flush de instrucciones de pago falló session={} err={}", session, exc)
+    skipped: str | None = None
+    if not already and body.payment_method in ("transfer", "payment_link"):
+        if receipt is not None:
+            skipped = "receipt_received"
+        elif not body.send_payment_instructions:
+            skipped = "operator"
+        if skipped:
+            # Fuera de la cola: encolado, el próximo flush (el primer turno del
+            # bot cuando «Confirmar pago» le devuelve la conversación) lo
+            # mandaba igual.
+            store.update(session, lambda data: _drop_payment_instructions(data, order_id))
+        else:
+            try:
+                sent = await deps.flush(session)
+            except Exception as exc:  # noqa: BLE001 — el pedido ya está registrado; el intent queda encolado
+                logger.warning("[chats.session_actions] flush de instrucciones de pago falló session={} err={}", session, exc)
 
     logger.info(
-        "[chats.session_actions] order session={} order_id={} already={} closed={} escalated={} payinstr_sent={}",
-        session, order_id, already, outcome.get("closed_id"), outcome.get("escalated"), sent,
+        "[chats.session_actions] order session={} order_id={} already={} closed={} escalated={} payinstr_sent={} "
+        "payinstr_skipped={}",
+        session, order_id, already, outcome.get("closed_id"), outcome.get("escalated"), sent, skipped,
     )
     return {
         "registered": True,
@@ -783,7 +800,25 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         ),
         "escalated": bool(outcome.get("escalated")),
         "payment_instructions_sent": sent > 0,
+        #: Por qué NO salieron los datos de pago: ``receipt_received`` (el
+        #: cliente ya mandó su comprobante en este episodio) u ``operator``
+        #: (el formulario lo apagó). ``None`` si salieron o no aplican.
+        "payment_instructions_skipped": skipped,
+        "payment_receipt": receipt.as_dict() if receipt is not None else None,
     }
+
+
+def _drop_payment_instructions(data: dict[str, Any], order_id: str) -> dict[str, Any] | None:
+    """Saca de la cola los datos de pago de ESTE pedido (lo demás no se toca)."""
+    queue = [i for i in data.get("pending_ui_intents") or [] if isinstance(i, dict)]
+    kept = [
+        i for i in queue
+        if not (i.get("kind") == "payment_instructions" and (i.get("params") or {}).get("order_id") == order_id)
+    ]
+    if len(kept) == len(queue):
+        return None
+    data["pending_ui_intents"] = kept
+    return data
 
 
 @router.post("/session-actions/{session_key}/tag")

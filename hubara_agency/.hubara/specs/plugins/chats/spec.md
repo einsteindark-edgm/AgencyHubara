@@ -623,8 +623,16 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 #### Scenario: Promociones vigentes
 
 - WHEN el cliente pregunta "¿tienen descuentos?" y el bot llama `list_promotions`
-- THEN el envelope lista código, descuento y productos de cada cupón activo (no automático)
+- THEN el envelope lista código, descuento y productos de cada cupón que rige hoy (no automático)
 - AND con lista vacía el bot dice que no hay promociones (no inventa) y solo escala si el cliente insiste en negociar
+
+#### Scenario: Un cupón vencido no se ofrece (venta del 2026-10-09)
+
+- GIVEN un cupón cuya campaña ya terminó (Medusa lo sigue marcando `active`), uno que todavía no empieza y uno sin presupuesto
+- WHEN el bot llama `list_promotions`
+- THEN ninguno de los tres aparece: se lista solo lo que `apply_coupon` aplicaría ahora (`coupon_problem`: activo, ya empezó, no venció, con presupuesto, alcance legible y no de envío)
+- AND si no queda ninguno, el resumen dice que no hay promociones vigentes
+- AND el builder de campañas (`GET /api/marketing/promotions`) tampoco ofrece el vencido ni el agotado; el que todavía no empieza sí, para programar la campaña de su inicio
 
 #### Scenario: Cupón con mínimo de compra o sin productos aplicables
 
@@ -669,6 +677,18 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - GIVEN un episodio con `applied_coupon`
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
+
+#### Scenario: Descuento de bienvenida, solo en la primera compra (2026-10-09)
+
+- GIVEN la central de cupones creó `BIENVENIDA` (5 %, todo el catálogo) con «Solo primera compra»: la condición vive en el vault (`_promotions/conditions/BIENVENIDA.json`), se escribe ANTES de crear el cupón en Medusa y el lector de promociones la pega en el `PromotionDTO` (`first_purchase_only`)
+- WHEN el cliente pide «el descuento de la primera compra» (o «el de la página») y el bot llama `list_promotions`
+- THEN el resumen nombra el cupón con su nombre y su condición y le dice al bot que lo aplique con su código aunque el cliente no lo sepa
+- AND `apply_coupon` lo aplica si la PERSONA no tiene un pedido anterior que cuente (ni cancelado ni de prueba): ni uno de los que registró la conversación antes del episodio activo (OrderFacts), ni ninguno de los pedidos y borradores de su número en Medusa (`get_customer_orders_port`: el cliente `wa+<sesión>@hubara.local` del bot y «Crear pedido», y todo cliente cuyo teléfono termine en sus 10 dígitos), aunque vengan de otra conversación o los haya cargado el operador
+- AND el pedido del episodio activo no cuenta: es justamente la primera compra (el colega pudo crearlo antes de prometer el descuento)
+- AND a quien ya compró se le responde `applied=false`, `reason="first_purchase_only"`, y `list_promotions` lo marca `applies_to_customer=false`; «Aplicar cupón» de la app del operador usa la misma vara
+- AND si Medusa no confirma sus pedidos, `reason="first_purchase_unknown"` y el cupón NO se aplica; una puerta que valide cupones sin poder mirar las compras (la campaña que aplica su cupón sola) tampoco lo aplica y le deja el `apply_coupon` al bot
+- AND un caso del laboratorio no le pregunta a Medusa: ahí la persona no tiene pedidos y decide lo que registró la conversación del banco
+- AND una condición ilegible deja el cupón `scope_unresolved` (no se ofrece ni se aplica)
 
 ### Requirement: Hilo de cada turno del bot en el chat (laboratorio, PR 17)
 
@@ -921,6 +941,22 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - GIVEN el cliente confirmó el total con descuento
 - WHEN al registrar Medusa (vendidas) o el vault (filas del cupo) no responden
 - THEN NO se crea el draft, el pedido queda en `failed_order_registrations` (pending) con el reparto CONFIRMADO, y el envelope trae `audit_id` SIN `error` (el bot escala como con Medusa caído) — nunca un "total nuevo" falso
+
+### Requirement: «Crear pedido» no le pide el pago a quien ya pagó (2026-10-09)
+
+Si en el episodio activo hay un comprobante del cliente (una foto que la visión leyó como `comprobante_pago` o un PDF, en `media_index` / `recent_image_descriptions`), `session-actions@v1 /order` SHALL registrar el pedido sin mandarle los datos de pago, aunque el formulario pida enviarlos (`payment_instructions_skipped: "receipt_received"`). Si el formulario los apaga, el motivo es `operator`. En los dos casos el aviso MUST salir de `pending_ui_intents`: si quedara en la cola, el primer flush posterior lo mandaría (por ejemplo, el turno del bot después de que «Confirmar pago» le devuelve la conversación). El comprobante de una compra anterior (otro episodio) no cuenta. `order-intake /suggest` SHALL devolver `payment_receipt`: el formulario abre con la casilla apagada y avisa «El cliente ya envió su comprobante de pago (hora, lo que leyó la visión)».
+
+#### Scenario: Pagó mientras lo atendía el humano (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el cliente mandó el comprobante en el episodio y lo atiende un humano
+- WHEN el operador da «Crear pedido» con transferencia
+- THEN el pedido se registra, no sale «Aquí tienes los datos para tu pago anticipado» y el aviso confirma que no se le pidió el pago
+
+#### Scenario: El comprobante era de la compra anterior
+
+- GIVEN el comprobante está en un episodio ya cerrado
+- WHEN el operador registra el pedido nuevo con transferencia
+- THEN los datos de pago salen como siempre
 
 ### Requirement: Acciones de venta del operador con el bot apagado (App Operador)
 

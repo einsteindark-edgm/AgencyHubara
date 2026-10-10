@@ -298,10 +298,10 @@ def test_the_estimate_lists_the_decision_bundles(env, monkeypatch) -> None:
 
     from src.plugins.chats.shared.store_pack import BUNDLES_DIR
 
-    # ventas-2 a ventas-5 viajan en la imagen de esta tienda (no en un clon de forge).
+    # ventas-2 a ventas-6 viajan en la imagen de esta tienda (no en un clon de forge).
     others = [
         {"id": bundle_id, "version": version, "active": False}
-        for bundle_id, version in (("ventas-2", 2), ("ventas-3", 3), ("ventas-4", 4), ("ventas-5", 5))
+        for bundle_id, version in (("ventas-2", 2), ("ventas-3", 3), ("ventas-4", 4), ("ventas-5", 5), ("ventas-6", 6))
         if (BUNDLES_DIR / bundle_id).is_dir()
     ]
     assert data["bundles"] == [{"id": "ventas", "version": 1, "active": True}, *others]

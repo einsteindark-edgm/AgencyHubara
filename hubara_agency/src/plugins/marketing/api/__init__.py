@@ -399,14 +399,20 @@ async def _validate_campaign_coupon(
 @router.get("/promotions")
 async def list_promotions() -> dict:
     """Cupones vigentes en Medusa (Admin → Promotions) para elegir en el
-    builder: el mismo código que el bot valida con `apply_coupon`."""
-    from src.sdk.connectorkit import PromotionsUnavailableError
+    builder: el mismo código que el bot valida con `apply_coupon`. Uno que
+    todavía no empieza se ofrece (la campaña se programa para su inicio); uno
+    vencido o agotado no, aunque Medusa lo siga marcando «active»."""
+    from src.sdk.connectorkit import PromotionsUnavailableError, coupon_problem
 
     try:
         promotions = await get_promotions_port().list_active()
     except PromotionsUnavailableError as e:
         log.warning("marketing: no pude leer promociones de Medusa: %s", e)
         return {"promotions": [], "unavailable": True}
+    now_ms = _now_ms()
+    promotions = [
+        p for p in promotions if coupon_problem(p, now_ms=now_ms) in (None, "not_started")
+    ]
     return {
         "promotions": [
             {
@@ -420,8 +426,6 @@ async def list_promotions() -> dict:
                 "product_count": len(p.product_ids) + len(p.variant_ids) + len(p.collection_ids),
             }
             for p in promotions
-            # El bot no aplica cupones de envío: el builder tampoco los ofrece.
-            if p.target_type != "shipping_methods"
         ],
         "unavailable": False,
     }

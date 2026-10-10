@@ -19,6 +19,7 @@ from src.sdk.connectorkit import (
     PromotionsPort,
     PromotionsUnavailableError,
     compute_discount,
+    coupon_problem,
     normalize_coupon_code,
 )
 
@@ -33,6 +34,10 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     public_units,
     quota_offer,
     units_text,
+)
+from src.plugins.chats.agent.sales.use_cases.first_purchase import (
+    FirstPurchaseUnknown,
+    bought_before,
 )
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     NO_LIMIT_TEXT,
@@ -54,6 +59,8 @@ async def _product_titles(catalog: Any, promotion: PromotionDTO) -> list[str] | 
 
 
 def _promotion_summary(p: dict[str, Any]) -> str:
+    if p.get("first_purchase_only"):
+        return _first_purchase_summary(p)
     if p.get("exhausted"):
         return f"{p['code']} (agotado: ya no quedan unidades con descuento)"
     if p.get("units_unavailable"):
@@ -68,8 +75,23 @@ def _promotion_summary(p: dict[str, Any]) -> str:
     return f"{p['code']} ({p['discount']}, {scope})"
 
 
+def _first_purchase_summary(p: dict[str, Any]) -> str:
+    """El cupón de bienvenida (solo primera compra), con su nombre: el cliente
+    lo pide por lo que leyó en la página, no por el código."""
+    name = f" «{p['name']}»" if p.get("name") else ""
+    head = f"{p['code']}{name} ({p['discount']}, solo en la primera compra"
+    applies = p.get("applies_to_customer")
+    if applies is False:
+        return head + ": este cliente ya compró antes, NO aplica; no lo ofrezcas)"
+    if applies is None and "applies_to_customer" in p:
+        return head + ": no pude confirmar si es su primera compra; `apply_coupon` lo verifica)"
+    return head + ")"
+
+
 class ListPromotionsTool(ToolBase):
     name = "list_promotions"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Lista los cupones/promociones VIGENTES (código, descuento, productos a "
         "los que aplica, vigencia). Úsala cuando el cliente pregunta si hay "
@@ -87,14 +109,40 @@ class ListPromotionsTool(ToolBase):
         catalog: Any = None,
         quotas: Any = None,
         sales: Any = None,
+        metadata_store: Any = None,
+        order_facts: Any = None,
+        now_ms: Callable[[], int] | None = None,
+        customer_orders: Any = None,
     ) -> None:
         """`quotas`/`sales`: cupo por unidad (almacén + lector de vendidas del
-        SDK). Sin ellos, los cupones se listan como siempre."""
+        SDK). Sin ellos, los cupones se listan como siempre.
+        `metadata_store`/`order_facts`/`customer_orders`: para decir si un
+        cupón de primera compra le aplica a ESTE cliente (lo registrado en la
+        conversación + los pedidos de su número; sin el store, se lista su
+        condición). `now_ms`: el reloj con que se decide qué cupones rigen."""
         self._workspace = Path(workspace)
         self._promotions = promotions
         self._catalog = catalog
         self._quotas = quotas
         self._sales = sales
+        self._store = metadata_store
+        self._order_facts = order_facts
+        self._customer_orders = customer_orders
+        self._now_ms = now_ms or (lambda: int(time.time() * 1000))
+
+    async def _applies_to_customer(self, session_key: str) -> bool | None:
+        """¿Un cupón de primera compra le aplica? None = no se sabe."""
+        if self._store is None:
+            return None
+        try:
+            return not await bought_before(
+                self._store.read(session_key),
+                self._order_facts,
+                customer_orders=self._customer_orders,
+                session_key=session_key,
+            )
+        except FirstPurchaseUnknown:
+            return None
 
     async def execute_with_context(self, ctx: ToolContext) -> str:
         try:
@@ -110,12 +158,11 @@ class ListPromotionsTool(ToolBase):
                 ensure_ascii=False,
             )
         out = []
+        now_ms = self._now_ms()
         for promo in promotions:
-            if promo.scope_unresolved:
-                # Reglas ilegibles: no sabemos a qué aplica — no se ofrece.
-                continue
-            if promo.target_type == "shipping_methods":
-                # El envío lo cobra la transportadora sin descuentos: no se ofrece.
+            if coupon_problem(promo, now_ms=now_ms) is not None:
+                # Lo que `apply_coupon` rechazaría no se ofrece: vencido, sin
+                # empezar, agotado, de envío o con reglas ilegibles.
                 continue
             entry: dict[str, Any] = {
                 "code": promo.code,
@@ -125,6 +172,10 @@ class ListPromotionsTool(ToolBase):
                 "ends_at_ms": promo.ends_at_ms,
                 "name": promo.description,
             }
+            if promo.first_purchase_only:
+                entry["first_purchase_only"] = True
+                if self._store is not None:
+                    entry["applies_to_customer"] = await self._applies_to_customer(ctx.session_key)
             offer = await quota_offer(promo, quotas=self._quotas, sales=self._sales, catalog=self._catalog)
             if offer.has_quota:
                 # Cupo por unidad: el cupón vale SOLO en estas combinaciones.
@@ -139,7 +190,12 @@ class ListPromotionsTool(ToolBase):
         else:
             summary = "Cupones vigentes: " + "; ".join(
                 _promotion_summary(p) for p in out
-            ) + ". El cliente lo aplica dándote el código → `apply_coupon`."
+            ) + (
+                ". Se aplican con `apply_coupon` y su código. El cliente no tiene que "
+                "saberlo: si pide uno de estos por su nombre o por su condición (por "
+                "ejemplo «el de primera compra» o «el de la página»), aplícale ese; el "
+                "sistema verifica la condición."
+            )
         return json.dumps({"promotions": out, "summary": summary}, ensure_ascii=False)
 
 
@@ -190,11 +246,16 @@ class ApplyCouponTool(ToolBase):
         now_ms: Callable[[], int] | None = None,
         quotas: Any = None,
         sales: Any = None,
+        order_facts: Any = None,
+        customer_orders: Any = None,
     ) -> None:
         """`metadata_store`: store de `metadata.json` del vault (DI desde la
         composición — `build_session_metadata_store`; las tools no importan
         platform ni el runtime del SDK, que arrastra temporalio: R-DIP).
-        `quotas`/`sales`: cupo por unidad (sin ellos, como siempre)."""
+        `quotas`/`sales`: cupo por unidad (sin ellos, como siempre).
+        `order_facts`/`customer_orders`: para los cupones de primera compra,
+        lo registrado en la conversación y los pedidos de su número (sin
+        OrderFacts, un pedido registrado antes cuenta como compra)."""
         self._workspace = Path(workspace)
         self._promotions = promotions
         self._catalog = catalog
@@ -202,6 +263,8 @@ class ApplyCouponTool(ToolBase):
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
         self._quotas = quotas
         self._sales = sales
+        self._order_facts = order_facts
+        self._customer_orders = customer_orders
 
     async def execute_with_context(
         self, ctx: ToolContext, code: str, items: list[dict[str, Any]] | None = None
@@ -228,6 +291,15 @@ class ApplyCouponTool(ToolBase):
             )
 
         now_ms = self._now_ms()
+
+        async def _bought_before() -> bool:
+            return await bought_before(
+                store.read(ctx.session_key),
+                self._order_facts,
+                customer_orders=self._customer_orders,
+                session_key=ctx.session_key,
+            )
+
         application = await resolve_coupon_application(
             normalized,
             promotions=self._promotions,
@@ -235,6 +307,7 @@ class ApplyCouponTool(ToolBase):
             sales=self._sales,
             catalog=self._catalog,
             now_ms=now_ms,
+            bought_before=_bought_before,
         )
         if application.reason == "unavailable":
             logger.warning("🎟️ [TOOL apply_coupon] unavailable session={}", ctx.session_key)

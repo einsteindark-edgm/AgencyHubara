@@ -215,3 +215,15 @@ def test_legacy_trajectory_drops_proactive_messages_from_other_agents() -> None:
 
     assert [t.sent_texts for t in traj.turns] == [("Tenemos tres formas de pago.",), ("Con gusto.",)]
     assert traj.turns[0].intents == ("reaction",)
+
+
+def test_an_episode_opened_right_after_a_purchase_carries_that_order() -> None:
+    """Caso 2026-10-09 (pedido #64): el episodio nuevo abrió con el pedido
+    anterior en curso (`after_order`, lo marca el ingest). La calificación
+    sabe que ese pedido existe aunque no se registró en este episodio."""
+    traj = build_trajectory(
+        [_trace(1)], session_id="wa_100000000001",
+        episode={"episode_id": "ep_002", "after_order": {"order_id": "order_64", "display_id": "#64"}},
+    )
+
+    assert traj.after_order_id == "order_64"

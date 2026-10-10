@@ -225,6 +225,12 @@ export function CouponForm({ coupon, update: liftedUpdate, onCreated, onCancel }
         onToggle={toggleProduct}
       />
 
+      <FirstPurchaseField
+        checked={values.firstPurchaseOnly}
+        readOnly={readOnly}
+        onChange={(firstPurchaseOnly) => set({ firstPurchaseOnly })}
+      />
+
       {generalError ? (
         <p role="alert" className="rounded-md bg-danger-soft px-3 py-2 text-[11.5px] text-danger">
           {generalError}
@@ -302,6 +308,38 @@ function Field({
           {error}
         </span>
       ) : null}
+    </div>
+  );
+}
+
+/** El descuento de bienvenida (caso 2026-10-09): la página lo ofrece en la
+ *  primera compra y el bot lo aplica solo a quien no ha comprado. */
+function FirstPurchaseField({
+  checked,
+  readOnly,
+  onChange,
+}: {
+  checked: boolean;
+  readOnly: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const hintId = useId();
+  return (
+    <div className="flex flex-col gap-0.5 rounded-md border border-line px-3 py-2">
+      <label className="flex items-center gap-2 text-[12px] text-fg">
+        <input
+          type="checkbox"
+          aria-describedby={hintId}
+          disabled={readOnly}
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="accent-accent"
+        />
+        Solo primera compra
+      </label>
+      <p id={hintId} className="pl-6 text-[10.5px] leading-snug text-fg-faint">
+        El bot lo aplica solo a clientes que no han comprado antes (lo revisa en sus pedidos).
+      </p>
     </div>
   );
 }

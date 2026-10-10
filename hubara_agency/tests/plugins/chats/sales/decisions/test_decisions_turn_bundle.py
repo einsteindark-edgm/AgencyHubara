@@ -148,7 +148,8 @@ def test_the_catalog_turn_vocabulary_is_the_code_s() -> None:
     assert own <= set(vocab["tools"]) <= own | platform
     assert "escalate_to_human" in vocab["tools"]
     # turno-v4 (ventas-4, 2026-10-07): la de turno-v3 con el producto desde el que escribe el cliente.
-    assert set(vocab["policies"]) == {"turno-v3", "turno-v4"}
+    # turno-v5 (ventas-6, 2026-10-09): la de turno-v4 con el paso de post-venta del comprobante.
+    assert set(vocab["policies"]) == {"turno-v3", "turno-v4", "turno-v5"}
 
 
 # ── las tablas ───────────────────────────────────────────────────────────────

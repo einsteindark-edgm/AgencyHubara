@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
+#
+# Paquete de decisión de Hubara (velas), ventas, versión 6. PAQUETES_DE_DECISION.md.
+# Es `ventas-5@5` con la política del turno `turno-v5` y nada más (una prueba lo
+# exige: test_decisions_ventas_6.py). Caso de producción del 2026-10-09 (pedido
+# #64): el cliente compró, «Confirmar pago» le devolvió la conversación al bot y
+# respondió citando su comprobante; en post-venta la guía de `turno-v4` pedía
+# «agradece y confirma que el equipo revisa el pago» con el pago ya confirmado.
+# Con `turno-v5` el paso es mirar el pago con `check_order_status`.
+# Y la tabla de `cierre` (decisión del operador, 2026-10-09: ningún silencio
+# pasa solo al equipo): «confirmó y no terminó de dar los datos de envío»
+# cierra INTERESADO —remarketing lo retoma con el pedido— en vez de
+# CONFIRMADO_SIN_DATOS + relevo. La pregunta a Jev no cambia.
+# Y la fila `catalogo` del contrato (turno 1 de …7392, 2026-10-08): pide
+# `present_products` o la galería (ya no `list_categories`, que no le muestra
+# nada al cliente) y que el texto vaya en `intro_text`.
+# Y el cuestionario del turno `rafaga-v7` con su fila del contrato (venta del
+# 2026-10-09, Encanto Silvestre):
+#   - «Me regalas también la de encanto silvestre» es PEDIR el producto: Jev lo
+#     leía como `gusto` (un regalo) y el bot hacía una recomendación que nadie pidió;
+#   - preguntar a qué huele un aroma (`aroma.notas`, pregunta nueva) no pide el
+#     selector: «¿Este qué esencia tiene?» citando el Caballero de la noche se
+#     responde con sus notas, no mandando otra vez la lista.
+#   Sonda (Jev real, frases sintéticas): «me regalas…» `gusto` 0,45–0,94 → 0,10;
+#   regalos de verdad 0,90–0,96; `aroma.notas` 0,96–0,98 al preguntar a qué huele
+#   y 0,02–0,05 al elegir o pedir la lista.
+#
+# ventas-5:
+# Es `ventas-4@4` con dos preguntas reescritas (incidente del 2026-10-09 y su
+# premortem): `compra.pregunta_compra` cuenta la propuesta de cierre («Si dale»
+# a «te paso el formulario… y dejamos el pedido listo» se retiraba) y
+# `relevo.promete` deja afuera el aviso de un evento del pedido («nuestro
+# equipo te avisa cuando despachemos»). Una prueba lo exige:
+# test_decisions_ventas_5.py.
+#
+# ventas-4:
+# Es `ventas-3@3` con la política del turno `turno-v4` y nada más (una prueba lo
+# exige: test_decisions_ventas_4.py). Conversación de prueba del 2026-10-07
+# (···1604, turno 3): el cliente escribió «Me gusta esta» desde la ficha de la
+# Calabaza en el catálogo de WhatsApp; la nota del ingest llegó, pero la guía de
+# `turno-v3` (etapa calculada con el borrador vacío) le pidió al LLM «ayúdale a
+# escoger un producto» y el bot preguntó «¿Cuál de las cuatro te gustó?». Con
+# `turno-v4` el paso de descubrimiento usa el producto desde el que escribe el
+# cliente (la ficha del catálogo o la página de la web).
+# Se promueve nombrándolo en Terraform (`tenants.<t>.lab.decisions_bundle =
+# "ventas-4"`), después de medirlo en el laboratorio (`B@ventas-4`).
+# Inmutable: otra pregunta u otro umbral = otra versión. Certificar:
+#   cd hubara_agency && uv run python -m src.sdk.cli decisions check
+id: ventas-6
+version: 6
+engine_contract: 1
+oracle: jev-1.13
+capabilities:
+  - acuse
+  - afirmacion
+  - baja
+  - cantidad
+  - categoria
+  - cierre
+  - compra
+  - contactar
+  - cortesia
+  - cupon
+  - datos
+  - destinatario
+  - destinatario_oracion
+  - destinatario_plantilla
+  - enumeracion
+  - familia_de_color
+  - fuera_de_catalogo
+  - item_del_pedido
+  - monto
+  - persona
+  - portavelas
+  - preambulo
+  - producto_nombrado
+  - relevo
+  - rescate
+  - retoma
+  - saludo
+  - selector
+  - zona_de_envio

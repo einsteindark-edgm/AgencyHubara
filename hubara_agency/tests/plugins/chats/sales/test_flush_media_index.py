@@ -161,6 +161,47 @@ async def test_product_detail_indexes_wamid_with_design(vault):
 
 
 @pytest.mark.asyncio
+async def test_product_detail_indexes_the_color_of_the_candle_in_the_photo(vault):
+    """Caso 2026-10-09: «¿no viene en este color?» citando la foto — la cita
+    de esa foto tiene que poder decir de qué color es la vela."""
+    _seed_metadata(
+        vault,
+        [
+            {
+                "id": "i-1",
+                "kind": "product_detail",
+                "params": {
+                    "handle": "encanto-silvestre",
+                    "title": "Encanto Silvestre",
+                    "image_url": _LEO,
+                    "caption": "Encanto Silvestre · $38.000 COP",
+                    "design": None,
+                    "color": "Café",
+                },
+            }
+        ],
+    )
+    env = ActivityEnvironment()
+    await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    (entry,) = _read_metadata(vault)["outbound_media_index"].values()
+    assert entry["color"] == "Café"
+
+
+@pytest.mark.asyncio
+async def test_gallery_indexes_the_color_of_each_photo(vault):
+    intent = _gallery_intent()
+    intent["params"]["images"][1]["color"] = "Blanco"
+    _seed_metadata(vault, [intent])
+    env = ActivityEnvironment()
+    await env.run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    index = _read_metadata(vault)["outbound_media_index"]
+    assert index["wamid.img.2"]["color"] == "Blanco"
+    assert "color" not in index["wamid.img.1"]
+
+
+@pytest.mark.asyncio
 async def test_media_index_caps_at_50_evicting_oldest(vault):
     old_index = {
         f"wamid.old.{i}": {

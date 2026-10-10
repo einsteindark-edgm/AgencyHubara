@@ -60,6 +60,8 @@ from src.sdk.connectorkit import (
     ProductNotFoundError,
     get_catalog_client,
     get_coupon_sales_reader,
+    get_customer_orders_port,
+    get_order_facts_port,
     get_promo_quota_store,
     get_promotions_port,
     parse_variant_tags,
@@ -115,6 +117,12 @@ class OperatorToolsDeps:
     #: `flush_pending_ui_intents(session, *, only_ids, operator_tool) -> enviados`
     flush: Callable[..., Awaitable[int]]
     now_ms: Callable[[], int]
+    #: OrderFacts: si el cliente ya compró (cupón de bienvenida, 2026-10-09).
+    order_facts: Any | None = None
+    #: Los pedidos de la persona en Medusa (su número), para el mismo cupón.
+    customer_orders: Any | None = None
+    #: El color de la vela de cada foto del catálogo (2026-10-09).
+    photo_colors: Any | None = None
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -123,6 +131,13 @@ def _try(name: str, factory: Callable[[], Any]) -> Any | None:
     except Exception as exc:  # noqa: BLE001 — sin config = endpoint degradado (503), no 500
         logger.warning("[chats.operator_tools] {} no disponible en este proceso: {}", name, exc)
         return None
+
+
+def _photo_color_reader() -> Any:
+    """El mismo lector del color de las fotos que usa el worker de Sales."""
+    from src.plugins.chats.agent.sales.composition import build_photo_color_reader
+
+    return build_photo_color_reader()
 
 
 def _now_ms() -> int:
@@ -139,6 +154,9 @@ def get_operator_tools_deps() -> OperatorToolsDeps:
         sales=_try("coupon_sales_reader", get_coupon_sales_reader),
         flush=flush_pending_ui_intents,
         now_ms=_now_ms,
+        order_facts=_try("order_facts", get_order_facts_port),
+        customer_orders=_try("customer_orders", get_customer_orders_port),
+        photo_colors=_try("photo_colors", _photo_color_reader),
     )
 
 
@@ -159,8 +177,8 @@ def _bot_tools(deps: OperatorToolsDeps) -> dict[str, Callable[[], Any]]:
     return {
         "present_variant_picker": lambda: PresentVariantPickerTool(ws, catalog=deps.catalog, metadata_store=store),
         "present_products": lambda: PresentProductsTool(ws, deps.catalog),
-        "present_product_detail": lambda: PresentProductDetailTool(ws, deps.catalog),
-        "present_product_gallery": lambda: PresentProductGalleryTool(ws, deps.catalog),
+        "present_product_detail": lambda: PresentProductDetailTool(ws, deps.catalog, photo_colors=deps.photo_colors),
+        "present_product_gallery": lambda: PresentProductGalleryTool(ws, deps.catalog, photo_colors=deps.photo_colors),
         "request_shipping_details": lambda: RequestShippingDetailsTool(ws, catalog=deps.catalog),
         "send_shipping_rates": lambda: SendShippingRatesTool(ws),
         "present_order_confirmation": lambda: PresentOrderConfirmationTool(
@@ -169,7 +187,8 @@ def _bot_tools(deps: OperatorToolsDeps) -> dict[str, Callable[[], Any]]:
         "send_quick_replies": lambda: SendQuickRepliesTool(ws, catalog=deps.catalog),
         "apply_coupon": lambda: ApplyCouponTool(
             ws, promotions=deps.promotions, metadata_store=store, catalog=deps.catalog,
-            quotas=deps.quotas, sales=deps.sales,
+            quotas=deps.quotas, sales=deps.sales, order_facts=deps.order_facts,
+            customer_orders=deps.customer_orders,
         ),
     }
 

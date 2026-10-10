@@ -145,6 +145,19 @@ describe("CouponForm — alta", () => {
       startsOn: "2026-09-22",
       endsOn: "2026-09-27",
       status: "active",
+      firstPurchaseOnly: false,
+    });
+  });
+
+  it("«Solo primera compra» crea el descuento de bienvenida (caso 2026-10-09)", () => {
+    const { getByRole, getByLabelText } = render(<CouponForm />);
+    fill(getByLabelText, { ...VALID, "Código": "bienvenida", "Descuento (%)": "5" });
+    fireEvent.click(getByLabelText("Solo primera compra"));
+    fireEvent.click(getByRole("button", { name: "Crear y activar" }));
+    expect(createMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      code: "BIENVENIDA",
+      percentage: 5,
+      firstPurchaseOnly: true,
     });
   });
 
@@ -217,6 +230,19 @@ describe("CouponForm — edición", () => {
     fireEvent.click(getByRole("button", { name: "Guardar cambios" }));
     expect(updateMock.mutate).toHaveBeenCalledTimes(1);
     expect(updateMock.mutate.mock.calls[0]?.[0]).toEqual({ percentage: 15 });
+  });
+
+  it("marcar «Solo primera compra» manda solo eso", () => {
+    const { getByRole, getByLabelText } = render(<CouponForm coupon={makeCoupon()} />);
+    expect((getByLabelText("Solo primera compra") as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(getByLabelText("Solo primera compra"));
+    fireEvent.click(getByRole("button", { name: "Guardar cambios" }));
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toEqual({ firstPurchaseOnly: true });
+  });
+
+  it("un cupón de bienvenida abre con la casilla marcada", () => {
+    const { getByLabelText } = render(<CouponForm coupon={makeCoupon({ firstPurchaseOnly: true })} />);
+    expect((getByLabelText("Solo primera compra") as HTMLInputElement).checked).toBe(true);
   });
 
   it("usa la mutación que le pasa el detalle: el error 'a medias' sobrevive al re-sembrado (D6)", () => {

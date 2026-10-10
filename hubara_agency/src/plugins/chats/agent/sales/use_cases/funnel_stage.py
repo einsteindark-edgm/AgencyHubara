@@ -85,6 +85,12 @@ def resolve_funnel_stage(metadata: dict[str, Any]) -> str:
     draft = episode.get("order_draft")
     slots = draft.get("slots") if isinstance(draft, dict) else None
     if not isinstance(slots, dict) or not slots.get("producto"):
+        # Episodio que abrió con el pedido anterior aún en curso (el ingest lo
+        # marca con `after_order`): el cliente escribe tras comprar, no viene a
+        # escoger (caso 2026-10-09, pedido #64). Si escoge otro producto, el
+        # borrador manda: es una venta nueva.
+        if episode.get("after_order"):
+            return STAGE_POSTCIERRE
         return STAGE_DESCUBRIMIENTO
     # Cada producto del pedido con sus elecciones (un borrador viejo es un
     # solo ítem): con varios, la etapa no avanza por el primero completo.
