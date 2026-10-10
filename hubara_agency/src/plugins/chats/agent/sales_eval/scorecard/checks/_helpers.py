@@ -18,6 +18,17 @@ PRICE_RE = re.compile(
 )
 
 
+#: La nota con que el ingest cita el mensaje NUESTRO que el cliente contesta (una
+#: plantilla o el seguimiento de una asesora, `episode_memory.quote_template_in_turn`).
+_OUR_QUOTED_RE = re.compile(r"\[El cliente responde a este mensaje que le enviamos: «(.*?)»\]", re.DOTALL)
+
+
+def our_quoted_message(text: str) -> str | None:
+    """El mensaje que le mandamos y el cliente contesta, si el turno lo cita."""
+    m = _OUR_QUOTED_RE.search(text or "")
+    return m.group(1) if m else None
+
+
 def clip(text: str, limit: int = _EVIDENCE_MAX) -> str:
     text = " ".join((text or "").split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -64,6 +75,13 @@ def all_read_texts(traj: Trajectory) -> Iterator[tuple[Turn, str]]:
 
 def quote(text: str, limit: int = 120) -> str:
     return f"«{clip(text, limit)}»"
+
+
+def fold(text: str) -> str:
+    """Minúsculas, sin tildes y con un espacio entre palabras («Trilogía del
+    Terror» = «trilogia del terror»)."""
+    text = unicodedata.normalize("NFKD", text or "")
+    return " ".join("".join(c for c in text if not unicodedata.combining(c)).split()).casefold()
 
 
 def _normalized(text: str) -> str:

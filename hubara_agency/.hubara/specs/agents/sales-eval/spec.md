@@ -388,6 +388,32 @@ conversación con dos ALERTA falsas. Desde `REGISTRY_VERSION` 9:
 - THEN ENV-02 pasa en ese turno
 - AND con «Si» y «cuánto demora el envío?» ENV-02 falla: las tarifas no dicen el plazo
 
+### Requirement: Un mensaje nuestro ya abrió la conversación (registro v11)
+
+Incidente del 2026-10-09 (`ep_001` de ···9824): el cliente contestó el
+seguimiento de una asesora («te escribe Liliana, asesora de Hubara… tenemos la
+trilogía del terror: <enlace>») y Calidad LLM marcó ALERTA y FALLA una venta
+bien atendida. Desde `REGISTRY_VERSION` 11, cuando el turno cita el mensaje
+nuestro que el cliente contesta (`[El cliente responde a este mensaje que le
+enviamos: «…»]`):
+
+- APE-01 NO SHALL pedir la marca si ese mensaje ya la dijo; el saludo por la
+  hora sí SHALL seguir exigiéndose.
+- APE-03 NO SHALL aplicar: la apertura la hicimos nosotros y el cliente llega
+  con un tema.
+- DES-05 NO SHALL contar como nombrado de memoria un producto que nombró ese
+  mensaje (sin importar tildes ni mayúsculas).
+
+Además, DES-05 NO SHALL contar como precio de catálogo el mínimo del contra
+entrega dicho como «compras/pedidos desde $X» o «a partir de $X».
+
+#### Scenario: Contesta el seguimiento de la asesora y pregunta por contra entrega
+
+- GIVEN el cliente contesta «Hola» al seguimiento de Liliana, asesora de Hubara, que nombró la trilogía del terror
+- WHEN el bot saluda «Buenas tardes» sin la marca y, a «¿Tienen pago contra entrega?», responde «aplica para compras desde $45.000 en productos… ¿Te muestro la trilogía del terror?» sin haber buscado
+- THEN APE-01 pasa, APE-03 no aplica y DES-05 no falla en esos turnos
+- AND si el bot nombra la Calabaza, que el mensaje no nombró, sin buscar, DES-05 falla
+
 ### Requirement: Testigo e informe de huecos
 
 Para decidir con datos qué arreglar (`docs/calidad-llm/cobertura-motor.html`),
