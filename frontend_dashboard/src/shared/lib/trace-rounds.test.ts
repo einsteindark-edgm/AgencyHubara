@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { modelRound, roundInput } from "./trace-rounds";
+import { modelRound, roundInput, skippedByCut } from "./trace-rounds";
 import type { TraceStep } from "./sequence-layout";
 
 /**
@@ -42,6 +42,29 @@ describe("modelRound (lo que pidió el modelo y qué pasó en esa ronda)", () =>
     expect(modelRound([{ i: 1, at_ms: 0, kind: "llm", round: 1, tool_calls: ["search_products"] }], 0).calls).toEqual([
       { name: "search_products", step: null },
     ]);
+  });
+
+  it("un pedido que el corte no dejó correr lo dice, con los argumentos que guardó el corte (…7392, 2026-10-08)", () => {
+    const steps: TraceStep[] = [
+      { i: 1, at_ms: 0, kind: "llm", round: 2, tool_calls: ["present_products"] },
+      { i: 2, at_ms: 10, kind: "cut", reason: "checkpoint_a", skipped: [{ name: "present_products", args: { handles: ["calabaza"] } }] },
+      { i: 3, at_ms: 20, kind: "restart", reason: "checkpoint_a", attempt: 1, drained: 1 },
+    ];
+
+    expect(modelRound(steps, 0).calls).toEqual([{ name: "present_products", step: null, skipped: { args: { handles: ["calabaza"] } } }]);
+    expect(skippedByCut(steps, 1)).toEqual([{ name: "present_products", args: { handles: ["calabaza"] } }]);
+  });
+
+  it("en una traza anterior al registro del corte, lo que no corrió sale de la ronda, sin argumentos", () => {
+    const steps: TraceStep[] = [
+      { i: 1, at_ms: 0, kind: "llm", round: 2, tool_calls: ["present_products"] },
+      { i: 2, at_ms: 10, kind: "cut", reason: "checkpoint_a" },
+    ];
+
+    expect(modelRound(steps, 0).calls).toEqual([{ name: "present_products", step: null, skipped: { args: {} } }]);
+    expect(skippedByCut(steps, 1)).toEqual([{ name: "present_products", args: {} }]);
+    // Otros cortes no dejan pedidos sin correr.
+    expect(skippedByCut([...steps.slice(0, 1), { i: 2, at_ms: 10, kind: "cut", reason: "send_reply" }], 1)).toEqual([]);
   });
 });
 

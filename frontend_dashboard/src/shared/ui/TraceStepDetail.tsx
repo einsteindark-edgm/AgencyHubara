@@ -21,6 +21,7 @@ import {
   modelRound,
   productName,
   roundInput,
+  skippedByCut,
   STEP_COLOR,
   type RoundInputItem,
   type SeqRow,
@@ -41,6 +42,7 @@ const TEXT_FATE: Record<string, string> = {
   pre_tool_message: "Se envió antes de la herramienta",
   discarded_default_deny: "No se envió: venía junto a una herramienta",
   discarded_internal_tools: "No se envió: venía junto a una herramienta interna",
+  discarded_contract: "No se envió: lo retuvo el contrato del turno",
 };
 
 const CUT_REASON: Record<string, string> = {
@@ -82,6 +84,12 @@ const PART_NAMES: Record<string, string> = {
 /** Protecciones que le dejan una nota al modelo para otra ronda. */
 const NOTE_GUARDS = new Set(["contract_extra_round", "turn_policy_extra_round", "promised_action_round"]);
 /** Protecciones que retuvieron la respuesta del modelo (no salió en esa ronda). */
+/** Cortes que no terminan el turno: vuelve a empezar con el mensaje nuevo. */
+const INTERRUPTIONS = new Set(["checkpoint_a", "before_record"]);
+
+/** Lo que pidió el modelo y el corte no dejó correr (…7392, 2026-10-08). */
+const SKIPPED_OUTCOME = "no se ejecutó: el cliente escribió y el turno volvió a empezar";
+
 const HOLDING_GUARDS = new Set(["contract_extra_round", "send_reply_retry", "promised_action_round"]);
 
 /** Argumentos de texto largo: van en su caja. */
@@ -171,7 +179,7 @@ function Sections({ step, back, steps, index }: { step: TraceStep; back: boolean
     case "guard":
       return <Guard step={step} />;
     case "cut":
-      return <Cut step={step} />;
+      return <Cut step={step} steps={steps} index={index} />;
     case "restart":
       return (
         <Sec title="Reinicio">
@@ -438,7 +446,9 @@ function Requested({ steps, index }: { steps: TraceStep[]; index: number }) {
             {round.calls.map((call, k) => {
               const s = call.step;
               const tool = describeTool({ name: call.name, args: s?.args, ok: (s?.ok ?? null) as boolean | null, error: str(s?.error), notes: s?.notes });
-              const outcome = !s
+              const outcome = call.skipped
+                ? SKIPPED_OUTCOME
+                : !s
                 ? null
                 : call.name === "send_reply" && !tool.failed
                   ? held
@@ -453,8 +463,8 @@ function Requested({ steps, index }: { steps: TraceStep[]; index: number }) {
                     <span className="rounded bg-cyan-soft px-1.5 py-0.5 text-[11.5px] text-cyan">{tool.action}</span>
                     <code className="font-mono text-[11px] text-fg-muted">{call.name}</code>
                   </div>
-                  <Args args={s?.args} />
-                  {outcome ? <div className={"text-[12px] " + (tool.failed || (held && call.name === "send_reply") ? "text-warn" : "text-fg-soft")}>{outcome}</div> : null}
+                  <Args args={s?.args ?? call.skipped?.args} />
+                  {outcome ? <div className={"text-[12px] " + (call.skipped || tool.failed || (held && call.name === "send_reply") ? "text-warn" : "text-fg-soft")}>{outcome}</div> : null}
                 </div>
               );
             })}
@@ -593,12 +603,30 @@ function Guard({ step }: { step: TraceStep }) {
   );
 }
 
-function Cut({ step }: { step: TraceStep }) {
+function Cut({ step, steps, index }: { step: TraceStep; steps: TraceStep[]; index: number }) {
   const reason = str(step.reason);
   const tools = list(step.tools).filter((a): a is string => typeof a === "string");
+  const skipped = skippedByCut(steps, index);
   return (
     <>
-      <Sec title="Por qué terminó el turno">{reason ? (CUT_REASON[reason] ?? reason) : "Sin motivo registrado."}</Sec>
+      <Sec title={reason && INTERRUPTIONS.has(reason) ? "Por qué se interrumpió" : "Por qué terminó el turno"}>
+        {reason ? (CUT_REASON[reason] ?? reason) : "Sin motivo registrado."}
+      </Sec>
+      {skipped.length ? (
+        <Sec title="No alcanzó a ejecutar">
+          <div className="grid gap-3">
+            {skipped.map((call, k) => (
+              <div key={k} className="grid gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[11.5px] text-danger">{describeTool({ name: call.name }).action}</span>
+                  <code className="font-mono text-[11px] text-fg-muted">{call.name}</code>
+                </div>
+                <Args args={call.args} />
+              </div>
+            ))}
+          </div>
+        </Sec>
+      ) : null}
       {tools.length ? (
         <Sec title="Herramientas pedidas">
           <Box>{tools.map((n) => describeTool({ name: n }).action).join(", ")}</Box>

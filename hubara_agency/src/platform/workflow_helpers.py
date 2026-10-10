@@ -1352,7 +1352,16 @@ async def _run_agent_turn_impl(
                 "turno interrumpido pre-outbound (corrientazo): llegó mensaje "
                 "nuevo del cliente; el caller recompone el batch y relanza"
             )
-            steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a"})
+            # Lo que el modelo pidió y el corte no deja correr, con sus
+            # argumentos: el «Paso a paso» lo dibuja como «no se ejecutó»
+            # (turno 1 de …7392, 2026-10-08: `present_products` no se veía).
+            skipped = [
+                {"name": tc.name, "args": dict(tc.arguments) if isinstance(tc.arguments, dict) else {}}
+                for tc in response.tool_calls or []
+            ]
+            steps.append(
+                {"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a", **({"skipped": skipped} if skipped else {})}
+            )
             if interrupt_before_record:
                 await _record_cut_attempt_cost(
                     session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
