@@ -50,6 +50,9 @@ class PromotionDTO:
     #: NOMBRE de cada etiqueta ("Color: Rosado"): el producto debe tener al
     #: menos una. Se suma (Y) a la selección de productos, como en Medusa.
     tag_values: tuple[str, ...] = ()
+    #: Solo para la PRIMERA compra del cliente (condición de Hubara, no de
+    #: Medusa: la pega `ConditionedPromotionsPort` desde el vault).
+    first_purchase_only: bool = False
 
 
 @dataclass(frozen=True)

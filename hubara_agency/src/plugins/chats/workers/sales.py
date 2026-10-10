@@ -181,6 +181,7 @@ _catalog = get_catalog_client()
 # SOLO a esas combinaciones producto + color + aroma.
 from src.sdk.connectorkit import (  # noqa: E402
     get_coupon_sales_reader,
+    get_order_facts_port,
     get_promo_quota_store,
     get_promotions_port,
     get_quota_lock,
@@ -188,6 +189,19 @@ from src.sdk.connectorkit import (  # noqa: E402
 
 _promotions = get_promotions_port()
 _coupon_sales = get_coupon_sales_reader()
+
+
+def _order_facts_port():
+    """OrderFacts para el cupón de bienvenida (caso 2026-10-09): si el cliente
+    ya compró lo dicen sus pedidos anteriores (el vault guarda solo el
+    vínculo). Se resuelve al armar la tool, no al importar el worker; sin
+    Medusa, None: un pedido registrado antes cuenta como compra."""
+    try:
+        return get_order_facts_port()
+    except Exception as exc:  # noqa: BLE001 — sin Medusa la tool degrada
+        logger.warning("OrderFacts no disponible para el cupón de bienvenida: {}", exc)
+        return None
+
 
 register_tool_extension(
     "sales.list_promotions",
@@ -197,6 +211,8 @@ register_tool_extension(
         catalog=_catalog,
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
+        metadata_store=build_session_metadata_store(),
+        order_facts=_order_facts_port(),
     ),
 )
 register_tool_extension(
@@ -208,6 +224,7 @@ register_tool_extension(
         metadata_store=build_session_metadata_store(),
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
+        order_facts=_order_facts_port(),
     ),
 )
 

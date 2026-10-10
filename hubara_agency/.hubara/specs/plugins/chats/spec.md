@@ -670,6 +670,16 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
 
+#### Scenario: Descuento de bienvenida, solo en la primera compra (2026-10-09)
+
+- GIVEN la central de cupones creó `BIENVENIDA` (5 %, todo el catálogo) con «Solo primera compra»: la condición vive en el vault (`_promotions/conditions/BIENVENIDA.json`), se escribe ANTES de crear el cupón en Medusa y el lector de promociones la pega en el `PromotionDTO` (`first_purchase_only`)
+- WHEN el cliente pide «el descuento de la primera compra» (o «el de la página») y el bot llama `list_promotions`
+- THEN el resumen nombra el cupón con su nombre y su condición y le dice al bot que lo aplique con su código aunque el cliente no lo sepa
+- AND `apply_coupon` lo aplica si la conversación no tiene un pedido anterior que cuente (registrado antes del episodio activo, ni cancelado ni de prueba, según OrderFacts)
+- AND a quien ya compró se le responde `applied=false`, `reason="first_purchase_only"`, y `list_promotions` lo marca `applies_to_customer=false`
+- AND si OrderFacts no confirma un pedido anterior, `reason="first_purchase_unknown"` y el cupón NO se aplica; una puerta que valide cupones sin poder mirar las compras (la campaña que aplica su cupón sola) tampoco lo aplica y le deja el `apply_coupon` al bot
+- AND una condición ilegible deja el cupón `scope_unresolved` (no se ofrece ni se aplica)
+
 ### Requirement: Hilo de cada turno del bot en el chat (laboratorio, PR 17)
 
 El panel del chat SHALL ofrecer, al final de cada turno del bot, un botón visible siempre (también en la app Android) que abre el hilo de ese turno: el diagrama de secuencia de la traza (`GET /api/chats/sessions/{sesión}/turns/trace?turn_key=`). `GET /api/dashboard/sessions/{sesión}` MUST marcar cada burbuja con el `turn_key` del turno que la produjo: el mensaje del cliente, con el turno que lo procesó (por wamid, o el primero que arrancó después, dentro de 30 min); lo del bot, con el último turno que arrancó antes y que todavía no había terminado (hasta 1 min después de escribir su traza, `recorded_at_ms`). Los mensajes del operador humano, los ecos de otro agente (`sender`), las plantillas que llegan después del turno (ETA, remarketing, campañas) y los eventos de sistema no llevan turno. Una traza rota nunca deja sin historial al chat: el historial sale igual, sin botones. Solo lectura.

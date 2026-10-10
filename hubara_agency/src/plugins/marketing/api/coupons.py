@@ -44,6 +44,8 @@ from src.plugins.marketing.domain.coupons import (
 from src.sdk.castkit import current_actor
 from src.sdk.connectorkit import (
     CouponCodeTakenError,
+    CouponConditions,
+    CouponConditionsError,
     CouponDeleteRefusedError,
     CouponNotFoundError,
     CouponNotManageableError,
@@ -117,6 +119,13 @@ def audit_log() -> Any:
     return get_coupon_audit_log()
 
 
+def conditions_store() -> Any:
+    """Condiciones de Hubara por cupón («solo primera compra»)."""
+    from src.sdk.connectorkit import get_coupon_conditions_store
+
+    return get_coupon_conditions_store()
+
+
 def sales_reader() -> Any:
     from src.sdk.connectorkit import get_coupon_sales_reader
 
@@ -174,6 +183,47 @@ def _sheet(promotion_id: str) -> QuotaSheet:
         return quota_store().get(_pid(promotion_id))
     except QuotaStoreError as e:
         raise _fail(503, "No pude leer las unidades guardadas de este cupón; no se hizo ningún cambio.") from e
+
+
+#: «Solo primera compra» (caso 2026-10-09): la condición es de Hubara (vault).
+_CONDITIONS_UNREADABLE = (
+    "No pude leer si este cupón es solo para la primera compra; no se hizo ningún cambio."
+)
+_CONDITIONS_UNSAVED = (
+    "No pude guardar si el cupón es solo para la primera compra; no se hizo ningún cambio."
+)
+
+
+def _first_purchase_of(code: str) -> bool | None:
+    """La condición guardada del cupón; None = no se pudo leer."""
+    try:
+        return conditions_store().get(code).first_purchase_only
+    except (CouponConditionsError, OSError, ValueError):
+        return None
+
+
+def _save_first_purchase(code: str, value: bool, request: Request) -> None:
+    """Guarda la condición; 503 si el vault falla (no cambió nada)."""
+    try:
+        conditions_store().put(
+            CouponConditions(code, first_purchase_only=value, updated_at=_stamp(), updated_by=current_actor(request))
+        )
+    except (CouponConditionsError, OSError, ValueError) as e:
+        raise _fail(503, _CONDITIONS_UNSAVED) from e
+
+
+def _forget_conditions(code: str) -> None:
+    """Borra la condición de un código que ya no la tiene (best-effort: queda
+    en el log; lo que sobra solo hace el cupón MÁS estricto)."""
+    try:
+        conditions_store().delete(code)
+    except (CouponConditionsError, OSError, ValueError) as e:
+        log.warning("central: no pude borrar la condición de primera compra de %s: %s", code, e)
+
+
+def _json(view: CouponView, *, units: dict[str, int | None] | None = None) -> dict[str, Any]:
+    """`coupon_json` con la condición de Hubara (None = no se pudo leer)."""
+    return coupon_json(view, units=units) | {"first_purchase_only": _first_purchase_of(view.code)}
 
 
 async def _view(promotion_id: str) -> CouponView:
@@ -294,7 +344,7 @@ async def list_coupons() -> dict[str, Any]:
     coupons = []
     for view in views:
         sheet = sheets.get(view.promotion_id) or QuotaSheet(view.promotion_id, view.code, ())
-        coupons.append(coupon_json(view, units=units_summary(boards.get(view.promotion_id), sheet)))
+        coupons.append(_json(view, units=units_summary(boards.get(view.promotion_id), sheet)))
     return {"coupons": coupons, "unavailable": False}
 
 
@@ -306,18 +356,34 @@ class CouponBody(BaseModel):
     starts_on: str = ""
     ends_on: str = ""
     status: str = "active"
+    #: Solo para la primera compra del cliente (el descuento de bienvenida).
+    first_purchase_only: bool = False
 
 
 @router.post("/coupons", status_code=201)
 async def create_coupon(body: CouponBody, request: Request) -> dict[str, Any]:
     try:
-        spec = parse_coupon_spec(body.model_dump())
+        spec = parse_coupon_spec(body.model_dump(exclude={"first_purchase_only"}))
     except CouponSpecError as e:
         raise _spec_error(e) from e
     await _check_products(spec.products)
+    # La condición va ANTES que Medusa: si el vault falla no queda un cupón de
+    # bienvenida que le sirva a cualquiera. Si Medusa no lo crea, se devuelve
+    # la que había (el código puede ser de otro cupón).
+    previous = _first_purchase_of(spec.code)
+    if body.first_purchase_only:
+        if previous is None:
+            raise _fail(503, _CONDITIONS_UNREADABLE)
+        _save_first_purchase(spec.code, True, request)
+
+    def _undo_condition() -> None:
+        if body.first_purchase_only and not previous:
+            _forget_conditions(spec.code)
+
     try:
         view = await promotions_admin().create_coupon(spec)
     except CouponCodeTakenError as e:
+        _undo_condition()
         if getattr(e, "campaign_identifier", False):
             # Solo choca la campaña que quedó de un cupón borrado.
             raise _fail(
@@ -327,12 +393,20 @@ async def create_coupon(body: CouponBody, request: Request) -> dict[str, Any]:
             ) from e
         raise _fail(409, "Ese código ya existe.") from e
     except CouponRejectedError as e:
+        _undo_condition()
         raise _fail(422, f"Medusa no aceptó el cupón: {e.message}") from e
     except PromotionsUnavailableError as e:
         log.warning("central: crear el cupón %s falló: %s", spec.code, e)
+        if not getattr(e, "outcome_unknown", False):
+            _undo_condition()
         raise _unavailable(e, unknown=_CREATE_UNKNOWN) from e
-    _audit(request, "create", view, {"percentage": view.percentage, "status": view.status})
-    return coupon_json(view)
+    if previous and not body.first_purchase_only:
+        _forget_conditions(spec.code)  # la de un cupón borrado con el mismo código
+    _audit(
+        request, "create", view,
+        {"percentage": view.percentage, "status": view.status, "first_purchase_only": body.first_purchase_only},
+    )
+    return _json(view)
 
 
 @router.get("/coupons/{promotion_id}")
@@ -344,7 +418,7 @@ async def get_coupon(promotion_id: str) -> dict[str, Any]:
     except PromotionsUnavailableError:
         board = None
     return {
-        "coupon": coupon_json(view, units=units_summary(board, sheet)),
+        "coupon": _json(view, units=units_summary(board, sheet)),
         # Sin Medusa se ven las filas (sin vendidas) y el aviso.
         "units": units_json(board if board is not None else quota_statuses(list(sheet.quotas), {}), sheet)
         | {"unavailable": board is None},
@@ -371,9 +445,31 @@ def _prune_units(request: Request, before: CouponView, after: CouponView) -> Non
         _audit(request, "units_pruned", after, {"rows": [quota_row_label(q) for q in removed]})
 
 
+def _set_first_purchase(request: Request, view: CouponView, wanted: bool) -> None:
+    """Cambia la condición del cupón y lo deja en el registro."""
+    current = _first_purchase_of(view.code)
+    if current is None:
+        raise _fail(503, _CONDITIONS_UNREADABLE)
+    if current == wanted:
+        return
+    _save_first_purchase(view.code, wanted, request)
+    _audit(request, "conditions", view, {"first_purchase_only": [current, wanted]})
+
+
 @router.patch("/coupons/{promotion_id}")
 async def update_coupon(promotion_id: str, patch: dict[str, Any], request: Request) -> dict[str, Any]:
+    first_purchase = patch.pop("first_purchase_only", None)
+    if first_purchase is not None and not isinstance(first_purchase, bool):
+        raise HTTPException(
+            status_code=422,
+            detail={"field": "first_purchase_only", "message": "Va como sí o no."},
+        )
     before = await _view(promotion_id)
+    if first_purchase is not None and not patch:
+        # Solo la condición: es de Hubara, vale aunque el cupón sea de solo
+        # lectura en Medusa (como el cupo).
+        _set_first_purchase(request, before, first_purchase)
+        return _json(before)
     if not before.manageable:
         raise _fail(409, before.unmanageable_reason or "Este cupón se ve en solo lectura.")
     try:
@@ -417,7 +513,7 @@ async def update_coupon(promotion_id: str, patch: dict[str, Any], request: Reque
                 "El cambio quedó a medias en Medusa y no pude ver cómo quedó el cupón. "
                 "Recárgalo; reintentar es seguro."
             )
-        raise _fail(502, message, step=e.step, coupon=coupon_json(e.view) if e.view else None) from e
+        raise _fail(502, message, step=e.step, coupon=_json(e.view) if e.view else None) from e
     except PromotionsUnavailableError as e:
         log.warning("central: editar el cupón %s falló: %s", promotion_id, e)
         if getattr(e, "outcome_unknown", False):
@@ -427,7 +523,16 @@ async def update_coupon(promotion_id: str, patch: dict[str, Any], request: Reque
     if diff:
         _audit(request, "update", after, diff)
     _prune_units(request, before, after)
-    return coupon_json(after)
+    if after.code != before.code:
+        # Un borrador renombrado conserva su condición (o la pedida).
+        kept = _first_purchase_of(before.code)
+        wanted = first_purchase if first_purchase is not None else bool(kept)
+        if wanted:
+            _save_first_purchase(after.code, True, request)
+        _forget_conditions(before.code)
+    elif first_purchase is not None:
+        _set_first_purchase(request, after, first_purchase)
+    return _json(after)
 
 
 class StatusBody(BaseModel):
@@ -456,7 +561,7 @@ async def set_coupon_status(promotion_id: str, body: StatusBody, request: Reques
                        {"status": body.status})
         raise _unavailable(e, unknown=_STATUS_UNKNOWN) from e
     _audit(request, "set_status", view, {"status": body.status})
-    return coupon_json(view)
+    return _json(view)
 
 
 async def _code_of(promotion_id: str) -> str:
@@ -550,6 +655,7 @@ async def delete_coupon(promotion_id: str, request: Request) -> Response:
             _audit(request, "delete_unconfirmed", view)
         raise _unavailable(e, unknown=_DELETE_UNKNOWN) from e
     _forget_units(promotion_id)
+    _forget_conditions(view.code)
     detail: dict[str, Any] = {}
     orphan = getattr(deletion, "orphaned_campaign_id", None)
     if orphan:

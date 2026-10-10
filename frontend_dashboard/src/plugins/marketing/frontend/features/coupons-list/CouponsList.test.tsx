@@ -60,6 +60,14 @@ describe("CouponsList", () => {
     expect(getAllByText(/quedan/)).toHaveLength(1);
   });
 
+  it("marca el cupón que es solo para la primera compra", () => {
+    const { getByText, getAllByText } = renderList({
+      coupons: [...COUPONS, makeCoupon({ promotionId: "promo_05", code: "BIENVENIDA", firstPurchaseOnly: true })],
+    });
+    expect(getByText("BIENVENIDA")).toBeTruthy();
+    expect(getAllByText("Primera compra")).toHaveLength(1);
+  });
+
   it("filtra por estado con los chips (con conteo)", () => {
     const { getByRole, queryByText } = renderList();
     expect(getByRole("button", { name: "Todos 4" })).toBeTruthy();

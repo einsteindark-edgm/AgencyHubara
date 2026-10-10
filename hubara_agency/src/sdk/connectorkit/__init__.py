@@ -153,6 +153,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "QuotaSheet": "src.platform.promotions.quota_store",
     "QuotaStoreError": "src.platform.promotions.quota_store",
     "FakePromoQuotaStore": "src.platform.promotions.quota_store",
+    # Condiciones de Hubara por cupón («solo primera compra», caso 2026-10-09):
+    "CouponConditions": "src.platform.promotions.conditions",
+    "CouponConditionsError": "src.platform.promotions.conditions",
+    "FakeCouponConditionsStore": "src.platform.promotions.conditions",
     "FakeCouponAuditLog": "src.platform.promotions.audit",
     "CouponResults": "src.platform.promotions.coupon_sales",
     "coupon_results": "src.platform.promotions.coupon_sales",
@@ -182,6 +186,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_promotions_port": "src.platform.promotions.composition",
     "get_promotions_admin_port": "src.platform.promotions.composition",
     "get_promo_quota_store": "src.platform.promotions.composition",
+    "get_coupon_conditions_store": "src.platform.promotions.composition",
     "get_coupon_audit_log": "src.platform.promotions.composition",
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",

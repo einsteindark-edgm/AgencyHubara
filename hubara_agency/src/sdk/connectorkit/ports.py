@@ -114,6 +114,7 @@ from src.platform.orders.query_port import (
 )
 from src.platform.promotions.composition import (
     get_coupon_audit_log as get_coupon_audit_log,
+    get_coupon_conditions_store as get_coupon_conditions_store,
     get_coupon_sales_reader as get_coupon_sales_reader,
     get_promo_quota_store as get_promo_quota_store,
     get_promotions_admin_port as get_promotions_admin_port,
@@ -153,6 +154,11 @@ from src.platform.promotions.quota_store import (
 )
 from src.platform.promotions.audit import (
     FakeCouponAuditLog as FakeCouponAuditLog,
+)
+from src.platform.promotions.conditions import (
+    CouponConditions as CouponConditions,
+    CouponConditionsError as CouponConditionsError,
+    FakeCouponConditionsStore as FakeCouponConditionsStore,
 )
 from src.platform.promotions.coupon_sales import (
     CouponResults as CouponResults,

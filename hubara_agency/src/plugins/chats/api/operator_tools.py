@@ -60,6 +60,7 @@ from src.sdk.connectorkit import (
     ProductNotFoundError,
     get_catalog_client,
     get_coupon_sales_reader,
+    get_order_facts_port,
     get_promo_quota_store,
     get_promotions_port,
     parse_variant_tags,
@@ -115,6 +116,8 @@ class OperatorToolsDeps:
     #: `flush_pending_ui_intents(session, *, only_ids, operator_tool) -> enviados`
     flush: Callable[..., Awaitable[int]]
     now_ms: Callable[[], int]
+    #: OrderFacts: si el cliente ya compró (cupón de bienvenida, 2026-10-09).
+    order_facts: Any | None = None
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -139,6 +142,7 @@ def get_operator_tools_deps() -> OperatorToolsDeps:
         sales=_try("coupon_sales_reader", get_coupon_sales_reader),
         flush=flush_pending_ui_intents,
         now_ms=_now_ms,
+        order_facts=_try("order_facts", get_order_facts_port),
     )
 
 
@@ -169,7 +173,7 @@ def _bot_tools(deps: OperatorToolsDeps) -> dict[str, Callable[[], Any]]:
         "send_quick_replies": lambda: SendQuickRepliesTool(ws, catalog=deps.catalog),
         "apply_coupon": lambda: ApplyCouponTool(
             ws, promotions=deps.promotions, metadata_store=store, catalog=deps.catalog,
-            quotas=deps.quotas, sales=deps.sales,
+            quotas=deps.quotas, sales=deps.sales, order_facts=deps.order_facts,
         ),
     }
 
