@@ -39,9 +39,11 @@ _NOW_MS = 1_791_000_000_000  # 2026-10-03
 class _History:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
+        self.kwargs: list[dict[str, Any]] = []
 
-    def append_user_event(self, session_id: str, content: str, **_: Any) -> None:
+    def append_user_event(self, session_id: str, content: str, **kwargs: Any) -> None:
         self.events.append((session_id, content))
+        self.kwargs.append(kwargs)
 
 
 class _LoadOrStart:
@@ -105,12 +107,12 @@ def ingest(monkeypatch: pytest.MonkeyPatch):
             await asyncio.sleep(0)
         return metadata.read(_SID)
 
-    return run, history, bot, dispatch
+    return run, history, bot, dispatch, metadata
 
 
 @pytest.mark.asyncio
 async def test_a_message_redelivered_days_later_keeps_its_window_closed(ingest) -> None:
-    run, history, bot, dispatch = ingest
+    run, history, bot, dispatch, _metadata = ingest
     sent_ms = _NOW_MS - 3 * 24 * 3600 * 1000
 
     meta = await run(sent_ms)
@@ -125,7 +127,7 @@ async def test_a_message_redelivered_days_later_keeps_its_window_closed(ingest) 
 
 @pytest.mark.asyncio
 async def test_a_message_that_arrives_on_time_opens_the_window_from_when_it_was_sent(ingest) -> None:
-    run, _history, bot, dispatch = ingest
+    run, _history, bot, dispatch, _metadata = ingest
     sent_ms = _NOW_MS - 40_000  # Meta demoró 40 s
 
     meta = await run(sent_ms)
@@ -137,7 +139,7 @@ async def test_a_message_that_arrives_on_time_opens_the_window_from_when_it_was_
 
 @pytest.mark.asyncio
 async def test_a_meta_clock_ahead_of_ours_does_not_stretch_the_window(ingest) -> None:
-    run, _history, bot, _dispatch = ingest
+    run, _history, bot, _dispatch, _metadata = ingest
 
     meta = await run(_NOW_MS + 120_000)
 
@@ -147,7 +149,7 @@ async def test_a_meta_clock_ahead_of_ours_does_not_stretch_the_window(ingest) ->
 
 @pytest.mark.asyncio
 async def test_a_timestamp_older_than_meta_retries_is_not_a_redelivery(ingest) -> None:
-    run, _history, bot, _dispatch = ingest
+    run, _history, bot, _dispatch, _metadata = ingest
 
     meta = await run(_NOW_MS - 30 * 24 * 3600 * 1000)
 
@@ -158,3 +160,59 @@ async def test_a_timestamp_older_than_meta_retries_is_not_a_redelivery(ingest) -
 def test_the_fixture_clock_is_in_the_past() -> None:
     """Guarda del propio test: `_NOW_MS` fijo, no el reloj real."""
     assert _NOW_MS < time.time() * 1000
+
+
+@pytest.mark.asyncio
+async def test_a_message_redelivered_days_later_tells_the_chat_when_it_was_written(ingest) -> None:
+    """Caso 2026-10-09: el saludo de 3 días antes llegó 19 s después
+    de la plantilla del operador y pareció su respuesta. El chat necesita
+    cuándo lo escribió el cliente y que el bot no pudo contestarle."""
+    run, history, _bot, _dispatch, _metadata = ingest
+    sent_ms = _NOW_MS - 3 * 24 * 3600 * 1000
+
+    await run(sent_ms)
+
+    assert history.kwargs[0]["sent_at_ms"] == sent_ms
+    assert history.kwargs[0]["arrived_after_window"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_message_that_arrives_on_time_carries_no_late_marks(ingest) -> None:
+    run, history, _bot, _dispatch, _metadata = ingest
+
+    await run(_NOW_MS - 40_000)
+
+    assert "sent_at_ms" not in history.kwargs[0]
+    assert "arrived_after_window" not in history.kwargs[0]
+
+
+@pytest.mark.asyncio
+async def test_a_message_hours_late_inside_the_window_shows_when_it_was_written(ingest) -> None:
+    run, history, bot, _dispatch, _metadata = ingest
+    sent_ms = _NOW_MS - 2 * 3600 * 1000
+
+    await run(sent_ms)
+
+    assert history.kwargs[0]["sent_at_ms"] == sent_ms
+    assert "arrived_after_window" not in history.kwargs[0]
+    assert bot.calls == [(_SID, "hola, ¿tienen velas de halloween?")]  # ventana abierta: contesta
+
+
+@pytest.mark.asyncio
+async def test_an_old_message_arriving_after_a_newer_one_does_not_close_the_window(ingest) -> None:
+    """Meta re-entrega los rezagados uno tras otro y sin orden garantizado:
+    si el cliente ya escribió algo nuevo, un mensaje viejo que llega después
+    no puede devolver la ventana a su hora (la cerraría hacia atrás)."""
+    run, history, bot, _dispatch, metadata = ingest
+    newer_ms = _NOW_MS - 60_000
+    metadata.store[_SID] = {
+        "last_inbound_at_ms": newer_ms,
+        "service_window_expires_at_ms": newer_ms + SERVICE_WINDOW_MS,
+    }
+
+    meta = await run(_NOW_MS - 3 * 24 * 3600 * 1000)
+
+    assert meta["last_inbound_at_ms"] == newer_ms
+    assert meta["service_window_expires_at_ms"] == newer_ms + SERVICE_WINDOW_MS
+    assert "arrived_after_window" not in history.kwargs[0]  # la ventana sigue abierta
+    assert bot.calls == [(_SID, "hola, ¿tienen velas de halloween?")]

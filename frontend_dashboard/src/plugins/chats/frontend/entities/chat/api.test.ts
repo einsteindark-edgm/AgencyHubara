@@ -205,6 +205,8 @@ interface RawMsg {
   reply_to?: { id: string; author?: string; text?: string; image_url?: string };
   /** Forma real del mensaje que proyecta el backend (ver `chatEventSchema`). */
   event?: ChatEvent;
+  sent_at?: string;
+  arrived_after_window?: boolean;
 }
 
 function mockSessionDetail(messages: RawMsg[]) {
@@ -801,5 +803,35 @@ describe("useChatMessages — turno del bot de cada burbuja (laboratorio PR 17)"
     ]);
     const bubbles = (data ?? []).filter((m) => m.kind !== "day");
     expect(bubbles.map((m) => m.turnKey)).toEqual(["run:x/t:1", "run:x/t:1", "run:x/t:1", undefined]);
+  });
+});
+
+describe("useChatMessages — mensaje que Meta entregó tarde", () => {
+  it("lleva el día y la hora en que el cliente lo escribió, y si llegó con la ventana cerrada", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "user_message",
+        role: "user",
+        content: "Hola, ¿siguen teniendo velas?",
+        timestamp: "2026-10-09T21:35:42+00:00",
+        sent_at: "2026-10-06T17:02:04+00:00",
+        arrived_after_window: true,
+      },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    expect(bubble?.time).toBe("16:35"); // la llegada sigue ordenando el chat
+    expect(bubble?.sentDayIso).toBe("2026-10-06");
+    expect(bubble?.sentTime).toBe("12:02");
+    expect(bubble?.arrivedAfterWindow).toBe(true);
+  });
+
+  it("un mensaje que llegó a tiempo no trae marcas de tardío", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "hola", timestamp: "2026-10-09T21:35:42+00:00" },
+    ]);
+    const bubble = data?.find((m) => m.kind === "in");
+    expect(bubble?.sentDayIso).toBeUndefined();
+    expect(bubble?.sentTime).toBeUndefined();
+    expect(bubble?.arrivedAfterWindow).toBeUndefined();
   });
 });

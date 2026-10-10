@@ -295,8 +295,8 @@ class RegisterOrderTool(ToolBase):
         "(reason_category='ORDER_REGISTRATION_FAILED')` para que un colega "
         "registre manualmente — los datos quedan persistidos en metadata "
         "para que el equipo los reconstruya. Si el cliente confirmó pero "
-        "NO completó los datos de envío, NO uses esta tool — usa "
-        "`escalate_to_human(reason_category='ORDER_PENDING_SHIPPING_DETAILS')`."
+        "NO completó los datos de envío, NO uses esta tool todavía: pídele "
+        "los datos que faltan."
     )
     parameters: dict[str, Any] = {
         "type": "object",

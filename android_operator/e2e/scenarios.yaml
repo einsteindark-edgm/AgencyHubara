@@ -8,6 +8,7 @@
 #   000000000104 Andrés   pedido #41 atrasado 4 días (incendio GRAVE, botón «Pedido #41»)
 #   000000000105 Valentina ventana de 24 h cerrada (solo plantillas)
 #   000000000106 Daniela  comprobante de pago por verificar (incendio HOY)
+#   000000000107 Mariana  mensaje que Meta entregó tarde, ventana cerrada (al fondo de la bandeja)
 # Órdenes: #40 Juan (en camino), #41 Andrés (preparando), #42 Daniela (borrador).
 # Pantallas del servidor (pestaña «Más»): android_operator/screens/; las de prueba de S18 en e2e/screens/.
 #
@@ -652,3 +653,23 @@ scenarios:
     checks:
       - screen_has: "Sofía pide un humano"
 
+
+  - id: S27_mensaje_que_llego_tarde
+    title: Un mensaje que Meta entregó tarde dice cuándo lo escribió el cliente
+    resumen: "Caso 2026-10-09: Meta re-entregó días después un mensaje perdido y, con la hora de llegada, parecía la respuesta a la plantilla recién enviada. En el chat de Mariana la burbuja dice «Escrito el …» y, como llegó con la ventana de 24 h cerrada, una nota explica que el bot no respondió y que solo un mensaje nuevo del cliente la abre."
+    setup: *fresh
+    script:
+      # Al fondo de la bandeja: el número queda bajo el borde, el nombre se ve.
+      - {tap: "Mariana Prueba"}
+      - {expect: "Le gusta la lavanda"}
+      - {expect: "Escrito el"}
+      - {expect: "El bot no respondió"}
+      - {shot: mensaje-tardio}
+    goal: |
+      En «Chats» abre la conversación de Mariana Prueba, 000000000107 (está al final de la lista).
+      1. Busca el último mensaje de la clienta y di qué hora muestra: ¿cuándo lo escribió y cuándo llegó?
+      2. Di si hay alguna nota debajo y qué explica sobre el bot y la ventana de 24 h.
+      Reporta los dos puntos.
+    checks:
+      - screen_has: "Escrito el"
+      - screen_has: "Solo un mensaje nuevo del cliente la abre"

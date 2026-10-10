@@ -142,6 +142,48 @@ async def test_confirmado_sin_datos_degrades_to_interesado_without_confirmation(
     assert md["episodes"][0]["closed_at_ms"] is None
 
 
+def _returning_customer(draft_slots: dict[str, Any]) -> dict[str, Any]:
+    """Clienta que ya compró hace semanas (pedido registrado de otro episodio)
+    y vuelve a pedir: el episodio de hoy no tiene confirmación (2026-10-09)."""
+    old = NOW - 16 * 86_400_000
+    return {
+        "active_route": "ventas",
+        "registered_order": {"success": True, "order_id": "o_viejo", "registered_at_ms": old},
+        "episodes": [
+            {"episode_id": "ep_001", "started_at_ms": old - 60_000, "order_id": "o_viejo", "closed_at_ms": old},
+            {**_episode(draft_slots), "episode_id": "ep_002"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_returning_customer_without_confirmation_stays_interesado(ctx, tmp_path: Path) -> None:
+    from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
+
+    path = _seed(tmp_path, _returning_customer({"producto": "Trilogía del Terror", "ciudad": "Bogotá"}))
+    tool = ManageConversationTagTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    result = json.loads(await tool.execute_with_context(ctx, tag="CONFIRMADO_SIN_DATOS", motivo="no tocó Confirmar"))
+    md = _read(path)
+    assert md["tag"] == "INTERESADO"
+    assert result["degraded_from"] == "CONFIRMADO_SIN_DATOS"
+    assert md["episodes"][-1]["closed_at_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_returning_customer_without_confirmation_is_not_handed_to_the_team(ctx, tmp_path: Path) -> None:
+    from src.platform.tools.escalation import EscalateToHumanTool
+    from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
+
+    SalesEscalateToHumanTool = guarded_escalation_tool(EscalateToHumanTool)
+
+    path = _seed(tmp_path, _returning_customer({"producto": "Trilogía del Terror"}))
+    tool = SalesEscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    result = json.loads(await tool.execute_with_context(ctx, reason_category="ORDER_PENDING_SHIPPING_DETAILS", summary="no tocó Confirmar"))
+    assert "escalation_decision" not in result
+    assert result["error"].startswith("precondition_failed")
+    assert _read(path)["active_route"] == "ventas"
+
+
 @pytest.mark.asyncio
 async def test_confirmado_sin_datos_kept_with_confirmation(ctx, tmp_path: Path) -> None:
     from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool

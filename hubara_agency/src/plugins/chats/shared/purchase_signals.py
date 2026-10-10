@@ -242,15 +242,30 @@ def register_inbound_purchase_signals(
 
 
 def has_purchase_confirmation(metadata: dict[str, Any]) -> bool:
-    """El cliente confirmó la compra en ESTE episodio, o ya hay orden registrada."""
-    registered = metadata.get("registered_order")
-    if isinstance(registered, dict) and registered.get("success") is True:
+    """El cliente confirmó la compra en ESTE episodio, o ya hay orden registrada.
+
+    Con un episodio abierto, un pedido registrado ANTES de que empezara es de
+    una compra anterior, no de esta (2026-10-09: clienta que vuelve, el pedido
+    de septiembre dio por confirmada la compra nueva y el cierre por silencio
+    la pasó al equipo en vez de dejarla a remarketing)."""
+    if has_registered_order(metadata):
         return True
     episode = active_episode(metadata)
     if not episode:
         return False
     draft = episode.get("order_draft")
     return isinstance(draft, dict) and isinstance(draft.get("confirmed_at_ms"), int)
+
+
+def has_registered_order(metadata: dict[str, Any]) -> bool:
+    """Hay un pedido registrado de ESTA compra: con un episodio abierto, uno
+    registrado antes de que empezara es de una compra anterior. Sin alguna de
+    las dos horas no se sabe: cuenta, como siempre."""
+    registered = metadata.get("registered_order")
+    if not isinstance(registered, dict) or registered.get("success") is not True:
+        return False
+    at, started = registered.get("registered_at_ms"), (active_episode(metadata) or {}).get("started_at_ms")
+    return not (isinstance(at, int) and isinstance(started, int) and at < started)
 
 
 def current_signal(metadata: dict[str, Any]) -> dict[str, Any] | None:
@@ -325,6 +340,7 @@ __all__ = [
     "detect_deferral",
     "detect_purchase_affirmation",
     "has_purchase_confirmation",
+    "has_registered_order",
     "is_current_inbound_deferral",
     "register_inbound_purchase_signals",
 ]

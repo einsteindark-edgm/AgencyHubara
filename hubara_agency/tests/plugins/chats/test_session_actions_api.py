@@ -329,6 +329,39 @@ def test_order_from_the_panel_is_not_held_by_the_bot_split_lines(h: _Harness) ->
     assert len(h.port.calls) == 1
 
 
+def test_order_created_after_the_bot_closed_without_order_belongs_to_that_episode(h: _Harness) -> None:
+    """Caso 2026-10-09 (cliente que vuelve, pedido #65): el bot cerró el
+    episodio CONFIRMADO_SIN_DATOS (no tocó «Confirmar») y escaló; minutos
+    después el operador registró el pedido con «Crear pedido». Sin episodio
+    activo, el pedido abría uno VACÍO (sin referral, sin mensajes del cliente):
+    en Ads la conversación real quedaba «cotizado» y la venta caía en la
+    campaña del primer anuncio (origin sticky). La venta es de la
+    conversación donde se cerró; «Confirmar pago» tiene que cerrar ESA.
+    """
+    from src.platform.orders.medusa_order_command import apply_payment_confirmation_to_chat_metadata
+    from src.plugins.chats.api.dashboard import _compute_pending_payment_order_id
+
+    h.client.post(_url("draft"), json={"producto": "luz-serena", "ciudad": "Bogotá", "direccion": "Cl 1 # 2-3"})
+    h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "no tocó Confirmar"})
+    (closed,) = h.meta()["episodes"]
+    assert closed["closing_tag"] == "CONFIRMADO_SIN_DATOS" and closed["order_id"] is None
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["registered"] is True
+    m = h.meta()
+    (ep,) = m["episodes"]  # ningún episodio vacío nuevo
+    assert ep["episode_id"] == closed["episode_id"] and ep["closed_at_ms"] == closed["closed_at_ms"]
+    assert ep["order_id"] == body["order_id"] and ep["order_total_cop"] == body["total_cop"]
+    assert ep["closing_tag"] == "CONFIRMADO_PAGO_PENDIENTE"
+    # el colega conserva el hilo (invariante de handoff) y ve el pago por verificar
+    assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "HUMANO"
+    assert _compute_pending_payment_order_id(m) == body["order_id"]
+    # «Confirmar pago» cierra la venta en el episodio donde ocurrió
+    assert apply_payment_confirmation_to_chat_metadata(m, now_ms=2, by="op", session_id=_A, order_id=body["order_id"])
+    assert m["episodes"][0]["closing_tag"] == "COMPRA_EXITOSA"
+
+
 def test_order_is_idempotent_for_the_same_content(h: _Harness) -> None:
     first = h.client.post(_url("order"), json=_ORDER).json()
     second = h.client.post(_url("order"), json=_ORDER).json()

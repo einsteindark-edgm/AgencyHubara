@@ -103,6 +103,25 @@ async def test_saying_the_order_is_registered_needs_a_registered_order(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_an_order_from_a_previous_purchase_does_not_keep_the_promise(tmp_path: Path, ctx: ToolContext) -> None:
+    """Cliente que vuelve (2026-10-09): el pedido de su compra anterior no
+    registra la de hoy; decir «quedó registrado» sigue pidiendo `register_order`."""
+    old = 1_788_024_154_683
+    _seed(
+        tmp_path,
+        registered_order={"success": True, "order_id": "o_viejo", "registered_at_ms": old},
+        episodes=[
+            {"episode_id": "ep_001", "started_at_ms": old - 60_000, "order_id": "o_viejo", "closed_at_ms": old},
+            {"episode_id": "ep_002", "started_at_ms": old + 86_400_000, "closed_at_ms": None},
+        ],
+    )
+
+    (promise,) = (await _send(tmp_path, ctx, "¡Listo! Tu pedido quedó registrado 🤍"))["promises"]
+
+    assert promise["kind"] == "registro" and promise["tools"] == ["register_order"]
+
+
+@pytest.mark.asyncio
 async def test_a_question_or_an_offer_promises_nothing(tmp_path: Path, ctx: ToolContext) -> None:
     _seed(tmp_path)
 

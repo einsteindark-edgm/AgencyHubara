@@ -65,6 +65,7 @@ import com.hubara.operator.core.model.Prominence
 import com.hubara.operator.core.model.ShippingForm
 import com.hubara.operator.core.model.Suggestion
 import com.hubara.operator.core.ui.clockLabel
+import com.hubara.operator.core.ui.writtenLabel
 import java.time.ZoneId
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.delay
@@ -110,16 +111,10 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
     position: BubblePosition = BubblePosition.SINGLE,
     zone: ZoneId = remember { ZoneId.systemDefault() },
+    nowMs: Long = System.currentTimeMillis(),
 ) {
     if (message.author == Author.SYSTEM) {
-        Box(modifier.fillMaxWidth().padding(top = Spacing.sm), contentAlignment = Alignment.Center) {
-            Text(
-                message.text.orEmpty(), style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
-                modifier = Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(12.dp))
-                    .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = Spacing.md, vertical = 6.dp),
-            )
-        }
+        SystemNote(message.text.orEmpty(), modifier)
         return
     }
     val mine = message.author != Author.CUSTOMER
@@ -170,11 +165,19 @@ fun MessageBubble(
                 message.text?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.bodyLarge, color = fg, modifier = textPad) }
             }
             if (message.imageUrl == null && message.text.isNullOrBlank()) Text("…", style = MaterialTheme.typography.bodyLarge, color = fg)
-            if (groupEnd || message.state != DeliveryState.SENT) {
+            // Meta lo entregó tarde: la llegada sola lo hacía parecer una respuesta a lo último que se le mandó
+            // (caso 2026-10-09). Va en toda burbuja tardía, no solo al final del grupo.
+            val sentAtMs = message.sentAtMs
+            if (groupEnd || message.state != DeliveryState.SENT || sentAtMs != null) {
+                val arrived = message.timestampMs?.let { clockLabel(it, zone) }
                 val meta = when (message.state) {
                     DeliveryState.PENDING -> "enviando…"
                     DeliveryState.FAILED -> "no se envió"
-                    DeliveryState.SENT -> message.timestampMs?.let { clockLabel(it, zone) }
+                    DeliveryState.SENT -> if (sentAtMs != null) {
+                        writtenLabel(sentAtMs, nowMs, zone) + (arrived?.let { " · llegó $it" } ?: "")
+                    } else {
+                        arrived
+                    }
                 }
                 meta?.let {
                     Text(
@@ -185,6 +188,24 @@ fun MessageBubble(
                 }
             }
         }
+        if (message.arrivedAfterWindow) SystemNote(WINDOW_CLOSED_NOTE)
+    }
+}
+
+/** Nota bajo un mensaje que llegó con la ventana de 24 h cerrada (el bot no pudo contestarle). */
+internal const val WINDOW_CLOSED_NOTE =
+    "El bot no respondió: este mensaje llegó con la ventana de 24 h cerrada. Solo un mensaje nuevo del cliente la abre."
+
+/** Píldora centrada de sistema: eventos del historial y avisos sobre un mensaje. */
+@Composable
+private fun SystemNote(text: String, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().padding(top = Spacing.sm), contentAlignment = Alignment.Center) {
+        Text(
+            text, style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = 320.dp).clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = Spacing.md, vertical = 6.dp),
+        )
     }
 }
 

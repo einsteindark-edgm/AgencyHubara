@@ -85,6 +85,35 @@ class MappersTest {
         assertThat(detail.messages.map { it.key }.toSet()).hasSize(detail.messages.size)
     }
 
+    // Caso 2026-10-09: Meta re-entregó un mensaje de 3 días antes 19 s después de la plantilla
+    // del operador; con la hora de llegada parecía su respuesta.
+    @Test fun mensaje_que_llego_tarde_trae_cuando_lo_escribio_el_cliente() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"hola, ¿siguen teniendo velas?","timestamp":"2026-10-09T21:35:42+00:00",
+               "sent_at":"2026-10-06T17:02:04+00:00","arrived_after_window":true,"wamid":"w1"},
+              {"ui_type":"user_message","content":"a tiempo","timestamp":"2026-10-09T21:36:00+00:00","wamid":"w2"}
+            ]}""",
+        )
+        val (late, onTime) = dto.toDomain()!!.messages
+        assertThat(late.sentAtMs).isEqualTo(1791306124000L)
+        assertThat(late.arrivedAfterWindow).isTrue()
+        assertThat(onTime.sentAtMs).isNull()
+        assertThat(onTime.arrivedAfterWindow).isFalse()
+    }
+
+    // L-10: un valor raro en un campo nuevo no puede tumbar la sesión entera.
+    @Test fun marcas_de_tardio_raras_se_ignoran_sin_romper_el_chat() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"hola","sent_at":{"x":1},"arrived_after_window":"sí","wamid":"w1"}
+            ]}""",
+        )
+        val message = dto.toDomain()!!.messages.single()
+        assertThat(message.sentAtMs).isNull()
+        assertThat(message.arrivedAfterWindow).isFalse()
+    }
+
     // Un backend de desarrollo (FakeSend) repite el mismo id en cada envío; una clave repetida
     // colapsa filas en Room y revienta la lista de Compose ("Key was already used").
     @Test fun wamid_repetido_no_repite_la_clave_del_mensaje() {
