@@ -48,11 +48,14 @@ tenants = {
     # («nuestro equipo te avisa cuando despachemos» ya no escala; un colega
     # que coordina algo cuando sale el pedido sí). Incidente del 2026-10-09;
     # medido con una sonda contra Jev, sin caja del laboratorio. `ventas-6`
-    # (2026-10-09) es `ventas-5` con la política `turno-v5`: en post-venta,
-    # cuando el cliente manda o cita su comprobante, la guía pide mirar el pago
-    # con check_order_status en vez de «el equipo revisa el pago» (pedido #64:
-    # el pago ya estaba confirmado). El resto de `lab` queda en sus defaults
-    # (todo apagado). Volver atrás = "ventas-5".
+    # (2026-10-09/10) es `ventas-5` con: la política `turno-v5` (en post-venta,
+    # cuando el cliente manda o cita su comprobante, mirar el pago con
+    # check_order_status en vez de «el equipo revisa el pago»: pedido #64), la
+    # tabla de `cierre` (confirmó sin datos de envío → INTERESADO), la fila
+    # `catalogo` (pide present_products, no list_categories) y el cuestionario
+    # `rafaga-v7` («me regalas…» es pedir; «¿a qué huele?» no trae el selector).
+    # El detalle, en la cabecera de su bundle.yaml. El resto de `lab` queda en
+    # sus defaults (todo apagado). Volver atrás = "ventas-5".
     #
     # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
     # banco del laboratorio. El del operador (2026-10-05) es el número con el
