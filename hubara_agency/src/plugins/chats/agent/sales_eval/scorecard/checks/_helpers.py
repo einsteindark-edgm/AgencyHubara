@@ -5,6 +5,7 @@ import re
 import unicodedata
 from collections.abc import Iterator
 
+from src.plugins.chats.agent.sales.use_cases.episode_memory import our_lines_in_turn
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
 
@@ -24,9 +25,14 @@ _OUR_QUOTED_RE = re.compile(r"\[El cliente responde a este mensaje que le enviam
 
 
 def our_quoted_message(text: str) -> str | None:
-    """El mensaje que le mandamos y el cliente contesta, si el turno lo cita."""
+    """El mensaje que le mandamos y el cliente contesta, si el turno lo cita:
+    una plantilla o lo que escribió un colega desde el chat (caso del
+    2026-10-09, `episode_memory.quote_team_exchange_in_turn`)."""
     m = _OUR_QUOTED_RE.search(text or "")
-    return m.group(1) if m else None
+    if m:
+        return m.group(1)
+    ours = our_lines_in_turn(text or "")
+    return "\n".join(ours) if ours else None
 
 
 def clip(text: str, limit: int = _EVIDENCE_MAX) -> str:

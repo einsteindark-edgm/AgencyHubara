@@ -194,3 +194,81 @@ async def test_campaign_reply_is_quoted_once_as_campaign_not_as_template() -> No
     message = loader.calls[0]["message"]
     assert message.count("[El cliente responde a") == 1
     assert "[El cliente responde a la campaña" in message
+
+
+# --- Lo que un colega escribió en el chat (caso del 2026-10-09) ---------------
+# El bot dijo que no había descuento y ofreció mostrar otra línea; un colega
+# tomó el chat, le escribió al cliente que sí le aplicaban el de la página y
+# devolvió el chat al bot. El cliente contestó «Si por favor» al colega y el
+# bot, que no tenía ese mensaje en su historial, le mandó la línea que él mismo
+# había ofrecido. Ahora el turno lleva lo que escribió el colega.
+
+_COLLEAGUE_TEXT = "Claro que sí, el descuento de la página te lo aplicamos"
+
+
+def _bot_then_colleague() -> _History:
+    return _History(
+        [
+            {"role": "user", "content": "¿Me aplicas el descuento por primera compra?"},
+            {"role": "assistant", "content": "Estas piezas no tienen promoción. ¿Te muestro la línea que sí la tiene?"},
+            {"role": "assistant", "sender": "human", "content": _COLLEAGUE_TEXT},
+        ]
+    )
+
+
+def _same_episode(now_ms: int) -> dict:
+    data = _after_order(now_ms)
+    data["episodes"][0].update(closed_at_ms=None, closing_tag=None, order_id=None)
+    data["tag"] = "RETOMA_VENTA"
+    return data
+
+
+@pytest.mark.asyncio
+async def test_what_the_colleague_wrote_reaches_the_bot_with_the_reply() -> None:
+    now = int(time.time() * 1000)
+    store = _Store(_same_episode(now))
+    loader = _Loader()
+
+    await _use_case(store, loader, _bot_then_colleague()).execute(_message("Si por favor"))
+
+    note, rest = loader.calls[0]["message"].rsplit("\n", 1)
+    assert rest == "Si por favor"
+    assert note.startswith("[Después de tu último mensaje, un colega del equipo")
+    assert f"«{_COLLEAGUE_TEXT}»" in note
+
+
+@pytest.mark.asyncio
+async def test_a_template_the_colleague_sent_is_quoted_once() -> None:
+    now = int(time.time() * 1000)
+    store = _Store(_same_episode(now))
+    loader = _Loader()
+    template = "Hola, te escribe Liliana, asesora de Hubara, para hacer seguimiento a tu consulta del pedido."
+    history = _History(
+        [
+            {"role": "assistant", "content": "¿Te ayudo con algo más?"},
+            {"role": "assistant", "sender": "human", "kind": "template", "content": template},
+        ]
+    )
+
+    await _use_case(store, loader, history).execute(_message("Sí, sigo interesada"))
+
+    message = loader.calls[0]["message"]
+    assert message.count(template) == 1
+    assert "[El cliente responde a este mensaje que le enviamos" not in message
+    assert message.endswith("\nSí, sigo interesada")
+
+
+@pytest.mark.asyncio
+async def test_when_the_bot_already_answered_after_the_colleague_nothing_is_quoted() -> None:
+    now = int(time.time() * 1000)
+    store = _Store(_same_episode(now))
+    loader = _Loader()
+    history = _bot_then_colleague()
+    history.events += [
+        {"role": "user", "content": "Si por favor"},
+        {"role": "assistant", "content": "Listo, te lo aplico 🤍"},
+    ]
+
+    await _use_case(store, loader, history).execute(_message("Gracias"))
+
+    assert loader.calls[0]["message"] == "Gracias"

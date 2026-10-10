@@ -66,3 +66,29 @@ def test_the_cash_on_delivery_minimum_and_the_product_we_sent_are_not_invented()
     verdict, failing = _verdicts()[2]
     assert "DES-05" not in failing
     assert verdict == "PASA"
+
+
+# Desde el caso del 2026-10-09 (colega que escribe desde el chat), el ingest
+# cita lo que mandó un colega —su plantilla de seguimiento incluida— con su
+# propia nota (`quote_team_exchange_in_turn`). La calificación la lee igual
+# que la cita de una plantilla: el mensaje es nuestro.
+
+def _episode_with_colleague_note():
+    from src.plugins.chats.agent.sales.use_cases.episode_memory import quote_team_exchange_in_turn
+
+    liliana = _LILIANA.split("«", 1)[1].rsplit("»]", 1)[0]
+    first = traj(
+        T(1, inbound=quote_team_exchange_in_turn([("colega", liliana)], "Hola"), sent=_episode().turns[0].sent_texts),
+        *[T(t.turn, inbound=t.inbound_text, sent=t.sent_texts) for t in _episode().turns[1:2]],
+        episode_id="ep_001",
+    )
+    return first
+
+
+def test_answering_a_colleague_the_bot_does_not_have_to_repeat_the_brand() -> None:
+    record = service.score_episode_turns(_episode_with_colleague_note(), _CTX, states={})
+    verdicts = {r["turn"]: [x["check_id"] for x in r["results"] if x["verdict"] == "falla"] for r in record["by_turn"]}
+
+    assert "APE-01" not in verdicts[1]
+    assert "APE-03" not in verdicts[1]
+    assert "DES-05" not in verdicts[2]
