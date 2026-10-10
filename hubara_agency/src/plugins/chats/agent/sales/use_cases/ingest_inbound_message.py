@@ -239,6 +239,32 @@ def _customer_sent_ms(parsed: WhatsAppMessage, now_ms: int) -> int:
     return min(now_ms, ts_ms)
 
 
+def _latest_inbound_ms(metadata: dict[str, Any], sent_ms: int, now_ms: int) -> int:
+    """El más nuevo entre este mensaje y el último que ya escribió el cliente
+    (`last_inbound_at_ms`; uno en el futuro no se cree)."""
+    previous = metadata.get("last_inbound_at_ms")
+    if isinstance(previous, int) and not isinstance(previous, bool) and sent_ms < previous <= now_ms:
+        return previous
+    return sent_ms
+
+
+#: Desde cuánta demora de Meta el chat muestra cuándo escribió el cliente
+#: (una entrega normal tarda segundos).
+_LATE_DELIVERY_MS = 5 * 60 * 1000
+
+
+def _late_delivery_kwargs(sent_ms: int, now_ms: int, arrived_after_window: bool) -> dict[str, Any]:
+    """`sent_at_ms` / `arrived_after_window` del evento del cliente en el
+    JSONL. Caso 2026-10-09: un mensaje de 3 días antes, re-entregado por Meta
+    19 s después de la plantilla del operador, se veía como su respuesta."""
+    kwargs: dict[str, Any] = {}
+    if now_ms - sent_ms >= _LATE_DELIVERY_MS:
+        kwargs["sent_at_ms"] = sent_ms
+    if arrived_after_window:
+        kwargs["arrived_after_window"] = True
+    return kwargs
+
+
 def _inbound_meta(parsed: WhatsAppMessage) -> dict[str, Any]:
     """`{wamid, ts_ms, kind}` del inbound (Meta manda la hora en segundos)."""
     ts = str(parsed.timestamp or "").strip()
@@ -487,7 +513,10 @@ class IngestInboundMessage:
         # (clientes sin teléfono, 2026-10-09): re-entregado días después, la
         # ventana ya está cerrada y el bot no puede escribirle texto libre.
         sent_ms = _customer_sent_ms(parsed, now_ms)
-        arrived_after_window = compute_service_window_expiry(sent_ms) <= now_ms
+        # La abre el ÚLTIMO mensaje del cliente: un rezagado que Meta entrega
+        # después de uno más nuevo no la cierra hacia atrás.
+        window_from_ms = _latest_inbound_ms(metadata, sent_ms, now_ms)
+        arrived_after_window = compute_service_window_expiry(window_from_ms) <= now_ms
         # Re-engagement (bug run 3b3fbaee): si el último episodio ya estaba
         # CERRADO, este inbound abre uno nuevo. Capturamos el episodio cerrado
         # ANTES de que `ensure_active_episode` mute `episodes[]`, para inyectar
@@ -607,8 +636,8 @@ class IngestInboundMessage:
         # Cada inbound del cliente reabre la ventana 24h — esto es lo que
         # permite al watchdog (Sprint 2) saber cuándo está por cerrarse y
         # disparar un utility template legítimo.
-        metadata["last_inbound_at_ms"] = sent_ms
-        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(sent_ms)
+        metadata["last_inbound_at_ms"] = window_from_ms
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(window_from_ms)
         # Lecturas del cliente (motor de decisiones, enchufe 1): compra,
         # retoma y baja las da el proveedor, con el metadata de ANTES de este
         # mensaje y lo que el cliente vio; acá solo se escriben, igual que hoy.
@@ -1205,7 +1234,10 @@ class IngestInboundMessage:
         # `wamid` + `reply_to`: el dashboard muestra qué mensaje citó el
         # cliente (caso run 541d90e0: "que el velón sea este" sin rastro de
         # a qué foto respondía).
-        reply_kwargs = _build_reply_kwargs(parsed, metadata)
+        reply_kwargs = {
+            **_build_reply_kwargs(parsed, metadata),
+            **_late_delivery_kwargs(sent_ms, now_ms, arrived_after_window),
+        }
         if persisted_document_url:
             self._history_store.append_user_event(
                 session_id,

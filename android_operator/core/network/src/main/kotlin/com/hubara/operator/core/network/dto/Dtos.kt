@@ -46,6 +46,10 @@ data class ChatMessageDto(
     val timestamp: JsonElement? = null,
     @SerialName("image_url") val imageUrl: String? = null,
     val wamid: String? = null,
+    /** Mensaje que Meta entregó tarde: cuándo lo escribió el cliente (ISO) y si llegó con la ventana
+     *  cerrada. `JsonElement` a propósito: un valor raro se ignora, no tumba la sesión (L-10). */
+    @SerialName("sent_at") val sentAt: JsonElement? = null,
+    @SerialName("arrived_after_window") val arrivedAfterWindow: JsonElement? = null,
 )
 
 @Serializable

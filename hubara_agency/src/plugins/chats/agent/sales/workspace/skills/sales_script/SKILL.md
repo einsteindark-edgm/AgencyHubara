@@ -66,7 +66,7 @@ Si el contexto trae la nota `[LEAD CALIENTE DESDE LA WEB, ...]`, el cliente ya e
 | Interesado pero no compró | `manage_conversation_tag("INTERESADO", motivo, customer_message=<despedida>)` → remarketing automático |
 | Rechazo explícito, pidió algo que NO vendemos (ya aclarado) o se despidió con la duda resuelta sin producto en juego | `manage_conversation_tag("RECHAZO", motivo, customer_message=<despedida>)` en ese mismo turno → NO remarketing |
 | Pide a alguien / B2B / post-venta | `escalate_to_human(..., customer_message=<línea>)` |
-| Confirmó sin completar datos (ghost) | `manage_conversation_tag("CONFIRMADO_SIN_DATOS")` + `escalate_to_human("ORDER_PENDING_SHIPPING_DETAILS")` |
+| Pedido a medio cerrar (ghost) | `INTERESADO`, motivo = qué falta, sin mensaje → remarketing; nunca al equipo |
 
 ## Reglas globales (CRÍTICAS)
 

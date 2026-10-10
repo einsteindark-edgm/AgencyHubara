@@ -12,6 +12,7 @@ un few-shot de omitir el param.
 """
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -63,6 +64,23 @@ def test_every_dictated_closing_tag_call_carries_the_customer_message() -> None:
         "Llamada dictada sin `customer_message` (few-shot de omitir la "
         "despedida):\n  " + "\n  ".join(offenders)
     )
+
+
+def test_the_script_never_hands_an_unfinished_order_to_the_team() -> None:
+    """Decisión del operador (2026-10-09): a quien le faltan los datos de envío
+    (o tocar «Confirmar») se le piden, y si se queda callado lo retoma
+    remarketing; el guion no lo manda al equipo con ORDER_PENDING_SHIPPING_DETAILS."""
+    from src.plugins.chats.agent.sales.tools.order_registration import RegisterOrderTool
+    from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
+
+    texts = {
+        "TOOLS.md": _read("TOOLS.md"),
+        "SKILL.md": _read("skills/sales_script/SKILL.md"),
+        "register_order": RegisterOrderTool.description,
+        "manage_conversation_tag": json.dumps(ManageConversationTagTool.parameters, ensure_ascii=False),
+    }
+    offenders = [name for name, text in texts.items() if "ORDER_PENDING_SHIPPING_DETAILS" in text]
+    assert not offenders, offenders
 
 
 def test_agents_md_explains_the_closing_contract() -> None:

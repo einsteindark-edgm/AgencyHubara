@@ -242,7 +242,7 @@ cd android_operator && ./gradlew :app:bundleRelease \
     desde el #412, «Pedir datos de envío» no espera un «sí» (solo la frena un aplazamiento); mientras falte un aroma o
     un color se sugiere solo si el cliente ya dijo que sí. La paleta «Más» (`acciones.json`) deja elegir el producto (y la cantidad
     para el formulario) del catálogo. Un 422 `invalid_args` trae `message` en español y la app lo muestra tal cual.
-    S27 en el emulador; en el chat la burbuja «Más» y la pestaña «Más» se llaman igual (`tap: {text, above}`).
+    S28 en el emulador; en el chat la burbuja «Más» y la pestaña «Más» se llaman igual (`tap: {text, above}`).
 
 33. **«Crear pedido» en la app, como en el dashboard** (2026-10-09): con el humano al mando y sin pedido, cuando el
     cliente cerró la compra (tocó «✅ Confirmar» en el resumen o el borrador anotó su «sí») va PRIMERA y en verde
@@ -252,10 +252,10 @@ cd android_operator && ./gradlew :app:bundleRelease \
     app vieja la enviaría como una tool que no existe. El formulario lee `GET /api/chats/order-intake/{id}/form` (la
     misma sugerencia de DeepSeek del dashboard + el borrador del operador; si la IA no da productos, los del borrador)
     y registra con `POST /api/chats/session-actions/{id}/order/app` (el mismo `/order`, con `success` y el motivo en
-    palabras). También está en «+ Más» (sale sin publicar app). **Trampa (S28):** la fila de burbujas conserva la
+    palabras). También está en «+ Más» (sale sin publicar app). **Trampa (S29):** la fila de burbujas conserva la
     posición de la que ya estaba; una nueva que llega adelante quedaba escondida a la izquierda. `QuickActionStrip`
-    vuelve al inicio cuando cambia la primera (Robolectric no lo reproduce: el guardia es S28). El backend de prueba no
-    crea pedidos en su Medusa: S28 llega hasta el formulario prellenado.
+    vuelve al inicio cuando cambia la primera (Robolectric no lo reproduce: el guardia es S29). El backend de prueba no
+    crea pedidos en su Medusa: S29 llega hasta el formulario prellenado.
 
 ## Endpoints
 

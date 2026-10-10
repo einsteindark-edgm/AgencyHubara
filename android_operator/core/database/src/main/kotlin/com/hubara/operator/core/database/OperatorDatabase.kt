@@ -19,12 +19,14 @@ import javax.inject.Singleton
         ConversationEntity::class, MessageEntity::class, OutboxEntity::class, DraftEntity::class,
         SuggestionSetEntity::class, FireEntity::class, HiddenFireEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = OperatorDatabase.InboundCount::class),
         // v3: nombre de perfil de WhatsApp y vista previa del último mensaje (columnas nuevas, null por defecto).
         AutoMigration(from = 2, to = 3),
+        // v4: cuándo escribió el cliente un mensaje entregado tarde y si llegó con la ventana cerrada (2026-10-09).
+        AutoMigration(from = 3, to = 4),
     ],
 )
 abstract class OperatorDatabase : RoomDatabase() {
