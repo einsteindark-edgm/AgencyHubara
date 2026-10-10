@@ -110,6 +110,25 @@ def test_with_ventas_6_the_catalog_asks_for_the_list_with_buttons() -> None:
     assert "intro_text" in row["nudge"] and "list_categories" not in row["nudge"]
 
 
+def test_with_ventas_6_the_held_back_catalog_text_asks_to_show_it_not_to_wait_for_data() -> None:
+    """La segunda puerta con la fila de cada versión (…7392): con ventas-5 la
+    fila acepta una lectura y la nota pedía «el dato» (el modelo ya lo tenía);
+    con ventas-6 dice que la herramienta es la que se lo muestra."""
+    from src.plugins.chats.agent.sales.decisions.contracts import TurnDecisions
+    from src.plugins.chats.agent.sales.decisions.facade import contract_policy_of
+
+    _need_v6()
+
+    def note(bundle: Path) -> str:
+        [row] = [r for r in _load(bundle / "turn.yaml")["contract"] if r["topic"] == "catalogo"]
+        policy = contract_policy_of(TurnDecisions(ok=True, profile="jev-v5", tools={"required": [row]}))
+        assert policy is not None and policy.final_round_note is not None
+        return policy.final_round_note(["search_products"], "Tenemos 4 piezas de Halloween") or ""
+
+    assert note(V5).endswith("hasta tener el dato de la herramienta.")
+    assert note(V6).endswith("Esa herramienta es la que se lo muestra al cliente: llámala en esta misma respuesta, tu texto solo no basta.")
+
+
 # ── el turno del caso: post-venta, el cliente cita su comprobante ─────────────
 
 
