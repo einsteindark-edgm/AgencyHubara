@@ -479,6 +479,14 @@ async def update_coupon(promotion_id: str, patch: dict[str, Any], request: Reque
     except CouponSpecError as e:
         raise _spec_error(e) from e
     await _check_products(spec.products, keep=before.products or ())
+    renaming = spec.code != before.code
+    current = _first_purchase_of(before.code)
+    if current is None and (renaming or first_purchase is not None):
+        raise _fail(503, _CONDITIONS_UNREADABLE)
+    wanted = bool(current) if first_purchase is None else first_purchase
+    if wanted and (renaming or not current):
+        # Más estricto: antes de Medusa (si el vault falla, no cambió nada).
+        _save_first_purchase(spec.code, True, request)
     try:
         after = await promotions_admin().update_coupon(promotion_id, spec)
     except CouponNotFoundError as e:
@@ -524,14 +532,15 @@ async def update_coupon(promotion_id: str, patch: dict[str, Any], request: Reque
         _audit(request, "update", after, diff)
     _prune_units(request, before, after)
     if after.code != before.code:
-        # Un borrador renombrado conserva su condición (o la pedida).
-        kept = _first_purchase_of(before.code)
-        wanted = first_purchase if first_purchase is not None else bool(kept)
-        if wanted:
-            _save_first_purchase(after.code, True, request)
+        # Un borrador renombrado conserva su condición (ya guardada con el
+        # código nuevo antes de Medusa) y el código viejo la suelta.
         _forget_conditions(before.code)
-    elif first_purchase is not None:
-        _set_first_purchase(request, after, first_purchase)
+    if current and not wanted:
+        # Quitarla va después de Medusa: si el vault falla, el cupón sigue
+        # siendo de primera compra (más estricto) y la respuesta lo muestra.
+        _forget_conditions(after.code)
+    if bool(current) != wanted:
+        _audit(request, "conditions", after, {"first_purchase_only": [bool(current), wanted]})
     return _json(after)
 
 

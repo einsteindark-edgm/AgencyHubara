@@ -143,3 +143,42 @@ def test_deleting_a_coupon_removes_its_condition(monkeypatch) -> None:
 
     assert res.status_code in (200, 204), res.text
     assert conditions.get("BIENVENIDA").first_purchase_only is False
+
+
+def test_renaming_a_draft_whose_condition_cannot_be_read_changes_nothing(monkeypatch) -> None:
+    # Sin poder leer la condición no se sabe si hay que llevarla al código
+    # nuevo: renombrar la perdería (el cupón quedaría para cualquiera).
+    w, _ = _with_conditions(monkeypatch)
+    draft = w.client.post("/api/marketing/coupons", json={**_WELCOME, "status": "draft"}).json()
+
+    class _Broken(FakeCouponConditionsStore):
+        def get(self, code: str) -> CouponConditions:
+            raise CouponConditionsError("ilegible")
+
+    monkeypatch.setattr(coupons_api, "conditions_store", _Broken)
+
+    res = w.client.patch(f"/api/marketing/coupons/{draft['promotion_id']}", json={"code": "BIENVENIDO"})
+
+    assert res.status_code == 503
+    assert [v.code for v in await_(w.admin.list_coupons())] == ["BIENVENIDA"]
+
+
+def test_turning_it_on_with_other_changes_fails_before_touching_medusa(monkeypatch) -> None:
+    # Lo que vuelve más estricto el cupón va antes de Medusa: si el vault falla,
+    # «no se hizo ningún cambio» es verdad.
+    w, conditions = _with_conditions(monkeypatch)
+    created = _create(w)
+
+    class _Down(FakeCouponConditionsStore):
+        def put(self, c: CouponConditions) -> CouponConditions:
+            raise OSError("disco lleno")
+
+    monkeypatch.setattr(coupons_api, "conditions_store", _Down)
+
+    res = w.client.patch(
+        f"/api/marketing/coupons/{created['promotion_id']}", json={"percentage": 7, "first_purchase_only": True}
+    )
+
+    assert res.status_code == 503
+    [view] = await_(w.admin.list_coupons())
+    assert view.percentage == 10
