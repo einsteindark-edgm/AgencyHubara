@@ -11,6 +11,9 @@
 # pasa solo al equipo): «confirmó y no terminó de dar los datos de envío»
 # cierra INTERESADO —remarketing lo retoma con el pedido— en vez de
 # CONFIRMADO_SIN_DATOS + relevo. La pregunta a Jev no cambia.
+# Y la fila `catalogo` del contrato (turno 1 de …7392, 2026-10-08): pide
+# `present_products` o la galería (ya no `list_categories`, que no le muestra
+# nada al cliente) y que el texto vaya en `intro_text`.
 #
 # ventas-5:
 # Es `ventas-4@4` con dos preguntas reescritas (incidente del 2026-10-09 y su

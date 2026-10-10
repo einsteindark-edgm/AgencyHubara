@@ -272,9 +272,12 @@ reading:
 # `th` y `inp.stage` (la etapa que calcula el código). Los datos que el cliente
 # acaba de dar piden `set_order_slot` con esos campos (lo agrega la política).
 contract:
+  # ventas-6 (turno 1 de …7392, 2026-10-08): el catálogo es lo que el cliente
+  # VE. `list_categories` solo le devuelve la lista al modelo: con ella el
+  # turno cerraba con un texto que listaba los productos, sin los botones.
   - topic: catalogo
-    any_of: [present_products, present_product_gallery, list_categories]
-    nudge: "Para mostrarle el catálogo usa present_products (o list_categories)."
+    any_of: [present_products, present_product_gallery]
+    nudge: "Para mostrarle los productos usa present_products: con los handles que te dio search_products, o sin handles para el catálogo completo (si no cabe, le llegan las categorías para elegir). Lo que le ibas a escribir, también la respuesta a lo que preguntó, va en intro_text: un texto suelto no le muestra los productos."
   # El precio ya está en lo que vio: no hace falta consultarlo.
   - topic: precio
     when: "'precio.en_contexto' in p && p['precio.en_contexto'] >= th['given']"
@@ -360,7 +363,7 @@ guide:
 
 examples:
   contract:
-    - {topics: [catalogo], expect: [{topic: catalogo, any_of: [present_products, present_product_gallery, list_categories]}]}
+    - {topics: [catalogo], expect: [{topic: catalogo, any_of: [present_products, present_product_gallery]}]}
     # El precio ya visto no pide tool; el que no vio, sí.
     - {topics: [precio], answers: {precio.en_contexto: 0.85}, expect: []}
     - {topics: [precio], answers: {precio.en_contexto: 0.84}, expect: [{topic: precio, any_of: [search_products, get_product_by_handle, present_product_detail, present_products]}]}

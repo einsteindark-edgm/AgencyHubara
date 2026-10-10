@@ -15,6 +15,13 @@ pero no terminó de dar los datos de envío» cierra INTERESADO —el episodio s
 abierto con el pedido y remarketing lo retoma—, no CONFIRMADO_SIN_DATOS + relevo
 al equipo. La pregunta a Jev es la misma; cambia solo lo que decide su respuesta.
 
+Y la fila `catalogo` del contrato (turno 1 de …7392, 2026-10-08): el modelo
+contestó con un texto que listaba los productos y el catálogo con botones no
+salió. La fila aceptaba `list_categories`, que solo le devuelve la lista al
+modelo (no le muestra nada al cliente), y su nota no decía dónde va el texto.
+Ahora pide `present_products` (o la galería) y que lo que iba a escribir vaya
+en `intro_text`.
+
 En un clon de forge `ventas-6` no viaja (experimento de esta tienda): se salta.
 """
 from __future__ import annotations
@@ -39,7 +46,7 @@ IN_FORGE_CLONE = not (Path(__file__).resolve().parents[6] / "forge").is_dir()
 #: Lo que cambia cada archivo (llaves de primer nivel); el resto es idéntico.
 CHANGED = {
     "bundle.yaml": {"id", "version"},
-    "turn.yaml": {"policy"},
+    "turn.yaml": {"policy", "contract", "examples"},
     "capabilities/cierre.yaml": {"decide", "examples"},
 }
 TEAM_CHECKS = "confirma que el equipo revisa el pago"
@@ -82,6 +89,25 @@ def test_ventas_6_is_ventas_5_with_turno_v5_and_the_close_table_and_nothing_else
         assert changed == CHANGED.get(rel, set()), rel
     assert {**_load(V6 / "bundle.yaml"), "id": "ventas-5", "version": 5} == _load(V5 / "bundle.yaml")
     assert (_load(V5 / "turn.yaml")["policy"], _load(V6 / "turn.yaml")["policy"]) == ("turno-v4", "turno-v5")
+    # Del contrato cambia solo la fila del catálogo (y su ejemplo).
+    old_turn, new_turn = _load(V5 / "turn.yaml"), _load(V6 / "turn.yaml")
+    assert [r for r in old_turn["contract"] if r["topic"] != "catalogo"] == [
+        r for r in new_turn["contract"] if r["topic"] != "catalogo"
+    ]
+    assert {k: v for k, v in old_turn["examples"].items() if k != "contract"} == {
+        k: v for k, v in new_turn["examples"].items() if k != "contract"
+    }
+
+
+def test_with_ventas_6_the_catalog_asks_for_the_list_with_buttons() -> None:
+    """…7392: la fila del catálogo pide lo que el cliente VE (la lista o la
+    galería), no `list_categories`, y dice dónde va el texto."""
+    _need_v6()
+
+    [row] = [r for r in _load(V6 / "turn.yaml")["contract"] if r["topic"] == "catalogo"]
+
+    assert row["any_of"] == ["present_products", "present_product_gallery"]
+    assert "intro_text" in row["nudge"] and "list_categories" not in row["nudge"]
 
 
 # ── el turno del caso: post-venta, el cliente cita su comprobante ─────────────
