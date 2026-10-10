@@ -1,0 +1,101 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "«Crear pedido» desde el chat intervenido, como el botón del dashboard: el backend lee la conversación (IA + el borrador + lo que eligió el operador en la app + lo que el cliente llenó en el formulario) y devuelve el pedido prellenado; el operador corrige el envío y el pago y lo registra. Los productos se corrigen en el dashboard. Se abre desde la burbuja verde «Crear pedido» o desde «+ Más».",
+  "schema": 1,
+  "id": "crear_pedido",
+  "title": "Nuevo pedido",
+  "params": ["session"],
+  "state": { "pago": "" },
+  "data": {
+    "pedido": { "get": "/api/chats/order-intake/{{params.session}}/form" }
+  },
+  "computed": {
+    "pago": "{{state.pago | default:pedido.payment_method}}",
+    "listo": "{{pedido.order_items | present | and:form.city | and:form.address | and:form.phone | and:form.receiver_name | and:pago}}"
+  },
+  "body": [
+    {
+      "type": "notice", "tone": "warning", "icon": "warning", "visible": "{{pedido.ready | not}}",
+      "text": "{{pedido.missing_text}}"
+    },
+    {
+      "type": "notice", "tone": "info", "icon": "info", "visible": "{{pedido.degraded}}",
+      "text": "No se pudo leer la conversación con IA: el pedido sale de lo que ya estaba anotado. Revísalo antes de crearlo."
+    },
+    {
+      "type": "notice", "tone": "warning", "icon": "warning", "visible": "{{pedido.already_registered_order_id | present}}",
+      "text": "Esta conversación ya tiene un pedido registrado. Revisa que no sea el mismo antes de crear otro."
+    },
+    {
+      "type": "section", "title": "Productos", "subtitle": "Para cambiarlos, crea el pedido desde el dashboard.",
+      "children": [
+        {
+          "type": "list", "items": "{{pedido.items}}", "as": "i", "key": "{{i.handle}}-{{index}}",
+          "item": {
+            "type": "list_item", "icon": "inventory",
+            "title": "{{i.quantity}}× {{i.title}}",
+            "subtitle": "{{i.color | default:''}} {{i.aroma | default:''}} {{i.variant_label | default:''}}",
+            "trailing": "{{i.line_total_cop | money}}"
+          },
+          "empty": { "type": "empty", "icon": "inventory", "title": "Sin productos", "body": "No se encontraron productos en la conversación. Crea este pedido desde el dashboard." }
+        },
+        { "type": "key_value", "label": "Envío (tarifa mínima)", "value": "{{pedido.shipping_cop | money}}" },
+        { "type": "key_value", "label": "Descuento del cupón", "value": "-{{pedido.discount_cop | money}}", "visible": "{{pedido.discount_cop | gt:0}}" },
+        { "type": "key_value", "label": "Total", "value": "{{pedido.total_cop | money}}" }
+      ]
+    },
+    {
+      "type": "section", "title": "Envío",
+      "children": [
+        {
+          "type": "column", "spacing": 12, "visible": "{{pedido | present}}",
+          "children": [
+            { "type": "text_field", "bind": "form.receiver_name", "label": "Quién recibe", "value": "{{pedido.shipping.receiver_name | default:''}}" },
+            { "type": "text_field", "bind": "form.phone", "label": "Teléfono", "keyboard": "phone", "value": "{{pedido.shipping.phone | default:''}}" },
+            { "type": "text_field", "bind": "form.city", "label": "Ciudad", "value": "{{pedido.shipping.city | default:''}}" },
+            { "type": "text_field", "bind": "form.address", "label": "Dirección", "value": "{{pedido.shipping.address | default:''}}" },
+            { "type": "text_field", "bind": "form.neighborhood", "label": "Barrio (opcional)", "value": "{{pedido.shipping.neighborhood | default:''}}" },
+            { "type": "text_field", "bind": "form.national_id", "label": "Cédula (opcional)", "keyboard": "number", "value": "{{pedido.shipping.national_id | default:''}}" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Pago", "subtitle": "{{pedido.payment_label | default:'El cliente no dijo cómo paga: elígelo.'}}",
+      "children": [
+        {
+          "type": "chips", "bind": "state.pago",
+          "options": [
+            { "value": "transfer", "label": "Transferencia o Nequi" },
+            { "value": "payment_link", "label": "Link de pago" },
+            { "value": "cash_on_delivery", "label": "Contra entrega" }
+          ]
+        },
+        { "type": "switch", "bind": "form.sin_instrucciones", "label": "No mandarle las instrucciones de pago", "description": "Si ya le explicaste cómo pagar por chat." }
+      ]
+    },
+    {
+      "type": "button", "text": "Crear pedido", "icon": "check", "full_width": true, "enabled": "{{listo}}",
+      "action": {
+        "type": "call", "method": "POST", "path": "/api/chats/session-actions/{{params.session}}/order/app",
+        "body": {
+          "items": "{{pedido.order_items}}",
+          "shipping": {
+            "city": "{{form.city}}", "neighborhood": "{{form.neighborhood | default:''}}", "address": "{{form.address}}",
+            "phone": "{{form.phone}}", "receiver_name": "{{form.receiver_name}}", "national_id": "{{form.national_id | default:''}}"
+          },
+          "payment_method": "{{pago}}",
+          "send_payment_instructions": "{{form.sin_instrucciones | not}}",
+          "expected_discount_cop": "{{pedido.discount_cop}}"
+        },
+        "confirm": {
+          "title": "¿Crear el pedido por {{pedido.total_cop | money}}?",
+          "body": "Queda registrado en la tienda a nombre de {{form.receiver_name}}. {{form.sin_instrucciones | if:'No se le manda nada al cliente.':'Al cliente le llegan las instrucciones de pago.'}}",
+          "accept": "Sí, crear"
+        },
+        "success": "Pedido creado",
+        "then": [ { "type": "back" } ]
+      }
+    }
+  ]
+}

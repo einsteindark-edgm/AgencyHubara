@@ -51,8 +51,6 @@ class SuggestionFacts:
     catalog_available: bool = False
     payment_methods_available: bool = False
     items: tuple[DraftItemFacts, ...] = field(default_factory=tuple)
-    #: El cliente dijo que sí a la compra en este episodio (o ya hay orden).
-    purchase_confirmed: bool = False
     #: El ÚLTIMO inbound fue un aplazamiento ("luego te escribo").
     customer_deferred: bool = False
     #: El borrador trae ciudad + dirección + un medio de pago reconocible:
@@ -71,6 +69,13 @@ class SuggestionFacts:
     #: Último mensaje del cliente (epoch ms): lo que el operador ejecutó
     #: después no se vuelve a sugerir hasta que el cliente escriba de nuevo.
     last_inbound_ms: int | None = None
+    #: El cliente cerró la compra en este episodio: tocó «✅ Confirmar» en el
+    #: resumen o el borrador anotó su «sí».
+    customer_confirmed: bool = False
+    #: Lo que sabe hacer la app que pide las burbujas (`?features=`):
+    #: `open_screen` = una burbuja puede abrir una pantalla del servidor. Una
+    #: app vieja no manda nada.
+    app_features: frozenset[str] = frozenset()
 
 
 #: Etiqueta visible y si el operador puede retocar la acción antes de enviarla.
@@ -82,13 +87,20 @@ _ACTION_UI: dict[str, tuple[str, bool]] = {
     "present_product_gallery": ("Más fotos", True),
     "request_shipping_details": ("Pedir datos de envío", False),
     "present_order_confirmation": ("Resumen para confirmar", False),
+    "create_order": ("Crear pedido", False),
 }
+
+#: Burbujas que no le mandan nada al cliente: abren una pantalla del servidor
+#: (`opens`) y van con otro color (`tone`) para que el operador las vea.
+_OPENS: dict[str, str] = {"create_order": "crear_pedido"}
+#: La app sabe abrir una pantalla desde una burbuja.
+OPEN_SCREEN = "open_screen"
 
 _STAGE_ACTIONS: dict[str, tuple[str, ...]] = {
     "etapa_descubrimiento": ("present_products", "send_shipping_rates", "send_payment_methods"),
     "etapa_variantes": ("present_variant_picker", "present_product_gallery", "request_shipping_details"),
     "etapa_datos_envio": ("request_shipping_details", "send_shipping_rates", "send_payment_methods"),
-    "etapa_cierre": ("present_order_confirmation", "send_payment_methods"),
+    "etapa_cierre": ("present_order_confirmation", "create_order", "send_payment_methods"),
     "etapa_postcierre": ("send_payment_methods",),
 }
 
@@ -107,11 +119,13 @@ def _label(name: str, args: dict[str, Any]) -> str:
 
 def _suggestion(name: str, args: dict[str, Any], *, primary: bool) -> dict[str, Any]:
     label, editable = _label(name, args), _ACTION_UI[name][1]
+    opens = {"tone": "order", "opens": _OPENS[name]} if name in _OPENS else {}
     return {
         "id": name,
         "label": label,
         "prominence": "primary" if primary else "normal",
         "editable": editable,
+        **opens,
         "action": {"name": name, "args": args},
     }
 
@@ -140,16 +154,44 @@ def _legal_args(name: str, facts: SuggestionFacts) -> list[dict[str, Any]]:
         # `skip_first` (default de la tool): hace falta una foto además de la portada.
         return [{"handle": i.handle} for i in facts.items if i.handle and i.image_count >= 2]
     if name == "request_shipping_details":
-        # Misma guarda que la tool del bot (sin "sí" o con aplazamiento, no
-        # sale) + los ítems {handle, quantity} tienen que poder armarse del
-        # borrador: la ruta de tools los deriva de ahí cuando args viene vacío.
-        ready = facts.purchase_confirmed and not facts.customer_deferred
+        # Misma guarda que la tool del bot: no espera un «sí» (PR #412), solo
+        # la frena un aplazamiento; los ítems {handle, quantity} se arman del
+        # borrador. Mientras falte un aroma o un color (el formulario saldría
+        # sin él) se sugiere solo si el cliente ya dijo que sí.
+        complete = not any(i.missing for i in facts.items)
+        ready = not facts.customer_deferred and (complete or facts.customer_confirmed)
         return [{}] if ready and _items_buildable(facts.items) else []
     if name == "present_order_confirmation":
         # La ruta de tools arma items/envío/pago desde el borrador + catálogo.
         priced = all(i.unit_price_cop is not None for i in facts.items)
         return [{}] if facts.shipping_ready and priced and _items_buildable(facts.items) else []
+    if name == "create_order":
+        # Abre el formulario del pedido: solo en una app que sabe abrirlo, con
+        # el humano al mando, y cuando hay algo que registrar (el cliente
+        # confirmó, o el pedido ya tiene producto y datos de envío).
+        closed = facts.customer_confirmed or facts.stage == "etapa_cierre"
+        human = facts.in_control == "human" and facts.stage != "etapa_postcierre"
+        return [{}] if OPEN_SCREEN in facts.app_features and human and closed else []
     return [{}]
+
+
+def selling_stage(stage: str, items: tuple[DraftItemFacts, ...], *, shipping_complete: bool) -> str:
+    """La etapa de la venta para las burbujas con el humano al mando.
+
+    La etapa del bot (`resolve_funnel_stage`) mira los campos que el bot
+    escribió: exige aroma Y color a cada producto, así que uno sin colores se
+    quedaba en variantes aunque el cliente ya hubiera dado todo, y con el bot
+    apagado el borrador no se mueve. Acá cuentan los productos del pedido
+    contra el catálogo (``missing``: lo que el producto ofrece y falta elegir)
+    y los datos de envío; con el pedido registrado manda la post-venta.
+    """
+    if stage == "etapa_postcierre":
+        return stage
+    if not items:
+        return "etapa_descubrimiento"
+    if not all(i.handle and i.quantity and not i.missing for i in items):
+        return "etapa_variantes"
+    return "etapa_cierre" if shipping_complete else "etapa_datos_envio"
 
 
 def _items_buildable(items: tuple[DraftItemFacts, ...]) -> bool:
@@ -205,6 +247,9 @@ def _blocked_as_last_sent(name: str, facts: SuggestionFacts, done: tuple[Operato
 def suggest_actions(facts: SuggestionFacts) -> dict[str, Any]:
     # Ventana 24h cerrada: ningún mensaje libre sale — la app ofrece la plantilla.
     names = _STAGE_ACTIONS.get(facts.stage, ()) if facts.window_open else ()
+    if names and facts.customer_confirmed:
+        # El cliente cerró la compra: lo que sigue es registrar el pedido.
+        names = ("create_order", *(n for n in names if n != "create_order"))
     done = _moves_since_last_inbound(facts)
     legal = [
         (n, args)

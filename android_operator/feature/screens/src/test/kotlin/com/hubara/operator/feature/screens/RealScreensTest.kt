@@ -12,6 +12,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTextReplacement
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.data.screens.AppSource
@@ -168,19 +169,135 @@ class RealScreensTest {
         }
     }
 
-    @Test fun la_paleta_solo_ofrece_acciones_que_no_piden_un_producto() {
+    /** Lo que devuelve `GET /api/chats/catalog`: Luz Serena no tiene colores para elegir. */
+    private val catalogo = """{"products": [
+      {"handle": "duo-zodiacal", "title": "Dúo Zodiacal", "price_cop": 89900, "thumbnail_url": null,
+       "aromas": ["Lavanda", "Vainilla"], "colors": ["Azul", "Rosa"], "designs": []},
+      {"handle": "luz-serena", "title": "Luz Serena", "price_cop": 29000, "thumbnail_url": null,
+       "aromas": ["Lavanda", "Canela"], "colors": [], "designs": []}]}"""
+
+    @Test fun la_paleta_manda_de_una_lo_que_no_pide_un_producto() {
         val doc = parseScreen(File(dir, "acciones.json").readText()).doc!!
-        val tools = Regex("\"tool\": \"(\\w+)\"").findAll(File(dir, "acciones.json").readText()).map { it.groupValues[1] }.toList()
-        assertThat(tools).containsExactly(
-            "present_products", "request_shipping_details", "send_shipping_rates", "present_order_confirmation", "send_payment_methods",
-        )
         assertThat(doc.params).containsExactly("session")
+        data.ok("/api/chats/catalog", catalogo)
         open("acciones", mapOf("session" to "wa_000000000101"))
         node("Medios de pago").performClick()
         compose.runOnIdle {
             assertThat(natives.single()).isEqualTo(
                 "send_tool" to json("""{"session": "wa_000000000101", "tool": "send_payment_methods", "label": "Medios de pago"}"""),
             )
+        }
+    }
+
+    /**
+     * Caso 2026-10-09: el cliente pedía colores y la app no tenía cómo mandarlos (con el bot apagado el pedido no tiene
+     * producto y la burbuja no sale). «Enviar colores» lista solo los productos que tienen colores para elegir.
+     */
+    @Test fun enviar_colores_pide_el_producto_y_solo_lista_los_que_tienen_colores() {
+        data.ok("/api/chats/catalog", catalogo)
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar colores").performClick()
+        compose.onNodeWithText("Luz Serena").assertDoesNotExist()
+        node("Dúo Zodiacal").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "present_variant_picker",
+                  "label": "Enviar colores · Dúo Zodiacal", "args": {"product": "duo-zodiacal", "attribute": "color"}}"""),
+            )
+            assertThat(effects).contains(ScreenEffect.Back)
+        }
+    }
+
+    @Test fun enviar_aromas_lista_los_productos_con_aromas() {
+        data.ok("/api/chats/catalog", catalogo)
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar aromas").performClick()
+        node("Luz Serena").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single().second["args"]).isEqualTo(json("""{"product": "luz-serena", "attribute": "aroma"}"""))
+        }
+    }
+
+    /** «Pedir datos de envío» con el pedido vacío daba «faltan datos para esta acción»: ahora se elige qué y cuántos. */
+    @Test fun pedir_datos_de_envio_usa_el_pedido_o_el_producto_y_la_cantidad_que_elige_el_operador() {
+        data.ok("/api/chats/catalog", catalogo)
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Pedir datos de envío").performClick()
+        node("Con los productos del pedido").performClick()
+        compose.runOnIdle {
+            assertThat(natives.last()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "request_shipping_details", "label": "Pedir datos de envío"}"""),
+            )
+        }
+        node("2").performClick()
+        node("Luz Serena").performClick()
+        compose.runOnIdle {
+            assertThat(natives.last()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "request_shipping_details",
+                  "label": "Pedir datos de envío · 2× Luz Serena", "args": {"product": "luz-serena", "quantity": "2"}}"""),
+            )
+        }
+    }
+
+    @Test fun volver_a_las_acciones_deja_el_menu_como_estaba() {
+        data.ok("/api/chats/catalog", catalogo)
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar colores").performClick()
+        node("Volver a las acciones").performClick()
+        node("Medios de pago").assertExists()
+        compose.onNodeWithText("Dúo Zodiacal").assertDoesNotExist()
+    }
+
+    /** Lo que devuelve `GET /api/chats/order-intake/{sesión}/form`: el pedido que leyó de la conversación. */
+    private fun formulario(ready: Boolean = true) = """{"session_key": "wa_000000000101",
+      "items": [{"handle": "duo-zodiacal", "title": "Dúo Zodiacal", "variant_label": null, "quantity": 2,
+                 "unit_price_cop": 89900, "line_total_cop": 179800, "color": "Azul", "aroma": null}],
+      "shipping": {"city": "Bogotá", "neighborhood": "Chapinero", "address": ${if (ready) "\"Cl 1 # 2-3\"" else "null"},
+                   "phone": "3000000000", "receiver_name": "Ana", "national_id": null},
+      "payment_method": "transfer", "payment_label": "Pago anticipado (transferencia o Nequi)",
+      "subtotal_cop": 179800, "shipping_cop": 7900, "discount_cop": 0, "total_cop": 187700,
+      "order_items": [{"handle": "duo-zodiacal", "quantity": 2, "color": "Azul"}],
+      "ready": $ready, "missing_text": "${if (ready) "" else "Falta la dirección. Complétalo antes de crear el pedido."}",
+      "warnings": [], "already_registered_order_id": null, "degraded": false}"""
+
+    /** El humano cerró la venta: «Crear pedido» registra el pedido con lo que dijo el cliente, como en el dashboard. */
+    @Test fun crear_pedido_registra_lo_que_se_ve_con_lo_que_el_operador_corrigio() {
+        data.ok("/api/chats/order-intake/wa_000000000101/form", formulario())
+        val vm = open("crear_pedido", mapOf("session" to "wa_000000000101"))
+        node("2× Dúo Zodiacal").assertExists()
+        node("Pago anticipado (transferencia o Nequi)").assertExists()
+        node("Total").assertExists()
+        node("Quién recibe").performTextReplacement("Ana Pérez")
+        node("Crear pedido").performClick()
+        compose.runOnIdle { vm.onConfirm(accepted = true) }
+        compose.runOnIdle {
+            val call = data.calls.single { it.method == "POST" }
+            assertThat(call.path).isEqualTo("/api/chats/session-actions/wa_000000000101/order/app")
+            assertThat(call.body).isEqualTo(json("""{
+              "items": [{"handle": "duo-zodiacal", "quantity": 2, "color": "Azul"}],
+              "shipping": {"city": "Bogotá", "neighborhood": "Chapinero", "address": "Cl 1 # 2-3", "phone": "3000000000",
+                           "receiver_name": "Ana Pérez", "national_id": ""},
+              "payment_method": "transfer", "send_payment_instructions": true, "expected_discount_cop": 0}"""))
+            assertThat(effects).contains(ScreenEffect.Back)
+        }
+    }
+
+    @Test fun crear_pedido_dice_que_falta_y_no_deja_crear_hasta_completarlo() {
+        data.ok("/api/chats/order-intake/wa_000000000101/form", formulario(ready = false))
+        open("crear_pedido", mapOf("session" to "wa_000000000101"))
+        node("Falta la dirección. Complétalo antes de crear el pedido.").assertExists()
+        node("Crear pedido").assertIsNotEnabled()
+        node("Dirección").performTextInput("Cl 1 # 2-3")
+        node("Crear pedido").assertIsEnabled()
+    }
+
+    @Test fun la_paleta_abre_crear_pedido() {
+        data.ok("/api/chats/catalog", catalogo)
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Crear pedido").performClick()
+        compose.runOnIdle {
+            val open = effects.filterIsInstance<ScreenEffect.Open>().single().key
+            assertThat(open).isEqualTo(com.hubara.operator.core.navigation.ScreenSheetKey("crear_pedido", mapOf("session" to "wa_000000000101")))
         }
     }
 

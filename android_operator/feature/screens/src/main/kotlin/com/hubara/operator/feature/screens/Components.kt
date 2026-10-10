@@ -85,6 +85,7 @@ import com.hubara.operator.core.sdui.Action
 import com.hubara.operator.core.sdui.Env
 import com.hubara.operator.core.sdui.Node
 import com.hubara.operator.core.sdui.Scope
+import com.hubara.operator.core.sdui.Template
 import com.hubara.operator.core.sdui.asText
 import com.hubara.operator.core.sdui.truthy
 import kotlinx.serialization.json.JsonArray
@@ -245,7 +246,11 @@ private fun NativeNode(node: Node, scope: Scope, modifier: Modifier) {
     val component = LocalNativeComponents.current[node.type] ?: return
     val values = node.props.keys.mapNotNull { key -> node.template(key)?.let { key to it.text(scope, host.env) } }.toMap()
     val actions = node.props.keys.mapNotNull { key -> node.actionProp(key)?.let { action -> key to { host.onAction(action, scope, null) } } }.toMap()
-    component.Content(NativeProps(values, actions), modifier)
+    // Lo que pida la pieza (la burbuja «Crear pedido» → `crear_pedido`) se abre como hoja, igual que un `navigate`.
+    val open = { screen: String, params: Map<String, String> ->
+        host.onAction(Action.Navigate(screen, params.mapValues { Template.parseOrLiteral(it.value) }, sheet = true), scope, null)
+    }
+    component.Content(NativeProps(values, actions, open), modifier)
 }
 
 /** `bind` evaluado: la clave puede salir de un dato (`form.{{v.name}}`, un campo por variable de una plantilla). */

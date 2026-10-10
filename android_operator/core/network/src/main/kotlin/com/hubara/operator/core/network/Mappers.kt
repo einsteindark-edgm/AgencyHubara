@@ -24,6 +24,7 @@ import com.hubara.operator.core.model.Severity
 import com.hubara.operator.core.model.ShippingAddress
 import com.hubara.operator.core.model.Suggestion
 import com.hubara.operator.core.model.SuggestionSet
+import com.hubara.operator.core.model.SuggestionTone
 import com.hubara.operator.core.network.dto.ActionRefDto
 import com.hubara.operator.core.network.dto.ChatMessageDto
 import com.hubara.operator.core.network.dto.ChatSessionDto
@@ -151,6 +152,8 @@ fun SuggestionsDto.toDomain(): SuggestionSet? = SessionId.parse(sessionId)?.let 
                 prominence = if (it.prominence == "primary") Prominence.PRIMARY else Prominence.NORMAL,
                 action = it.action.toDomain(),
                 editable = it.editable,
+                tone = if (it.tone == "order") SuggestionTone.ORDER else SuggestionTone.NORMAL,
+                opens = it.opens?.takeIf(String::isNotBlank),
             )
         },
     )

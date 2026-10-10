@@ -10,7 +10,12 @@ import androidx.compose.ui.Modifier
  * propiedades-acción como funciones (`on_more` → abrir la paleta, lo que diga el JSON).
  */
 @Immutable
-data class NativeProps(val values: Map<String, String>, val actions: Map<String, () -> Unit>) {
+data class NativeProps(
+    val values: Map<String, String>,
+    val actions: Map<String, () -> Unit>,
+    /** Abre una pantalla del servidor como hoja, con sus parámetros. */
+    val open: (screen: String, params: Map<String, String>) -> Unit = { _, _ -> },
+) {
     operator fun get(key: String): String? = values[key]
 
     fun action(key: String): (() -> Unit)? = actions[key]

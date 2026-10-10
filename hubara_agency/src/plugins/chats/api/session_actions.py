@@ -56,7 +56,7 @@ from typing import Annotated, Any, Awaitable, Callable, Literal
 from exoclaw.agent.tools import ToolContext
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents,
@@ -469,6 +469,60 @@ async def draft(session_key: SessionKey, body: DraftBody, deps: Deps) -> dict[st
              for k, v in body.model_dump(exclude_none=True).items()}
     raw = await tool.execute_with_context(_ctx(session), **slots)
     return json.loads(raw)
+
+
+#: Por qué no se creó el pedido, para el operador (`error_detail` de `/order`).
+_APP_ORDER_ERRORS = {
+    "unknown_product": "Un producto del pedido ya no está en el catálogo. Créalo desde el dashboard.",
+    "catalog_unavailable": "El catálogo no está disponible en este momento. Intenta de nuevo en un rato.",
+    "invalid_variant_attribute": "Falta elegir bien el color o el aroma de un producto. Corrígelo desde el dashboard.",
+    "quota_changed": (
+        "El descuento del cupón cambió mientras tanto. Cierra y vuelve a abrir «Crear pedido» para ver el total nuevo."
+    ),
+    "quota_unavailable": "No se pudo confirmar el cupo del cupón. Intenta de nuevo en un momento.",
+}
+_APP_ORDER_FAILED = "No se pudo crear el pedido en la tienda. Intenta de nuevo o créalo desde el dashboard."
+#: Campo del cuerpo → cómo se nombra al operador (en el orden en que se dice).
+_APP_ORDER_FIELDS = {
+    "items": "los productos",
+    "city": "la ciudad",
+    "address": "la dirección",
+    "phone": "el teléfono",
+    "receiver_name": "quién recibe",
+    "payment_method": "el medio de pago",
+}
+
+
+def _app_validation_text(exc: ValidationError) -> str:
+    fields = {str(part) for error in exc.errors() for part in error.get("loc", ())}
+    named = [word for key, word in _APP_ORDER_FIELDS.items() if key in fields]
+    if not named:
+        return "Revisa los datos del pedido antes de crearlo."
+    listed = named[0] if len(named) == 1 else f"{', '.join(named[:-1])} y {named[-1]}"
+    return f"Revisa {listed} antes de crear el pedido."
+
+
+@router.post("/session-actions/{session_key}/order/app")
+async def order_from_app(session_key: SessionKey, body: dict[str, Any], deps: Deps) -> dict[str, Any]:
+    """«Crear pedido» desde la App Operador: el MISMO registro que `/order`,
+    con el resultado como lo leen sus pantallas (`success` y, si no, el motivo
+    en palabras en `error_detail`). Un dato mal llenado no es un 422 crudo:
+    se dice qué revisar."""
+    _session(session_key)
+    try:
+        parsed = OrderBody.model_validate(body)
+    except ValidationError as exc:
+        return {"success": False, "error_detail": _app_validation_text(exc)}
+    result = await order(session_key, parsed, deps)
+    if not result.get("registered"):
+        code = str(result.get("error_detail") or "")
+        return {"success": False, "error_detail": _APP_ORDER_ERRORS.get(code, _APP_ORDER_FAILED)}
+    return {
+        "success": True,
+        "order_id": result.get("order_id"),
+        "order_reference": result.get("order_reference"),
+        "already_registered": bool(result.get("already_registered")),
+    }
 
 
 @router.post("/session-actions/{session_key}/order")
