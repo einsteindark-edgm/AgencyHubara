@@ -236,7 +236,9 @@ async def ingest_burst(
     )
     from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
     from src.plugins.chats.agent.sales.use_cases.episode_memory import (
+        quote_team_exchange_in_turn,
         quote_template_in_turn,
+        unseen_team_exchange,
         unseen_template_text,
         with_previous_episode,
     )
@@ -283,9 +285,12 @@ async def ingest_burst(
         # Lo que el cliente vio ANTES de este mensaje (el ingest lo lee del
         # historial antes de guardar el mensaje).
         events = _history(vault_dir, session_id)
-        # Como el ingest: la plantilla a la que responde (un aviso del ETA, un
-        # gancho), si es lo último que recibió antes de este mensaje.
-        template = unseen_template_text(events)
+        # Como el ingest: lo que escribió un colega después del último mensaje
+        # del bot (con la plantilla adentro, si mandó una) o, si no, la
+        # plantilla a la que responde (un aviso del ETA, un gancho), si es lo
+        # último que recibió antes de este mensaje.
+        team = unseen_team_exchange(events)
+        template = unseen_template_text(events) if team is None else None
         wamid = str(message.get("wamid") or f"lab.{k}")
         # Como el ingest, antes de las lecturas: el último mensaje del cliente
         # y la ventana de servicio que reabre (la nota del aplazamiento
@@ -339,6 +344,8 @@ async def ingest_burst(
         text = str(message.get("text") or "")
         if template is not None:
             text = quote_template_in_turn(template, text)
+        if team is not None:
+            text = quote_team_exchange_in_turn(team, text)
         if boundary_from is not None and k == 1:
             text = with_previous_episode(boundary_from, text)
         out.append(

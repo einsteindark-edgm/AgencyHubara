@@ -33,6 +33,14 @@ def get_catalog_photo_index() -> CatalogPhotoIndex:
     return CatalogPhotoIndex(get_snapshot_dir() / "photo_index", model=embedder.model, dimensions=embedder.dimensions)
 
 
+def get_photo_color_store():  # -> VaultPhotoColorStore
+    """El color de la vela de cada foto del catálogo, junto al snapshot
+    (``<snapshot>/photo_colors``): se lee una vez por foto (caso 2026-10-09)."""
+    from src.platform.catalog.photo_colors import VaultPhotoColorStore
+
+    return VaultPhotoColorStore(get_snapshot_dir() / "photo_colors")
+
+
 @lru_cache(maxsize=1)
 def get_checkout_verification_port():  # -> CheckoutVerificationPort
     """Verificador LIVE de precio/stock (Medusa) con el snapshot como referencia.

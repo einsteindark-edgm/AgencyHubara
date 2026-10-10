@@ -182,13 +182,14 @@ class FilesystemMessageHistoryStore:
     ) -> None:
         """Mensaje del humano operador via dashboard handoff.
 
-        Rol ``assistant`` (no rol nuevo): cuando el bot retome el chat,
-        ``build_prompt`` lo verá como parte del historial assistant natural,
-        sin que la API de Anthropic se rompa por un rol desconocido. El campo
-        extra ``sender: "human"`` queda persistido para que (1) el clasificador
-        del dashboard lo proyecte como ``ui_type: human_message`` y pinte una
-        burbuja distinta, y (2) quede traza histórica de qué fue agente vs
-        humano cuando un analista revise el JSONL.
+        Rol ``assistant`` (no rol nuevo) con ``sender: "human"``, para que
+        (1) el clasificador del dashboard lo proyecte como ``ui_type:
+        human_message`` y pinte una burbuja distinta, y (2) quede traza de qué
+        fue agente vs humano cuando un analista revise el JSONL. OJO: este
+        JSONL es el del dashboard; el historial del LLM vive aparte
+        (`EXOCLAW_STATE_DIR`, PR #183) y NO recibe este evento. Cuando el bot
+        retoma el chat, el ingest de Ventas cita en el turno lo que escribió
+        el colega (`episode_memory.unseen_team_exchange`, caso 2026-10-09).
 
         ``image_url``: ref relativa a una foto que el operador mandó al cliente,
         ya persistida en el media store outbound (``persist_outbound_image``).

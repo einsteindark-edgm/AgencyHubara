@@ -231,3 +231,37 @@ async def test_reply_quoting_a_bot_text_bubble_names_it_for_the_bot():
     assert event["reply_to"] == {"id": "wamid.bot.1", "author": "agent", "text": "Tu pedido #64 entró en preparación."}
     note = "\n".join(loader.calls[0].extra_context or [])
     assert "un mensaje que le enviamos" in note and "Tu pedido #64 entró en preparación." in note
+
+
+# --- El color de la vela de la foto (caso 2026-10-09) -------------------------
+# «¿No viene en este color?» citando la foto de Encanto Silvestre: la nota decía
+# el producto y un «diseño» que era el nombre del archivo del banner, no el
+# color de la vela. Ahora dice el color (lo leyó la visión al mandar la foto).
+
+
+def test_the_citation_says_the_color_of_the_candle_in_the_photo():
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import build_photo_citation_note
+
+    metadata = {"outbound_media_index": {"wamid.img.9": {
+        "handle": "encanto-silvestre", "title": "Encanto Silvestre",
+        "image_url": "https://assets.hubara.com.co/x.webp", "label": None, "color": "Café",
+    }}}
+
+    note = build_photo_citation_note({"id": "wamid.img.9"}, metadata)
+
+    assert "«Encanto Silvestre»" in note
+    assert "la vela de esa foto es color «Café»" in note
+
+
+def test_a_banner_file_name_is_not_presented_as_a_design():
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import build_photo_citation_note
+
+    metadata = {"outbound_media_index": {"wamid.img.9": {
+        "handle": "encanto-silvestre", "title": "Encanto Silvestre",
+        "image_url": "https://assets.hubara.com.co/x.webp", "label": "Copia de hero desktop 2560x1440 (1)",
+    }}}
+
+    note = build_photo_citation_note({"id": "wamid.img.9"}, metadata)
+
+    assert "2560x1440" not in note and "diseño «" not in note
+    assert "(handle: encanto-silvestre)" in note

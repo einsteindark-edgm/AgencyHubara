@@ -38,12 +38,13 @@ from __future__ import annotations
 from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
+import asyncio
 import contextlib
 import contextvars
 import json
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,13 @@ from src.plugins.chats.agent.sales.tools.catalog import decided_category
 #: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
 #: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
 _V = vocabulary()
+
+#: Lo que la foto de un producto espera a que se sepa el color de su vela
+#: (una vez por foto; después sale del disco). Pasado esto, va sin color.
+PHOTO_COLOR_TIMEOUT_S = 4.0
+
+#: `(url de la foto, título, colores del producto) → color o None`.
+PhotoColorReader = Callable[[str, str, Sequence[str]], Awaitable[str | None]]
 
 
 def no_more_photos_message(title: str) -> str:
@@ -251,6 +259,24 @@ def _first_price(product) -> tuple[str | None, str | None]:
 # =============================================================================
 
 
+async def read_photo_color(reader: PhotoColorReader | None, url: str, product: Any) -> str | None:
+    """El color de la vela de la foto (de la paleta del producto), o None.
+    Nunca frena la foto: con tope y sin errores hacia afuera (caso
+    2026-10-09: «¿no viene en este color?» citando la foto)."""
+    if reader is None:
+        return None
+    from src.platform.catalog import parse_variant_tags
+
+    palette = parse_variant_tags(getattr(product, "tags", None) or []).colors
+    if not palette:
+        return None
+    try:
+        return await asyncio.wait_for(reader(url, product.title, palette), timeout=PHOTO_COLOR_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — el color es un extra
+        logger.warning("sin color de la foto de {!r} ({})", getattr(product, "handle", ""), type(exc).__name__)
+        return None
+
+
 class PresentProductDetailTool(ToolBase):
     """Envía UN producto al cliente con foto + caption (precio + título).
 
@@ -309,9 +335,18 @@ class PresentProductDetailTool(ToolBase):
         "required": ["handle"],
     }
 
-    def __init__(self, workspace: str | Path, catalog: CatalogPort) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        catalog: CatalogPort,
+        photo_colors: PhotoColorReader | None = None,
+    ) -> None:
+        """`photo_colors`: de qué color es la vela de la foto (caso
+        2026-10-09: el cliente citó la foto de una ardilla café, «¿no viene en
+        este color?», y nadie lo sabía). Sin él, la foto va como siempre."""
         self._workspace = Path(workspace)
         self._catalog = catalog
+        self._photo_colors = photo_colors
 
     async def execute_with_context(
         self,
@@ -392,6 +427,7 @@ class PresentProductDetailTool(ToolBase):
             caption = f"{caption}\n{caption_suffix}"
         # Recorta al límite Meta defensivamente
         caption = wa_limits.truncate(caption, wa_limits.MAX_CAPTION)
+        photo_color = await read_photo_color(self._photo_colors, thumbnail, product)
 
         intent = {
             "kind": "product_detail",
@@ -423,9 +459,12 @@ class PresentProductDetailTool(ToolBase):
                 "prefer_native_product_card": True,
             },
         }
+        if photo_color:
+            # La cita de esta foto lo nombra después (`outbound_media_index`).
+            intent["params"]["color"] = photo_color
         _append_intent(ctx.session_key, intent)
 
-        return json.dumps({
+        envelope: dict[str, Any] = {
             "queued": True,
             "kind": "product_detail",
             "handle": handle,
@@ -438,7 +477,14 @@ class PresentProductDetailTool(ToolBase):
                 f"NO repitas el precio en tu próximo mensaje (ya se mostró en la "
                 f"imagen). Continúa con una pregunta natural sobre la compra."
             ),
-        }, ensure_ascii=False)
+        }
+        if photo_color:
+            envelope["photo_color"] = photo_color
+            envelope["summary"] += (
+                f" La vela de la foto es color «{photo_color}»: si el cliente pide «ese color» "
+                "o «el de la foto», es ese (y entra al selector de colores)."
+            )
+        return json.dumps(envelope, ensure_ascii=False)
 
 
 # =============================================================================
@@ -2428,9 +2474,16 @@ class PresentProductGalleryTool(ToolBase):
         "required": ["handle"],
     }
 
-    def __init__(self, workspace: str | Path, catalog: CatalogPort) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        catalog: CatalogPort,
+        photo_colors: PhotoColorReader | None = None,
+    ) -> None:
+        """`photo_colors`: el color de la vela de cada foto (caso 2026-10-09)."""
         self._workspace = Path(workspace)
         self._catalog = catalog
+        self._photo_colors = photo_colors
 
     async def execute_with_context(
         self,
@@ -2494,6 +2547,13 @@ class PresentProductGalleryTool(ToolBase):
             for url in additional
         ]
         sent_designs = [img["label"] for img in labeled if img["label"]]
+        # El color de la vela de cada foto: la cita de una de ellas lo nombra.
+        colors = await asyncio.gather(
+            *(read_photo_color(self._photo_colors, img["url"], product) for img in labeled)
+        )
+        for img, color in zip(labeled, colors):
+            if color:
+                img["color"] = color
 
         # Encolamos UN intent product_gallery con todas las URLs. El
         # dispatch las manda en secuencia. Esto vs N intents separados:
@@ -2524,6 +2584,11 @@ class PresentProductGalleryTool(ToolBase):
             if sent_designs
             else ""
         )
+        if any(colors):
+            designs_note += " Color de la vela en cada foto: " + ", ".join(
+                f"foto {k}: «{color}»" if color else f"foto {k}: sin dato"
+                for k, color in enumerate(colors, 1)
+            ) + "."
         return json.dumps({
             "queued": True,
             "kind": "product_gallery",
@@ -2844,8 +2909,9 @@ class PresentVariantPickerTool(ToolBase):
         f"cuando vayas a presentar 4 o más opciones de {_V['variant_dimensions']} de un "
         "producto. El emoji por opción se asigna automáticamente desde el "
         "registry Hubara — **tú NO pasas emojis, solo el nombre literal "
-        "del envelope**. Si el cliente ya eligió la variante, NO uses esta "
-        "tool — continúa hacia el cierre."
+        "del envelope**. Con `handle`, el cliente ve TODAS las opciones del "
+        "producto: el sistema agrega las que no pases. Si el cliente ya eligió "
+        "la variante, NO uses esta tool — continúa hacia el cierre."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -3020,6 +3086,16 @@ class PresentVariantPickerTool(ToolBase):
                     ),
                 }, ensure_ascii=False)
 
+        # El selector de UN producto muestra todas sus opciones: el cliente lo
+        # lee como todo lo que hay (caso del 2026-10-09: salieron 3 de los 11
+        # colores, no el café de la foto que tenía delante, y preguntó «¿no
+        # viene en este color?»). Lo que el LLM no pasó va al final.
+        added: list[str] = []
+        if handle and valid_labels is not None:
+            shown = {lbl.casefold() for lbl in labels}
+            added = [lbl for lbl in valid_labels if lbl.casefold() not in shown]
+            labels = labels + added
+
         # Cupón con cupo en este producto: sus combinaciones van ARRIBA
         # (conversación de prueba del 2026-09-24: salieron los 11 aromas y el
         # cupón valía en 5 combinaciones).
@@ -3058,6 +3134,12 @@ class PresentVariantPickerTool(ToolBase):
                 "catálogo y NO se mostraron: "
                 + ", ".join(removed_invalid)
                 + ". No las ofrezcas ni las aceptes si el cliente las pide."
+            )
+        if added:
+            envelope["added_options"] = added
+            envelope["summary"] += (
+                " El cliente ve TODAS las opciones del producto: se agregaron "
+                "las que no pasaste (" + ", ".join(added) + ")."
             )
         if coupon is not None:
             envelope["summary"] += coupon["summary"]

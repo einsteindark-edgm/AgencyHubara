@@ -25,6 +25,7 @@ isinstance check).
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
@@ -86,8 +87,10 @@ from src.plugins.chats.agent.sales.use_cases.closing_ack import (
     ack_shape,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
+    quote_team_exchange_in_turn,
     quote_template_in_turn,
     request_clean_llm_history,
+    unseen_team_exchange,
     unseen_template_text,
     with_previous_episode,
 )
@@ -1246,9 +1249,18 @@ class IngestInboundMessage:
         # Plantilla a la que responde (fase 3, run 28a8e407): el LLM no ve
         # las plantillas (van solo al JSONL del dashboard). Se lee ANTES de
         # persistir este mensaje; la campaña ya trae su propia cita.
+        # Tampoco ve lo que escribió un colega desde el chat (caso del
+        # 2026-10-09: «Si por favor» le respondía al colega y el bot contestó
+        # a su propia oferta anterior): si un colega escribió después del
+        # último mensaje del bot, el turno lleva ese tramo (con la plantilla
+        # adentro, si el colega mandó una).
         unseen_template: str | None = None
+        team_exchange: list[tuple[str, str]] | None = None
         if campaign_reply_touch is None:
-            unseen_template = unseen_template_text(self._session_events(session_id))
+            events_now = self._session_events(session_id)
+            team_exchange = unseen_team_exchange(events_now)
+            if team_exchange is None:
+                unseen_template = unseen_template_text(events_now)
 
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
@@ -1426,6 +1438,8 @@ class IngestInboundMessage:
         )
         if unseen_template is not None:
             turn_message = quote_template_in_turn(unseen_template, turn_message)
+        if team_exchange is not None:
+            turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
         if previous_episode is not None:
             turn_message = with_previous_episode(previous_episode, turn_message)
         await self._load_session.execute(
@@ -2999,6 +3013,10 @@ def _build_reply_kwargs(
     return kwargs
 
 
+#: Un nombre de archivo exportado con su resolución («hero desktop 2560x1440»).
+_EXPORT_FILE_NAME = re.compile(r"\b\d{3,5}\s*x\s*\d{3,5}\b")
+
+
 def build_photo_citation_note(
     context: dict[str, Any] | None, metadata: dict[str, Any]
 ) -> str | None:
@@ -3026,17 +3044,26 @@ def build_photo_citation_note(
     title = entry.get("title") or entry.get("handle") or "producto"
     handle = entry.get("handle")
     label = entry.get("label")
+    # El nombre del archivo de un banner («Copia de hero desktop 2560x1440»)
+    # no es un diseño (caso 2026-10-09): no se le presenta al LLM como tal.
+    if isinstance(label, str) and _EXPORT_FILE_NAME.search(label):
+        label = None
+    color = entry.get("color")
     detail = f"«{title}»"
     if label:
         detail += f", diseño «{label}»"
     if handle:
         detail += f" (handle: {handle})"
+    if isinstance(color, str) and color:
+        # «¿No viene en este color?» citando la foto (caso 2026-10-09).
+        detail += f"; la vela de esa foto es color «{color}»"
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         "El cliente escribió este mensaje RESPONDIENDO (citando) a una foto "
         f"que le enviaste: {detail}. Si dice 'esta', 'esa' o 'la de la "
         "foto', se refiere EXACTAMENTE a esa foto/diseño — no asumas otro "
         "diseño ni vuelvas a preguntar cuál."
+        + (" Si pregunta por «este color» o «el de la foto», es ese color." if isinstance(color, str) and color else "")
     )
 
 

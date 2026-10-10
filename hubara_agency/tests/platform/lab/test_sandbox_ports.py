@@ -117,3 +117,26 @@ def test_connectorkit_resolves_to_the_sandbox_promotions(tmp_path: Path) -> None
         from src.sdk.connectorkit import get_promotions_port
 
         assert get_promotions_port().__class__.__name__ == "FakePromotionsPort"
+
+
+async def test_the_photo_color_is_never_read_inside_a_case(tmp_path: Path) -> None:
+    """El color de la vela de una foto (2026-10-09) baja la foto y le pregunta
+    a un modelo: un caso del laboratorio solo lee, así que en el sandbox no se
+    pregunta (el bot manda la foto sin color, como cuando el lector falla)."""
+    calls: list[str] = []
+
+    async def fetch(url: str) -> bytes:
+        calls.append(url)
+        return b"x"
+
+    class _Reader:
+        async def pick_color(self, *a, **k):
+            calls.append("modelo")
+
+    with installed_sandbox_ports(promotions_path=tmp_path / "promotions.json", catalog=_Catalog({})):
+        from src.sdk.catalogkit import color_of_photo
+
+        color = await color_of_photo("https://assets.hubara.com.co/x.webp", title="X", palette=["Café"],
+                                     store=None, reader=_Reader(), fetch=fetch)
+
+    assert color is None and calls == []

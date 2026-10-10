@@ -209,6 +209,27 @@ def build_order_facts_reader() -> Callable[[str], Awaitable[Any]]:
     return read
 
 
+def build_photo_color_reader() -> Callable[[str, str, Any], Awaitable[str | None]] | None:
+    """De qué color es la vela de una foto del catálogo (caso 2026-10-09:
+    «¿no viene en este color?» citando la foto de una ardilla café). Se lee
+    una vez por foto y queda junto al snapshot (`<snapshot>/photo_colors`).
+    None si la visión no se puede armar en este proceso: la foto va sin color.
+    Lo usan `present_product_detail` del worker y el de la app del operador."""
+    from src.sdk.catalogkit import color_of_photo, get_photo_color_store
+    from src.sdk.connectorkit import get_photo_color_port
+
+    try:
+        store, reader = get_photo_color_store(), get_photo_color_port()
+    except Exception as exc:  # noqa: BLE001 — el color es un extra
+        logger.warning("Sin lector del color de las fotos: {}", f"{type(exc).__name__}: {exc}"[:200])
+        return None
+
+    async def _read(url: str, title: str, palette: Any) -> str | None:
+        return await color_of_photo(url, title=title, palette=palette, store=store, reader=reader)
+
+    return _read
+
+
 def build_photo_identifier(catalog: Any) -> PhotoIdentifier:
     """Qué producto nuestro es la foto del cliente (``use_cases/photo_product``):
     el texto que se lee en ella y, si no alcanza, el índice de fotos del

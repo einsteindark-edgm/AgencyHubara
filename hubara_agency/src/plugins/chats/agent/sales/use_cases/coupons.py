@@ -75,6 +75,8 @@ def promotion_from_snapshot(raw: dict[str, Any]) -> PromotionDTO:
         data[key] = tuple(str(x) for x in (data.get(key) or []))
     # Snapshots de antes del campo: sin reglas ilegibles conocidas.
     data["scope_unresolved"] = bool(data.get("scope_unresolved"))
+    # …ni condición de primera compra (2026-10-09).
+    data["first_purchase_only"] = bool(data.get("first_purchase_only"))
     fields = PromotionDTO.__dataclass_fields__
     return PromotionDTO(**{k: data.get(k) for k in fields})
 

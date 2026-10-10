@@ -404,3 +404,38 @@ async def test_without_template_nor_new_episode_the_turn_text_is_what_the_custom
                                     at_ms=T0 + 60_000)
 
     assert ingested.text == _THANKS["text"]
+
+
+# ── Lo que escribió un colega, como lo cita el ingest (caso del 2026-10-09) ──
+# Producción le antepone al mensaje lo que un colega escribió después del
+# último mensaje del bot; sin eso el laboratorio no reproduce el turno en que
+# el cliente le contesta al colega.
+
+def _colleague_events() -> list[dict]:
+    from datetime import datetime, timezone
+
+    def at(ms: int) -> str:
+        return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+    return [
+        {"role": "assistant", "content": "Estas piezas no tienen promoción. ¿Te muestro otra línea?", "timestamp": at(T0 + 10_000)},
+        {"role": "assistant", "sender": "human", "content": "Claro que sí, el descuento de la página te lo aplicamos",
+         "timestamp": at(T0 + 30_000)},
+    ]
+
+
+async def test_the_turn_text_carries_what_the_colleague_wrote_like_production(tmp_path: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales_lab.sandbox.readings import append_history_event, ingest_burst
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    for event in _colleague_events():
+        append_history_event(tmp_path, SID_R, event)
+    reply = {"text": "Si por favor", "ts_ms": T0 + 60_000, "wamid": "wamid.C"}
+
+    [ingested] = await ingest_burst({"episodes": [{"episode_id": "ep_1", "started_at_ms": T0, "closed_at_ms": None}]},
+                                    [reply], session_id=SID_R, vault_dir=tmp_path, at_ms=T0 + 60_000)
+
+    note, rest = ingested.text.rsplit("\n", 1)
+    assert rest == "Si por favor"
+    assert note.startswith("[Después de tu último mensaje, un colega del equipo")
+    assert "«Claro que sí, el descuento de la página te lo aplicamos»" in note

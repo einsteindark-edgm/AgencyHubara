@@ -83,3 +83,35 @@ async def test_sales_reader_without_medusa_is_unavailable(monkeypatch) -> None:
 
     with pytest.raises(PromotionsUnavailableError):
         await reader.sold_units(since=datetime(2026, 9, 22))
+
+
+def test_coupon_conditions_live_in_the_vault(_isolate_vault_dir) -> None:
+    from src.platform.promotions.conditions import CouponConditions
+
+    composition.get_coupon_conditions_store().put(CouponConditions("BIENVENIDA", first_purchase_only=True))
+
+    assert (_isolate_vault_dir / "_promotions" / "conditions" / "BIENVENIDA.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_the_bot_reader_carries_the_conditions_saved_in_the_vault(monkeypatch, _isolate_vault_dir) -> None:
+    from src.platform.promotions.conditions import CouponConditions
+    from src.platform.promotions.port import FakePromotionsPort, PromotionDTO
+
+    class Settings:
+        base_url = "http://medusa.test"
+
+    welcome = PromotionDTO(
+        id="promo_1", code="BIENVENIDA", discount_type="percentage", value=5, currency_code="cop",
+        target_type="items", allocation="across", max_quantity=None, product_ids=(), variant_ids=(),
+        collection_ids=(), min_subtotal_cop=None, is_automatic=False, status="active", starts_at_ms=None,
+        ends_at_ms=None, budget_type=None, budget_limit=None, budget_used=None, description="Bienvenida",
+    )
+    monkeypatch.setattr(composition, "get_medusa_settings", lambda: Settings())
+    monkeypatch.setattr(composition, "get_medusa_client", lambda: object())
+    monkeypatch.setattr(composition, "MedusaPromotionsPort", lambda _client: FakePromotionsPort([welcome]))
+    composition.get_coupon_conditions_store().put(CouponConditions("BIENVENIDA", first_purchase_only=True))
+
+    [promo] = await composition.get_promotions_port().list_active()
+
+    assert promo.first_purchase_only is True

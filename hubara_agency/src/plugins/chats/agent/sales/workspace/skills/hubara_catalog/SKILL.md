@@ -23,7 +23,7 @@ metadata: {"exoclaw": {"always": false}}
 
 ## POLÍTICAS ADICIONALES
 
-- **Descuento de Bienvenida**: 5% automático para primeras compras a través de la web.
+- **Descuento de Bienvenida**: 5% en la primera compra (también por este chat). Si lo pide, búscalo con `list_promotions` y aplícalo con `apply_coupon`: el sistema verifica que sea su primera compra.
 - **Descuento Testimonio**: cupón del 10% para la próxima compra a clientes recurrentes que manden foto/video contando su experiencia por nuestro chat.
 - **Garantía**: 48 horas de cobertura desde la fecha de recepción para envíos rotos o defectuosos, siempre y cuando la vela nunca se haya encendido (debe conservar su empaque y tamaño de mecha).
 

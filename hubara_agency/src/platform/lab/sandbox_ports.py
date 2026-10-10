@@ -14,6 +14,7 @@ Los plugins lo usan por `src.sdk.labkit`.
 | Promociones y cupones (Medusa)        | `promotions.json` exportado con el banco         |
 | Registrar pedido (draft order real)   | `StubOrderRegistration` (id ficticio `HUB-…`)    |
 | Estado de pedido (Medusa en vivo)     | vacío (`EmptyOrderQuery`) (*)                     |
+| Color de la vela de una foto (visión) | no se pregunta: la foto sale sin color           |
 
 (*) El laboratorio (`sales_lab`) no llega a este puerto en los turnos del
 banco: `check_order_status` devuelve lo que devolvió en el turno REAL
@@ -89,11 +90,18 @@ def load_promotions(path: Path) -> list[PromotionDTO]:
     return out
 
 
+async def _no_photo_color(*_a: Any, **_k: Any) -> None:
+    """El color de una foto del catálogo baja la foto y le pregunta a un
+    modelo (2026-10-09): un caso solo lee, la foto va sin color."""
+    return None
+
+
 @contextmanager
 def installed_sandbox_ports(*, promotions_path: Path, catalog: Any) -> Iterator[None]:
     """Reemplaza las fábricas con efectos por las del sandbox y las restaura
     al salir. En la caja se instala una vez por proceso (un proceso por
     caso), antes de importar el worker de ventas."""
+    import src.platform.catalog.photo_colors as photo_colors
     import src.platform.medusa.composition as medusa
     import src.platform.orders.composition as orders
     import src.platform.promotions.composition as promos
@@ -115,6 +123,7 @@ def installed_sandbox_ports(*, promotions_path: Path, catalog: Any) -> Iterator[
         (orders, "get_order_query_port", lambda: query),
         (orders, "get_order_facts_port", lambda: facts),
         (orders, "_raw_order_query", lambda: query),
+        (photo_colors, "color_of_photo", _no_photo_color),
     ]
     # Cada módulo ya cargado que se quedó con la fábrica original (`from x
     # import f`, el caché de `src.sdk.connectorkit`) también se reapunta: si

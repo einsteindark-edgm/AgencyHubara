@@ -1306,6 +1306,12 @@ el cliente.
 - WHEN el LLM responde «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son: <11 aromas>. ¿Alguno de esos te llama la atención?»
 - THEN el cliente recibe «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:», el selector y «¿Alguno de esos te llama la atención?»
 
+#### Scenario: El selector de un producto muestra todas sus opciones (2026-10-09)
+
+- GIVEN Encanto Silvestre tiene 11 colores en el catálogo
+- WHEN el LLM llama `present_variant_picker(variant_type="color", handle="encanto-silvestre")` con 3 de ellos
+- THEN el cliente recibe los 11 (los que el LLM no pasó van al final, en su grupo) y el resumen de la tool dice cuáles se agregaron: el cliente lee el selector como todo lo que hay
+
 ### Requirement: La lista de opciones vuelve al modelo antes de salir (2026-09-30)
 
 La protección de arriba decide DESPUÉS del turno. Antes, `send_reply` SHALL
@@ -1758,6 +1764,52 @@ notas del turno en ambos casos.
 - GIVEN `SALES_PROMPT_TURN_CONTEXT=team` y `LAB_INTERNAL_NUMBERS` con el teléfono del operador
 - WHEN escriben el operador y un cliente
 - THEN solo el turno del operador lleva las notas en el mensaje; el del cliente, en las instrucciones
+
+### Requirement: El bot sabe de qué color es la vela de la foto que manda (2026-10-09)
+
+`present_product_detail` y `present_product_gallery` SHALL preguntar el color de
+la vela de cada foto que mandan (lista cerrada = los colores del producto) y
+decírselo al bot; el color viaja en el intent y queda en
+`outbound_media_index`, así la cita de esa foto lo nombra. Se lee UNA vez por
+foto (`<snapshot>/photo_colors/`, alias `gemini-photo-match`) y se vuelve a
+leer solo si cambia la paleta del producto. Una foto que no permite decirlo
+(varias velas de colores distintos) no lleva color. La foto nunca espera más
+de `PHOTO_COLOR_TIMEOUT_S` (4 s) por el color.
+
+#### Scenario: «¿No viene en este color?» citando la foto
+
+- GIVEN el bot mandó la foto de Encanto Silvestre (una ardilla café) y la visión la leyó como «Café»
+- WHEN el cliente responde citando esa foto «¿no viene en este color?»
+- THEN la nota de la cita dice «la vela de esa foto es color «Café»» y que «este color» o «el de la foto» es ese color
+- AND la nota no presenta el nombre del archivo del banner («Copia de hero desktop 2560x1440») como un diseño
+
+### Requirement: El bot ve lo que un colega le escribió al cliente (2026-10-09)
+
+Los mensajes del equipo desde el chat (`sender: human`) van solo al JSONL del
+dashboard: el historial del LLM no los tiene. Cuando el bot vuelve a tener el
+turno, el ingest SHALL citar en el mensaje del cliente lo que pasó después del
+último mensaje del bot si un colega escribió algo: las líneas del colega, lo que
+el cliente le contestó y los avisos automáticos, en orden (hasta 8). Queda en
+el historial del LLM, como la plantilla citada; el laboratorio arma el mismo
+texto y la calificación lee lo del colega como un mensaje nuestro.
+
+#### Scenario: El cliente le contesta al colega
+
+- GIVEN el bot dijo que no había descuento y ofreció mostrar otra línea; un colega tomó el chat, escribió «claro que sí, el descuento de la página» y devolvió el chat al bot
+- WHEN el cliente escribe «Si por favor»
+- THEN el turno del bot empieza con «[Después de tu último mensaje, un colega del equipo le escribió al cliente…» con la línea del colega y la instrucción de seguir desde ahí sin contradecirlo, y luego «Si por favor»
+
+#### Scenario: La plantilla de seguimiento de un colega se cita una vez
+
+- GIVEN lo último que recibió el cliente es la plantilla de seguimiento que mandó un colega
+- WHEN el cliente responde
+- THEN la plantilla va dentro de la nota del colega (no además como «[El cliente responde a este mensaje que le enviamos…]»)
+
+#### Scenario: Lo del colega ya llegó al bot
+
+- GIVEN el bot ya respondió después del mensaje del colega
+- WHEN el cliente vuelve a escribir
+- THEN el turno no lleva la nota
 
 ## Out of scope
 

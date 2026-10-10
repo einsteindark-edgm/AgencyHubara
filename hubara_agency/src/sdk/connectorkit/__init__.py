@@ -83,6 +83,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "PhotoPick": "src.platform.vision.photo_match",
     "FakePhotoMatchAdapter": "src.platform.vision.photo_match",
     "NullPhotoMatchAdapter": "src.platform.vision.photo_match",
+    # El color de la vela en una foto del catálogo (caso 2026-10-09):
+    "PhotoColorPort": "src.platform.vision.photo_color",
+    "ColorPick": "src.platform.vision.photo_color",
+    "FakePhotoColorAdapter": "src.platform.vision.photo_color",
+    "NullPhotoColorAdapter": "src.platform.vision.photo_color",
     "MetaCatalogPort": "src.platform.meta_catalog.port",
     # Central de la Graph API (host + versión únicos) — stdlib-pura, sin vendor:
     "META_GRAPH_API_VERSION": "src.platform.meta.graph",
@@ -153,6 +158,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "QuotaSheet": "src.platform.promotions.quota_store",
     "QuotaStoreError": "src.platform.promotions.quota_store",
     "FakePromoQuotaStore": "src.platform.promotions.quota_store",
+    # Condiciones de Hubara por cupón («solo primera compra», caso 2026-10-09):
+    "CouponConditions": "src.platform.promotions.conditions",
+    "CouponConditionsError": "src.platform.promotions.conditions",
+    "FakeCouponConditionsStore": "src.platform.promotions.conditions",
     "FakeCouponAuditLog": "src.platform.promotions.audit",
     "CouponResults": "src.platform.promotions.coupon_sales",
     "coupon_results": "src.platform.promotions.coupon_sales",
@@ -175,6 +184,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_image_vision_port": "src.platform.vision.composition",
     "get_image_embedding_port": "src.platform.vision.composition",
     "get_photo_match_port": "src.platform.vision.composition",
+    "get_photo_color_port": "src.platform.vision.composition",
     "get_order_command_port": "src.platform.orders.composition",
     "get_order_query_port": "src.platform.orders.composition",
     "get_order_facts_port": "src.platform.orders.composition",
@@ -182,6 +192,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_promotions_port": "src.platform.promotions.composition",
     "get_promotions_admin_port": "src.platform.promotions.composition",
     "get_promo_quota_store": "src.platform.promotions.composition",
+    "get_coupon_conditions_store": "src.platform.promotions.composition",
     "get_coupon_audit_log": "src.platform.promotions.composition",
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",
