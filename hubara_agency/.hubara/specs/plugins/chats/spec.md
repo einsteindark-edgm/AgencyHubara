@@ -938,6 +938,63 @@ Si en el episodio activo hay un comprobante del cliente (una foto que la visión
 - WHEN el operador registra el pedido nuevo con transferencia
 - THEN los datos de pago salen como siempre
 
+### Requirement: Acciones de venta del operador con el bot apagado (App Operador)
+
+Con un humano al mando el bot no corre y nadie escribe el borrador del pedido. Las acciones de la App Operador que
+dependen del pedido (`POST /api/chats/session-actions/{id}/tools/request_shipping_details`, `…/present_order_confirmation`)
+y las burbujas (`GET /api/chats/mobile/suggestions/{id}`) SHALL leer el borrador del episodio completado con lo que pasó
+con el humano al mando, sin escribirlo: el producto que el operador eligió en la app (formulario `{product, quantity}`
+o colores/aromas `{product, attribute}`) y lo que el cliente llenó en el formulario de envío. Solo cuenta lo del episodio
+(o, sin episodio activo, lo posterior al cierre del último). Un 422 `invalid_args` MUST traer `message`: la frase en
+español que la app le muestra al operador. Caso 2026-10-09: «faltan datos para esta acción» y la burbuja de colores que
+nunca salía.
+
+#### Scenario: Formulario con el producto que elige el operador
+
+- GIVEN un chat intervenido cuyo episodio tiene el borrador vacío
+- WHEN el operador pide los datos de envío con `{product: "duo-zodiacal", quantity: "2"}`
+- THEN el formulario sale con «2× Dúo Zodiacal» y el subtotal del catálogo, firmado por el humano
+
+#### Scenario: Resumen con lo que llenó el cliente
+
+- GIVEN el operador mandó el formulario de un producto y después el cliente lo llenó (`[datos de envío recibidos] …`)
+- WHEN el operador pide el resumen para confirmar con `{}`
+- THEN el resumen sale con ese producto, la dirección y el medio de pago del formulario; las burbujas lo ofrecen primero (`etapa_cierre`)
+
+#### Scenario: Pedido vacío
+
+- GIVEN el borrador no tiene productos y el operador no eligió ninguno
+- WHEN pide el formulario o el resumen con `{}`
+- THEN responde 422 `invalid_args` con un `message` que dice qué falta y qué hacer (nada sale al cliente)
+
+#### Scenario: Un producto sin colores no se queda en variantes
+
+- GIVEN un chat intervenido con un producto que no ofrece colores, su cantidad y todos los datos de envío
+- WHEN se piden las burbujas
+- THEN la etapa es `etapa_cierre` (la de la venta contra el catálogo, no la del bot) y se ofrece «Resumen para confirmar»
+
+### Requirement: «Crear pedido» desde la App Operador
+
+Con un humano al mando y sin pedido registrado en el episodio, `GET /api/chats/mobile/suggestions/{id}` SHALL ofrecer la
+burbuja «Crear pedido» (`tone: "order"`, `opens: "crear_pedido"`) cuando el cliente cerró la compra (tocó «Confirmar»
+en el último resumen o el borrador anotó su «sí») — primera — o cuando el pedido ya tiene producto y datos de envío —
+después del resumen. Solo a una app que declara `?features=open_screen`. El formulario de la app SHALL leer el pedido
+sugerido con `GET /api/chats/order-intake/{id}/form` (sin registrar nada) y registrarlo con
+`POST /api/chats/session-actions/{id}/order/app`, que responde `success` y, si no se creó, el motivo en palabras.
+
+#### Scenario: El cliente confirmó el resumen
+
+- GIVEN el operador mandó el resumen desde la app y el cliente tocó «✅ Confirmar»
+- WHEN la app pide las burbujas con `features=open_screen`
+- THEN «Crear pedido» va primera y marcada; una app que no declara `open_screen` no la recibe
+
+#### Scenario: Registrar desde la app
+
+- GIVEN el formulario prellenado con productos, envío y medio de pago
+- WHEN el operador lo crea
+- THEN el pedido queda registrado como con `/order` y la respuesta trae `success: true`; con un dato mal llenado o un
+  producto que ya no existe, `success: false` y qué revisar (nunca un 422 crudo)
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)

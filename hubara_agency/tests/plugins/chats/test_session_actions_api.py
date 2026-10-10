@@ -398,6 +398,40 @@ def test_order_with_unknown_product_or_bad_shipping_does_not_register(h: _Harnes
     assert r.status_code == 422
 
 
+# ── /order/app: «Crear pedido» desde la App Operador ─────────────────────────
+#
+# Las pantallas de la app dan por buena una respuesta salvo `success: false`, y
+# muestran `error_detail` tal cual: el mismo registro, con el resultado en palabras.
+
+
+def test_the_app_creates_the_order_and_hears_it_worked(h: _Harness) -> None:
+    r = h.client.post(_url("order/app"), json={**_ORDER, "send_payment_instructions": False})
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"success": True, "order_id": "order_1", "order_reference": "#22 (Luz Serena)",
+                        "already_registered": False}
+    assert h.meta()["registered_order"]["order_id"] == "order_1" and h.flushed == []
+    # el mismo pedido otra vez (doble toque): no se crea dos veces
+    again = h.client.post(_url("order/app"), json={**_ORDER, "send_payment_instructions": False}).json()
+    assert again["success"] is True and again["already_registered"] is True and len(h.port.calls) == 1
+
+
+def test_the_app_hears_in_words_why_the_order_was_not_created(h: _Harness) -> None:
+    unknown = h.client.post(_url("order/app"), json={**_ORDER, "items": [{"handle": "nope", "quantity": 1}]})
+    assert unknown.status_code == 200 and unknown.json() == {
+        "success": False, "error_detail": "Un producto del pedido ya no está en el catálogo. Créalo desde el dashboard."}
+    blank = h.client.post(_url("order/app"), json={
+        **_ORDER, "shipping": {**_ORDER["shipping"], "receiver_name": " ", "phone": "12"}})
+    assert blank.status_code == 200 and blank.json() == {
+        "success": False, "error_detail": "Revisa el teléfono y quién recibe antes de crear el pedido."}
+    assert h.port.calls == []
+
+    h.port.ok = False
+    down = h.client.post(_url("order/app"), json=_ORDER).json()
+    assert down == {"success": False,
+                    "error_detail": "No se pudo crear el pedido en la tienda. Intenta de nuevo o créalo desde el dashboard."}
+
+
 def test_order_when_the_provider_fails_keeps_the_audit_and_does_not_close(h: _Harness) -> None:
     h.port.ok = False
     body = h.client.post(_url("order"), json=_ORDER).json()

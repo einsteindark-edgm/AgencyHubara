@@ -108,12 +108,14 @@ class Run:
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".
         Con argumento: {"link": uri}, {"wait": s}, {"inject": "fire …"}, {"adb": "shell cmd"},
-        {"tap": "texto"}, {"type": "ascii"}, {"swipe": {"at": "texto", "dx": px, "dy": px}},
+        {"tap": "texto" | {text, above}}, {"type": "ascii"}, {"swipe": {"at": "texto", "dx": px, "dy": px}},
         {"expect": "texto"}, {"expect_gone": "texto"},
         {"expect_all": [...] | {texts, in_order, above_focused}}, {"assert": {<chequeo>}},
         {"shot": "nombre"} (captura a mitad del escenario, la que muestra el comentario del PR),
         {"relay_push": s} (espera hasta s segundos el push que mandó el backend y se lo entrega a la app).
-        Un texto con «=» adelante busca igual exacto (p. ej. "=Enviar" y no «Enviar aromas»)."""
+        Un texto con «=» adelante busca igual exacto (p. ej. "=Enviar" y no «Enviar aromas»). `above` toca el que está
+        encima de otro texto: en el chat la burbuja «Más» y la pestaña «Más» se llaman igual (la burbuja va encima
+        del campo «Escribe un mensaje…»)."""
         if isinstance(step, str):
             step = {step: True}
         (kind, arg), = step.items()
@@ -141,9 +143,10 @@ class Run:
             dev.sh(arg)
         elif kind == "tap":
             text, timeout = _text_and_timeout(arg, 20)
-            node, _ = dev.wait_for(text, timeout=timeout)
+            above = arg.get("above") if isinstance(arg, dict) else None
+            node, _ = dev.wait_for(text, timeout=timeout, above=above)
             if not node:
-                raise StepFailed(f"no apareció «{text}» para tocarlo")
+                raise StepFailed(f"no apareció «{text}»{f' encima de «{above}»' if above else ''} para tocarlo")
             dev.tap(node)
         elif kind == "type":
             dev.type_ascii(arg)

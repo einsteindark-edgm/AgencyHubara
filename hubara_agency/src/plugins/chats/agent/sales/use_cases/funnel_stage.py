@@ -69,6 +69,11 @@ _SHIPPING_SLOTS: tuple[str, ...] = (
 )
 
 
+def shipping_slots_complete(slots: dict[str, Any]) -> bool:
+    """¿Están los datos de envío que cierran `etapa_datos_envio`?"""
+    return all(slots.get(k) for k in _SHIPPING_SLOTS)
+
+
 def resolve_funnel_stage(metadata: dict[str, Any]) -> str:
     """Proyecta la etapa del funnel desde el estado persistido del episodio."""
     episode = get_active_episode(metadata)
@@ -92,6 +97,6 @@ def resolve_funnel_stage(metadata: dict[str, Any]) -> str:
     items = draft_items(draft)
     if not items or any(missing_variants(draft, item) for item in items):
         return STAGE_VARIANTES
-    if not all(slots.get(k) for k in _SHIPPING_SLOTS):
+    if not shipping_slots_complete(slots):
         return STAGE_DATOS_ENVIO
     return STAGE_CIERRE

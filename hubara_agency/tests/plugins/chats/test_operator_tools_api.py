@@ -99,6 +99,11 @@ class _Harness:
     def sent_texts(self) -> list[str]:
         return [call.args[2] for call in self.wa["send_text"].await_args_list]
 
+    def write_history(self, events: list[dict[str, Any]]) -> None:
+        (self.vault / _S / "sessions").mkdir(parents=True, exist_ok=True)
+        (self.vault / _S / "sessions" / f"{_S}.jsonl").write_text(
+            "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), encoding="utf-8")
+
 
 @pytest.fixture
 def h(_isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch) -> _Harness:
@@ -449,6 +454,102 @@ def test_the_order_summary_needs_address_and_a_known_payment_method(h: _Harness)
     assert r.status_code == 422 and r.json()["error"] == "invalid_args"
     problems = " ".join(r.json()["problems"])
     assert "dirección" in problems and "medio de pago" in problems
+    assert not h.wa["send_interactive_buttons"].await_count
+
+
+# ── con el bot apagado nadie llena el borrador (caso 2026-10-09) ─────────────
+#
+# «Pedir datos de envío» y «Resumen para confirmar» respondían «faltan datos
+# para esta acción»: el episodio tenía el borrador vacío porque con un humano
+# al mando el bot no corre. El operador elige el producto en la app y el
+# resumen sale con ese producto y lo que el cliente llenó en el formulario.
+
+
+def _iso(ms: int) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
+_FORM_REPLY = ("[datos de envío recibidos] city=Bogotá; neighborhood=Chapinero; address=Cl 1 # 2-3; "
+               "phone=3000000000; receiver_name=Ana; payment_method=transfer; order_total_cop=179800; "
+               "items_summary=2× Dúo Zodiacal")
+
+
+def test_with_no_products_in_the_order_the_form_goes_with_the_product_the_operator_picks(
+    h: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-envio-prueba")  # el formulario nativo, como en producción
+    # sin un «sí» anotado: con el bot apagado nadie lo anota, y el formulario no lo espera (PR #412)
+    h.seed(_human(episodes=_draft({}, confirmed=False)))
+
+    r = h.run("request_shipping_details", {"product": "duo-zodiacal", "quantity": "2"}, cid="act-form")
+
+    assert r.status_code == 200, r.text
+    flow = h.wa["send_flow"].await_args.args[2]
+    assert "2× Dúo Zodiacal" in flow.body and "Subtotal en productos: $179.800" in flow.body
+    [event] = h.history()
+    assert event["operator_tool"] == "request_shipping_details" and event["component_kind"] == "shipping_flow"
+    assert h.meta()["operator_tool_actions"][-1]["args"] == {"product": "duo-zodiacal", "quantity": "2"}
+
+
+def test_an_order_without_products_tells_the_operator_what_to_do(h: _Harness) -> None:
+    h.seed(_human(episodes=_draft({})))
+
+    r = h.run("request_shipping_details", cid="act-empty")
+
+    assert r.status_code == 422
+    assert r.json()["error"] == "invalid_args"
+    # la app muestra `message` tal cual: nada de «faltan datos para esta acción»
+    assert r.json()["message"] == "El pedido todavía no tiene productos: elige el producto y la cantidad."
+    assert h.sent_texts() == []
+
+
+def test_the_form_needs_a_real_product_and_a_positive_quantity(h: _Harness) -> None:
+    h.seed(_human(episodes=_draft({})))
+
+    for cid, args, said in (
+        ("q1", {"product": "duo-zodiacal", "quantity": "0"}, "La cantidad tiene que ser un número de 1 a 999."),
+        ("q2", {"product": "duo-zodiacal", "quantity": "muchas"}, "La cantidad tiene que ser un número de 1 a 999."),
+        ("q3", {"product": "no-existe", "quantity": "1"}, "El producto «no-existe» no está en el catálogo."),
+    ):
+        r = h.run("request_shipping_details", args, cid=cid)
+        assert (r.status_code, r.json()["error"], r.json()["message"]) == (422, "invalid_args", said), cid
+    assert h.sent_texts() == []
+
+
+def test_with_the_bot_off_the_summary_uses_the_form_the_operator_sent_and_what_the_customer_filled_in(
+    h: _Harness,
+) -> None:
+    now = _now()
+    h.seed(_human(
+        episodes=_draft({}),
+        operator_tool_actions=[{"id": "act-form", "tool": "request_shipping_details", "sent": True,
+                                "at_ms": now - 10 * _MIN, "args": {"product": "duo-zodiacal", "quantity": "2"}}],
+    ))
+    h.write_history([{"role": "user", "timestamp": _iso(now - 5 * _MIN), "content": _FORM_REPLY}])
+
+    r = h.run("present_order_confirmation", cid="act-summary-off")
+
+    assert r.status_code == 200, r.text
+    card = h.wa["send_interactive_buttons"].await_args.args[2]
+    assert "2× Dúo Zodiacal — $89.900" in card.body and "Total: $187.700 COP" in card.body
+    assert "Cl 1 # 2-3, Chapinero, Bogotá" in card.body and "Pago anticipado (Nequi)" in card.body
+
+
+def test_the_summary_says_what_is_missing_in_words_the_operator_reads(h: _Harness) -> None:
+    now = _now()
+    # el formulario y el pedido del episodio ANTERIOR no cuentan para este
+    h.seed(_human(episodes=_draft({})))
+    h.write_history([{"role": "user", "timestamp": _iso(now - 2 * 60 * _MIN), "content": _FORM_REPLY}])
+
+    r = h.run("present_order_confirmation", cid="act-summary-empty")
+
+    assert r.status_code == 422 and r.json()["error"] == "invalid_args"
+    assert r.json()["message"] == (
+        "Para el resumen falta el producto, la ciudad, la dirección y el medio de pago. "
+        "Elige el producto en «Pedir datos de envío» y espera a que el cliente llene el formulario."
+    )
     assert not h.wa["send_interactive_buttons"].await_count
 
 

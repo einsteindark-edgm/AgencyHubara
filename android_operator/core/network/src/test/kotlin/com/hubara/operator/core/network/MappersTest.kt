@@ -14,6 +14,7 @@ import com.hubara.operator.core.network.dto.OrderDetailDto
 import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SessionsResponse
 import com.hubara.operator.core.network.dto.SuggestionsDto
+import com.hubara.operator.core.model.SuggestionTone
 import org.junit.Test
 
 class MappersTest {
@@ -145,6 +146,23 @@ class MappersTest {
         assertThat(set.humanInControl).isTrue()
         assertThat(set.suggestions.map { it.prominence }).containsExactly(Prominence.PRIMARY, Prominence.NORMAL).inOrder()
         assertThat(set.suggestions.first().action.args["product"].toString()).isEqualTo("\"duo-zodiacal\"")
+    }
+
+    /** «Crear pedido»: no le manda nada al cliente, abre el formulario (una pantalla del servidor) y va marcada. */
+    @Test fun la_burbuja_crear_pedido_abre_una_pantalla_y_va_marcada() {
+        val dto = json.decodeFromString<SuggestionsDto>(
+            """{"session_id":"wa_test_laura","version":8,"decided_by":"rules","stage":"etapa_cierre",
+            "window_open":true,"in_control":"human","suggestions":[
+              {"id":"create_order","label":"Crear pedido","prominence":"primary","editable":false,"tone":"order",
+               "opens":"crear_pedido","action":{"name":"create_order","args":{}}},
+              {"id":"send_payment_methods","label":"Medios de pago","prominence":"normal","editable":false,
+               "action":{"name":"send_payment_methods","args":{}}}]}""",
+        )
+        val (order, payment) = dto.toDomain()!!.suggestions
+        assertThat(order.tone).isEqualTo(SuggestionTone.ORDER)
+        assertThat(order.opens).isEqualTo("crear_pedido")
+        assertThat(payment.tone).isEqualTo(SuggestionTone.NORMAL)
+        assertThat(payment.opens).isNull()
     }
 
     @Test fun incendios_de_chat_y_de_orden_y_tolera_tipos_nuevos() {

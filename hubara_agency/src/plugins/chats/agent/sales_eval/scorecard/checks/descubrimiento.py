@@ -7,12 +7,14 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     PRICE_RE,
     failed,
+    fold,
     in_focus,
     is_legacy,
     judged,
     judged_turns,
     not_applicable,
     not_judged,
+    our_quoted_message,
     passed,
     quote,
     sent_texts,
@@ -185,7 +187,10 @@ def _titles(ctx: CheckContext) -> list[str]:
 # valores de envío ("compras superiores a $45.000", "recargo de $3.000", "el
 # envío sale en $12.000"). Se miran las palabras justo antes del monto.
 _POLICY_AMOUNT_RE = re.compile(
-    r"(superior(es)?|mayor(es)?|m[aá]s de|m[ií]nim[oa]|recargo|env[ií]o|domicilio|flete|contra ?entrega)"
+    # «compras/pedidos desde», «a partir de»: el mínimo del contra entrega
+    # (incidente del 2026-10-09, ···9824: «aplica para compras desde $45.000»).
+    r"(superior(es)?|mayor(es)?|m[aá]s de|m[ií]nim[oa]|recargo|env[ií]o|domicilio|flete|contra ?entrega"
+    r"|(compras|pedidos) (desde|de)|a partir de)"
     r"[^.$\n]{0,25}$",
     re.IGNORECASE,
 )
@@ -198,11 +203,21 @@ def _catalog_price(text: str) -> str | None:
     return None
 
 
-def _naming(text: str, titles: list[str]) -> str | None:
+def _naming(text: str, titles: list[str], known: frozenset[str] = frozenset()) -> str | None:
+    """El precio o el producto que el texto nombra, salvo los productos que
+    ya nombró un mensaje nuestro (`known`, en minúsculas y sin tildes)."""
     if price := _catalog_price(text):
         return price
-    low = text.lower()
-    return next((t for t in titles if t.lower() in low), None)
+    low = fold(text)
+    return next((t for t in titles if fold(t) in low and fold(t) not in known), None)
+
+
+def _named_by_us(turn: Turn, titles: list[str]) -> set[str]:
+    """Los productos que nombró el mensaje nuestro que el cliente contesta
+    (incidente del 2026-10-09, ···9824: la asesora mandó la trilogía con su
+    enlace). El bot no los saca de la memoria."""
+    ours = our_quoted_message(turn.inbound_text)
+    return {fold(t) for t in titles if ours and fold(t) in fold(ours)}
 
 
 @code_check("DES-05")
@@ -210,12 +225,14 @@ def check_search_before_naming(traj: Trajectory, ctx: CheckContext) -> CheckResu
     titles = _titles(ctx)
     grounded = False
     named = False
+    known: set[str] = set()
     for turn in traj.turns:
         grounded = grounded or any(tc.name in _GROUNDING_TOOLS for tc in turn.tools)
+        known |= _named_by_us(turn, titles)
         if not judged(traj, turn):
-            continue  # el prefijo solo aporta búsquedas hechas
+            continue  # el prefijo solo aporta búsquedas hechas y lo que nombramos
         for text in turn.sent_texts:
-            name = _naming(text, titles)
+            name = _naming(text, titles, frozenset(known))
             if name is None:
                 continue
             named = True

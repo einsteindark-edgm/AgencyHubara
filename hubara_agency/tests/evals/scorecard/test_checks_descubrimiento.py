@@ -462,3 +462,44 @@ def test_des10_without_amounts_is_not_applicable() -> None:
 def test_des10_without_catalog_is_unknown() -> None:
     t = traj(T(1, sent=["Vale $45.000"]))
     assert _run("DES-10", t, _Ctx()).verdict == "desconocido"
+
+
+# ── Incidente del 2026-10-09 (···9824, ep_001) ──────────────────────────────
+_LILIANA = (
+    "[El cliente responde a este mensaje que le enviamos: «Hola, te escribe Liliana, asesora de Hubara, para hacer "
+    "seguimiento a tu consulta de velas para este hallowen, tenemos la trilogia del terror: "
+    "https://hubara.com.co/products/trilogia-del-terror/ o cada una por sepado...»]\nHola"
+)
+_HALLOWEEN_PRICES = CheckContext(product_titles=("Trilogía del Terror", "Calabaza"), catalog_available=True)
+
+
+def test_des05_the_cash_on_delivery_minimum_is_not_a_catalog_price() -> None:
+    """«¿Tienen pago contra entrega?» → «el contra entrega aplica para compras
+    desde $45.000 en productos»: es el mínimo de la forma de pago, no un precio
+    (coincide con el de la trilogía). La regla de política miraba solo 25
+    letras antes del monto y «contra entrega» quedaba a 27."""
+    for text in (
+        "Perfecto, el contra entrega aplica para compras desde $45.000 en productos; el valor del envío lo confirma la transportadora al despachar.",
+        "Sí, manejamos pago contra entrega a partir de $45.000 en productos.",
+        "El contra entrega aplica en pedidos desde $45.000.",
+    ):
+        assert _run("DES-05", traj(T(1, sent=[text])), _NO_CATALOG).verdict == "no_aplica", text
+
+
+def test_des05_a_product_our_own_message_named_is_not_named_from_memory() -> None:
+    """La asesora mandó la trilogía con su enlace; que el bot la nombre antes de
+    buscar no es inventarla: salió de nuestro mensaje."""
+    t = traj(
+        T(1, inbound=_LILIANA, sent=["Buenas tardes 🤍 ¿Te interesa la trilogía completa o alguna en particular?"]),
+        T(2, inbound="Tienes pago contra entrega", sent=[
+            "Perfecto, el contra entrega aplica para compras desde $45.000 en productos.\n\n¿Te muestro la trilogía del terror para que la veas?",
+        ]),
+    )
+    assert _run("DES-05", t, _HALLOWEEN_PRICES).verdict == "no_aplica"
+
+
+def test_des05_a_product_our_message_did_not_name_still_needs_a_search() -> None:
+    t = traj(T(1, inbound=_LILIANA, sent=["También tenemos la Calabaza, ¿te la muestro?"]))
+    r = _run("DES-05", t, _HALLOWEEN_PRICES)
+    assert (r.verdict, r.turn) == ("falla", 1)
+    assert "Calabaza" in r.evidence

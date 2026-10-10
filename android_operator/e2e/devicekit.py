@@ -67,20 +67,27 @@ class Device:
             time.sleep(0.4)
         raise RuntimeError(f"uiautomator no pudo leer la pantalla: {res.strip()[:300]}")
 
-    def find(self, needle: str, nodes: list[Node] | None = None) -> Node | None:
-        """Primer nodo cuyo texto o descripción contiene `needle`; con «=» adelante, igual exacto."""
+    def find(self, needle: str, nodes: list[Node] | None = None, above: str | None = None) -> Node | None:
+        """Primer nodo cuyo texto o descripción contiene `needle`; con «=» adelante, igual exacto. Con `above`, el
+        primero que queda encima del nodo con ese texto (dos elementos con el mismo nombre en pantalla)."""
         exact = needle.startswith("=")
         want = needle[1:] if exact else needle
-        for n in nodes if nodes is not None else self.nodes():
+        nodes = nodes if nodes is not None else self.nodes()
+        ref = self.find(above, nodes) if above else None
+        if above and ref is None:
+            return None
+        for n in nodes:
+            if ref is not None and n.center[1] >= ref.bounds[1]:
+                continue
             if (want in (n.text, n.desc)) if exact else (want in n.text or want in n.desc):
                 return n
         return None
 
-    def wait_for(self, needle: str, timeout: float = 15.0) -> tuple[Node | None, float]:
+    def wait_for(self, needle: str, timeout: float = 15.0, above: str | None = None) -> tuple[Node | None, float]:
         """Espera a que aparezca un texto. Devuelve el nodo y los segundos que tardó."""
         t0 = time.monotonic()
         while time.monotonic() - t0 < timeout:
-            n = self.find(needle)
+            n = self.find(needle, above=above)
             if n:
                 return n, time.monotonic() - t0
             time.sleep(0.3)

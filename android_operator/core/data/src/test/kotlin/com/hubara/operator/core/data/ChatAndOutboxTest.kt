@@ -125,6 +125,8 @@ class ChatAndOutboxTest {
         assertThat(tool).isEqualTo("send_payment_methods")
         assertThat(body.clientActionId).isEqualTo(id)
         assertThat(api.calls).contains("suggestions:wa_test_laura")
+        // La app avisa que sabe abrir pantallas desde una burbuja: sin eso el backend no le manda «Crear pedido».
+        assertThat(api.suggestionFeatures.toSet()).containsExactly("open_screen")
     }
 
     @Test fun la_plantilla_viaja_con_sus_variables_y_su_client_message_id() = runTest {

@@ -673,3 +673,50 @@ scenarios:
     checks:
       - screen_has: "Escrito el"
       - screen_has: "Solo un mensaje nuevo del cliente la abre"
+
+  - id: S28_mas_enviar_colores_eligiendo_producto
+    title: «Más» manda los colores del producto que elige el operador
+    resumen: "Con el bot apagado nadie llena el pedido y los colores no tenían cómo salir (caso 2026-10-09). Desde «Más», el operador toca «Enviar colores», elige la Plegaria de Luz y a Laura le llegan sus colores; la hoja se cierra sola."
+    # La burbuja «Más» y la pestaña «Más» se llaman igual: `above` toca la que está encima del campo de texto.
+    setup: *laura_tomada
+    script:
+      - {tap: {text: "=Más", above: "Escribe un mensaje…"}}
+      - {tap: "Enviar colores"}
+      - {expect: "Plegaria de Luz"}
+      - {shot: elegir-producto}
+      - {tap: "Plegaria de Luz"}
+      - {expect: "Enviando «Enviar colores · Plegaria de Luz»"}
+      - {expect_gone: {text: "Enviando", timeout: 30}}
+    goal: |
+      Estás en el chat 000000000101 y atiendes tú. La clienta pregunta qué colores hay.
+      1. Toca la burbuja «Más» (la que está justo encima del campo «Escribe un mensaje…», no la pestaña de abajo).
+      2. En la hoja que se abre, toca «Enviar colores». Anota qué productos aparecen.
+      3. Toca «Plegaria de Luz». Di qué barra aparece abajo y espera unos 8 segundos.
+      4. Confirma que en el chat aparece un mensaje enviado con la lista de colores.
+      Reporta lo que viste en cada paso.
+    checks:
+      - sent_contains: ['"to": "000000000101"', "Dorado"]
+      - screen_has: "Tú atiendes"
+
+  - id: S29_crear_pedido_desde_la_burbuja
+    title: La burbuja verde «Crear pedido» abre el pedido listo para registrar
+    resumen: "Camilo ya confirmó la compra y dio el envío y el pago. El operador toma el chat: aparece primero la burbuja verde «Crear pedido» (como el botón del dashboard); al tocarla se abre el pedido prellenado (2× Plegaria de Luz a Medellín) con el botón para crearlo, y al cliente no le sale nada."
+    # El backend de prueba no tiene IA ni crea pedidos en su Medusa: el formulario sale del borrador (aviso «No se
+    # pudo leer la conversación con IA») y registrar lo cubren los tests del backend (`order/app`).
+    setup: [reset, clear_app, launch, {expect: "000000000103"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "000000000103"}, {tap: "Tomar la conversación"}, {expect: "Tú atiendes"}]
+    script:
+      - {expect: "=Crear pedido"}
+      - {shot: burbuja-verde}
+      - {tap: "=Crear pedido"}
+      - {expect: {text: "2× Plegaria de Luz", timeout: 60}}
+      - {expect_all: ["Nuevo pedido", "Medellín"]}
+      - {shot: pedido-prellenado}
+    goal: |
+      Estás en el chat 000000000103 (Camilo) y acabas de tomar la conversación. El cliente ya confirmó la compra.
+      1. Di qué burbujas aparecen encima del campo de texto y de qué color es cada una.
+      2. Toca «Crear pedido». Di qué pantalla se abre, qué productos, total, datos de envío y medio de pago muestra.
+      3. NO toques el botón «Crear pedido» del final. Di si está habilitado.
+    checks:
+      - screen_has: "2× Plegaria de Luz"
+      - sent_nothing_matching: ['"to": "000000000103"']

@@ -30,7 +30,11 @@ from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 # vigente, no un «sí»; CON-04 pasa a «manda el formulario sin hacer esperar»;
 # TAG-08 deja afuera el aviso de un evento del pedido y TAG-09 nuevo: lo que el
 # bot promete para ahora sale en ese turno.
-REGISTRY_VERSION = 10
+# v11 (incidente del 2026-10-09, ···9824): si el cliente contesta un mensaje
+# nuestro, APE-01 no pide la marca que ese mensaje ya dijo y APE-03 no aplica;
+# DES-05 no cuenta el mínimo del contra entrega («compras desde $45.000») ni
+# los productos que nombró nuestro mensaje.
+REGISTRY_VERSION = 11
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -81,7 +85,8 @@ CHECKS: tuple[CheckSpec, ...] = (
     # ── Apertura ────────────────────────────────────────────────────────────
     _c("APE-01", "Saludo por hora y marca en el primer contacto", "apertura", "mayor", "code",
        "Primer contacto de la conversación.",
-       "El primer texto que recibe el cliente abre con saludo por hora de Colombia (Buenos días/tardes/noches) y la marca Hubara.",
+       "El primer texto que recibe el cliente abre con saludo por hora de Colombia (Buenos días/tardes/noches) y la marca Hubara. "
+       "Si el cliente contesta un mensaje nuestro que ya dijo la marca (el seguimiento de una asesora), basta el saludo.",
        ("spec:sales-worker/Saludo garantizado en el primer contacto", "memoria:first_contact_greeting_dropped"),
        ("greeting_first_turn",)),
     _c("APE-02", "Sin apertura prohibida", "apertura", "menor", "code",
@@ -89,7 +94,7 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El primer texto no abre con ¡Hola!, Hey ni Buen día.",
        ("guion:etapa_descubrimiento",), ("forbidden_opener_absent",)),
     _c("APE-03", "Ofrece el catálogo en la apertura", "apertura", "mayor", "code",
-       "Primer contacto de la conversación.",
+       "Primer contacto de la conversación, salvo que el cliente conteste un mensaje nuestro (la apertura ya la hicimos).",
        "El turno de apertura envía botones rápidos (Ver catálogo) o ya muestra productos.",
        ("guion:etapa_descubrimiento",), ("offer_catalog_opening",)),
     _c("APE-04", "No vuelve a saludar a un cliente con historial", "apertura", "menor", "code",
@@ -115,7 +120,8 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("operador 2026-09-14", "PR #281")),
     _c("DES-05", "Busca en el catálogo antes de nombrar productos o precios", "descubrimiento", "critico", "code",
        "El bot nombró un producto del catálogo o un precio.",
-       "Una búsqueda o lectura del catálogo precede al primer texto con producto o precio.",
+       "Una búsqueda o lectura del catálogo precede al primer texto con producto o precio. No cuentan los montos de "
+       "política (mínimo del contra entrega, recargos, envío) ni los productos que nombró un mensaje nuestro.",
        ("guion:sales_script regla máxima 1",), ("search_before_naming",)),
     _c("DES-06", "Sin datos de catálogo inventados", "descubrimiento", "critico", "judge",
        "El bot afirmó productos, precios, aromas, colores o conteos.",
