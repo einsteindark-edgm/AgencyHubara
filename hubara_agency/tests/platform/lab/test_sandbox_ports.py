@@ -174,7 +174,7 @@ async def test_a_case_never_asks_medusa_for_the_orders_of_the_person(tmp_path: P
 
             port = get_customer_orders_port()
             assert isinstance(port, NoCustomerOrders)
-            assert await port.orders_of("wa_573001112233") == ()
+            assert await port.orders_of("wa_573001111111") == ()
     finally:
         orders.get_customer_orders_port.cache_clear()
 

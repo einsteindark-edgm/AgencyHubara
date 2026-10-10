@@ -16,7 +16,7 @@ from src.plugins.chats.agent.sales.use_cases.first_purchase import (
 )
 from src.sdk.connectorkit import InMemoryCustomerOrders, InMemoryOrderFacts, OrderFacts
 
-SESSION = "wa_573001112233"
+SESSION = "wa_573001111111"
 
 
 def _facts(order_id: str, *, stage: str = "delivered", pay_status: str = "paid", is_test: bool = False) -> OrderFacts:

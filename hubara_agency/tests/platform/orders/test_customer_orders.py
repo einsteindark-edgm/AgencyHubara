@@ -23,8 +23,8 @@ from src.platform.orders.facts import OrderFacts
 from src.platform.orders.medusa_order_query import MedusaOrderQuery
 
 _BASE_URL = "http://medusa.test"
-SESSION = "wa_573001112233"
-SESSION_EMAIL = "wa+wa_573001112233@hubara.local"
+SESSION = "wa_573001111111"
+SESSION_EMAIL = "wa+wa_573001111111@hubara.local"
 
 
 def _raw(order_id: str, *, display_id: int, metadata: dict | None = None) -> dict:
@@ -51,12 +51,12 @@ def _customers(request: Request) -> Response:
     contiene los dígitos en medio de otro número."""
     params = request.url.params
     if params.get("email") == SESSION_EMAIL:
-        rows = [{"id": "cus_wa", "email": SESSION_EMAIL, "phone": "3001112233"}]
-    elif params.get("q") == "3001112233":
+        rows = [{"id": "cus_wa", "email": SESSION_EMAIL, "phone": "3001111111"}]
+    elif params.get("q") == "3001111111":
         rows = [
-            {"id": "cus_wa", "email": SESSION_EMAIL, "phone": "3001112233"},
-            {"id": "cus_web", "email": "ana@example.com", "phone": "+57 300 111 2233"},
-            {"id": "cus_otro", "email": "otro@example.com", "phone": "13001112233999"},
+            {"id": "cus_wa", "email": SESSION_EMAIL, "phone": "3001111111"},
+            {"id": "cus_web", "email": "ana@example.com", "phone": "+57 300 111 1111"},
+            {"id": "cus_otro", "email": "otro@example.com", "phone": "13001111111999"},
         ]
     else:
         rows = []
@@ -127,7 +127,7 @@ async def test_the_official_fake_serves_orders_by_session_or_fails_like_medusa()
     fake = InMemoryCustomerOrders({SESSION: [fact]})
 
     assert await fake.orders_of(SESSION) == (fact,)
-    assert await fake.orders_of("wa_570000000000") == ()
+    assert await fake.orders_of("wa_573000000000") == ()
     with pytest.raises(CustomerOrdersUnavailableError):
         await InMemoryCustomerOrders(available=False).orders_of(SESSION)
 

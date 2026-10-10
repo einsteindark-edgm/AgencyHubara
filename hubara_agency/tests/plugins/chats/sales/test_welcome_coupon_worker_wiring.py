@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 from exoclaw.agent.tools import ToolContext
 
-SESSION = "wa_573001112233"
+SESSION = "wa_573001111111"
 
 
 @pytest.fixture
