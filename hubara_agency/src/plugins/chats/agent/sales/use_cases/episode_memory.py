@@ -15,6 +15,9 @@ from __future__ import annotations
 from typing import Any
 
 from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.shared.team_exchange import (
+    quote_team_exchange_in_turn as quote_team_exchange_in_turn,
+)
 
 #: Cómo terminó el episodio, por tag de cierre (`episode_lifecycle`).
 _OUTCOMES: dict[str, str] = {
@@ -115,8 +118,6 @@ def quote_template_in_turn(template_text: str, text: str) -> str:
 TEAM_EXCHANGE_MAX_LINES = 8
 _TEAM_LINE_MAX_CHARS = 300
 
-_TEAM_SPEAKERS = {"colega": "Tu colega", "cliente": "Cliente", "aviso": "Mensaje automático"}
-
 
 def _team_speaker(event: dict[str, Any]) -> str | None:
     """Quién escribió un mensaje que el LLM no vio; ``None`` = lo escribió el
@@ -151,7 +152,8 @@ def unseen_team_exchange(events: list[dict[str, Any]]) -> list[tuple[str, str]] 
     Los mensajes del equipo (`sender: human`) van solo al JSONL del dashboard:
     el historial del LLM no los tiene, ni lo que el cliente le contestó al
     colega mientras tenía el chat. Hay que llamarla ANTES de persistir el
-    mensaje actual (como `unseen_template_text`).
+    mensaje actual (como `unseen_template_text`). La nota la arma
+    `quote_team_exchange_in_turn` (`chats/shared/team_exchange.py`).
     """
     tail: list[dict[str, Any]] = []
     for event in reversed(events):
@@ -169,44 +171,3 @@ def unseen_team_exchange(events: list[dict[str, Any]]) -> list[tuple[str, str]] 
         if (speaker := _team_speaker(event)) is not None and (text := _team_text(event))
     ]
     return lines[-TEAM_EXCHANGE_MAX_LINES:] or None
-
-
-_TEAM_NOTE_HEAD = "[Después de tu último mensaje, un colega del equipo"
-#: Las líneas de la nota que dijimos nosotros (el colega o un aviso).
-_OUR_LINE_PREFIXES = tuple(f"- {_TEAM_SPEAKERS[who]}: «" for who in ("colega", "aviso"))
-
-
-def quote_team_exchange_in_turn(exchange: list[tuple[str, str]], text: str) -> str:
-    """El mensaje del cliente con lo que escribió el colega citado adelante.
-
-    Sin corchetes adentro: la nota va entre corchetes y la calificación quita
-    las notas del ingest hasta el primer «]» (`_INGEST_NOTE_RE`)."""
-    lines = "\n".join(
-        f"- {_TEAM_SPEAKERS.get(who, who)}: «{said.replace('[', '(').replace(']', ')')}»"
-        for who, said in exchange
-    )
-    return (
-        f"{_TEAM_NOTE_HEAD} le escribió al cliente "
-        "en este chat (el cliente lo ve como la misma conversación):\n"
-        f"{lines}\n"
-        "Lo que el cliente escribe ahora puede ser la respuesta a tu colega: sigue "
-        "desde ahí y no contradigas lo que le dijo.]\n"
-        f"{text}"
-    )
-
-
-def our_lines_in_turn(text: str) -> list[str]:
-    """Lo que dijimos nosotros (el colega o un aviso) según la nota que puso
-    `quote_team_exchange_in_turn` en el turno; ``[]`` si el turno no la trae.
-    La lee la calificación, como la cita de una plantilla."""
-    start = text.find(_TEAM_NOTE_HEAD)
-    if start < 0:
-        return []
-    end = text.find("]", start)
-    note = text[start : end if end >= 0 else len(text)]
-    return [
-        line[len(prefix) : -1]
-        for line in note.splitlines()
-        for prefix in _OUR_LINE_PREFIXES
-        if line.startswith(prefix) and line.endswith("»")
-    ]
