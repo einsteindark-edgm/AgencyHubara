@@ -120,6 +120,8 @@ with workflow.unsafe.imports_passed_through():
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
+    # Las tools que solo leen: el reinicio conserva su resultado (…7392).
+    from src.plugins.chats.agent.sales.read_only_tools import READ_ONLY_TOOLS
 
     # Funciones puras del V1 (sin copiar): traza, capas ①③, debounce y CAPI.
     from src.plugins.chats.agent.sales.workflows.sales_session import (
@@ -503,6 +505,8 @@ class HubaraSalesSessionWorkflowV2:
                 trace_suppressed: str | None = None
                 trace_steps: list[dict] = []
                 restarts = 0
+                # Lo que el intento cortado ya leyó: viaja al reinicio.
+                carried = None
                 # Ráfagas sin cortes (revisión del PR #391): cuántos mensajes
                 # había en la bandeja justo antes de la PRIMERA salida del
                 # turno (saludo, texto o componentes). Lo que llega después
@@ -589,10 +593,15 @@ class HubaraSalesSessionWorkflowV2:
                         # escribió y el turno todavía no le mostró nada, se
                         # recompone en vez de responder a medias.
                         interrupt_before_record=True,
+                        read_only_tools=READ_ONLY_TOOLS,
+                        carried=carried,
                     )
                     trace_steps.extend(result.steps or [])
                     if result.interrupted:
                         restarts += 1
+                        # Lo que ya leyó no se vuelve a consultar (…7392);
+                        # el gate vive en el helper.
+                        carried = result.carried
                         # El motivo es el del corte (Checkpoint A o antes de
                         # grabar); solo payload de la traza.
                         cut_reason = next(

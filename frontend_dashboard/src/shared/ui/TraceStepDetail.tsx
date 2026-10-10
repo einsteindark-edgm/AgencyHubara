@@ -193,6 +193,22 @@ function Sections({ step, back, steps, index }: { step: TraceStep; back: boolean
       return <Plan step={step} />;
     case "outbound":
       return <Outbound step={step} />;
+    case "carry":
+      return (
+        <Sec title="Lo que ya había consultado">
+          <div className="grid gap-1.5">
+            <div className="text-[12.5px] text-fg-soft">El intento anterior se cortó: estos resultados pasan al reinicio y no se vuelve a pedir.</div>
+            {list(step.tools)
+              .filter((n): n is string => typeof n === "string")
+              .map((name) => (
+                <div key={name} className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded bg-cyan-soft px-1.5 py-0.5 text-[11.5px] text-cyan">{describeTool({ name }).action}</span>
+                  <code className="font-mono text-[11px] text-fg-muted">{name}</code>
+                </div>
+              ))}
+          </div>
+        </Sec>
+      );
     case "truncated":
       return <Sec title="Traza recortada">{`Se omitieron ${num(step.dropped) ?? "varios"} pasos por el tope de la traza.`}</Sec>;
     default:

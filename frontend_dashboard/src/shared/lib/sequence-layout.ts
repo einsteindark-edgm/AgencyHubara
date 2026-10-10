@@ -15,7 +15,7 @@
  *  - `llm`: Bot → Modelo ("ronda N") y Modelo → Bot (lo que pidió).
  *  - `tool`: Bot → Herramientas y de vuelta: las tools las ejecuta el BOT
  *    (`execute_tool` de exoclaw) después de que el modelo las pide.
- *  - `plan`, `guard`, `cut`, `restart`: una caja dentro del Bot.
+ *  - `plan`, `guard`, `cut`, `restart`, `carry`: una caja dentro del Bot.
  *  - `outbound`: Bot → Cliente.
  * Las tools se nombran por lo que hacen (`sales-tools.ts`). La flecha hacia
  * las herramientas dice cuál se ejecutó (operador, 2026-09-30): lo que pidió el
@@ -236,6 +236,13 @@ function rowsFor(step: TraceStep, stepIndex: number): Draft[] {
       // Texto antes de la foto (2026-09-30): el turno esperó la foto que se leía.
       const label = step.photo === true ? "vuelve a empezar · esperó la foto" : `vuelve a empezar · +${drained} mensaje${drained === 1 ? "" : "s"}`;
       return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "warn", short: label, title: `Vuelve a empezar (${attempt})`, kind: "Reinicio", t: time }];
+    }
+    case "carry": {
+      // El reinicio trae lo que el intento cortado ya había consultado (…7392).
+      const read = names(step.tools);
+      const short = `ya tenía: ${read.map(toolActionPhrase).join(", ")}`;
+      const title = `No lo vuelve a consultar: ${read.map((n) => describeTool({ name: n }).action).join(", ")}`;
+      return [{ ...base, from: WORKFLOW, to: WORKFLOW, status: "ok", short, title, kind: "Reinicio", t: time }];
     }
     case "outbound": {
       const n = count(step.bubbles);
