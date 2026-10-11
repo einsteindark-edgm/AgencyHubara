@@ -41,6 +41,89 @@ def test_non_deferral_phrases_are_not_flagged(text: str) -> None:
 
 @pytest.mark.parametrize(
     "text",
+    [
+        "¿Me llega mañana?",
+        "Y después de llenarlo cómo pago?",
+        "¿Puedo pagar después?",
+        "Osea q si hago el pedido hoy llega el martes? Por el fds y como el lunes es festivo",
+        "¿Luego de pagar qué hago?",
+    ],
+)
+def test_a_question_about_when_is_not_a_deferral(text: str) -> None:
+    """Premortem 2026-10-09: la regla leía «mañana» / «después» / «luego» en
+    una PREGUNTA como aplazamiento. Jev lo corrige, pero si cae, decide la
+    regla: el formulario quedaba frenado y el bot le decía «aquí te espero»
+    a un cliente que preguntaba cuándo le llega."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Déjame una de lavanda",
+        "Te confirmo: lavanda y en blanco",
+        "Les escribo la dirección: Calle 1 # 2-3",
+        "cuando llegue pago en efectivo",
+        "Mañana estoy en casa todo el día",
+        "Lo recibo en la noche, después de las 6",
+        "Ok, te aviso cualquier cosa del pedido: es para mi mamá",
+    ],
+)
+def test_a_purchase_detail_with_a_time_word_is_not_a_deferral(text: str) -> None:
+    """Premortem 2026-10-09: la regla aplazaba compras. Solo cuentan las
+    frases fuertes («voy en camino», «lo pienso», «ahora no») o un «te aviso /
+    te confirmo / lo hago» que se deja para después; lo demás lo decide Jev."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Después", "Luego", "Más tarde", "En un rato", "Mañana", "Sí, luego", "Luego miro", "Más tarde reviso",
+     "Mañana lo miro"],
+)
+def test_a_message_that_only_says_later_is_a_deferral(text: str) -> None:
+    """Revisión del premortem (2026-10-09): un mensaje que solo dice un momento
+    («Luego», «Mañana») o un momento y lo que hará («Luego miro») sigue
+    aplazando, como antes de reescribir la regla."""
+    assert detect_deferral(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["La compro ahorita", "Ok, lo confirmo ahorita", "Listo, ahorita lo pago",
+     "Sí, contra entrega, lo pago cuando me llegue"],
+)
+def test_ahorita_and_paying_on_delivery_are_not_deferrals(text: str) -> None:
+    """«Ahorita» en Colombia es ya mismo; pagar cuando le llegue es contra entrega."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Listo, lo pago mañana por nequi", "dale, mañana lo pago", "Confirmo, lo pago cuando llegue a la casa"],
+)
+def test_saying_when_they_pay_is_not_a_deferral(text: str) -> None:
+    """Premortem 2026-10-09: cuándo paga no aplaza la compra; leído como
+    aplazamiento, `register_order` frenaba con `customer_deferred` a un
+    cliente que ya había tocado ✅ Confirmar."""
+    assert detect_deferral(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Te aviso", "Les confirmo más tarde", "Después hablamos", "Déjame pensarlo", "Lo voy a pensar", "Más tarde lo pido"],
+)
+def test_leaving_it_for_later_is_a_deferral(text: str) -> None:
+    assert detect_deferral(text) is True
+
+
+@pytest.mark.parametrize("text", ["¿Te confirmo mañana?", "¿Te aviso luego?", "¿Lo pienso y te escribo?"])
+def test_a_question_that_defers_in_first_person_still_defers(text: str) -> None:
+    assert detect_deferral(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
     ["sí", "Si", "dale", "listo, así está bien", "lo quiero", "me lo llevo", "confirmo", "de una", "Dame 2", "quiero 3", "hágale"],
 )
 def test_purchase_affirmations_are_detected(text: str) -> None:
@@ -104,6 +187,30 @@ def test_deferral_is_current_only_for_the_latest_inbound() -> None:
 
 def test_registered_order_counts_as_confirmation() -> None:
     md = {"registered_order": {"success": True, "order_id": "o1"}, "episodes": []}
+    assert has_purchase_confirmation(md) is True
+
+
+def test_an_order_from_a_previous_purchase_is_not_this_purchase() -> None:
+    """Conversación real del 2026-10-09: clienta que vuelve (pedido del 23-sep)
+    pide otra vez, da sus datos y no toca «Confirmar». El pedido viejo hizo
+    pasar por confirmada la compra nueva: el cierre por silencio la pasó al
+    equipo en vez de dejarla a remarketing."""
+    md = {
+        "registered_order": {"success": True, "order_id": "o_viejo", "registered_at_ms": NOW - 16 * 86_400_000},
+        "episodes": [
+            {"episode_id": "ep_001", "order_id": "o_viejo", "closed_at_ms": NOW - 16 * 86_400_000},
+            {"episode_id": "ep_002", "started_at_ms": NOW - 14 * 86_400_000, "closed_at_ms": None,
+             "order_draft": {"slots": {"producto": "Trilogía del Terror", "ciudad": "Bogotá"}}},
+        ],
+    }
+    assert has_purchase_confirmation(md) is False
+
+
+def test_an_order_registered_in_this_episode_counts() -> None:
+    md = {
+        "registered_order": {"success": True, "order_id": "o1", "registered_at_ms": NOW},
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": NOW - 5_000, "closed_at_ms": None}],
+    }
     assert has_purchase_confirmation(md) is True
 
 

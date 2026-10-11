@@ -97,6 +97,12 @@ export const chatMessageSchema = z.object({
   turn_key: z.string().optional().catch(undefined),
   /** Forma real del mensaje (ver `chatEventSchema`). Ausente = normal. */
   event: chatEventSchema.optional(),
+  /** Mensaje del cliente que Meta entregó tarde: cuándo lo escribió de verdad
+   *  (`timestamp` es la llegada) y si llegó con la ventana de 24 h cerrada
+   *  (el bot no pudo contestarle). Caso 2026-10-09: un mensaje de 3 días antes
+   *  pareció la respuesta a la plantilla. Un valor raro se ignora (L-10). */
+  sent_at: z.union([z.string(), z.number()]).optional().catch(undefined),
+  arrived_after_window: z.boolean().optional().catch(undefined),
   /** El cliente respondió CITANDO un mensaje. `author`/`text`/`image_url`
    *  vienen cuando el backend pudo resolver la cita; solo `id` si no. */
   reply_to: z

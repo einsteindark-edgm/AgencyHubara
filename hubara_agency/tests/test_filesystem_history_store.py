@@ -274,3 +274,33 @@ def test_append_user_event_persists_document_fields_when_provided(tmp_path):
     assert parsed["role"] == "user"
     assert parsed["document_url"] == "/api/dashboard/media/wa_1/media-9.pdf"
     assert parsed["document_filename"] == "comprobante.pdf"
+
+
+def test_append_user_event_records_when_a_late_message_was_written(tmp_path):
+    """Caso 2026-10-09: Meta re-entregó días después un mensaje del cliente;
+    el chat lo mostraba con la hora de llegada, como si respondiera a la
+    plantilla recién enviada. `sent_at` guarda cuándo lo escribió de verdad
+    (mismo formato que `timestamp`) y `arrived_after_window` que llegó con la
+    ventana de 24 h ya cerrada (el bot no pudo contestarle)."""
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_user_event(
+        "wa_1",
+        "hola, ¿siguen teniendo velas?",
+        sent_at_ms=1_791_306_124_000,
+        arrived_after_window=True,
+    )
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["sent_at"] == "2026-10-06T17:02:04+00:00"
+    assert parsed["arrived_after_window"] is True
+
+
+def test_append_user_event_omits_late_marks_when_absent(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+    store.append_user_event("wa_1", "hola")
+
+    log = tmp_path / "wa_1" / "sessions" / "wa_1.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert "sent_at" not in parsed
+    assert "arrived_after_window" not in parsed

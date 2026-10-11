@@ -33,25 +33,18 @@ def test_ghosting_prompt_defaults_to_interesado_when_in_doubt() -> None:
     assert "no me interesa" in out.lower() or "obvio" in out.lower()
 
 
-def test_ghosting_prompt_handles_confirmed_without_shipping_case() -> None:
-    """Sesión c4e3416f: el prompt debe instruir al LLM a detectar el caso
-    'cliente confirmó pedido pero NO completó datos de envío' y combinarlo
-    con `escalate_to_human(reason_category="ORDER_PENDING_SHIPPING_DETAILS")`.
-
-    Sin esta detección, sales caería a INTERESADO genérico y arrancaría
-    remarketing — perdiendo el lead que estaba a un paso de cerrar."""
+def test_ghosting_prompt_leaves_an_unfinished_order_to_remarketing() -> None:
+    """Decisión del operador (2026-10-09): ningún silencio pasa solo al equipo.
+    Quien confirmó y no dio los datos de envío, o los dio y no tocó
+    «Confirmar», y se quedó callado queda INTERESADO: el pedido sigue en el
+    episodio y remarketing lo retoma. Antes (sesión c4e3416f) iba a
+    CONFIRMADO_SIN_DATOS + `escalate_to_human(ORDER_PENDING_SHIPPING_DETAILS)`."""
     out = build_ghosting_prompt()
-    # La tag nueva debe estar mencionada explícitamente
-    assert "CONFIRMADO_SIN_DATOS" in out
-    # La razón de escalation correspondiente también
-    assert "ORDER_PENDING_SHIPPING_DETAILS" in out
-    # Y debe explicitar que en este caso van DOS tools (tag + escalate)
-    assert "escalate_to_human" in out
-    # Y que NO se debe usar INTERESADO para este caso (anti-confusión)
-    assert (
-        "NO uses INTERESADO" in out
-        or "no es remarketing genérico" in out.lower()
-    )
+    case = next(line for line in out.splitlines() if "Confirmar" in line)
+    assert "`INTERESADO`" in case
+    assert "remarketing" in case.lower()
+    assert "ORDER_PENDING_SHIPPING_DETAILS" not in out
+    assert "Para CONFIRMADO_SIN_DATOS llamas DOS tools" not in out
 
 
 def test_ghosting_prompt_mentions_register_order_for_compra_exitosa() -> None:
@@ -65,13 +58,15 @@ def test_ghosting_prompt_escalates_registration_failure_only_for_medusa() -> Non
     """Un rechazo de validación de `register_order` (`error`, p. ej. falta
     quien recibe) no es una falla de Medusa: el humano lo recibiría como
     tal y buscaría en `failed_order_registrations`, que está vacío. Si el
-    cliente se fue con ese rechazo pendiente, el pedido quedó sin datos
-    completos (CONFIRMADO_SIN_DATOS + ORDER_PENDING_SHIPPING_DETAILS)."""
+    cliente se fue con ese rechazo pendiente, al pedido le falta un dato:
+    queda INTERESADO y remarketing se lo pide (2026-10-09: ningún silencio
+    pasa solo al equipo)."""
     out = build_ghosting_prompt()
     compra = out[out.index("- `COMPRA_EXITOSA`"):]
     assert "sin `error`" in compra
-    assert "con `error`" in compra
-    assert "ORDER_PENDING_SHIPPING_DETAILS" in compra
+    assert "ORDER_REGISTRATION_FAILED" in compra
+    validation = compra[compra.index("con `error`"):compra.index("Esta tag")]
+    assert "`INTERESADO`" in validation
 
 
 def test_remarketing_trigger_includes_motivo_and_memory() -> None:

@@ -1128,6 +1128,7 @@ def test_get_promotions_lista_los_cupones_vigentes_de_medusa(
         budget_type=None, budget_limit=None, budget_used=None, description="Madres",
     )
     monkeypatch.setattr(api_mod, "get_promotions_port", lambda: FakePromotionsPort([promo]))
+    monkeypatch.setattr(api_mod, "_now_ms", lambda: 1_791_590_000_000)
     res = client.get("/api/marketing/promotions")
     assert res.status_code == 200
     body = res.json()
@@ -1159,6 +1160,31 @@ def test_get_promotions_no_ofrece_cupones_de_envio(client: TestClient, monkeypat
     )
     res = client.get("/api/marketing/promotions")
     assert [p["code"] for p in res.json()["promotions"]] == ["AMOR26"]
+
+
+def test_get_promotions_no_ofrece_cupones_vencidos_ni_agotados(
+    client: TestClient, monkeypatch
+) -> None:
+    """Venta del 2026-10-09: un cupón cuya campaña terminó sigue «active» en
+    Medusa. El builder no lo ofrece (ninguna campaña puede anunciarlo); uno
+    que todavía no empieza sí, para programar la campaña de su inicio."""
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    now = 1_791_590_000_000
+    monkeypatch.setattr(api_mod, "_now_ms", lambda: now)
+    monkeypatch.setattr(
+        api_mod, "get_promotions_port",
+        lambda: FakePromotionsPort(
+            [
+                _promo_dto("MAMA15"),
+                _promo_dto("FERIA10", ends_at_ms=now - 1),
+                _promo_dto("AGOTADO", budget_type="usage", budget_limit=5, budget_used=5),
+                _promo_dto("NAVIDAD", starts_at_ms=now + 86_400_000),
+            ]
+        ),
+    )
+    res = client.get("/api/marketing/promotions")
+    assert [p["code"] for p in res.json()["promotions"]] == ["MAMA15", "NAVIDAD"]
 
 
 def test_get_promotions_con_medusa_caido_es_vacio_y_lo_dice(
@@ -1523,3 +1549,12 @@ def test_test_send_accepts_a_programmed_coupon_but_not_a_paused_draft_or_expired
         assert res.status_code == 422
         assert fragment in res.json()["detail"]
         assert sent == []
+
+
+def test_get_audience_conversation_de_un_cliente_sin_telefono(client: TestClient) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta
+    sin punto>`. Entra en la audiencia como cualquier otro (la plantilla le
+    llega con `recipient`), así que el visor no puede devolverle 422."""
+    res = client.get("/api/marketing/audience/wa_CO9990000000000002/conversation")
+    assert res.status_code == 200
+    assert client.get("/api/marketing/audience/wa_CO.1502/conversation").status_code == 422

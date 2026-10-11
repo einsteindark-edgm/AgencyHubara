@@ -80,6 +80,7 @@ from src.plugins.chats.agent.sales.config.shipping import (
     CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
     SHIPPING_COP_PARAM_DESCRIPTION,
     SHIPPING_RATE_RULE,
+    cash_on_delivery_available,
     is_published_rate_for_zone,
 )
 from src.plugins.chats.agent.sales.decisions.guards import (
@@ -294,8 +295,8 @@ class RegisterOrderTool(ToolBase):
         "(reason_category='ORDER_REGISTRATION_FAILED')` para que un colega "
         "registre manualmente — los datos quedan persistidos en metadata "
         "para que el equipo los reconstruya. Si el cliente confirmó pero "
-        "NO completó los datos de envío, NO uses esta tool — usa "
-        "`escalate_to_human(reason_category='ORDER_PENDING_SHIPPING_DETAILS')`."
+        "NO completó los datos de envío, NO uses esta tool todavía: pídele "
+        "los datos que faltan."
     )
     parameters: dict[str, Any] = {
         "type": "object",
@@ -996,6 +997,33 @@ class RegisterOrderTool(ToolBase):
                         "acláraselo con honestidad antes de registrar. Nunca "
                         "inventes ni negocies precios (descuentos → "
                         "escalate_to_human('DISCOUNT_REQUEST'))."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        # Contra entrega solo desde el mínimo en productos (premortem
+        # 2026-10-09): la tarjeta ya lo exige; el registro del bot también, por
+        # si el LLM llega acá sin pasar por ella. Va después de los rechazos de
+        # precio (esos dicen qué corregir primero). El pedido que crea el
+        # operador desde el panel (`closing_guard=False`) decide él.
+        products_subtotal = sum(item.quantity * item.unit_price_cop for item in order_items)
+        if (
+            self._closing_guard
+            and payment_method == "cash_on_delivery"
+            and not cash_on_delivery_available(products_subtotal)
+        ):
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "cod_below_minimum",
+                    "error": "cod_below_minimum",
+                    "summary": (
+                        f"Contra entrega es desde {format_cop(CASH_ON_DELIVERY_MIN_PRODUCTS_COP)} en productos y "
+                        f"este pedido suma {format_cop(products_subtotal)}: NO se registró. Dile al cliente con "
+                        "calidez que con este valor el pago es anticipado (Nequi o llave) o con link de pago, y "
+                        "muéstrale de nuevo el resumen con el método que elija."
                     ),
                 },
                 ensure_ascii=False,

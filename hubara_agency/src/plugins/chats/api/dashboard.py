@@ -21,6 +21,7 @@ from src.plugins.chats.shared.origin import session_origin, with_ad_names
 from src.plugins.chats.shared.turn_view import annotate_turn_keys
 from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
 from src.sdk.dashboardkit import DashboardEvent, get_dashboard_event_bus
+from src.sdk.identitykit import is_user_id_address
 from src.sdk.messagingkit import postponed_view
 from src.sdk.runtime import BoundedTTLCache, FilesystemMetadataStore
 
@@ -574,6 +575,19 @@ _PREVIEW_TAIL_BYTES = 16_384
 _preview_cache: dict[Path, tuple[float, int, str | None]] = {}
 
 
+def _display_phone(session_id: str, customer_name: str | None) -> str:
+    """El número del cliente, que la bandeja web usa como nombre de la
+    conversación. Un cliente sin teléfono (nombre de usuario de WhatsApp,
+    sesión `wa_<id de Meta>`) no tiene número: se muestra su nombre de perfil,
+    o el final de su id para distinguirlo."""
+    address = session_id.removeprefix("wa_")
+    if not is_user_id_address(address):
+        return address
+    if customer_name:
+        return f"{customer_name} (sin teléfono)"
+    return f"Cliente sin teléfono ···{address[-4:]}"
+
+
 def _customer_name(data: dict) -> str | None:
     profile = data.get("profile")
     name = profile.get("name") if isinstance(profile, dict) else None
@@ -687,7 +701,7 @@ async def list_dashboard_sessions():
 
             sessions.append({
                 "session_id": entry,
-                "phone_number": entry.replace("wa_", ""),
+                "phone_number": _display_phone(entry, customer_name),
                 "tag": tag,
                 "motivo": motivo,
                 "active_agent_route": active_route,
@@ -930,7 +944,7 @@ async def get_session_history(session_id: str):
 
     return {
         "session_id": session_id,
-        "phone_number": session_id.replace("wa_", ""),
+        "phone_number": _display_phone(session_id, _customer_name(data) if data else None),
         "tag": tag,
         "motivo": motivo,
         "memory_content": memory_content,

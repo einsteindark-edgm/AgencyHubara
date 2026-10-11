@@ -45,6 +45,12 @@ from src.platform.vision.embeddings import (
     NullImageEmbeddingAdapter,
 )
 from src.platform.vision.litellm_adapter import LiteLLMVisionAdapter
+from src.platform.vision.photo_color import (
+    FakePhotoColorAdapter,
+    LiteLLMPhotoColorAdapter,
+    NullPhotoColorAdapter,
+    PhotoColorPort,
+)
 from src.platform.vision.photo_match import (
     FakePhotoMatchAdapter,
     LiteLLMPhotoMatchAdapter,
@@ -189,3 +195,17 @@ def get_photo_match_port() -> PhotoMatchPort:
     if provider in {"auto", "litellm"}:
         return LiteLLMPhotoMatchAdapter.from_env()
     return NullPhotoMatchAdapter()
+
+
+def get_photo_color_port() -> PhotoColorPort:
+    """El lector del color de la vela en una foto del catálogo
+    (``photo_color``, caso 2026-10-09). Mismo interruptor que la visión
+    (``IMAGE_VISION_PROVIDER``): ``fake`` → sin colores conocidos; ``off`` →
+    nunca lee; default → el alias ``gemini-photo-match`` del proxy
+    (``PHOTO_COLOR_MODEL`` lo cambia)."""
+    provider = (os.getenv("IMAGE_VISION_PROVIDER") or "auto").lower()
+    if provider == "fake":
+        return FakePhotoColorAdapter()
+    if provider in {"auto", "litellm"}:
+        return LiteLLMPhotoColorAdapter.from_env()
+    return NullPhotoColorAdapter()

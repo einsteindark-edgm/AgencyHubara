@@ -225,6 +225,48 @@ async def test_list_promotions_sin_promos_lo_dice(ctx, _isolate_vault_dir):
     assert "no hay" in env["summary"].lower()
 
 
+_DAY_MS = 86_400_000
+
+
+def _now_ms() -> int:
+    import time
+
+    return int(time.time() * 1000)
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_solo_ofrece_los_cupones_que_rigen_hoy(ctx, _isolate_vault_dir):
+    """Venta del 2026-10-09: el cupón de una campaña que terminó el 1 de
+    octubre seguía «active» en Medusa y el bot lo dio como «la única
+    promoción vigente». Vigente = activo, ya empezó, no venció y le queda
+    presupuesto: lo mismo que exige `apply_coupon` para aplicarlo."""
+    now = _now_ms()
+    port = FakePromotionsPort(
+        [
+            _promo(),
+            _promo(id="p2", code="FERIA10", starts_at_ms=now - 20 * _DAY_MS, ends_at_ms=now - 8 * _DAY_MS),
+            _promo(id="p3", code="NAVIDAD", starts_at_ms=now + 30 * _DAY_MS),
+            _promo(id="p4", code="AGOTADO", budget_type="usage", budget_limit=5, budget_used=5),
+        ]
+    )
+    tool = ListPromotionsTool(workspace=str(_isolate_vault_dir), promotions=port, catalog=FakeCatalog())
+    env = json.loads(await tool.execute_with_context(ctx))
+    assert [p["code"] for p in env["promotions"]] == ["MAMA15"]
+    for code in ("FERIA10", "NAVIDAD", "AGOTADO"):
+        assert code not in env["summary"]
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_con_solo_un_cupon_vencido_dice_que_no_hay(ctx, _isolate_vault_dir):
+    now = _now_ms()
+    port = FakePromotionsPort([_promo(code="FERIA10", ends_at_ms=now - _DAY_MS)])
+    tool = ListPromotionsTool(workspace=str(_isolate_vault_dir), promotions=port, catalog=FakeCatalog())
+    env = json.loads(await tool.execute_with_context(ctx))
+    assert env["promotions"] == []
+    assert "no hay" in env["summary"].lower()
+    assert "FERIA10" not in env["summary"]
+
+
 # --- apply_coupon -----------------------------------------------------------
 
 

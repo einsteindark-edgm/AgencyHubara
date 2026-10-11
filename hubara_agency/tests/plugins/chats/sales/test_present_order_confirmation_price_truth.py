@@ -150,3 +150,31 @@ async def test_summary_reminds_to_clarify_a_quoted_wrong_price(ctx, _isolate_vau
     result = await _present(tool, ctx, 49500)
     assert result["queued"] is True
     assert "$45.000" in result["summary"] and "$49.500" in result["summary"]
+
+
+# ── contra entrega solo desde el mínimo (premortem 2026-10-09) ──────────────
+
+
+class _SmallCatalog(FakeCatalog):
+    products = {"calabaza": _product("calabaza", "Calabaza", "16000")}
+
+
+@pytest.mark.asyncio
+async def test_cash_on_delivery_below_the_minimum_is_rejected(ctx, _isolate_vault_dir: Path) -> None:
+    """El mínimo de $45.000 en productos solo armaba las opciones del
+    formulario: si la cantidad bajaba después, la tarjeta salía (y el pedido se
+    registraba) con contra entrega por debajo del mínimo."""
+    path = _seed(_isolate_vault_dir)
+    tool = PresentOrderConfirmationTool(workspace=str(_isolate_vault_dir), catalog=_SmallCatalog())
+
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        items=[{"handle": "calabaza", "quantity": 2, "unit_price_cop": 16000}],
+        shipping_cop=16940,
+        shipping_address_summary="Calle 1 #2-3, Centro, Cali",
+        payment_method="cash_on_delivery",
+    ))
+
+    assert result["queued"] is False and result["error"] == "cod_below_minimum"
+    assert "45.000" in result["message"] and "anticipado" in result["message"]
+    assert _intents(path) == []

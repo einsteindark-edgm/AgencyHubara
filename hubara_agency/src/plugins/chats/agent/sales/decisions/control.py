@@ -64,14 +64,21 @@ from src.plugins.chats.agent.sales.decisions.rollout_store import (
     shadow_metrics,
     write_state,
 )
+from src.sdk.identitykit import is_customer_session_id
 
 logger = structlog.get_logger()
 
+#: Un número de prueba es una conversación de cliente: `wa_<teléfono>` o, desde
+#: #411, `wa_<país><id de Meta>` (cliente con nombre de usuario, sin teléfono).
 SID_RE = re.compile(r"wa_\d{8,15}")
 TARGETS = ("shadow", "canary", "on")
 WORKFLOW_TARGETS = ("canary", "on")
 _MODES_MSG = "Modos: off, shadow, canary u on."
 _CHANGED = {"reason": "changed", "message": "El estado cambió mientras se revisaba; vuelve a intentarlo."}
+
+
+def _is_test_number(value: object) -> bool:
+    return isinstance(value, str) and (bool(SID_RE.fullmatch(value)) or is_customer_session_id(value))
 
 
 class ControlError(Exception):
@@ -241,7 +248,7 @@ def set_rollout(
         raise ControlError(422, {"reason": "invalid_percent", "message": "El porcentaje va de 0 a 100."})
     numbers = list(current.test_numbers) if test_numbers is None else test_numbers
     if (test_numbers is not None or raising) and (
-        not isinstance(numbers, list) or not all(isinstance(n, str) and SID_RE.fullmatch(n) for n in numbers)
+        not isinstance(numbers, list) or not all(_is_test_number(n) for n in numbers)
     ):
         raise ControlError(422, {"reason": "invalid_test_numbers", "message": "Números de prueba como wa_57…"})
     if raising:

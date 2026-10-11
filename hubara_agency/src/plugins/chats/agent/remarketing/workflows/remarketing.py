@@ -67,6 +67,14 @@ _DEBOUNCE_SILENCE = timedelta(seconds=1.5)
 _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 
 
+def reply_summary(message: object) -> str:
+    """El resumen del traspaso determinista a ventas: lo que el cliente
+    respondió, con el tope de los otros traspasos (500). Premortem 2026-10-09:
+    cortado a 60, la dirección o el pedido llegaban a medias y ventas solo ve
+    este resumen. Solo cambia el contenido del traspaso: replay seguro."""
+    return "Usuario respondió: " + str(message)[:500]
+
+
 @workflow.defn(name="RemarketingWorkflow")
 class RemarketingSessionWorkflow:
     """Long-running session workflow for Remarketing."""
@@ -689,7 +697,7 @@ class RemarketingSessionWorkflow:
                         workflow.logger.info("Remarketing ignoró la transición. Forzando paso a Ventas de forma determinista.")
                         await self._handoff_to_sales(
                             session_id=session_id,
-                            summary="Usuario respondió: " + str(msg.message)[:60],
+                            summary=reply_summary(msg.message),
                         )
                         self._force_shutdown = True
 

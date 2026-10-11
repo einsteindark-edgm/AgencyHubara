@@ -18,6 +18,21 @@ const QUOTE_AUTHOR_LABEL: Record<ChatQuote["author"], string> = {
   unknown: "Mensaje anterior",
 };
 
+/** Nota bajo un mensaje que llegó con la ventana de 24 h cerrada. */
+const WINDOW_CLOSED_NOTE =
+  "El bot no respondió: este mensaje llegó con la ventana de 24 h cerrada. Solo un mensaje nuevo del cliente la abre.";
+
+/** «Escrito ayer, 22:40» · «Escrito el lunes, 12:02» · «Escrito el 21 de
+ *  agosto de 2026, 12:02». En render: el día relativo depende del reloj. */
+function writtenLabel(dayIso: string, time: string): string {
+  const day = formatDayLabelEs(dayIso);
+  const spoken =
+    day === "Hoy" || day === "Ayer"
+      ? day.toLowerCase()
+      : `el ${day.charAt(0).toLowerCase()}${day.slice(1)}`;
+  return `Escrito ${spoken}, ${time}`;
+}
+
 /** Mensaje citado (reply de WhatsApp) encima del contenido de la burbuja. */
 function QuoteBlock({ quote }: { quote: ChatQuote }) {
   const hasContent = Boolean(quote.text || quote.imageUrl);
@@ -347,13 +362,33 @@ export function ChatsBubble({ message: m }: Props) {
         m.text
       )}
       <div className="meta">
-        {m.time}
+        {/* Meta lo entregó tarde: la llegada sola lo hacía parecer una
+            respuesta a lo último que se le mandó (caso 2026-10-09). */}
+        {m.sentDayIso && m.sentTime
+          ? `${writtenLabel(m.sentDayIso, m.sentTime)} · llegó ${m.time ?? ""}`
+          : m.time}
         {m.kind === "out" && m.status === "read" && <Icon.check />}
       </div>
     </div>
   );
 
-  if (!photo) return bubble;
+  const shown = photo ? labeledPhoto(photo, bubble) : bubble;
+  if (!m.arrivedAfterWindow) return shown;
+  return (
+    <>
+      {shown}
+      <div className="system">
+        <span className="dot" />
+        {WINDOW_CLOSED_NOTE}
+      </div>
+    </>
+  );
+}
+
+function labeledPhoto(
+  photo: Extract<ChatEvent, { kind: "customer_photo" }>,
+  bubble: React.ReactNode,
+) {
   return (
     <Labeled
       side="in"

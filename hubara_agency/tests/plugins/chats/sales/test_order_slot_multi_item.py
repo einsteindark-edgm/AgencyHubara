@@ -27,7 +27,9 @@ _TRILOGIA = CatalogProductDTO(
     handle="trilogia-del-terror",
     title="Trilogía del Terror",
     status="published",
-    tags=["Aroma: Frutos rojos", "Color: Blanco"],
+    # Dos opciones de cada una: estos casos son de ruteo, no de la opción
+    # única que `set_order_slot` anota sola (test_order_slot_single_option.py).
+    tags=["Aroma: Frutos rojos", "Aroma: Canela", "Color: Blanco", "Color: Naranja"],
     options={"Unico": ["Unico"]},
 )
 _DUO = CatalogProductDTO(
@@ -43,7 +45,7 @@ _VELON = CatalogProductDTO(
     handle="velon-amor-eterno",
     title="Velón Amor Eterno",
     status="published",
-    tags=["Aroma: Lavanda", "Color: verde", "Color: Blanco"],
+    tags=["Aroma: Lavanda", "Aroma: Coco", "Color: verde", "Color: Blanco"],
 )
 
 

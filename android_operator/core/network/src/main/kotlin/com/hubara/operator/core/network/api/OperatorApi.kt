@@ -57,7 +57,7 @@ interface OperatorApi {
     suspend fun sseTicket(): SseTicketDto
 
     @GET("api/chats/mobile/suggestions/{id}")
-    suspend fun suggestions(@Path("id") id: String): SuggestionsDto
+    suspend fun suggestions(@Path("id") id: String, @Query("features") features: String): SuggestionsDto
 
     @POST("api/chats/session-actions/{key}/tools/{tool}")
     suspend fun runTool(@Path("key") key: String, @Path("tool") tool: String, @Body body: ToolRequest): Response<ToolResponseDto>

@@ -23,6 +23,11 @@ from src.platform.medusa.composition import (
     get_medusa_settings,
 )
 from src.platform.orders.command_port import OrderCommandPort
+from src.platform.orders.customer_orders import (
+    CustomerOrdersPort,
+    MedusaCustomerOrders,
+    NoCustomerOrders,
+)
 from src.platform.events import get_dashboard_event_bus
 from src.platform.orders.empty_query import EmptyOrderQuery
 from src.platform.orders.facts import (
@@ -101,6 +106,18 @@ def get_order_facts_port() -> OrderFactsStore:
     return OrderFactsStore(
         _raw_order_query(), ttl_s=ttl_s, bus=get_dashboard_event_bus()
     )
+
+
+@lru_cache(maxsize=1)
+def get_customer_orders_port() -> CustomerOrdersPort:
+    """Los pedidos de una persona en Medusa — si ya compró, para el cupón de
+    bienvenida (caso 2026-10-09). Con el mismo mapeo de la vista Órdenes; sin
+    Medusa configurado, `NoCustomerOrders` (decide lo que registró la
+    conversación)."""
+    query = _raw_order_query()
+    if not isinstance(query, MedusaOrderQuery):
+        return NoCustomerOrders()
+    return MedusaCustomerOrders(get_medusa_client(), query)
 
 
 @lru_cache(maxsize=1)

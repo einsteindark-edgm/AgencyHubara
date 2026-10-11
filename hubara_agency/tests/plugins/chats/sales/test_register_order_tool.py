@@ -194,7 +194,8 @@ async def test_register_order_passes_receiver_and_cedula_to_port(ctx, vault):
             ctx,
             items=_SAMPLE_ITEMS,
             shipping=shipping,
-            payment_method="cash_on_delivery",
+            # Pago anticipado: $17.000 no alcanza el mínimo de contra entrega.
+            payment_method="transfer",
             subtotal_cop=17000,
             shipping_cop=7900,
             total_cop=24900,
@@ -511,7 +512,8 @@ async def test_register_order_idempotent_history(ctx, vault):
             ctx,
             items=_SAMPLE_ITEMS,
             shipping=_SAMPLE_SHIPPING,
-            payment_method="cash_on_delivery",
+            # Otro método que el primero (y que $17.000 permite: no contra entrega).
+            payment_method="transfer",
             subtotal_cop=17000,
             shipping_cop=7900,
             total_cop=24900,
@@ -522,7 +524,7 @@ async def test_register_order_idempotent_history(ctx, vault):
     metadata = _read_metadata(vault, ctx.session_key)
     # registered_order = el último éxito
     assert metadata["registered_order"]["order_id"] == "draft_v2"
-    assert metadata["registered_order"]["payment_method"] == "cash_on_delivery"
+    assert metadata["registered_order"]["payment_method"] == "transfer"
     # historial preserva ambos
     assert len(metadata["registered_orders_history"]) == 2
     ids_in_history = [h["order_id"] for h in metadata["registered_orders_history"]]

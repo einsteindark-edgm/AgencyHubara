@@ -45,6 +45,7 @@ from src.platform.catalog.color_families import (
 from src.platform.catalog.composition import (
     get_catalog_client as get_catalog_client,
     get_catalog_photo_index as get_catalog_photo_index,
+    get_photo_color_store as get_photo_color_store,
 )
 from src.platform.catalog.dtos import (
     CatalogImageDTO as CatalogImageDTO,
@@ -64,6 +65,11 @@ from src.platform.catalog.photo_index import (
     PhotoCandidate as PhotoCandidate,
     catalog_photos as catalog_photos,
     fetch_catalog_photo as fetch_catalog_photo,
+)
+from src.platform.catalog.photo_colors import (
+    PhotoColorRecord as PhotoColorRecord,
+    VaultPhotoColorStore as VaultPhotoColorStore,
+    color_of_photo as color_of_photo,
 )
 from src.platform.catalog.port import CatalogPort as CatalogPort
 from src.platform.catalog.portavelas import (

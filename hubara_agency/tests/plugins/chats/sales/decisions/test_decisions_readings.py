@@ -72,7 +72,9 @@ def _inbound(text: str | None, *, metadata: dict | None = None, events: list | N
 async def test_with_rules_the_readings_are_todays(tmp_path: Path, oracle) -> None:
     readings = await EngineReadings(tmp_path).read(_inbound("Te confirmo, sí la quiero"))
 
-    assert readings.purchase == ("deferral", "text")  # el bug de hoy, intacto con reglas
+    # Era el bug de la regla («te confirmo» = aplazamiento); desde el premortem
+    # del 2026-10-09 la regla solo aplaza con un momento o al cerrar el mensaje.
+    assert readings.purchase == ("affirmation", "text")
     assert readings.opt_out is False and readings.courtesy is False
     assert all(v["by"] == "reglas" for v in readings.verdicts)
     assert oracle["fake"].calls == []
@@ -193,7 +195,10 @@ async def test_shadow_keeps_todays_readings_and_queues_disagreements(tmp_path: P
 
     events = [{"role": "assistant", "content": "¿Confirmas el pedido del Duo Zodiacal por $58.000?"}]
 
-    readings = await EngineReadings(tmp_path).read(_inbound("Te confirmo, sí la quiero", metadata=DRAFT, events=events))
+    # Un texto en que la regla y Jev discrepan: la regla lee «mañana te
+    # confirmo» como aplazamiento; Jev, la compra.
+    text = "Sí la quiero, mañana te confirmo la dirección"
+    readings = await EngineReadings(tmp_path).read(_inbound(text, metadata=DRAFT, events=events))
 
     assert readings.purchase == ("deferral", "text")
     from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog

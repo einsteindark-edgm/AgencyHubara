@@ -107,6 +107,25 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText(CONTRACT_NOTE)).toBeVisible();
   });
 
+  it("la ronda de lo prometido: la respuesta retenida y la nota que recibió el modelo", () => {
+    // Incidente del 2026-10-09: «Te paso el formulario» sin la herramienta.
+    const promise = "Perfecto, contra entrega. Te paso el formulario para los datos de envío 🤍";
+    const note = "Prometiste el formulario de envío y no lo mandaste: llama request_shipping_details.";
+    const steps: TraceStep[] = [
+      { i: 0, at_ms: 0, kind: "inbound", messages: [{ text: "contra entrega" }] },
+      { i: 1, at_ms: 10, kind: "llm", round: 1, tool_calls: ["send_reply"], text_fate: "none" },
+      { i: 2, at_ms: 20, kind: "tool", name: "send_reply", ok: true, args: { text: promise }, excerpt: '{"reply": {"text": "Perfecto…"}}' },
+      { i: 3, at_ms: 30, kind: "guard", name: "promised_action_round", before: promise, after: note, tools: ["send_reply"] },
+      { i: 4, at_ms: 40, kind: "llm", round: 2, tool_calls: ["request_shipping_details"], text_fate: "none" },
+    ];
+    const row = layoutSequence(steps).rows.findIndex((r) => r.stepIndex === 1 && r.from !== 1);
+    show(steps, row === -1 ? 2 : row); // ronda 1 → pide responder al cliente
+
+    expect(screen.getByText("no salió: el bot la retuvo")).toBeVisible();
+    expect(screen.getByText("retuvo la respuesta: prometía algo que todavía no hizo")).toBeVisible();
+    expect(screen.getByText(note)).toBeVisible();
+  });
+
   it("la herramienta dice cuál se ejecutó y con qué, a la vista", () => {
     show(t20, 3); // Bot → Herramientas: set_order_slot
 
@@ -160,6 +179,41 @@ describe("TraceStepDetail", () => {
     expect(screen.getByText("typesafe/jev-1.13")).toBeInTheDocument();
   });
 
+  // Turno 1 de …7392 (2026-10-08): el modelo pidió la lista de productos y el
+  // cliente escribió antes de que corriera.
+  const cutBeforeTools: TraceStep[] = [
+    { i: 5, at_ms: 0, dur_ms: 1867, kind: "llm", round: 2, finish: "tool_calls", tool_calls: ["present_products"], text_fate: "none" },
+    {
+      i: 6,
+      at_ms: 1867,
+      kind: "cut",
+      reason: "checkpoint_a",
+      skipped: [{ name: "present_products", args: { intro_text: "Esta es la colección 🎃", handles: ["calabaza", "momia"] } }],
+    },
+  ];
+
+  it("lo que pidió el modelo y no corrió dice que no se ejecutó y con qué iba", () => {
+    show(cutBeforeTools, 1); // Modelo → Bot: pide mostrar productos
+
+    expect(screen.getByText("no se ejecutó: el cliente escribió y el turno volvió a empezar")).toBeVisible();
+    expect(screen.getByText("Esta es la colección 🎃")).toBeVisible();
+  });
+
+  it("la flecha de lo que no corrió abre el corte: por qué se interrumpió y qué no alcanzó a hacer", () => {
+    show(cutBeforeTools, 3); // Bot ⇢ Herramientas: no se ejecutó
+
+    expect(screen.getByText("Por qué se interrumpió")).toBeVisible();
+    expect(screen.getByText("No alcanzó a ejecutar")).toBeVisible();
+    expect(screen.getByText("present_products")).toBeVisible();
+    expect(screen.getByText("Esta es la colección 🎃")).toBeVisible();
+  });
+
+  it("el texto que retuvo el contrato del turno lo dice en palabras", () => {
+    show([{ i: 1, at_ms: 0, dur_ms: 1400, kind: "llm", round: 2, finish: "stop", tool_calls: [], text_fate: "discarded_contract", text: "Tenemos 4 piezas" }], 1);
+
+    expect(screen.getByText("No se envió: lo retuvo el contrato del turno")).toBeVisible();
+  });
+
   it("el corte antes de grabar dice que la respuesta no salió y que el turno vuelve a empezar (ráfagas, 2026-10-06)", () => {
     show([{ i: 1, at_ms: 0, kind: "cut", reason: "before_record", text: "¿Me confirmas el barrio?" }], 0);
 
@@ -172,6 +226,14 @@ describe("TraceStepDetail", () => {
 
     expect(screen.getByText(/se responde en el turno siguiente/)).toBeInTheDocument();
     expect(screen.queryByText(/vuelve a empezar/)).not.toBeInTheDocument();
+  });
+
+  it("lo que el reinicio ya tenía dice qué consultas no repite", () => {
+    show([{ i: 1, at_ms: 0, kind: "carry", tools: ["search_products"] }], 0);
+
+    expect(screen.getByText("Lo que ya había consultado")).toBeVisible();
+    expect(screen.getByText("search_products")).toBeVisible();
+    expect(screen.getByText(/no se vuelve a pedir/)).toBeVisible();
   });
 
   it("el reinicio dice cuánto esperó a que el cliente terminara de escribir", () => {

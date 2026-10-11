@@ -353,15 +353,33 @@ def attach_order_to_active_episode(
     igual que `llm_usage`. `None` preserva el valor previo (no lo pisa con
     None si un caller no lo provee).
 
-    Defensivo: si no hay episodio activo, crea uno (preferimos no perder
-    la asociación venta↔episodio aunque haya un bug upstream que invoque
-    register_order sin haber pasado por el ingest).
+    Sin episodio activo, la venta es del último episodio si cerró SIN pedido
+    (caso 2026-10-09, pedido #65: el bot cerró CONFIRMADO_SIN_DATOS y el
+    operador registró el pedido con «Crear pedido» minutos después). Ese
+    cierre pasa a CONFIRMADO_PAGO_PENDIENTE —el pedido ya existe, y
+    «Confirmar pago» busca ese tag— y el cierre anterior queda en
+    `order_attached_after_close`. Antes se abría un episodio vacío, sin
+    referral: la conversación real quedaba «cotizado» en Ads y la venta caía
+    en la campaña del primer anuncio de la sesión.
 
-    Returns el episodio activo con `order_id` ya seteado.
+    Defensivo: si tampoco hay un episodio cerrado sin pedido, crea uno
+    (preferimos no perder la asociación venta↔episodio).
+
+    Returns el episodio con `order_id` ya seteado.
     """
     ep = get_active_episode(metadata)
     if ep is None:
-        ep = ensure_active_episode(metadata, now_ms=now_ms)
+        episodes = metadata.get("episodes") or []
+        last = episodes[-1] if episodes else None
+        if last is not None and not last.get("order_id"):
+            ep = last
+            ep["order_attached_after_close"] = {
+                "at_ms": now_ms,
+                "previous_closing_tag": ep.get("closing_tag"),
+            }
+            ep["closing_tag"] = "CONFIRMADO_PAGO_PENDIENTE"
+        else:
+            ep = ensure_active_episode(metadata, now_ms=now_ms)
     ep["order_id"] = order_id
     if order_total_cop is not None:
         ep["order_total_cop"] = order_total_cop

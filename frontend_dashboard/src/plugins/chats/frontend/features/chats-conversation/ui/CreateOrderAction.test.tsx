@@ -247,6 +247,43 @@ describe("CreateOrderAction", () => {
     expect(createAsync.mock.calls[0][0].send_payment_instructions).toBe(false);
   });
 
+  // Caso 2026-10-09 (pedido #64): el cliente pagó mientras lo atendía el
+  // humano y «Crear pedido» le mandó los datos para pagar.
+  const RECEIPT = {
+    media_id: "m1",
+    kind: "comprobante_pago",
+    received_at_ms: Date.UTC(2026, 9, 9, 17, 26),
+    description: "Comprobante de pago por $48.500,00 a la llave Nequi",
+  };
+
+  it("si el cliente ya mandó el comprobante, lo avisa y no le manda los datos de pago", async () => {
+    createAsync.mockResolvedValue({ registered: true, order_id: "order_1" });
+    await openForm({ ...SUGGESTION, payment_receipt: RECEIPT });
+
+    expect(screen.getByText(/ya envió su comprobante de pago \(12:26/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/instrucciones de pago/i)).not.toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+    await waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync.mock.calls[0][0].send_payment_instructions).toBe(false);
+  });
+
+  it("con el comprobante ya recibido, al crear el pedido dice que no se le pidió el pago", async () => {
+    createAsync.mockResolvedValue({
+      registered: true,
+      order_id: "order_1",
+      order_reference: "#64 (Trilogía)",
+      payment_instructions_skipped: "receipt_received",
+    });
+    await openForm({ ...SUGGESTION, payment_receipt: RECEIPT });
+
+    fireEvent.click(screen.getByRole("button", { name: /^crear pedido$/i }));
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/no se le mandaron los datos de pago/i);
+    expect(status).toHaveTextContent(/revisa el comprobante/i);
+  });
+
   it("sin los datos que exige la transportadora no deja registrar", async () => {
     await openForm();
     const submit = screen.getByRole("button", { name: /^crear pedido$/i });

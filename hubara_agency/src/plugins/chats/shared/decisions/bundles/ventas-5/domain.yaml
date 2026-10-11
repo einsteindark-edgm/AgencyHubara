@@ -1,0 +1,28 @@
+# Dominio de la tienda del paquete `ventas` (Hubara, velas). PAQUETES_DE_DECISION.md F5.
+#
+# Lo que es de ESTA tienda: el agente lo ve en sus herramientas y en el
+# gancho de remarketing, y las condiciones del paquete lo leen como
+# `dom.campo`. Otra tienda (Vincenzo, zapatos) escribe el suyo; los campos y
+# sus tipos los declara `../builtins.yaml: domain` (DB014 si no cuadra).
+# Certificar: cd hubara_agency && uv run python -m src.sdk.cli decisions check
+store_name: Hubara
+farewell_order_registered: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+vocabulary:
+  search_examples: "'lavanda', 'religiosa', 'cera de palma'"
+  product_example: "'Luz Serena'"
+  scent_example: "'Lavanda'"
+  notes_examples: "'Plato: Leo', 'es para regalo'"
+  variant_label_examples: "'Lavanda', 'Azul'"
+  caption_example: "'aroma lavanda · 40 horas de duración'"
+  list_intro_example: "'Estas son nuestras velas religiosas:'"
+  tax_note: "Impuestos en COP. Velas artesanales suelen ser 0."
+  variant_question: "por aroma/color"
+  variant_dimensions: "aroma/color"
+  variant_kinds: "aromas / colores / tamaños"
+  variant_reply_examples: "'lavanda', 'el morado'"
+  variant_label_literal_examples: "'Lavanda', 'Verde menta', 'rosado'"
+  picker_intro_examples: "'Tenemos estos aromas:' o 'Estos son los colores disponibles:'"
+  hook_topic_examples: "'el Velón de Cristo', 'los aromas que viste'"
+  hook_examples:
+    - "¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo y los aromas — ¿lograste decidirte? 🤍"
+    - "Te escribo para retomar lo de la *Cruz de Vida* ✨ ¿Te ayudo a cerrar el pedido?"

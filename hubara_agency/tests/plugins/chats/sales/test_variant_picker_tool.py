@@ -376,3 +376,45 @@ async def test_picker_size_type_skips_validation(ctx, seeded_vault):
         intro_text="Tamaños:",
     ))
     assert result["queued"] is True
+
+
+# ── El selector de un producto muestra todas sus opciones (caso 2026-10-09) ──
+# El bot pasó 3 de los 11 colores de Encanto Silvestre; el café, que era el de
+# la foto que el cliente tenía delante, no salió y el cliente preguntó «¿no
+# viene en este color?». El cliente lee el selector como TODO lo que hay.
+
+
+@pytest.mark.asyncio
+async def test_picker_of_a_product_shows_all_its_colors_even_if_the_llm_passed_some(ctx, seeded_vault):
+    tool = PresentVariantPickerTool(workspace=str(seeded_vault), catalog=FakeCatalog())
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="color",
+        options=[{"label": "gris"}, {"label": "Blanco"}],
+        intro_text="Ahora el color:",
+        handle="cruz-de-vida",
+    ))
+
+    assert result["queued"] is True
+    assert result["count"] == 4
+    titles = " | ".join(r["title"] for s in _read_intents(seeded_vault, ctx.session_key)[-1]["params"]["sections"]
+                        for r in s["rows"])
+    for color in ("Gris", "Blanco", "Rosado", "Azul"):
+        assert color.casefold() in titles.casefold()
+    assert result["added_options"] == ["Rosado", "Azul"]
+    assert "Rosado" in result["summary"] and "Azul" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_picker_with_all_the_options_adds_nothing(ctx, seeded_vault):
+    tool = PresentVariantPickerTool(workspace=str(seeded_vault), catalog=FakeCatalog())
+    result = json.loads(await tool.execute_with_context(
+        ctx,
+        variant_type="scent",
+        options=[{"label": "Lavanda"}, {"label": "Café"}, {"label": "Drakar"}],
+        intro_text="Aromas:",
+        handle="cruz-de-vida",
+    ))
+
+    assert result["count"] == 3
+    assert "added_options" not in result

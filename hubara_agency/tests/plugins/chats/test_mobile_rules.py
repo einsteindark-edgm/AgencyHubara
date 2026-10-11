@@ -14,6 +14,7 @@ from src.plugins.chats.shared.mobile_rules import (
     OperatorMove,
     SuggestionFacts,
     last_sent_action,
+    selling_stage,
     suggest_actions,
 )
 
@@ -107,9 +108,11 @@ def test_picker_targets_the_first_item_missing_something_and_says_colors_for_col
     assert "present_product_gallery" not in _ids(out)
 
 
-def test_asking_shipping_details_needs_a_confirmed_purchase_and_complete_items() -> None:
+def test_asking_shipping_details_needs_complete_items_and_no_deferral() -> None:
+    """La misma guarda que la tool del bot (PR #412, incidente del 2026-10-09): el
+    formulario no espera un «sí» del cliente; solo lo frena que acabe de aplazar."""
     ready = replace(_DUO, missing=())
-    offered = suggest_actions(_facts(stage="etapa_variantes", items=(ready,), purchase_confirmed=True))
+    offered = suggest_actions(_facts(stage="etapa_variantes", items=(ready,)))
     assert _ids(offered) == ["present_product_gallery", "request_shipping_details"]
     ask = offered["suggestions"][1]
     assert ask == {
@@ -119,25 +122,43 @@ def test_asking_shipping_details_needs_a_confirmed_purchase_and_complete_items()
         "editable": False,
         "action": {"name": "request_shipping_details", "args": {}},
     }
-    # la misma guarda que la tool del bot: sin "sí" del cliente, o si acaba de aplazar, no
     assert "request_shipping_details" not in _ids(
-        suggest_actions(_facts(stage="etapa_variantes", items=(ready,), purchase_confirmed=False))
-    )
-    assert "request_shipping_details" not in _ids(
-        suggest_actions(_facts(stage="etapa_variantes", items=(ready,), purchase_confirmed=True, customer_deferred=True))
+        suggest_actions(_facts(stage="etapa_variantes", items=(ready,), customer_deferred=True))
     )
     # un producto que no resolvió al catálogo o sin cantidad: no se pueden armar los ítems
     for broken in (replace(ready, handle=None), replace(ready, quantity=None)):
         assert "request_shipping_details" not in _ids(
-            suggest_actions(_facts(stage="etapa_variantes", items=(broken,), purchase_confirmed=True))
+            suggest_actions(_facts(stage="etapa_variantes", items=(broken,)))
         )
+    # mientras falte un aroma o un color el formulario saldría sin él: se sugiere solo si el
+    # cliente ya dijo que sí (como antes del #412: la variante puede llegar después)
+    assert "request_shipping_details" not in _ids(suggest_actions(_facts(stage="etapa_variantes", items=(_DUO,))))
+    assert "request_shipping_details" in _ids(
+        suggest_actions(_facts(stage="etapa_variantes", items=(_DUO,), customer_confirmed=True)))
 
 
 _READY = replace(_DUO, missing=())
 
 
+def test_the_selling_stage_follows_what_the_catalog_offers_not_the_fields_the_bot_wrote() -> None:
+    """Con el humano al mando la etapa sale de los productos del pedido contra
+    el catálogo: un producto sin colores no espera un color que nunca llegará
+    (la etapa del bot se quedaba en variantes y el resumen no se ofrecía)."""
+    no_quantity = replace(_READY, quantity=None)
+    unknown = replace(_READY, handle=None)
+
+    assert selling_stage("etapa_variantes", (), shipping_complete=True) == "etapa_descubrimiento"
+    assert selling_stage("etapa_descubrimiento", (_DUO,), shipping_complete=True) == "etapa_variantes"
+    for item in (no_quantity, unknown):
+        assert selling_stage("etapa_cierre", (item,), shipping_complete=True) == "etapa_variantes"
+    assert selling_stage("etapa_variantes", (_READY,), shipping_complete=False) == "etapa_datos_envio"
+    assert selling_stage("etapa_variantes", (_READY,), shipping_complete=True) == "etapa_cierre"
+    # con el pedido registrado manda la post-venta
+    assert selling_stage("etapa_postcierre", (_DUO,), shipping_complete=False) == "etapa_postcierre"
+
+
 def test_shipping_stage_puts_the_shipping_form_first() -> None:
-    out = suggest_actions(_facts(stage="etapa_datos_envio", items=(_READY,), purchase_confirmed=True))
+    out = suggest_actions(_facts(stage="etapa_datos_envio", items=(_READY,)))
 
     assert _ids(out) == ["request_shipping_details", "send_shipping_rates", "send_payment_methods"]
     assert out["suggestions"][0]["prominence"] == "primary"
@@ -640,3 +661,59 @@ def test_human_chats_skip_the_bot_and_never_carry_messages() -> None:
     assert [r["session_id"] for r in rows] == ["wa_test_humano"]
     assert rows[0]["name"] == "Cliente"
     assert set(rows[0]) == {"session_id", "name", "unanswered", "waiting_since_ms", "last_inbound_ms"}
+
+
+# ── «Crear pedido»: cuando el humano cierra la venta ─────────────────────────
+#
+# El dashboard tiene «Crear pedido» en el chat intervenido; la app no. La
+# burbuja va marcada (`tone: "order"`, otro color en la app) y abre el
+# formulario del pedido (`opens`: la pantalla del servidor) en vez de mandarle
+# algo al cliente.
+
+_OPENS = frozenset({"open_screen"})
+_CREATE = {
+    "id": "create_order",
+    "label": "Crear pedido",
+    "prominence": "primary",
+    "editable": False,
+    "tone": "order",
+    "opens": "crear_pedido",
+    "action": {"name": "create_order", "args": {}},
+}
+
+
+def test_when_the_customer_confirmed_the_summary_create_order_goes_first_and_marked() -> None:
+    out = suggest_actions(_facts(stage="etapa_cierre", items=(_READY,), shipping_ready=True,
+                                 customer_confirmed=True, app_features=_OPENS, last_action="present_order_confirmation"))
+
+    assert out["suggestions"][0] == _CREATE
+    assert _ids(out) == ["create_order", "send_payment_methods"]
+
+
+def test_with_the_order_ready_create_order_follows_the_summary() -> None:
+    out = suggest_actions(_facts(stage="etapa_cierre", items=(_READY,), shipping_ready=True, app_features=_OPENS))
+
+    assert _ids(out) == ["present_order_confirmation", "create_order", "send_payment_methods"]
+    assert out["suggestions"][1]["tone"] == "order" and out["suggestions"][1]["prominence"] == "normal"
+
+
+def test_a_purchase_confirmed_without_shipping_data_also_offers_create_order() -> None:
+    """El cliente dijo que sí y el humano le pide los datos por chat: el
+    formulario del pedido los toma de la conversación."""
+    out = suggest_actions(_facts(stage="etapa_datos_envio", items=(_READY,), customer_confirmed=True,
+                                 app_features=_OPENS))
+
+    assert _ids(out)[0] == "create_order"
+
+
+def test_create_order_needs_an_app_that_opens_the_form_a_human_and_no_order_yet() -> None:
+    ready = _facts(stage="etapa_cierre", items=(_READY,), shipping_ready=True, customer_confirmed=True)
+
+    # una app vieja la mandaría como tool (404): no se le ofrece
+    assert "create_order" not in _ids(suggest_actions(ready))
+    assert "create_order" not in _ids(suggest_actions(replace(ready, app_features=_OPENS, in_control="bot")))
+    assert "create_order" not in _ids(suggest_actions(replace(ready, app_features=_OPENS, stage="etapa_postcierre")))
+    assert "create_order" not in _ids(suggest_actions(replace(ready, app_features=_OPENS, window_open=False)))
+    # sin confirmación del cliente ni el pedido completo, no hay qué registrar
+    assert "create_order" not in _ids(suggest_actions(
+        _facts(stage="etapa_variantes", items=(_DUO,), app_features=_OPENS)))

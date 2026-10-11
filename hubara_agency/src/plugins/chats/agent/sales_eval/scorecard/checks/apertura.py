@@ -18,6 +18,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
     no_signal,
     not_applicable,
     not_judged,
+    our_quoted_message,
     passed,
     quote,
     sent_texts,
@@ -66,11 +67,13 @@ def check_greeting_first_contact(traj: Trajectory, ctx: CheckContext) -> CheckRe
     turn, text = first
     if not judged(traj, turn):
         return not_judged("APE-01", traj, _FIRST_TEXT_BEFORE)
-    missing = [
-        label
-        for label, rx in (("saludo por hora", GREETING_RE), ("marca Hubara", BRAND_RE))
-        if not rx.search(text)
-    ]
+    # Incidente del 2026-10-09 (···9824): si el cliente contesta un mensaje
+    # nuestro que ya dijo la marca (el seguimiento de una asesora), el bot no
+    # tiene que repetirla (operador). El saludo por la hora sí.
+    ours = our_quoted_message(traj.turns[0].inbound_text)
+    brand_said = ours is not None and bool(BRAND_RE.search(ours))
+    required = [("saludo por hora", GREETING_RE)] + ([] if brand_said else [("marca Hubara", BRAND_RE)])
+    missing = [label for label, rx in required if not rx.search(text)]
     if missing:
         return failed(
             "APE-01", turn.turn, f"turno {turn.turn}: primer texto sin {' ni '.join(missing)} {quote(text)}"
@@ -106,6 +109,11 @@ def check_catalog_offered_at_opening(traj: Trajectory, ctx: CheckContext) -> Che
     opening = traj.turns[0]
     if not judged(traj, opening):
         return not_judged("APE-03", traj, "la apertura es un turno anterior")
+    # Incidente del 2026-10-09 (···9824): el cliente contesta un mensaje nuestro
+    # (el seguimiento de una asesora, una plantilla): la apertura la hicimos
+    # nosotros y él llega con un tema concreto.
+    if our_quoted_message(opening.inbound_text) is not None:
+        return not_applicable("APE-03", "el cliente contesta un mensaje nuestro: la apertura ya la hicimos")
     intents = set(opening.intents)
     if "quick_replies" in intents or intents & CATALOG_DISPLAY_INTENTS:
         return passed("APE-03", f"turno {opening.turn}: {', '.join(opening.intents)}", turn=opening.turn)

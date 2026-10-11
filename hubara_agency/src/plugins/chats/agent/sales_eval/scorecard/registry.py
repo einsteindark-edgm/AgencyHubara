@@ -25,7 +25,16 @@ from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 # v9 (2026-10-07, prueba del operador ep_012): DES-08 no cuenta «me gusta» ni
 # contestar con el nombre «¿cuál te gustó?» como elegir; ENV-02 cuenta el
 # mensaje de tarifas como respuesta a cuánto cuesta el envío.
-REGISTRY_VERSION = 9
+# v10 (incidente del 2026-10-09, criterio del operador: el formulario no espera
+# confirmación de nada): CON-01 pide el producto elegido y ningún aplazamiento
+# vigente, no un «sí»; CON-04 pasa a «manda el formulario sin hacer esperar»;
+# TAG-08 deja afuera el aviso de un evento del pedido y TAG-09 nuevo: lo que el
+# bot promete para ahora sale en ese turno.
+# v11 (incidente del 2026-10-09, ···9824): si el cliente contesta un mensaje
+# nuestro, APE-01 no pide la marca que ese mensaje ya dijo y APE-03 no aplica;
+# DES-05 no cuenta el mínimo del contra entrega («compras desde $45.000») ni
+# los productos que nombró nuestro mensaje.
+REGISTRY_VERSION = 11
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")
@@ -76,7 +85,8 @@ CHECKS: tuple[CheckSpec, ...] = (
     # ── Apertura ────────────────────────────────────────────────────────────
     _c("APE-01", "Saludo por hora y marca en el primer contacto", "apertura", "mayor", "code",
        "Primer contacto de la conversación.",
-       "El primer texto que recibe el cliente abre con saludo por hora de Colombia (Buenos días/tardes/noches) y la marca Hubara.",
+       "El primer texto que recibe el cliente abre con saludo por hora de Colombia (Buenos días/tardes/noches) y la marca Hubara. "
+       "Si el cliente contesta un mensaje nuestro que ya dijo la marca (el seguimiento de una asesora), basta el saludo.",
        ("spec:sales-worker/Saludo garantizado en el primer contacto", "memoria:first_contact_greeting_dropped"),
        ("greeting_first_turn",)),
     _c("APE-02", "Sin apertura prohibida", "apertura", "menor", "code",
@@ -84,7 +94,7 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El primer texto no abre con ¡Hola!, Hey ni Buen día.",
        ("guion:etapa_descubrimiento",), ("forbidden_opener_absent",)),
     _c("APE-03", "Ofrece el catálogo en la apertura", "apertura", "mayor", "code",
-       "Primer contacto de la conversación.",
+       "Primer contacto de la conversación, salvo que el cliente conteste un mensaje nuestro (la apertura ya la hicimos).",
        "El turno de apertura envía botones rápidos (Ver catálogo) o ya muestra productos.",
        ("guion:etapa_descubrimiento",), ("offer_catalog_opening",)),
     _c("APE-04", "No vuelve a saludar a un cliente con historial", "apertura", "menor", "code",
@@ -110,7 +120,8 @@ CHECKS: tuple[CheckSpec, ...] = (
        ("operador 2026-09-14", "PR #281")),
     _c("DES-05", "Busca en el catálogo antes de nombrar productos o precios", "descubrimiento", "critico", "code",
        "El bot nombró un producto del catálogo o un precio.",
-       "Una búsqueda o lectura del catálogo precede al primer texto con producto o precio.",
+       "Una búsqueda o lectura del catálogo precede al primer texto con producto o precio. No cuentan los montos de "
+       "política (mínimo del contra entrega, recargos, envío) ni los productos que nombró un mensaje nuestro.",
        ("guion:sales_script regla máxima 1",), ("search_before_naming",)),
     _c("DES-06", "Sin datos de catálogo inventados", "descubrimiento", "critico", "judge",
        "El bot afirmó productos, precios, aromas, colores o conteos.",
@@ -172,10 +183,10 @@ CHECKS: tuple[CheckSpec, ...] = (
        "La guarda anti-selector no rechazó botones de producto, aroma o color.",
        ("memoria:quick_replies_catalog_selector_guard",)),
     # ── Confirmación de compra ─────────────────────────────────────────────
-    _c("CON-01", "Formulario de envío solo tras confirmación de compra", "confirmacion", "critico", "code",
+    _c("CON-01", "Formulario de envío con producto elegido y sin aplazamiento", "confirmacion", "critico", "code",
        "Se envió el formulario de envío.",
-       "Existe confirmación del cliente (sí explícito o botón Confirmar) antes del formulario.",
-       ("PR #281", "spec:sales-worker/Confirmación de compra antes del cierre")),
+       "El producto ya estaba elegido y el cliente no acababa de aplazar (no hace falta un sí aparte).",
+       ("PR #281", "incidente 2026-10-09", "spec:sales-worker/Confirmación de compra antes del cierre")),
     _c("CON-02", "Aplazamiento respetado", "confirmacion", "critico", "code",
        "El cliente aplazó (después, luego, voy en camino).",
        "En ese turno no avanza la venta: sin formulario, resumen, registro ni etiqueta de confirmación.",
@@ -184,10 +195,10 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot envió texto.",
        "Ningún texto dice que el pedido quedó confirmado o registrado sin orden registrada.",
        ("PR #281",)),
-    _c("CON-04", "Pide el sí explícito antes de avanzar", "confirmacion", "mayor", "judge",
+    _c("CON-04", "Manda el formulario sin hacer esperar", "confirmacion", "mayor", "judge",
        "El pedido llegó a variantes completas.",
-       "El bot pregunta si confirma la compra (con precio) antes de pedir datos.",
-       ("guion:etapa_variantes",)),
+       "Si le dice al cliente que le manda el formulario, el formulario sale; no le pide un sí de más.",
+       ("guion:etapa_variantes", "incidente 2026-10-09")),
     _c("CON-05", "La guarda de confirmación tuvo que actuar", "confirmacion", "mayor", "code",
        "Siempre (trazas).",
        "Ninguna tool fue rechazada por purchase_not_confirmed o customer_deferred.",
@@ -310,6 +321,11 @@ CHECKS: tuple[CheckSpec, ...] = (
        "El bot le dijo al cliente que un colega o alguien del equipo lo atiende.",
        "Ese turno escaló (el LLM con escalate_to_human o la red de seguridad): el colega queda avisado.",
        ("laboratorio caso-cortesia-1001: «un colega coordina la entrega» sin escalar (2026-09-30)",)),
+    _c("TAG-09", "Lo que promete, lo hace", "estado", "critico", "code",
+       "El bot le prometió algo para ahora (formulario, tarifas, resumen, catálogo, fotos, aromas o colores) o "
+       "dijo que el pedido quedó registrado.",
+       "Ese componente sale en el mismo turno y el pedido está registrado de verdad.",
+       ("incidente 2026-10-09",)),
     _c("TAG-07", "RECHAZO o INTERESADO sostenidos por la conversación", "estado", "mayor", "judge",
        "El episodio cerró con RECHAZO o quedó en INTERESADO.",
        "La conversación sostiene la etiqueta (el cliente rechazó, o mostró interés sin comprar).",

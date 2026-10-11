@@ -180,8 +180,10 @@ cd android_operator && ./gradlew :app:bundleRelease \
     visto (run 36925839845) fue `INSTALL_FAILED_UPDATE_INCOMPATIBLE` (AVD en caché con la app firmada por otro
     runner). `qa.sh` ya desinstala y reinstala; si vuelve, sube la `key` de la caché del AVD en `qa-emulador.yml`.
 26. **La app nunca espera a Jev**: la burbuja lo espera 2,5 s como mucho y los incendios nada; lo que no llegó sale por
-    reglas y el veredicto queda en la caché del proceso para la MISMA versión del chat y el mismo modo (la
-    siguiente consulta lo usa; un deploy la vacía). Los incendios de PEDIDOS (retraso, pago sin verificar) son hechos:
+    reglas y el veredicto queda en la caché del proceso para lo MISMO que Jev lee (etapa, burbujas y huella de la
+    conversación) y el mismo modo (la siguiente consulta lo usa; un deploy la vacía). Nunca la versión del chat:
+    Jev anota su costo en `metadata.json`, eso mueve la versión, el dashboard avisa y la app vuelve a pedir; con la
+    versión en la llave Jev decidía cada ~2,7 s mientras el chat estaba abierto (caso 2026-10-09). Los incendios de PEDIDOS (retraso, pago sin verificar) son hechos:
     no son una decisión. El motor deja cada decisión en `<vault>/<sid>/evals/decisions.jsonl` (`stage: "operador"`),
     sus métricas (la vara para subir), los desacuerdos y el costo (`jev_usage`). El backend de prueba del emulador
     corre Jev falso (`PERCEPTION_PROVIDER=fake`, sin red) con las dos decisiones en sombra (`seed.py` escribe
@@ -230,6 +232,31 @@ cd android_operator && ./gradlew :app:bundleRelease \
     El arnés `E2eWidgetHostActivity` (debug) hospeda el widget real: escucha ANTES de crear la vista, le dice su tamaño
     (`--es size compact`, `--es then large|compact`) y corre el vigía (S24 pestañas, S25 2×2, S26 cambio de tamaño).
 
+32. **Con el humano al mando nadie llena el borrador del pedido** (caso 2026-10-09): el bot no corre, y el formulario,
+    el resumen y las burbujas salían de ese borrador: «Pedir datos de envío» y «Resumen para confirmar» daban «faltan
+    datos para esta acción» y la burbuja de colores nunca salía. Ahora la ruta de acciones y las burbujas usan
+    `mobile.operator_view`: el borrador del episodio + el producto que el operador eligió en la app (formulario
+    `{product, quantity}` o colores/aromas) + lo que el cliente llenó en el formulario (`shared/operator_order.py`, no
+    escribe nada). Con el humano al mando la etapa de las burbujas es `selling_stage`: contra el catálogo, también para
+    los productos que eligió el operador (la del bot ya sale de variantes con `missing_variants`, PR #412). Como la tool
+    desde el #412, «Pedir datos de envío» no espera un «sí» (solo la frena un aplazamiento); mientras falte un aroma o
+    un color se sugiere solo si el cliente ya dijo que sí. La paleta «Más» (`acciones.json`) deja elegir el producto (y la cantidad
+    para el formulario) del catálogo. Un 422 `invalid_args` trae `message` en español y la app lo muestra tal cual.
+    S28 en el emulador; en el chat la burbuja «Más» y la pestaña «Más» se llaman igual (`tap: {text, above}`).
+
+33. **«Crear pedido» en la app, como en el dashboard** (2026-10-09): con el humano al mando y sin pedido, cuando el
+    cliente cerró la compra (tocó «✅ Confirmar» en el resumen o el borrador anotó su «sí») va PRIMERA y en verde
+    (`tone: "order"`, par `successContainer`); con el pedido completo sin confirmar, después del resumen. No le manda
+    nada al cliente: abre la pantalla del servidor que diga `opens` (`crear_pedido.json`) por `NativeProps.open`. El
+    backend solo manda esas burbujas a la app que pide `?features=open_screen` (`SuggestionRepository.FEATURES`): una
+    app vieja la enviaría como una tool que no existe. El formulario lee `GET /api/chats/order-intake/{id}/form` (la
+    misma sugerencia de DeepSeek del dashboard + el borrador del operador; si la IA no da productos, los del borrador)
+    y registra con `POST /api/chats/session-actions/{id}/order/app` (el mismo `/order`, con `success` y el motivo en
+    palabras). También está en «+ Más» (sale sin publicar app). **Trampa (S29):** la fila de burbujas conserva la
+    posición de la que ya estaba; una nueva que llega adelante quedaba escondida a la izquierda. `QuickActionStrip`
+    vuelve al inicio cuando cambia la primera (Robolectric no lo reproduce: el guardia es S29). El backend de prueba no
+    crea pedidos en su Medusa: S29 llega hasta el formulario prellenado.
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
@@ -237,6 +264,7 @@ Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
 `GET /api/chats/mobile/hot`, `GET /api/chats/mobile/human` (página «Humano» del widget), `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,
 `DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`,
-`POST /api/chats/session-actions/{id}/tools/{tool}`.
+`POST /api/chats/session-actions/{id}/tools/{tool}`, `GET /api/chats/order-intake/{id}/form` y
+`POST /api/chats/session-actions/{id}/order/app` («Crear pedido»).
 Pantallas del servidor (las de `screens/`): `/api/orders/orders`, `PATCH /api/orders/orders/{id}/confirm-payment`,
 `/api/marketing/campaigns[/{id}[/stats]]`, `/api/dashboard/sessions`.

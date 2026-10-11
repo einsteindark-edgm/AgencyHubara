@@ -493,20 +493,21 @@ async def test_order_confirmation_envelope_cod_does_not_hand_llm_a_total(
     result = json.loads(
         await tool.execute_with_context(
             _ctx(),
-            items=[{"handle": "velon-amor-eterno", "quantity": 1, "unit_price_cop": 38500}],
+            # Dos unidades: contra entrega es desde $45.000 en productos.
+            items=[{"handle": "velon-amor-eterno", "quantity": 2, "unit_price_cop": 38500}],
             shipping_cop=16940,
             shipping_address_summary="Calle 59b sur 38, Poblado, Medellín",
             payment_method="cash_on_delivery",
         )
     )
     assert result["queued"] is True
-    assert "55.440" not in result["summary"]
-    assert "55440" not in result["summary"]
+    assert "93.940" not in result["summary"]
+    assert "93940" not in result["summary"]
     assert "por confirmar" in result["summary"].lower()
     # El intent sigue llevando los montos para analytics/consistencia.
     (intent,) = _read_intents(tmp_path, "s_ship")
     assert intent["params"]["shipping_cop"] == 16940
-    assert intent["params"]["total_cop"] == 55440
+    assert intent["params"]["total_cop"] == 93940
 
 
 # ---------------------------------------------------------------------------

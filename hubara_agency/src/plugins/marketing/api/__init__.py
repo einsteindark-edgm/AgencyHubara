@@ -49,6 +49,7 @@ from src.sdk.connectorkit import (
     OrderFactsSnapshot,
     get_catalog_client,
 )
+from src.sdk.identitykit import is_customer_session_id
 from src.sdk.messagingkit import (
     get_current_rate_card,
     send_template_to_session,
@@ -208,7 +209,7 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
         if field not in patch:
             continue
         # fullmatch: el `$` de `match` acepta un salto de línea final.
-        bad_format = [s for s in patch[field] if not _SESSION_ID_RE.fullmatch(s)]
+        bad_format = [s for s in patch[field] if not _is_session_id(s)]
         if bad_format:
             raise HTTPException(
                 status_code=422,
@@ -398,14 +399,20 @@ async def _validate_campaign_coupon(
 @router.get("/promotions")
 async def list_promotions() -> dict:
     """Cupones vigentes en Medusa (Admin → Promotions) para elegir en el
-    builder: el mismo código que el bot valida con `apply_coupon`."""
-    from src.sdk.connectorkit import PromotionsUnavailableError
+    builder: el mismo código que el bot valida con `apply_coupon`. Uno que
+    todavía no empieza se ofrece (la campaña se programa para su inicio); uno
+    vencido o agotado no, aunque Medusa lo siga marcando «active»."""
+    from src.sdk.connectorkit import PromotionsUnavailableError, coupon_problem
 
     try:
         promotions = await get_promotions_port().list_active()
     except PromotionsUnavailableError as e:
         log.warning("marketing: no pude leer promociones de Medusa: %s", e)
         return {"promotions": [], "unavailable": True}
+    now_ms = _now_ms()
+    promotions = [
+        p for p in promotions if coupon_problem(p, now_ms=now_ms) in (None, "not_started")
+    ]
     return {
         "promotions": [
             {
@@ -419,8 +426,6 @@ async def list_promotions() -> dict:
                 "product_count": len(p.product_ids) + len(p.variant_ids) + len(p.collection_ids),
             }
             for p in promotions
-            # El bot no aplica cupones de envío: el builder tampoco los ofrece.
-            if p.target_type != "shipping_methods"
         ],
         "unavailable": False,
     }
@@ -769,8 +774,13 @@ def get_campaign_audience(campaign_id: str) -> dict:
     }
 
 
-# Anti path-traversal, no política de formato: solo wa_ + dígitos (con o sin +).
+# Anti path-traversal, no política de formato: wa_ + dígitos (con o sin +), o
+# wa_ + el id de Meta sin punto de un cliente sin teléfono (`is_customer_session_id`).
 _SESSION_ID_RE = re.compile(r"^wa_\+?\d{1,20}$")
+
+
+def _is_session_id(session_id: str) -> bool:
+    return bool(_SESSION_ID_RE.fullmatch(session_id)) or is_customer_session_id(session_id)
 #: Handle de producto Medusa (slug): letras/dígitos/guiones/underscore.
 _HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,120}$")
 #: Cupón: solo letras y números (espejo de `COUPON_CODE_RE` del SDK; ver PUT).
@@ -789,7 +799,7 @@ def get_audience_conversation(session_id: str) -> dict:
     la agregación de ads: `<session>/sessions/<session>.jsonl`). Parse
     tolerante: una línea corrupta se salta, jamás rompe el visor.
     """
-    if not _SESSION_ID_RE.fullmatch(session_id):
+    if not _is_session_id(session_id):
         raise HTTPException(status_code=422, detail="session_id inválido")
     history_path = (
         WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"

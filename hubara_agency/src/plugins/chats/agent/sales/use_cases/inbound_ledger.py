@@ -21,6 +21,8 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from src.sdk.identitykit import address_from_user_id, is_user_id_address
+
 
 def webhook_ledger_records(body: Any, *, at_ms: int, outcome: str = "accepted") -> list[dict[str, Any]]:
     """Registros del ledger para UN POST al webhook (puro, tolerante a shapes
@@ -49,7 +51,8 @@ def webhook_ledger_records(body: Any, *, at_ms: int, outcome: str = "accepted") 
                     "at_ms": at_ms,
                     "field": field_name,
                     "wa_message_id": msg.get("id"),
-                    "session_id": _session_id(msg.get("from")),
+                    "session_id": _session_id(msg.get("from")) or _session_id(address_from_user_id(msg.get("from_user_id"))),
+                    "user_id": _user_id(msg.get("from_user_id")),
                     "msg_type": msg.get("type"),
                     "wa_timestamp": msg.get("timestamp"),
                     "referral": _referral_summary(msg.get("referral")),
@@ -66,6 +69,7 @@ def message_stage_record(
     wa_message_id: str,
     from_number: str,
     error: str | None = None,
+    user_id: str | None = None,
 ) -> dict[str, Any]:
     """Registro de una etapa POSTERIOR a ``seen`` (``ingested`` /
     ``ingest_failed``) — se une al ``seen`` por ``wa_message_id``."""
@@ -79,6 +83,8 @@ def message_stage_record(
     }
     if error is not None:
         record["error"] = error[:300]
+    if user_id is not None:
+        record["user_id"] = _user_id(user_id)
     return record
 
 
@@ -176,8 +182,17 @@ def _inbound_messages(field_name: str, value: dict[str, Any]) -> list[dict[str, 
     return [m for m in messages if isinstance(m, dict)] if isinstance(messages, list) else []
 
 
-def _session_id(from_number: Any) -> str | None:
-    return f"wa_{from_number}" if isinstance(from_number, str) and from_number.isdigit() else None
+def _session_id(address: Any) -> str | None:
+    """`wa_<teléfono>` o `wa_<BSUID sin punto>` (cliente con nombre de usuario)."""
+    if not isinstance(address, str) or not (address.isdigit() or is_user_id_address(address)):
+        return None
+    return f"wa_{address}"
+
+
+def _user_id(raw: Any) -> str | None:
+    """El `from_user_id` (BSUID) tal como vino, acotado: con él se cuentan
+    personas y se ubica el chat aunque el mensaje se haya rechazado."""
+    return raw[:140] if isinstance(raw, str) else None
 
 
 def _referral_summary(referral: Any) -> dict[str, Any] | None:

@@ -905,7 +905,8 @@ async def test_v2_names_the_missing_required_tool_before_closing_with_text(tmp_p
     steps = _customer_trace(tracker)["steps"]
     assert any(s.get("name") == "contract_extra_round" for s in steps)
     assert draft not in _sent(tracker)
-    assert any(m.get("content", "").startswith("[CONTRATO DEL TURNO]") for m in llm.inputs[1] if m.get("role") == "system")
+    # «Tu respuesta NO se envió. [CONTRATO DEL TURNO] …» (turno 1 de …7392).
+    assert any("[CONTRATO DEL TURNO]" in m.get("content", "") for m in llm.inputs[1] if m.get("role") == "system")
 
 
 def _final(text: str) -> LLMResponseData:
@@ -1268,6 +1269,44 @@ async def test_a_burst_that_keeps_coming_gets_one_answer_with_every_fragment(tmp
     assert all(s["settle_ms"] >= 1500 for s in _restarts(trace))
     # El costo de cada intento llega al episodio, también el de los cortados.
     assert tracker.episode_llm_usage == [("ep_001", 1200)] * 5
+
+
+async def test_a_restarted_turn_does_not_search_again_what_it_already_found(tmp_path: Path) -> None:
+    """Turno 1 de …7392 (2026-10-08): el modelo buscó la colección, el cliente
+    escribió («Que viene incluido») antes de que saliera la respuesta y el
+    reinicio volvió a buscar lo mismo. Ahora el reinicio recibe la búsqueda
+    hecha: no la repite, el modelo la ve y la traza lo dice."""
+    box: dict = {}
+    found = json.dumps({"query": "halloween", "count": 1, "results": [{"handle": "calabaza", "price": "16000"}]})
+    answer = "La Calabaza viene con aroma a frutos rojos 🎃"
+
+    def calls(name: str, args: dict) -> LLMResponseData:
+        return LLMResponseData(
+            content="", finish_reason="tool_calls", has_tool_calls=True,
+            tool_calls=[ToolCallData(id=f"call_{name}", name=name, arguments=args)],
+        )
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        customer_text="Quiero más información sobre la colección de Halloween",
+        responses=[
+            calls("search_products", {"q": "halloween"}),
+            calls("present_products", {"handles": ["calabaza"], "intro_text": "Mira la colección 🎃"}),
+            _final(answer),
+        ],
+        tool_results={"search_products": found},
+        llm_call_hooks={2: _writes(box, "Que viene incluido")},
+        box=box,
+    )
+
+    assert tracker.execute_tool_calls == ["search_products"], "la búsqueda corre una sola vez"
+    restart_round = tracker.llm_inputs[2]
+    assert any(m.get("role") == "tool" and m.get("name") == "search_products" and m.get("content") == found
+               for m in restart_round)
+    assert _sent(tracker) == [answer]
+    [trace] = _customer_traces(tracker)
+    assert [s.get("tools") for s in trace["steps"] if s["kind"] == "carry"] == [["search_products"]]
+    assert [t["name"] for t in trace["tools"]] == ["search_products"]
 
 
 async def test_the_burst_stops_restarting_at_the_hard_cap(tmp_path: Path) -> None:

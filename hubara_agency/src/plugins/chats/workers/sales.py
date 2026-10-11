@@ -78,6 +78,7 @@ from src.plugins.chats.agent.sales.tools.catalog import (
     SearchProductsTool,
 )
 from src.plugins.chats.agent.sales.composition import (
+    build_photo_color_reader,
     build_session_history_reader,
     build_session_metadata_store,
     build_vault_dir,
@@ -181,6 +182,8 @@ _catalog = get_catalog_client()
 # SOLO a esas combinaciones producto + color + aroma.
 from src.sdk.connectorkit import (  # noqa: E402
     get_coupon_sales_reader,
+    get_customer_orders_port,
+    get_order_facts_port,
     get_promo_quota_store,
     get_promotions_port,
     get_quota_lock,
@@ -188,6 +191,31 @@ from src.sdk.connectorkit import (  # noqa: E402
 
 _promotions = get_promotions_port()
 _coupon_sales = get_coupon_sales_reader()
+
+
+def _order_facts_port():
+    """OrderFacts para el cupón de bienvenida (caso 2026-10-09): si el cliente
+    ya compró lo dicen sus pedidos anteriores (el vault guarda solo el
+    vínculo). Se resuelve al armar la tool, no al importar el worker; sin
+    Medusa, None: un pedido registrado antes cuenta como compra."""
+    try:
+        return get_order_facts_port()
+    except Exception as exc:  # noqa: BLE001 — sin Medusa la tool degrada
+        logger.warning("OrderFacts no disponible para el cupón de bienvenida: {}", exc)
+        return None
+
+
+def _customer_orders_port():
+    """Los pedidos de la PERSONA en Medusa (todos los de su número), para el
+    mismo cupón: un pedido de otra conversación también es «ya compró». Se
+    resuelve al armar la tool; si no se puede, None y decide lo que registró
+    la conversación."""
+    try:
+        return get_customer_orders_port()
+    except Exception as exc:  # noqa: BLE001 — sin Medusa la tool degrada
+        logger.warning("Pedidos de la persona no disponibles para el cupón de bienvenida: {}", exc)
+        return None
+
 
 register_tool_extension(
     "sales.list_promotions",
@@ -197,6 +225,9 @@ register_tool_extension(
         catalog=_catalog,
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
+        metadata_store=build_session_metadata_store(),
+        order_facts=_order_facts_port(),
+        customer_orders=_customer_orders_port(),
     ),
 )
 register_tool_extension(
@@ -208,6 +239,8 @@ register_tool_extension(
         metadata_store=build_session_metadata_store(),
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
+        order_facts=_order_facts_port(),
+        customer_orders=_customer_orders_port(),
     ),
 )
 
@@ -340,10 +373,12 @@ register_tool_extension(
 # renderiza al cliente como mensaje WA nativo (imagen, botones, lista,
 # Flow, reacción, etc.) DESPUÉS del texto del LLM. Patrón documentado en
 # `workspace/TOOLS.md` sección "UI Tools — Decision tools (HU-002)".
+# El color de la vela de cada foto (caso 2026-10-09): se lee una vez por foto.
+_photo_colors = build_photo_color_reader()
 register_tool_extension(
     "sales.present_product_detail",
     lambda workspace: PresentProductDetailTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors
     ),
 )
 register_tool_extension(
@@ -399,7 +434,7 @@ register_tool_extension(
 register_tool_extension(
     "sales.present_product_gallery",
     lambda workspace: PresentProductGalleryTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors
     ),
 )
 # HU-002 / fix sesión a56bfaa9: botones genéricos. Usados en el saludo

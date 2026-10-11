@@ -433,6 +433,7 @@ def main() -> None:
         "/api/chats/mobile/suggestions/{session_id}", "/api/chats/mobile/fires", "/api/chats/mobile/hot",
         "/api/chats/mobile/devices", "/api/chats/mobile/devices/{token}", "/api/chats/catalog",
         "/api/chats/session-actions/{session_key}/tools/{tool}", "/api/orders/orders",
+        "/api/chats/order-intake/{session_key}/form", "/api/chats/session-actions/{session_key}/order/app",
         "/api/orders/orders/{order_id}", "/api/orders/orders/{order_id}/stage",
     ]
     missing = [p for p in wanted if p not in routes]

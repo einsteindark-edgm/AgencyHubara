@@ -273,10 +273,11 @@ def test_closing_stage_suggests_the_summary_only_with_a_recognizable_payment_met
     assert [s["id"] for s in body["suggestions"]] == ["send_payment_methods"]
 
 
-def test_confirmed_purchase_in_the_draft_unlocks_the_shipping_form(h: _Harness) -> None:
+def test_with_the_products_chosen_the_shipping_form_is_offered_without_waiting_for_a_yes(h: _Harness) -> None:
+    """Como la tool del bot desde el PR #412 (incidente del 2026-10-09): el
+    formulario no espera un «sí»; solo lo frena un cliente que acaba de aplazar."""
     slots = {k: _FULL_SLOTS[k] for k in ("producto", "aroma", "color", "cantidad")}
     ep = _episode(slots)
-    ep["order_draft"]["confirmed_at_ms"] = NOW - _MIN
     h.seed(_LAURA, {**_open_window(), "active_route": "humano", "episodes": [ep]})
 
     body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
@@ -291,6 +292,112 @@ def test_confirmed_purchase_in_the_draft_unlocks_the_shipping_form(h: _Harness) 
     h.seed(_LAURA, deferred)
     body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
     assert "request_shipping_details" not in [s["id"] for s in body["suggestions"]]
+
+
+# ── con el bot apagado las burbujas siguen al operador (caso 2026-10-09) ─────
+#
+# Con un humano al mando nadie llena el borrador: las burbujas se quedaban en
+# las de descubrimiento (tarifas, medios de pago) aunque el operador ya
+# hubiera mandado los colores o el formulario y el cliente lo hubiera llenado.
+
+
+def _iso(ms: int) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
+def _ledger(tool: str, at_ms: int, args: dict[str, Any]) -> dict[str, Any]:
+    return {"id": f"act-{tool}", "tool": tool, "sent": True, "at_ms": at_ms, "args": args}
+
+
+def test_after_the_operator_sends_a_products_colors_the_bubbles_offer_its_aromas(h: _Harness) -> None:
+    h.seed(
+        _LAURA,
+        {**_open_window(), "active_route": "humano", "episodes": [_episode()],
+         "operator_tool_actions": [_ledger("present_variant_picker", NOW - 3 * _MIN,
+                                           {"product": "duo-zodiacal", "attribute": "color"})]},
+        events=[
+            {"role": "user", "timestamp": _iso(NOW - 5 * _MIN), "content": "¿qué colores y aromas manejan?"},
+            {"role": "assistant", "sender": "human", "operator_tool": "present_variant_picker",
+             "timestamp": _iso(NOW - 3 * _MIN), "content": "Estos son los colores disponibles:\n💙 Azul\n🌸 Rosa"},
+        ],
+    )
+
+    body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
+
+    assert body["stage"] == "etapa_variantes"
+    assert body["suggestions"][0]["label"] == "Enviar aromas"
+    assert body["suggestions"][0]["action"] == {
+        "name": "present_variant_picker", "args": {"product": "duo-zodiacal", "attribute": "aroma"},
+    }
+
+
+def test_after_the_customer_fills_the_form_the_operator_sent_the_summary_is_offered(h: _Harness) -> None:
+    h.seed(
+        _LAURA,
+        {**_open_window(), "active_route": "humano", "episodes": [_episode({})],
+         "operator_tool_actions": [_ledger("request_shipping_details", NOW - 10 * _MIN,
+                                           {"product": "duo-zodiacal", "quantity": "2"})]},
+        events=[
+            {"role": "assistant", "sender": "human", "operator_tool": "request_shipping_details",
+             "kind": "ui_component", "component_kind": "shipping_flow", "timestamp": _iso(NOW - 10 * _MIN),
+             "content": "📋 El operador pidió los datos de envío (formulario)"},
+            {"role": "user", "timestamp": _iso(NOW - 5 * _MIN),
+             "content": "[datos de envío recibidos] city=Bogotá; neighborhood=Chapinero; address=Cl 1 # 2-3; "
+                        "phone=3000000000; receiver_name=Ana; payment_method=transfer"},
+        ],
+    )
+
+    body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
+
+    assert body["stage"] == "etapa_cierre"
+    assert [s["id"] for s in body["suggestions"]] == ["present_order_confirmation", "send_payment_methods"]
+
+
+def test_when_the_customer_confirms_the_summary_the_app_is_offered_create_order(h: _Harness) -> None:
+    """El humano cerró la venta: el cliente tocó «✅ Confirmar» en el resumen
+    que mandó desde la app. Lo que sigue es registrar el pedido (como el botón
+    «Crear pedido» del dashboard), y la burbuja va marcada para verla rápido."""
+    h.seed(
+        _LAURA,
+        {**_open_window(), "active_route": "humano", "episodes": [_episode({})],
+         "operator_tool_actions": [_ledger("request_shipping_details", NOW - 20 * _MIN,
+                                           {"product": "duo-zodiacal", "quantity": "2"})]},
+        events=[
+            {"role": "user", "timestamp": _iso(NOW - 15 * _MIN),
+             "content": "[datos de envío recibidos] city=Bogotá; address=Cl 1 # 2-3; phone=3000000000; "
+                        "receiver_name=Ana; payment_method=transfer"},
+            {"role": "assistant", "sender": "human", "operator_tool": "present_order_confirmation",
+             "kind": "ui_component", "component_kind": "order_confirmation", "timestamp": _iso(NOW - 10 * _MIN),
+             "content": "🧾 El operador envió el resumen del pedido con botones para confirmar"},
+            {"role": "user", "timestamp": _iso(NOW - 5 * _MIN), "content": "[el cliente tocó el botón: ✅ Confirmar]"},
+        ],
+    )
+
+    body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}", params={"features": "open_screen"}).json()
+
+    assert body["suggestions"][0] == {
+        "id": "create_order", "label": "Crear pedido", "prominence": "primary", "editable": False,
+        "tone": "order", "opens": "crear_pedido", "action": {"name": "create_order", "args": {}},
+    }
+    # una app que no sabe abrir el formulario no la recibe (la mandaría como tool)
+    old_app = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
+    assert "create_order" not in [s["id"] for s in old_app["suggestions"]]
+
+
+def test_a_product_with_nothing_left_to_choose_reaches_the_summary(h: _Harness) -> None:
+    """Luz Serena no tiene colores: el borrador nunca tendrá `color` y la
+    etapa del bot se queda en variantes. Para las burbujas el producto está
+    completo (no le falta nada que el catálogo ofrezca)."""
+    slots = {**_FULL_SLOTS}
+    del slots["color"]
+    h.seed(_LAURA, {**_open_window(), "active_route": "humano", "episodes": [_episode(slots)]})
+
+    body = h.client.get(f"/api/chats/mobile/suggestions/{_LAURA}").json()
+
+    assert body["stage"] == "etapa_cierre"
+    assert body["suggestions"][0]["id"] == "present_order_confirmation"
 
 
 def _facts(order_id: str, *, pay: str, stage: str = "preparing", due_iso: str | None = None) -> OrderFacts:

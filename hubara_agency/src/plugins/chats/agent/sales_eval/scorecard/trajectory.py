@@ -174,6 +174,9 @@ class Trajectory:
     closed_at_ms: int | None = None
     # Modo turno (laboratorio): el turno que se juzga; el resto es contexto.
     focus_turn: int | None = None
+    # El episodio abrió con el pedido anterior en curso (`after_order`, caso
+    # pedido #64): ese pedido existe aunque no se registró en este episodio.
+    after_order_id: str | None = None
 
     @property
     def first_contact(self) -> bool | None:
@@ -256,6 +259,25 @@ def _with_category_menu(intents: tuple[str, ...], raw_tools: Any) -> tuple[str, 
     return tuple(out) if "categories" in out else (*out, "categories")
 
 
+#: Lo que la red de lo prometido manda sin tool del LLM (incidente del
+#: 2026-10-09, `ensure_promised_handoff_activity`): el formulario y las tarifas.
+_NET_KINDS = ("shipping_flow", "shipping_rates")
+
+
+def _with_net_components(intents: tuple[str, ...], steps: Any) -> tuple[str, ...]:
+    """El formulario o las tarifas que salieron en el flush del turno sin que
+    una tool del LLM los pidiera: los mandó la red de lo prometido. El
+    cliente los vio; uno que no llegó no cuenta."""
+    delivered = {
+        b.get("kind")
+        for step in steps or []
+        if isinstance(step, dict) and step.get("kind") == "outbound"
+        for b in step.get("bubbles") or []
+        if isinstance(b, dict) and b.get("delivered") is True
+    }
+    return (*intents, *(k for k in _NET_KINDS if k in delivered and k not in intents))
+
+
 def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
     return {
         "closing_tag": episode.get("closing_tag"),
@@ -263,7 +285,14 @@ def _episode_fields(episode: dict[str, Any]) -> dict[str, Any]:
         "closing_motivo": episode.get("closing_motivo"),
         "started_at_ms": _as_int(episode.get("started_at_ms")),
         "closed_at_ms": _as_int(episode.get("closed_at_ms")),
+        "after_order_id": _after_order_id(episode),
     }
+
+
+def _after_order_id(episode: dict[str, Any]) -> str | None:
+    after = episode.get("after_order")
+    order_id = after.get("order_id") if isinstance(after, dict) else None
+    return str(order_id) if order_id else None
 
 
 #: El encuadre con que la plataforma entrega un turno que es SOLO un traspaso
@@ -308,7 +337,9 @@ def turn_from_trace(raw: dict[str, Any], default_turn: int = 1) -> Turn:
         suppressed_reason=raw.get("suppressed_reason"),
         discarded_narration=tuple(str(x) for x in raw.get("discarded_narration") or []),
         tools=tools,
-        intents=_with_category_menu(_intents_for(tools, guards), raw.get("tools")),
+        intents=_with_net_components(
+            _with_category_menu(_intents_for(tools, guards), raw.get("tools")), raw.get("steps")
+        ),
         guards=guards,
         stage_in=raw.get("stage_in"),
         stage_out=raw.get("stage_out"),

@@ -50,6 +50,8 @@ class SearchProductsTool(ToolBase):
     """Busca productos del catalogo por substring en title/handle."""
 
     name = "search_products"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Busca productos del catálogo de Hubara. El search es case-insensitive "
         "y matchea en title, handle, tags, categorías y description del "
@@ -264,6 +266,8 @@ class ListCategoriesTool(ToolBase):
     """Closed-list de categorías reales del catálogo."""
 
     name = "list_categories"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Devuelve las categorías REALES del catálogo con cuántos productos "
         "tiene cada una. Úsala cuando el cliente pregunta '¿qué categorías "
@@ -314,6 +318,8 @@ class GetProductByHandleTool(ToolBase):
     """Devuelve el detalle exacto de un producto por su handle."""
 
     name = "get_product_by_handle"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Devuelve el detalle completo de UN producto cuyo handle ya conoces "
         "(visto en search_products). Úsalo para confirmar precio, "

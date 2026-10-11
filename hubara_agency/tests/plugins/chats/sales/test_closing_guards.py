@@ -145,3 +145,21 @@ async def test_the_bot_cannot_tag_compra_exitosa(ctx, tmp_path: Path) -> None:
     assert result.get("error") == "human_only_tag"
     assert "CONFIRMADO_PAGO_PENDIENTE" in result["message"]
     assert "capi_outbox" not in md and md.get("tag") != "COMPRA_EXITOSA"
+
+
+@pytest.mark.asyncio
+async def test_register_order_keeps_the_cash_on_delivery_minimum(ctx, _isolate_vault_dir: Path) -> None:
+    """Premortem 2026-10-09: contra entrega es desde $45.000 en productos; el
+    registro lo aceptaba por debajo si el LLM no pasaba por la tarjeta."""
+    _seed(_isolate_vault_dir, confirmed=True)
+    port = FakeOrderRegistrationPort()
+    tool = RegisterOrderTool(workspace=str(_isolate_vault_dir), vault_dir=_isolate_vault_dir, port=port)
+
+    result = json.loads(await tool.execute_with_context(
+        ctx, items=_SAMPLE_ITEMS, shipping=_SAMPLE_SHIPPING, payment_method="cash_on_delivery",
+        subtotal_cop=17000, shipping_cop=7900, total_cop=24900,
+    ))
+
+    assert (result["registered"], result["error_detail"]) == (False, "cod_below_minimum")
+    assert "45.000" in result["summary"]
+    assert port.calls == []

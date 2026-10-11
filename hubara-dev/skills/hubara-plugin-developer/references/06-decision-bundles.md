@@ -197,7 +197,10 @@ motor, cómo decide, qué cambió frente a `main` y este bucle con diagramas).
 **Regla de oro:** un bug de decisión se arregla en el paquete (pregunta,
 umbral, fila o ejemplo, en una versión nueva), nunca con un `if`, un regex o
 una guarda en el lugar que decide. Código solo si al motor le falta algo
-genérico, y entonces en UN builtin con su prueba.
+genérico, y entonces en UN builtin con su prueba. **Única excepción**
+(decisión del operador, 2026-10-09): lo que el bot promete hacer ahora (el
+formulario, las tarifas, el resumen…) lo lee el detector de código
+`use_cases/promised_actions.py`, no una capacidad (gotcha 16 del CLAUDE.md).
 
 1. **Ver:** Calidad LLM → Conversaciones → el turno → «Decisiones de Jev»
    (o `<vault>/<sesión>/evals/decisions.jsonl`). Sin decisión de Jev en el
@@ -230,6 +233,7 @@ genérico, y entonces en UN builtin con su prueba.
 | hace falta una decisión nueva | catálogo (`capabilities` + `about`) + YAML + UN `capability("x")`; nace off → sombra | una función nueva en el lugar |
 | el bot redactó mal sin decisión fallida | `turn.yaml: guide`/`nudge`, `domain.yaml`; `SOUL.md` solo si es conducta general | guarda que reescriba el texto |
 | un hecho mal (precio, cupo, stock, envío) | donde vive el dato, una vez (lo verificado manda) | pedirle a Jev un hecho |
+| el bot prometió algo para ahora y no salió (TAG-09), o leyó una promesa que no era | el detector `use_cases/promised_actions.py`: su caso en `test_promised_actions.py` y su fila en `_PROMISES` (excepción del operador, 2026-10-09) | una capacidad nueva o una guarda en la tool |
 
 ## Lo que NO se hace
 

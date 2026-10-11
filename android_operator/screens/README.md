@@ -17,6 +17,7 @@ las pantallas como **piezas nativas** del catálogo (el chat con su composer, el
 | `incendios.json` | Incendios de chats y órdenes; cada uno abre su chat en vivo o la ficha del pedido. |
 | `ordenes.json` · `pedido.json` | La lista de órdenes y la ficha (hoja) con el siguiente paso según la etapa. |
 | `chat.json` · `acciones.json` · `plantillas.json` | El chat (encabezado + pieza nativa `chat`), «+ Más» y reactivar con plantilla. |
+| `crear_pedido.json` | «Crear pedido»: el pedido prellenado de la conversación; lo abre la burbuja verde o «+ Más». |
 | `mas.json` y las demás | La pestaña «Más»: resumen de ventas, por cobrar, campañas. |
 
 - **Referencia completa** de componentes, propiedades, filtros, acciones e íconos: [CATALOGO.md](CATALOGO.md)

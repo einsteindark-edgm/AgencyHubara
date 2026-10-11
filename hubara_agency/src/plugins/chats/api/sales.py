@@ -18,6 +18,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from typing import Any
 
 import structlog
@@ -32,6 +33,9 @@ from src.plugins.chats.agent.sales.composition import (
     build_ingest_handover_use_case,
     build_ingest_standby_use_case,
     build_ingest_use_case,
+    build_phone_identity,
+    build_sender_identity,
+    has_phone_conversation,
 )
 from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
@@ -46,6 +50,7 @@ from src.plugins.chats.agent.sales.use_cases.inbound_ledger import (
     message_stage_record,
     webhook_ledger_records,
 )
+from src.sdk.identitykit import address_from_user_id
 
 logger = structlog.get_logger()
 
@@ -241,6 +246,28 @@ async def _ingest_ledgered(
     )
 
 
+def _in_their_conversation(parsed: Any) -> Any:
+    """El mensaje, dirigido a la conversación de SU cliente.
+
+    Un cliente con nombre de usuario de WhatsApp llega con su id de Meta
+    (BSUID) y, según el momento, con o sin teléfono. La primera conversación
+    que abrió es la suya: si empezó sin teléfono (`wa_CO9990…`) se queda ahí
+    cuando Meta empieza a mandar el teléfono, y si empezó con teléfono
+    (`wa_57…`) se queda ahí cuando llega solo con el BSUID. Un teléfono que ya
+    tiene su conversación no se vuelve alias de otra."""
+    user_address = address_from_user_id(getattr(parsed, "wa_user_id", None))
+    phone = parsed.from_number if str(parsed.from_number or "").isdigit() else None
+    if user_address is None:
+        # Solo el teléfono: si es de un cliente que empezó sin teléfono, va a
+        # su conversación (`wa_CO…`), no a una nueva (premortem 2026-10-09).
+        alias = build_phone_identity().known_address(phone) if phone else None
+        return parsed if alias in (None, phone) else replace(parsed, from_number=alias)
+    address = build_sender_identity().remember(user_address, parsed.from_number)
+    if phone and address != phone and not has_phone_conversation(phone):
+        build_phone_identity().remember(phone, address)
+    return parsed if address == parsed.from_number else replace(parsed, from_number=address)
+
+
 # ── handlers por `field` ───────────────────────────────────────────────────────
 
 def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
@@ -278,6 +305,7 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
                 wa_message_id=item.wa_message_id,
                 from_number=item.from_number or "",
                 error=item.reason,
+                user_id=item.user_id,
             )
             for item in batch.rejected
             if item.wa_message_id
@@ -295,6 +323,7 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
     # cliente se ingieren en orden; statuses arriba ya quedaron encolados.
     use_case = build_ingest_use_case()
     for parsed in batch.messages:
+        parsed = _in_their_conversation(parsed)
         add_traced_background_task(
             background_tasks, _ingest_ledgered, use_case.execute, parsed, "messages", (parsed,)
         )

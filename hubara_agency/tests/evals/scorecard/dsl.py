@@ -84,6 +84,7 @@ def traj(
     order_id: str | None = None,
     session_id: str = "wa_100000000001",
     episode_id: str = "ep_007",
+    after_order_id: str | None = None,
 ) -> Trajectory:
     return Trajectory(
         session_id=session_id,
@@ -92,4 +93,5 @@ def traj(
         turns=tuple(turns),
         closing_tag=closing_tag,
         order_id=order_id,
+        after_order_id=after_order_id,
     )

@@ -47,6 +47,7 @@ from src.platform.temporal.client import get_temporal_client
 from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
 from src.plugins.chats.agent.sales.inbound_ledger_store import FilesystemInboundLedger
+from src.plugins.chats.agent.sales.sender_identity_store import FilesystemSenderIdentity
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.ingest_delivery_status import (
     IngestDeliveryStatus,
@@ -94,6 +95,28 @@ def build_inbound_ledger() -> FilesystemInboundLedger:
     sobrevive a deploys, a diferencia de los logs del container). `_ledger/`
     no empieza con `wa_` → ningún scanner de sesiones lo toma por conversación."""
     return FilesystemInboundLedger(WORKSPACE_VAULT_DIR / "_ledger" / "webhook")
+
+
+def build_sender_identity() -> FilesystemSenderIdentity:
+    """Qué conversación es de cada id de Meta (BSUID) de un cliente con nombre
+    de usuario, dentro del vault (`_identity/` no empieza con `wa_`)."""
+    return FilesystemSenderIdentity(WORKSPACE_VAULT_DIR / "_identity" / "whatsapp_user_ids")
+
+
+def build_phone_identity() -> FilesystemSenderIdentity:
+    """Qué conversación es de cada teléfono de un cliente que empezó SIN
+    teléfono (`wa_<CC><id>`): cuando Meta empieza a mandar su teléfono se
+    recuerda, y un mensaje que después llegue solo con `from` sigue en su
+    conversación (premortem 2026-10-09)."""
+    return FilesystemSenderIdentity(WORKSPACE_VAULT_DIR / "_identity" / "whatsapp_phones")
+
+
+def has_phone_conversation(phone: str) -> bool:
+    """¿El teléfono ya tiene su conversación (`wa_<teléfono>`, de antes del
+    nombre de usuario)? Entonces no se recuerda como alias de la conversación
+    sin teléfono: lo que llegue solo con él sigue en la suya (revisión del
+    premortem 2026-10-09)."""
+    return (WORKSPACE_VAULT_DIR / f"wa_{phone}").is_dir()
 
 
 def build_session_history_reader() -> Callable[[str], list[dict[str, Any]]]:
@@ -158,8 +181,53 @@ def build_ingest_use_case() -> IngestInboundMessage:
         photo_identifier=build_photo_identifier(catalog),
         # Texto antes de la foto: el workflow de ventas espera la foto.
         photo_notifier=load_session.notify_photo_reading,
+        # El cliente que escribe tras comprar: post-venta con el pedido real.
+        order_facts=build_order_facts_reader(),
     )
     return _INGEST_USE_CASE
+
+
+#: Tope para leer un pedido en el webhook: sin datos a tiempo, la nota de siempre.
+_ORDER_FACTS_TIMEOUT_S = 3.0
+
+
+def _order_facts_port() -> Any:
+    from src.sdk.connectorkit import get_order_facts_port
+
+    return get_order_facts_port()
+
+
+def build_order_facts_reader() -> Callable[[str], Awaitable[Any]]:
+    """OrderFacts de UN pedido (``None`` si Medusa no lo conoce), con tope:
+    el ingest corre en el webhook y nunca espera más que esto."""
+    import asyncio
+
+    async def read(order_id: str) -> Any:
+        snapshot = await asyncio.wait_for(_order_facts_port().get_facts([order_id]), timeout=_ORDER_FACTS_TIMEOUT_S)
+        return snapshot.facts.get(order_id)
+
+    return read
+
+
+def build_photo_color_reader() -> Callable[[str, str, Any], Awaitable[str | None]] | None:
+    """De qué color es la vela de una foto del catálogo (caso 2026-10-09:
+    «¿no viene en este color?» citando la foto de una ardilla café). Se lee
+    una vez por foto y queda junto al snapshot (`<snapshot>/photo_colors`).
+    None si la visión no se puede armar en este proceso: la foto va sin color.
+    Lo usan `present_product_detail` del worker y el de la app del operador."""
+    from src.sdk.catalogkit import color_of_photo, get_photo_color_store
+    from src.sdk.connectorkit import get_photo_color_port
+
+    try:
+        store, reader = get_photo_color_store(), get_photo_color_port()
+    except Exception as exc:  # noqa: BLE001 — el color es un extra
+        logger.warning("Sin lector del color de las fotos: {}", f"{type(exc).__name__}: {exc}"[:200])
+        return None
+
+    async def _read(url: str, title: str, palette: Any) -> str | None:
+        return await color_of_photo(url, title=title, palette=palette, store=store, reader=reader)
+
+    return _read
 
 
 def build_photo_identifier(catalog: Any) -> PhotoIdentifier:

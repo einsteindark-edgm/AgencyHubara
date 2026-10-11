@@ -74,15 +74,19 @@ def _read(path: Path) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_shipping_details_rejected_without_purchase_confirmation(ctx, _isolate_vault_dir: Path) -> None:
-    path = _seed(_isolate_vault_dir, {"episodes": [_episode({"producto": "Cubo Love", "color": "Azul", "aroma": "Café"})]})
+async def test_shipping_details_sent_without_an_explicit_yes(ctx, _isolate_vault_dir: Path) -> None:
+    """Incidente del 2026-10-09 (ventas-4): producto, ciudad y «el contra
+    entrega» elegidos, el bot escribió «Te paso el formulario» y la guarda lo
+    frenó con `purchase_not_confirmed` porque nadie anotó un «sí». Criterio
+    del operador: el formulario no espera confirmación de nada; la
+    confirmación vive en la tarjeta ✅ y en `register_order`."""
+    path = _seed(_isolate_vault_dir, {"episodes": [_episode({
+        "producto": "Cubo Love", "cantidad": "1", "ciudad": "Bogotá", "metodo_pago": "contra entrega",
+    })]})
     tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
     result = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
-    assert result["queued"] is False
-    assert result["error"] == "purchase_not_confirmed"
-    assert "Cubo Love" in result["message"]
-    assert "21.000" in result["message"] or "21000" in result["message"]
-    assert _read(path).get("pending_ui_intents", []) == []
+    assert result["queued"] is True
+    assert [i["kind"] for i in _read(path)["pending_ui_intents"]] == ["shipping_flow"]
 
 
 @pytest.mark.asyncio
@@ -136,6 +140,48 @@ async def test_confirmado_sin_datos_degrades_to_interesado_without_confirmation(
     assert "escalate_to_human" in result["message"]
     assert "episode_closed" not in result
     assert md["episodes"][0]["closed_at_ms"] is None
+
+
+def _returning_customer(draft_slots: dict[str, Any]) -> dict[str, Any]:
+    """Clienta que ya compró hace semanas (pedido registrado de otro episodio)
+    y vuelve a pedir: el episodio de hoy no tiene confirmación (2026-10-09)."""
+    old = NOW - 16 * 86_400_000
+    return {
+        "active_route": "ventas",
+        "registered_order": {"success": True, "order_id": "o_viejo", "registered_at_ms": old},
+        "episodes": [
+            {"episode_id": "ep_001", "started_at_ms": old - 60_000, "order_id": "o_viejo", "closed_at_ms": old},
+            {**_episode(draft_slots), "episode_id": "ep_002"},
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_returning_customer_without_confirmation_stays_interesado(ctx, tmp_path: Path) -> None:
+    from src.plugins.chats.agent.sales.tools.tags import ManageConversationTagTool
+
+    path = _seed(tmp_path, _returning_customer({"producto": "Trilogía del Terror", "ciudad": "Bogotá"}))
+    tool = ManageConversationTagTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    result = json.loads(await tool.execute_with_context(ctx, tag="CONFIRMADO_SIN_DATOS", motivo="no tocó Confirmar"))
+    md = _read(path)
+    assert md["tag"] == "INTERESADO"
+    assert result["degraded_from"] == "CONFIRMADO_SIN_DATOS"
+    assert md["episodes"][-1]["closed_at_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_returning_customer_without_confirmation_is_not_handed_to_the_team(ctx, tmp_path: Path) -> None:
+    from src.platform.tools.escalation import EscalateToHumanTool
+    from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
+
+    SalesEscalateToHumanTool = guarded_escalation_tool(EscalateToHumanTool)
+
+    path = _seed(tmp_path, _returning_customer({"producto": "Trilogía del Terror"}))
+    tool = SalesEscalateToHumanTool(workspace=str(tmp_path), vault_dir=tmp_path)
+    result = json.loads(await tool.execute_with_context(ctx, reason_category="ORDER_PENDING_SHIPPING_DETAILS", summary="no tocó Confirmar"))
+    assert "escalation_decision" not in result
+    assert result["error"].startswith("precondition_failed")
+    assert _read(path)["active_route"] == "ventas"
 
 
 @pytest.mark.asyncio
@@ -366,3 +412,19 @@ async def test_ingest_registers_affirmation_as_confirmation(_isolate_vault_dir: 
     md = store.read(sid)
     assert md["episodes"][0]["order_draft"]["confirmed_at_ms"] > 0
     assert not any("APLAZ" in n.upper() for n in loader.calls[0][2])
+
+
+@pytest.mark.asyncio
+async def test_the_form_is_queued_once_per_turn(ctx, _isolate_vault_dir: Path) -> None:
+    """Revisión del premortem (2026-10-09): la ronda de las promesas o la red
+    podían pedir el formulario cuando ya estaba en la cola del turno; cada
+    llamada lo encolaba con otro id y el flush lo mandaba dos veces."""
+    path = _seed(_isolate_vault_dir, {"episodes": [_episode({"producto": "Cubo Love", "cantidad": "1"})]})
+    tool = RequestShippingDetailsTool(workspace=str(_isolate_vault_dir), catalog=_Catalog())
+
+    first = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
+    second = json.loads(await tool.execute_with_context(ctx, items=[{"handle": "cubo-love", "quantity": 1}]))
+
+    assert first["queued"] is True and second["queued"] is True
+    assert [i["kind"] for i in _read(path)["pending_ui_intents"]] == ["shipping_flow"]
+

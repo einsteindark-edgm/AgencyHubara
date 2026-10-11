@@ -35,6 +35,35 @@ def test_ape01_first_text_without_greeting_fails_on_that_turn() -> None:
     assert "aquí tienes" in r.evidence
 
 
+_OUR_FOLLOW_UP = (
+    "[El cliente responde a este mensaje que le enviamos: «Hola, te escribe Liliana, asesora de Hubara, para hacer "
+    "seguimiento a tu consulta de velas. ¿En cuál estás interesada?»]\nHola"
+)
+
+
+def test_ape01_brand_our_own_message_already_said_is_not_required() -> None:
+    """Incidente del 2026-10-09 (···9824, ep_001): el cliente contestó el
+    seguimiento de una asesora («te escribe Liliana, asesora de Hubara») y el
+    bot saludó por la hora sin repetir la marca. La marca ya la dijo nuestro
+    mensaje: no se le cobra al bot (operador)."""
+    t = traj(T(1, inbound=_OUR_FOLLOW_UP, sent=["Buenas tardes 🤍 Con gusto te ayudo con las velas de Halloween."]))
+    assert _run("APE-01", t).verdict == "pasa"
+
+
+def test_ape01_our_message_without_the_brand_still_asks_for_it() -> None:
+    inbound = "[El cliente responde a este mensaje que le enviamos: «Hola, ¿seguimos con tu pedido?»]\nHola"
+    t = traj(T(1, inbound=inbound, sent=["Buenas tardes, con gusto te ayudo."]))
+    assert _run("APE-01", t).verdict == "falla"
+
+
+def test_ape01_answering_our_message_still_needs_the_greeting_by_hour() -> None:
+    t = traj(T(1, inbound=_OUR_FOLLOW_UP, sent=["Con gusto te ayudo con las velas de Halloween."]))
+    r = _run("APE-01", t)
+    assert r.verdict == "falla"
+    assert "saludo por hora" in r.evidence
+    assert "marca" not in r.evidence
+
+
 def test_ape01_greeting_without_brand_fails() -> None:
     r = _run("APE-01", traj(T(1, sent=["¡Buenas tardes! ¿En qué te ayudo?"])))
     assert (r.verdict, r.turn) == ("falla", 1)
@@ -182,3 +211,16 @@ def test_ape04_first_contact_is_not_applicable() -> None:
 def test_ape04_unknown_first_contact_is_unknown() -> None:
     t = _without_first_contact(traj(T(1, sent=[_GREETING]), fidelity="legacy"))
     assert _run("APE-04", t).verdict == "desconocido"
+
+
+def test_ape03_answering_our_message_the_opening_was_ours() -> None:
+    """Incidente del 2026-10-09 (···9824): el cliente contesta el seguimiento de
+    la asesora; la apertura ya la hicimos nosotros y él llega con un tema. No
+    se le piden botones ni catálogo al bot."""
+    t = traj(T(1, inbound=_OUR_FOLLOW_UP, sent=["Buenas tardes 🤍 ¿Te interesa la trilogía completa?"]))
+    assert _run("APE-03", t).verdict == "no_aplica"
+
+
+def test_ape03_a_first_message_of_the_customer_still_needs_buttons_or_catalog() -> None:
+    t = traj(T(1, inbound="Hola", sent=["¡Buenos días! Bienvenido a Hubara. ¿Qué buscas?"]))
+    assert _run("APE-03", t).verdict == "falla"

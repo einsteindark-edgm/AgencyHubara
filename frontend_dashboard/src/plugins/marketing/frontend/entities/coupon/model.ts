@@ -46,6 +46,9 @@ export interface Coupon {
   unmanageableReason: string | null;
   acceptsUnits: boolean;
   units: CouponUnitsSummary | null;
+  /** Solo para la primera compra del cliente (el descuento de bienvenida,
+   *  condición de Hubara). null = no se pudo leer. */
+  firstPurchaseOnly?: boolean | null;
 }
 
 export interface CouponUnitRow {
@@ -122,6 +125,8 @@ export interface CouponInput {
   startsOn: string;
   endsOn: string;
   status: "draft" | "active";
+  /** Solo para la primera compra del cliente (el bot lo verifica). */
+  firstPurchaseOnly?: boolean;
 }
 
 /** Edición parcial (PATCH): solo los campos que cambiaron. */

@@ -180,16 +180,24 @@ class HttpMedusaClient:
         self,
         *,
         email: str | None = None,
+        q: str | None = None,
         limit: int = 10,
+        fields: str | None = None,
     ) -> dict[str, Any]:
-        """List customers, optionally filtered by email.
+        """List customers, optionally filtered by email (exact) or `q` (Medusa
+        searches that text inside email, name and phone).
 
         Used to find an existing WhatsApp customer (synthesized email) before
-        creating a new one (avoid duplicates on retry).
+        creating a new one (avoid duplicates on retry), and to find every
+        customer of a phone number (welcome coupon, 2026-10-09).
         """
         params: dict[str, Any] = {"limit": limit}
         if email:
             params["email"] = email
+        if q:
+            params["q"] = q
+        if fields:
+            params["fields"] = fields
         return await self._request("GET", "/admin/customers", params=params)
 
     async def create_customer(
@@ -288,6 +296,7 @@ class HttpMedusaClient:
         sales_channel_id: list[str] | None = None,
         fields: str | None = None,
         created_gte: str | None = None,
+        customer_id: list[str] | None = None,
     ) -> dict[str, Any]:
         """List orders. Used by the dashboard `/api/orders/orders` endpoint.
 
@@ -296,7 +305,7 @@ class HttpMedusaClient:
         its own DTO mapping.
 
         `created_gte` (ISO-8601): only orders created from that instant on
-        (`created_at[$gte]`).
+        (`created_at[$gte]`). `customer_id`: only those customers' orders.
         """
         params: dict[str, Any] = {
             "limit": limit,
@@ -310,6 +319,8 @@ class HttpMedusaClient:
             params["sales_channel_id[]"] = sales_channel_id
         if created_gte:
             params["created_at[$gte]"] = created_gte
+        if customer_id:
+            params["customer_id[]"] = customer_id
         return await self._request("GET", "/admin/orders", params=params)
 
     async def get_order(
@@ -334,6 +345,7 @@ class HttpMedusaClient:
         order: str = "-created_at",
         fields: str | None = None,
         created_gte: str | None = None,
+        customer_id: list[str] | None = None,
     ) -> dict[str, Any]:
         """List draft orders. Draft orders are the ones our `register_order`
         tool creates on sale close — they live in a separate Medusa endpoint
@@ -343,7 +355,7 @@ class HttpMedusaClient:
         kanban including pedidos recién cerrados pero no completados.
 
         `created_gte` (ISO-8601): only drafts created from that instant on
-        (`created_at[$gte]`).
+        (`created_at[$gte]`). `customer_id`: only those customers' drafts.
         """
         params: dict[str, Any] = {
             "limit": limit,
@@ -353,6 +365,8 @@ class HttpMedusaClient:
         }
         if created_gte:
             params["created_at[$gte]"] = created_gte
+        if customer_id:
+            params["customer_id[]"] = customer_id
         return await self._request("GET", "/admin/draft-orders", params=params)
 
     async def get_draft_order(

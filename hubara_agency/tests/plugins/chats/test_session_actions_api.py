@@ -35,7 +35,9 @@ _LUZ = CatalogProductDTO(
     variants=[CatalogVariantDTO(id="v1", title="Lavanda / Blanco", options={"Aroma": "Lavanda", "Color": "Blanco"},
                                 prices=[CatalogPriceDTO(amount="29000", currency_code="cop")])],
     options={"Aroma": ["Lavanda"], "Color": ["Blanco"]},
-    tags=["aroma:Lavanda", "color:Blanco"],
+    # Dos colores: el caso es del borrador que escribe MBA, no de la opción
+    # única que `set_order_slot` anota sola (test_order_slot_single_option.py).
+    tags=["aroma:Lavanda", "aroma:Coco", "color:Blanco", "color:Negro"],
 )
 _ZODIAC = CatalogProductDTO(
     id="p2", handle="duo-zodiacal", title="Dúo Zodiacal", status="published", description="Set con portavelas.",
@@ -136,7 +138,7 @@ def test_draft_writes_the_slots_into_the_active_episode(h: _Harness) -> None:
     # sobrescribe + valida contra el catálogo (color inexistente → rechazado con los válidos)
     r = h.client.post(_url("draft"), json={"color": "Verde"})
     assert r.status_code == 200
-    assert [x["field"] for x in r.json()["rejected"]] == ["color"] and r.json()["rejected"][0]["available"] == ["Blanco"]
+    assert [x["field"] for x in r.json()["rejected"]] == ["color"] and r.json()["rejected"][0]["available"] == ["Blanco", "Negro"]
     assert "color" not in h.meta()["episodes"][-1]["order_draft"]["slots"]
 
 
@@ -221,9 +223,61 @@ def test_order_can_skip_the_payment_instructions_message(h: _Harness) -> None:
 
     assert body["registered"] is True
     assert body["payment_instructions_sent"] is False and h.flushed == []
-    # El intent queda ENCOLADO (auditoría + el canvas de pago lo sigue viendo),
-    # simplemente no se despacha al cliente en este momento.
-    assert h.meta()["pending_ui_intents"][0]["kind"] == "payment_instructions"
+    assert body["payment_instructions_skipped"] == "operator"
+    # Sale de la cola: encolado, el próximo flush (el primer turno del bot
+    # tras «Confirmar pago», que devuelve la conversación) lo mandaba igual.
+    assert not _queued_payment_instructions(h)
+
+
+def _with_receipt(h: _Harness, *, kind: str = "comprobante_pago", episode_closed: bool = False) -> None:
+    """El cliente ya mandó su comprobante en el chat (lo leyó la visión, o un
+    PDF), con un humano atendiendo — como lo deja el ingest."""
+    episodes = [{"episode_id": "ep_1", "started_at_ms": 1, "closed_at_ms": None}]
+    if episode_closed:
+        episodes = [{**episodes[0], "closed_at_ms": 2, "closing_tag": "COMPRA_EXITOSA"},
+                    {"episode_id": "ep_2", "started_at_ms": 3, "closed_at_ms": None}]
+    metadata: dict[str, Any] = {
+        "active_route": ROUTE_HUMANO, "tag": "HUMANO", "episodes": episodes,
+        "media_index": [{"media_id": "m1", "filename": "m1.jpg", "episode_id": "ep_1", "kind": kind,
+                         "retention_class": "receipt", "created_at_ms": 1_791_566_770_000}],
+    }
+    if kind == "comprobante_pago":
+        metadata["recent_image_descriptions"] = [{
+            "media_id": "m1", "kind": kind, "episode_id": "ep_1",
+            "description": "Comprobante de pago por $65.900,00 a la llave Nequi",
+        }]
+    (h.vault / _A).mkdir(parents=True)
+    (h.vault / _A / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def _queued_payment_instructions(h: _Harness) -> list[dict[str, Any]]:
+    return [i for i in h.meta().get("pending_ui_intents") or [] if i.get("kind") == "payment_instructions"]
+
+
+@pytest.mark.parametrize("kind", ["comprobante_pago", "pdf_document"])
+def test_order_does_not_ask_for_the_payment_when_the_customer_already_sent_a_receipt(h: _Harness, kind: str) -> None:
+    """Caso 2026-10-09 (pedido #64): el cliente pagó y mandó el comprobante
+    mientras lo atendía el humano; al dar «Crear pedido» (casilla marcada por
+    defecto) el sistema le mandó los datos para pagar. Con un comprobante en el
+    episodio, el pedido se registra sin pedirle el pago otra vez."""
+    _with_receipt(h, kind=kind)
+
+    body = h.client.post(_url("order"), json={**_ORDER, "send_payment_instructions": True}).json()
+
+    assert body["registered"] is True
+    assert body["payment_instructions_sent"] is False and h.flushed == []
+    assert body["payment_instructions_skipped"] == "receipt_received"
+    assert not _queued_payment_instructions(h)
+
+
+def test_order_asks_for_the_payment_when_the_receipt_was_for_an_earlier_purchase(h: _Harness) -> None:
+    """El comprobante de una compra anterior (otro episodio) no paga este pedido."""
+    _with_receipt(h, episode_closed=True)
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["payment_instructions_sent"] is True and h.flushed == [_A]
+    assert body["payment_instructions_skipped"] is None
 
 
 def test_order_created_by_the_human_turns_on_schedule_and_confirm_payment(h: _Harness) -> None:
@@ -275,6 +329,39 @@ def test_order_from_the_panel_is_not_held_by_the_bot_split_lines(h: _Harness) ->
     assert len(h.port.calls) == 1
 
 
+def test_order_created_after_the_bot_closed_without_order_belongs_to_that_episode(h: _Harness) -> None:
+    """Caso 2026-10-09 (cliente que vuelve, pedido #65): el bot cerró el
+    episodio CONFIRMADO_SIN_DATOS (no tocó «Confirmar») y escaló; minutos
+    después el operador registró el pedido con «Crear pedido». Sin episodio
+    activo, el pedido abría uno VACÍO (sin referral, sin mensajes del cliente):
+    en Ads la conversación real quedaba «cotizado» y la venta caía en la
+    campaña del primer anuncio (origin sticky). La venta es de la
+    conversación donde se cerró; «Confirmar pago» tiene que cerrar ESA.
+    """
+    from src.platform.orders.medusa_order_command import apply_payment_confirmation_to_chat_metadata
+    from src.plugins.chats.api.dashboard import _compute_pending_payment_order_id
+
+    h.client.post(_url("draft"), json={"producto": "luz-serena", "ciudad": "Bogotá", "direccion": "Cl 1 # 2-3"})
+    h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "no tocó Confirmar"})
+    (closed,) = h.meta()["episodes"]
+    assert closed["closing_tag"] == "CONFIRMADO_SIN_DATOS" and closed["order_id"] is None
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["registered"] is True
+    m = h.meta()
+    (ep,) = m["episodes"]  # ningún episodio vacío nuevo
+    assert ep["episode_id"] == closed["episode_id"] and ep["closed_at_ms"] == closed["closed_at_ms"]
+    assert ep["order_id"] == body["order_id"] and ep["order_total_cop"] == body["total_cop"]
+    assert ep["closing_tag"] == "CONFIRMADO_PAGO_PENDIENTE"
+    # el colega conserva el hilo (invariante de handoff) y ve el pago por verificar
+    assert m["active_route"] == ROUTE_HUMANO and m["tag"] == "HUMANO"
+    assert _compute_pending_payment_order_id(m) == body["order_id"]
+    # «Confirmar pago» cierra la venta en el episodio donde ocurrió
+    assert apply_payment_confirmation_to_chat_metadata(m, now_ms=2, by="op", session_id=_A, order_id=body["order_id"])
+    assert m["episodes"][0]["closing_tag"] == "COMPRA_EXITOSA"
+
+
 def test_order_is_idempotent_for_the_same_content(h: _Harness) -> None:
     first = h.client.post(_url("order"), json=_ORDER).json()
     second = h.client.post(_url("order"), json=_ORDER).json()
@@ -309,6 +396,40 @@ def test_order_with_unknown_product_or_bad_shipping_does_not_register(h: _Harnes
     assert r.status_code == 422
     r = h.client.post(_url("order"), json={**_ORDER, "payment_method": "bitcoin"})
     assert r.status_code == 422
+
+
+# ── /order/app: «Crear pedido» desde la App Operador ─────────────────────────
+#
+# Las pantallas de la app dan por buena una respuesta salvo `success: false`, y
+# muestran `error_detail` tal cual: el mismo registro, con el resultado en palabras.
+
+
+def test_the_app_creates_the_order_and_hears_it_worked(h: _Harness) -> None:
+    r = h.client.post(_url("order/app"), json={**_ORDER, "send_payment_instructions": False})
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"success": True, "order_id": "order_1", "order_reference": "#22 (Luz Serena)",
+                        "already_registered": False}
+    assert h.meta()["registered_order"]["order_id"] == "order_1" and h.flushed == []
+    # el mismo pedido otra vez (doble toque): no se crea dos veces
+    again = h.client.post(_url("order/app"), json={**_ORDER, "send_payment_instructions": False}).json()
+    assert again["success"] is True and again["already_registered"] is True and len(h.port.calls) == 1
+
+
+def test_the_app_hears_in_words_why_the_order_was_not_created(h: _Harness) -> None:
+    unknown = h.client.post(_url("order/app"), json={**_ORDER, "items": [{"handle": "nope", "quantity": 1}]})
+    assert unknown.status_code == 200 and unknown.json() == {
+        "success": False, "error_detail": "Un producto del pedido ya no está en el catálogo. Créalo desde el dashboard."}
+    blank = h.client.post(_url("order/app"), json={
+        **_ORDER, "shipping": {**_ORDER["shipping"], "receiver_name": " ", "phone": "12"}})
+    assert blank.status_code == 200 and blank.json() == {
+        "success": False, "error_detail": "Revisa el teléfono y quién recibe antes de crear el pedido."}
+    assert h.port.calls == []
+
+    h.port.ok = False
+    down = h.client.post(_url("order/app"), json=_ORDER).json()
+    assert down == {"success": False,
+                    "error_detail": "No se pudo crear el pedido en la tienda. Intenta de nuevo o créalo desde el dashboard."}
 
 
 def test_order_when_the_provider_fails_keeps_the_audit_and_does_not_close(h: _Harness) -> None:
@@ -707,3 +828,13 @@ def test_after_a_close_the_draft_starts_empty_in_the_new_episode_and_the_old_one
     assert episodes[-1]["order_draft"]["slots"] == {"ciudad": "Cali"}
     assert episodes[-2]["order_draft"]["slots"] == {"producto": "luz-serena", "cantidad": "2"}  # intacto
     assert meta["tag"] == "NO_ETIQUETADO"
+
+
+def test_a_customer_without_phone_can_be_escalated_and_tagged(h: _Harness) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su conversación es
+    `wa_<id de Meta sin punto>`. La guarda solo aceptaba `wa_<dígitos>` y el
+    operador (o MBA) no podía escalar, etiquetar ni registrar su pedido."""
+    session = "wa_CO9990000000000002"
+    r = h.client.post(_url("escalate", session), json={"reason_category": "EXPLICIT_REQUEST", "summary": "quiere humano"})
+    assert r.status_code == 200, r.text
+    assert h.meta(session)["active_route"] == ROUTE_HUMANO

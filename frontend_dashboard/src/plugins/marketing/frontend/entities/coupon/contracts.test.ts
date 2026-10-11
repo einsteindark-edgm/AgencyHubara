@@ -6,6 +6,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  couponInputToBody,
+  couponPatchToBody,
   couponUnitsToBody,
   mapBackendCoupon,
   mapBackendCouponDetail,
@@ -95,6 +97,7 @@ describe("backendCouponsResponseSchema", () => {
       unmanageableReason: null,
       acceptsUnits: true,
       units: { total: 5, left: 3 },
+      firstPurchaseOnly: false,
     });
     expect(b?.products).toBe("all");
     expect(b?.manageable).toBe(false);
@@ -249,5 +252,35 @@ describe("backendCouponProductsResponseSchema", () => {
     expect(products).toEqual([
       { id: "prod_cubo", handle: "cubo-love", title: "Cubo Love", colors: ["Rojo", "Blanco"], aromas: [] },
     ]);
+  });
+});
+
+describe("solo primera compra (descuento de bienvenida, 2026-10-09)", () => {
+  it("el backend dice si el cupón es solo para la primera compra; null = no se pudo leer", () => {
+    const parsed = backendCouponsResponseSchema.parse({
+      coupons: [
+        { ...COUPON_FIXTURE, first_purchase_only: true },
+        { ...COUPON_FIXTURE, first_purchase_only: null },
+        COUPON_FIXTURE,
+      ],
+    });
+    expect(parsed.coupons.map(mapBackendCoupon).map((c) => c.firstPurchaseOnly)).toEqual([true, null, false]);
+  });
+
+  it("el alta y la edición mandan `first_purchase_only`", () => {
+    expect(
+      couponInputToBody({
+        code: "BIENVENIDA",
+        campaignName: "Descuento de bienvenida",
+        percentage: 5,
+        products: "all",
+        startsOn: "2026-10-10",
+        endsOn: "2026-12-31",
+        status: "active",
+        firstPurchaseOnly: true,
+      }),
+    ).toMatchObject({ first_purchase_only: true });
+    expect(couponPatchToBody({ firstPurchaseOnly: false })).toEqual({ first_purchase_only: false });
+    expect(couponPatchToBody({ percentage: 10 })).toEqual({ percentage: 10 });
   });
 });

@@ -78,6 +78,8 @@ class FilesystemMessageHistoryStore:
         document_filename: str | None = None,
         wamid: str | None = None,
         reply_to: dict[str, Any] | None = None,
+        sent_at_ms: int | None = None,
+        arrived_after_window: bool = False,
     ) -> None:
         """Persiste un inbound del cliente con timestamp ISO UTC.
 
@@ -101,6 +103,13 @@ class FilesystemMessageHistoryStore:
         del webhook). ``{"id": <wamid citado>}`` más, si el ingest lo pudo
         resolver (foto del bot), ``author``/``text``/``image_url``. El
         dashboard pinta la cita encima de la burbuja.
+
+        ``sent_at_ms``: cuándo lo escribió el cliente, si Meta lo entregó tarde
+        (``timestamp`` sigue siendo la llegada: ordena el chat). Se guarda como
+        ``sent_at`` ISO UTC. ``arrived_after_window``: llegó con la ventana de
+        24 h ya cerrada y el bot no pudo contestarle. Caso 2026-10-09: un
+        mensaje de 3 días antes apareció debajo de la plantilla recién enviada
+        y pareció su respuesta.
         """
         event: dict[str, Any] = {
             "role": "user",
@@ -119,6 +128,10 @@ class FilesystemMessageHistoryStore:
             event["wamid"] = wamid
         if reply_to:
             event["reply_to"] = reply_to
+        if sent_at_ms is not None:
+            event["sent_at"] = datetime.fromtimestamp(sent_at_ms / 1000, timezone.utc).isoformat()
+        if arrived_after_window:
+            event["arrived_after_window"] = True
         self._append(session_id, event)
 
     def append_assistant_event(
@@ -169,13 +182,14 @@ class FilesystemMessageHistoryStore:
     ) -> None:
         """Mensaje del humano operador via dashboard handoff.
 
-        Rol ``assistant`` (no rol nuevo): cuando el bot retome el chat,
-        ``build_prompt`` lo verá como parte del historial assistant natural,
-        sin que la API de Anthropic se rompa por un rol desconocido. El campo
-        extra ``sender: "human"`` queda persistido para que (1) el clasificador
-        del dashboard lo proyecte como ``ui_type: human_message`` y pinte una
-        burbuja distinta, y (2) quede traza histórica de qué fue agente vs
-        humano cuando un analista revise el JSONL.
+        Rol ``assistant`` (no rol nuevo) con ``sender: "human"``, para que
+        (1) el clasificador del dashboard lo proyecte como ``ui_type:
+        human_message`` y pinte una burbuja distinta, y (2) quede traza de qué
+        fue agente vs humano cuando un analista revise el JSONL. OJO: este
+        JSONL es el del dashboard; el historial del LLM vive aparte
+        (`EXOCLAW_STATE_DIR`, PR #183) y NO recibe este evento. Cuando el bot
+        retoma el chat, el ingest de Ventas cita en el turno lo que escribió
+        el colega (`episode_memory.unseen_team_exchange`, caso 2026-10-09).
 
         ``image_url``: ref relativa a una foto que el operador mandó al cliente,
         ya persistida en el media store outbound (``persist_outbound_image``).

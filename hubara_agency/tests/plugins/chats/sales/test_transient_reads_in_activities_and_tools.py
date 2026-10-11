@@ -156,8 +156,13 @@ def test_the_shipping_precondition_survives_a_transient_read_error(
 ) -> None:
     from src.plugins.chats.agent.sales.tools.ui_intents import _shipping_precondition_rejection
 
-    _seed(_isolate_vault_dir, {"episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}]})
-    expected = _shipping_precondition_rejection(SESSION, order_total_cop=49500, items_summary="1× Vela")
+    _seed(_isolate_vault_dir, {
+        "last_inbound_message_id": "wamid.defer",
+        "last_inbound_signal": {"kind": "deferral", "at_ms": 1, "message_id": "wamid.defer", "text": "luego"},
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}],
+    })
+    expected = _shipping_precondition_rejection(SESSION)
+    assert expected is not None and expected["error"] == "customer_deferred"
     _one_transient_read(monkeypatch)
 
-    assert _shipping_precondition_rejection(SESSION, order_total_cop=49500, items_summary="1× Vela") == expected
+    assert _shipping_precondition_rejection(SESSION) == expected

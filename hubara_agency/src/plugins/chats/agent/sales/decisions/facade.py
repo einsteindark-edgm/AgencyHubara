@@ -35,6 +35,7 @@ from src.plugins.chats.agent.sales.decisions.egress_activities import (
     decide_egress_activity as decide_egress_activity,
 )
 from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnPlan, uncovered_topics
+from src.plugins.chats.agent.sales.read_only_tools import READ_ONLY_TOOLS
 from src.sdk.agentkit import TurnPolicy
 
 # Tools que tocan al cliente (envían o encolan algo que el flush entrega).
@@ -81,6 +82,12 @@ def turn_policy_of(decisions: TurnDecisions) -> TurnPolicy | None:
     return TurnPolicy(extra_round_note=extra_round_note)
 
 
+_DATA_TAIL = "No le escribas al cliente hasta tener el dato de la herramienta."
+_SHOW_TAIL = (
+    "Esa herramienta es la que se lo muestra al cliente: llámala en esta misma respuesta, tu texto solo no basta."
+)
+
+
 def _no_extra_round(_tools_used: list[str], _shown: str) -> None:
     return None
 
@@ -103,10 +110,13 @@ def contract_policy_of(decisions: TurnDecisions | None) -> TurnPolicy | None:
         if not missing:
             return None
         nudges = " ".join(str(r.get("nudge") or f"usa {' o '.join(r.get('any_of') or [])}.") for r in missing)
-        return (
-            "[CONTRATO DEL TURNO] Antes de responder: " + nudges
-            + " No le escribas al cliente hasta tener el dato de la herramienta."
-        )
+        # Una fila que acepta una lectura pide un DATO; una que no, que el
+        # cliente VEA algo (turno 1 de …7392: con el catálogo pendiente, «hasta
+        # tener el dato» no decía nada: el modelo ya tenía los productos).
+        data = any(set(r.get("any_of") or []) & READ_ONLY_TOOLS for r in missing)
+        shows = any(not set(r.get("any_of") or []) & READ_ONLY_TOOLS for r in missing)
+        tails = [_DATA_TAIL] * data + [_SHOW_TAIL] * shows
+        return "[CONTRATO DEL TURNO] Antes de responder: " + nudges + " " + " ".join(tails)
 
     return TurnPolicy(extra_round_note=_no_extra_round, final_round_note=final_round_note)
 

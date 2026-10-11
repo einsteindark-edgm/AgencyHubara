@@ -1,13 +1,22 @@
 {
   "$schema": "./screen.schema.json",
-  "_nota": "«+ Más» del chat: las acciones del bot que el operador puede mandar. Van por el outbox (con los 5 s de deshacer). Las que piden elegir un producto esperan al selector del catálogo.",
+  "_nota": "«+ Más» del chat: las acciones del bot que el operador puede mandar. Van por el outbox (con los 5 s de deshacer). Las que necesitan un producto (colores, aromas, formulario de envío) muestran el catálogo para elegirlo: con el bot apagado nadie llena el pedido y sin esto el formulario respondía «faltan datos» y los colores no se podían mandar (caso 2026-10-09).",
   "schema": 1,
   "id": "acciones",
   "title": "Acciones",
   "params": ["session"],
+  "state": { "elegir": "", "cantidad": "1" },
+  "data": {
+    "catalogo": { "get": "/api/chats/catalog", "optional": true }
+  },
+  "computed": {
+    "menu": "{{state.elegir | empty}}",
+    "con_colores": "{{catalogo.products | where:'colors'}}",
+    "con_aromas": "{{catalogo.products | where:'aromas'}}"
+  },
   "body": [
     {
-      "type": "section", "title": "Catálogo",
+      "type": "section", "title": "Catálogo", "visible": "{{menu}}",
       "children": [
         {
           "type": "list",
@@ -18,23 +27,28 @@
                 { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos" } },
                 { "type": "back" }
               ]
+            },
+            {
+              "type": "list_item", "icon": "apps", "title": "Enviar colores", "subtitle": "Eliges el producto", "chevron": true,
+              "action": { "type": "set_state", "values": { "elegir": "color" } }
+            },
+            {
+              "type": "list_item", "icon": "star", "title": "Enviar aromas", "subtitle": "Eliges el producto", "chevron": true,
+              "action": { "type": "set_state", "values": { "elegir": "aroma" } }
             }
           ]
         }
       ]
     },
     {
-      "type": "section", "title": "Venta",
+      "type": "section", "title": "Venta", "visible": "{{menu}}",
       "children": [
         {
           "type": "list",
           "children": [
             {
-              "type": "list_item", "icon": "shipping", "title": "Pedir datos de envío",
-              "action": [
-                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "request_shipping_details", "label": "Pedir datos de envío" } },
-                { "type": "back" }
-              ]
+              "type": "list_item", "icon": "shipping", "title": "Pedir datos de envío", "subtitle": "Con el pedido o con el producto que elijas", "chevron": true,
+              "action": { "type": "set_state", "values": { "elegir": "envio" } }
             },
             {
               "type": "list_item", "icon": "shipping", "title": "Tarifas de envío",
@@ -48,13 +62,18 @@
       ]
     },
     {
-      "type": "section", "title": "Cierre",
+      "type": "section", "title": "Cierre", "visible": "{{menu}}",
       "children": [
         {
           "type": "list",
           "children": [
             {
-              "type": "list_item", "icon": "check", "title": "Resumen para confirmar",
+              "type": "list_item", "icon": "orders", "icon_tone": "success", "title": "Crear pedido",
+              "subtitle": "Registra el pedido cuando el cliente confirma", "chevron": true,
+              "action": { "type": "navigate", "screen": "crear_pedido", "params": { "session": "{{params.session}}" }, "sheet": true }
+            },
+            {
+              "type": "list_item", "icon": "check", "title": "Resumen para confirmar", "subtitle": "Con el pedido y los datos que llenó el cliente",
               "action": [
                 { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_order_confirmation", "label": "Resumen para confirmar" } },
                 { "type": "back" }
@@ -70,6 +89,90 @@
           ]
         }
       ]
+    },
+    {
+      "type": "section", "title": "Enviar colores", "subtitle": "Elige el producto: al cliente le llegan sus colores.",
+      "visible": "{{state.elegir | eq:'color'}}",
+      "children": [
+        { "type": "progress", "label": "Cargando el catálogo…", "visible": "{{status.catalogo.loading}}" },
+        {
+          "type": "list", "items": "{{con_colores}}", "as": "p", "key": "{{p.handle}}",
+          "item": {
+            "type": "list_item", "title": "{{p.title}}", "subtitle": "{{p.colors | join}}",
+            "action": [
+              { "type": "native", "name": "send_tool", "args": {
+                "session": "{{params.session}}", "tool": "present_variant_picker", "label": "Enviar colores · {{p.title}}",
+                "args": { "product": "{{p.handle}}", "attribute": "color" } } },
+              { "type": "back" }
+            ]
+          },
+          "empty": { "type": "empty", "icon": "inventory", "title": "Sin productos con colores", "body": "El catálogo no cargó o ningún producto tiene colores para elegir." }
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Enviar aromas", "subtitle": "Elige el producto: al cliente le llegan sus aromas.",
+      "visible": "{{state.elegir | eq:'aroma'}}",
+      "children": [
+        { "type": "progress", "label": "Cargando el catálogo…", "visible": "{{status.catalogo.loading}}" },
+        {
+          "type": "list", "items": "{{con_aromas}}", "as": "p", "key": "{{p.handle}}",
+          "item": {
+            "type": "list_item", "title": "{{p.title}}", "subtitle": "{{p.aromas | join}}",
+            "action": [
+              { "type": "native", "name": "send_tool", "args": {
+                "session": "{{params.session}}", "tool": "present_variant_picker", "label": "Enviar aromas · {{p.title}}",
+                "args": { "product": "{{p.handle}}", "attribute": "aroma" } } },
+              { "type": "back" }
+            ]
+          },
+          "empty": { "type": "empty", "icon": "inventory", "title": "Sin productos con aromas", "body": "El catálogo no cargó o ningún producto tiene aromas para elegir." }
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Pedir datos de envío", "subtitle": "El formulario sale con el producto, la cantidad y el precio del catálogo.",
+      "visible": "{{state.elegir | eq:'envio'}}",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "orders", "title": "Con los productos del pedido", "subtitle": "Lo que ya está en el pedido de esta conversación",
+              "action": [
+                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "request_shipping_details", "label": "Pedir datos de envío" } },
+                { "type": "back" }
+              ]
+            }
+          ]
+        },
+        { "type": "text", "style": "label", "emphasis": true, "text": "O elige la cantidad y el producto" },
+        {
+          "type": "chips", "bind": "state.cantidad",
+          "options": [
+            { "value": "1", "label": "1" }, { "value": "2", "label": "2" }, { "value": "3", "label": "3" },
+            { "value": "4", "label": "4" }, { "value": "5", "label": "5" }, { "value": "6", "label": "6" }
+          ]
+        },
+        { "type": "progress", "label": "Cargando el catálogo…", "visible": "{{status.catalogo.loading}}" },
+        {
+          "type": "list", "items": "{{catalogo.products}}", "as": "p", "key": "{{p.handle}}",
+          "item": {
+            "type": "list_item", "title": "{{p.title}}", "trailing": "{{p.price_cop | money}}",
+            "action": [
+              { "type": "native", "name": "send_tool", "args": {
+                "session": "{{params.session}}", "tool": "request_shipping_details", "label": "Pedir datos de envío · {{state.cantidad}}× {{p.title}}",
+                "args": { "product": "{{p.handle}}", "quantity": "{{state.cantidad}}" } } },
+              { "type": "back" }
+            ]
+          },
+          "empty": { "type": "empty", "icon": "inventory", "title": "Sin catálogo", "body": "No se pudo cargar el catálogo. Cierra y vuelve a abrir «Más»." }
+        }
+      ]
+    },
+    {
+      "type": "button", "style": "text", "icon": "arrow_back", "text": "Volver a las acciones", "visible": "{{menu | not}}",
+      "action": { "type": "set_state", "values": { "elegir": "" } }
     }
   ]
 }

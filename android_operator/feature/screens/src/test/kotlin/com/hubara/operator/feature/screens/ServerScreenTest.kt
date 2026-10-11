@@ -267,6 +267,13 @@ class ServerScreenTest {
         // Las acciones del componente nativo son las del JSON.
         compose.runOnIdle { island!!.action("on_more")!!.invoke() }
         assertThat((actions.last().first as Action.Navigate).screen).isEqualTo("acciones")
+
+        // Y abre la pantalla del servidor que pida una burbuja («Crear pedido» → crear_pedido), como hoja.
+        compose.runOnIdle { island!!.open("crear_pedido", mapOf("session" to "wa_000000000104")) }
+        val open = actions.last().first as Action.Navigate
+        assertThat(open.screen).isEqualTo("crear_pedido")
+        assertThat(open.sheet).isTrue()
+        assertThat(open.params.mapValues { it.value.text(actions.last().second) }).containsExactly("session", "wa_000000000104")
     }
 
     @Test fun la_fila_de_la_bandeja_y_los_pasos_del_pedido() {

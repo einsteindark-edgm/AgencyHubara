@@ -96,6 +96,15 @@ def test_canary_settings_are_validated(vault: Path) -> None:
     assert out["state"]["test_numbers"] == [TEST] and out["state"]["canary_percent"] == 10
 
 
+def test_a_customer_without_a_phone_can_be_a_test_number(vault: Path) -> None:
+    """Desde #411 un cliente con nombre de usuario de WhatsApp (sin teléfono)
+    es `wa_<país><id de Meta>`: también puede probar el bot nuevo."""
+    out = control.set_rollout(vault, mode="off", test_numbers=["wa_CO9990000000000001"], actor="x")
+
+    assert out["state"]["test_numbers"] == ["wa_CO9990000000000001"]
+    assert _refused(control.set_rollout, vault, mode="off", test_numbers=["wa_CO.999"], actor="x").status == 422
+
+
 def test_test_numbers_must_match_whole(vault: Path) -> None:
     assert _refused(control.set_rollout, vault, mode="off", test_numbers=[TEST + "\n"], actor="x").status == 422
 

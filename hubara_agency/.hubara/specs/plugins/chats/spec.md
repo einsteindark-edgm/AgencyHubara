@@ -57,6 +57,58 @@ y el resto se perdía en silencio.
 - THEN los válidos se ingieren y se devuelve HTTP 200 (un 400 haría que Meta reintente TODO el POST y re-entregue los válidos)
 - AND cada ítem rechazado se loguea con su motivo
 
+#### Scenario: Cliente con nombre de usuario de WhatsApp (sin teléfono)
+
+Si el cliente activó su nombre de usuario y el negocio no habló con él en los
+últimos 30 días (el caso de un lead nuevo de anuncio), Meta omite el teléfono
+(`messages[].from`, `contacts[].wa_id`) y manda solo su id de Meta
+(`from_user_id` / `contacts[].user_id`, BSUID: `CO.9990000000000002`). Bug
+(ledger 2026-09-25 y 2026-10-09): el parser exigía `from`, respondía 400 y el
+cliente nunca llegaba al bot (Halloween 07–08 oct: 3 de las 8 conversaciones
+que contó Meta).
+
+- GIVEN un mensaje sin `from` y con `from_user_id` = `<CC>.<1..128 alfanuméricos>`
+- WHEN se procesa
+- THEN se ingiere en la conversación `wa_<CC><id>` (el BSUID sin el punto: directorio seguro del vault)
+- AND `WhatsAppMessage.wa_user_id` lleva el BSUID y `profile_name` sale del contacto con ese `user_id`
+- AND la respuesta al cliente sale con `"recipient": "<BSUID>"` en vez de `"to"` (la traduce `_post_json`, único punto de salida)
+- AND un `from_user_id` inválido (sin país, id "padre" `CC.ENT.…`, traversal, > 128) se rechaza como antes
+
+#### Scenario: El mismo cliente con y sin teléfono sigue en SU conversación
+
+- GIVEN un mensaje que trae BSUID
+- WHEN el BSUID ya tiene conversación (`<vault>/_identity/whatsapp_user_ids/<CC><id>`)
+- THEN el mensaje va a esa conversación, traiga o no teléfono (empezó sin teléfono → sigue en `wa_CO…`; empezó con teléfono → sigue en `wa_57…`)
+- AND si no la tiene, queda fijada la de este mensaje (el primero que escribe gana)
+
+#### Scenario: La ventana de 24 h se abre cuando el cliente escribió
+
+Meta reintenta un webhook no aceptado hasta 7 días. Con la ventana contada
+desde la LLEGADA, una re-entrega tardía parecía «ventana abierta»: el bot
+contestaba texto libre, Meta lo rechazaba (131047) y el panel no ofrecía la
+plantilla (2026-10-09).
+
+- GIVEN un mensaje con `messages[].timestamp` dentro del horizonte de reintentos de Meta (8 días)
+- WHEN se ingiere
+- THEN `last_inbound_at_ms` y `service_window_expires_at_ms` (y la ventana CTWA) salen de `min(llegada, timestamp)`
+- AND si esa ventana YA cerró al llegar, el mensaje queda en el chat y en la metadata, pero NO dispara el turno del bot ni el watchdog (`inbound_after_service_window` en el log), y NO pasa al humano: el operador lo ve con la ventana cerrada y lo reactiva con plantilla
+- AND un `timestamp` más viejo que el horizonte (reloj sintético: simulador, laboratorio) o ausente cuenta la llegada
+- AND la ventana la abre el ÚLTIMO mensaje del cliente: un rezagado que llega después de uno más nuevo no la cierra hacia atrás (`last_inbound_at_ms` no retrocede)
+
+#### Scenario: El chat dice cuándo escribió el cliente un mensaje que llegó tarde
+
+Caso 2026-10-09 (cliente sin teléfono): Meta re-entregó en fila dos mensajes de un
+cliente sin teléfono (del 5 y del 6 oct). El segundo llegó 19 s después de la
+plantilla del operador, con la hora de llegada, y pareció su respuesta: el
+operador esperó que el bot contestara y no entendió por qué el panel volvía a
+pedir plantilla.
+
+- GIVEN un mensaje del cliente que Meta entregó 5 min o más después de que lo escribió
+- WHEN se guarda en el historial
+- THEN el evento lleva `sent_at` (ISO UTC, cuándo lo escribió; `timestamp` sigue siendo la llegada y ordena el chat)
+- AND si llegó con la ventana ya cerrada lleva `arrived_after_window: true`
+- AND `GET /api/dashboard/sessions/{id}` los entrega tal cual; el panel web y la app muestran «Escrito el …» en la burbuja y, con la ventana cerrada, la nota «El bot no respondió: llegó con la ventana de 24 h cerrada»
+
 #### Scenario: Status update (no es mensaje)
 
 - GIVEN un webhook que es status update (delivered/read), no mensaje nuevo
@@ -347,6 +399,15 @@ entrega ya asignada (`summary.due_iso != null`).
 - THEN el flujo de 2 pasos (agendar + confirmar) queda disponible como fallback
 - AND el popover avisa explícitamente que no se pudo verificar si ya hay fecha (la protección está apagada)
 
+#### Scenario: "Crear pedido" después de un cierre sin pedido
+
+- GIVEN el último episodio cerró sin pedido (p.ej. CONFIRMADO_SIN_DATOS por inactividad) y no hay episodio activo
+- WHEN el operador registra el pedido con "Crear pedido"
+- THEN el pedido queda en ESE episodio y su cierre pasa a CONFIRMADO_PAGO_PENDIENTE (el anterior queda en `order_attached_after_close`)
+- AND NO se abre un episodio vacío: en Ads la conversación sale «ganado» en su canal (no en la campaña del primer anuncio de la sesión)
+- AND "Confirmar pago" cierra ese mismo episodio con COMPRA_EXITOSA
+- AND si ese episodio ya tenía su propio pedido, el pedido nuevo abre otro episodio (nunca pisa una venta)
+
 #### Scenario: Agendar sobre stage avanzado se rechaza
 
 - GIVEN un pedido en stage `ready`/`shipping`/`delivered`/`cancelled`
@@ -512,7 +573,7 @@ MUST NOT afectar la respuesta al webhook.
 - GIVEN un POST válido con uno o más mensajes (en cualquier `entry`/`change`, incluido `standby`)
 - WHEN el handler lo acepta
 - THEN escribe un registro `request` (`outcome=accepted`, `fields`, `n_messages`, `n_statuses`)
-- AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
+- AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` — `wa_<teléfono>` o `wa_<CC><id>` si solo vino el BSUID —, `user_id` (el `from_user_id` crudo, también en los `rejected`) y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
 
 #### Scenario: el ingest deja su desenlace
 
@@ -562,8 +623,16 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 #### Scenario: Promociones vigentes
 
 - WHEN el cliente pregunta "¿tienen descuentos?" y el bot llama `list_promotions`
-- THEN el envelope lista código, descuento y productos de cada cupón activo (no automático)
+- THEN el envelope lista código, descuento y productos de cada cupón que rige hoy (no automático)
 - AND con lista vacía el bot dice que no hay promociones (no inventa) y solo escala si el cliente insiste en negociar
+
+#### Scenario: Un cupón vencido no se ofrece (venta del 2026-10-09)
+
+- GIVEN un cupón cuya campaña ya terminó (Medusa lo sigue marcando `active`), uno que todavía no empieza y uno sin presupuesto
+- WHEN el bot llama `list_promotions`
+- THEN ninguno de los tres aparece: se lista solo lo que `apply_coupon` aplicaría ahora (`coupon_problem`: activo, ya empezó, no venció, con presupuesto, alcance legible y no de envío)
+- AND si no queda ninguno, el resumen dice que no hay promociones vigentes
+- AND el builder de campañas (`GET /api/marketing/promotions`) tampoco ofrece el vencido ni el agotado; el que todavía no empieza sí, para programar la campaña de su inicio
 
 #### Scenario: Cupón con mínimo de compra o sin productos aplicables
 
@@ -608,6 +677,18 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - GIVEN un episodio con `applied_coupon`
 - WHEN el operador usa "Crear pedido"
 - THEN el sugerido muestra `discount_cop`/`coupon_code` y el registro descuenta lo mismo que descontaría el bot
+
+#### Scenario: Descuento de bienvenida, solo en la primera compra (2026-10-09)
+
+- GIVEN la central de cupones creó `BIENVENIDA` (5 %, todo el catálogo) con «Solo primera compra»: la condición vive en el vault (`_promotions/conditions/BIENVENIDA.json`), se escribe ANTES de crear el cupón en Medusa y el lector de promociones la pega en el `PromotionDTO` (`first_purchase_only`)
+- WHEN el cliente pide «el descuento de la primera compra» (o «el de la página») y el bot llama `list_promotions`
+- THEN el resumen nombra el cupón con su nombre y su condición y le dice al bot que lo aplique con su código aunque el cliente no lo sepa
+- AND `apply_coupon` lo aplica si la PERSONA no tiene un pedido anterior que cuente (ni cancelado ni de prueba): ni uno de los que registró la conversación antes del episodio activo (OrderFacts), ni ninguno de los pedidos y borradores de su número en Medusa (`get_customer_orders_port`: el cliente `wa+<sesión>@hubara.local` del bot y «Crear pedido», y todo cliente cuyo teléfono termine en sus 10 dígitos), aunque vengan de otra conversación o los haya cargado el operador
+- AND el pedido del episodio activo no cuenta: es justamente la primera compra (el colega pudo crearlo antes de prometer el descuento)
+- AND a quien ya compró se le responde `applied=false`, `reason="first_purchase_only"`, y `list_promotions` lo marca `applies_to_customer=false`; «Aplicar cupón» de la app del operador usa la misma vara
+- AND si Medusa no confirma sus pedidos, `reason="first_purchase_unknown"` y el cupón NO se aplica; una puerta que valide cupones sin poder mirar las compras (la campaña que aplica su cupón sola) tampoco lo aplica y le deja el `apply_coupon` al bot
+- AND un caso del laboratorio no le pregunta a Medusa: ahí la persona no tiene pedidos y decide lo que registró la conversación del banco
+- AND una condición ilegible deja el cupón `scope_unresolved` (no se ofrece ni se aplica)
 
 ### Requirement: Hilo de cada turno del bot en el chat (laboratorio, PR 17)
 
@@ -860,6 +941,79 @@ cerrada). Un cupón sin filas se comporta como siempre.
 - GIVEN el cliente confirmó el total con descuento
 - WHEN al registrar Medusa (vendidas) o el vault (filas del cupo) no responden
 - THEN NO se crea el draft, el pedido queda en `failed_order_registrations` (pending) con el reparto CONFIRMADO, y el envelope trae `audit_id` SIN `error` (el bot escala como con Medusa caído) — nunca un "total nuevo" falso
+
+### Requirement: «Crear pedido» no le pide el pago a quien ya pagó (2026-10-09)
+
+Si en el episodio activo hay un comprobante del cliente (una foto que la visión leyó como `comprobante_pago` o un PDF, en `media_index` / `recent_image_descriptions`), `session-actions@v1 /order` SHALL registrar el pedido sin mandarle los datos de pago, aunque el formulario pida enviarlos (`payment_instructions_skipped: "receipt_received"`). Si el formulario los apaga, el motivo es `operator`. En los dos casos el aviso MUST salir de `pending_ui_intents`: si quedara en la cola, el primer flush posterior lo mandaría (por ejemplo, el turno del bot después de que «Confirmar pago» le devuelve la conversación). El comprobante de una compra anterior (otro episodio) no cuenta. `order-intake /suggest` SHALL devolver `payment_receipt`: el formulario abre con la casilla apagada y avisa «El cliente ya envió su comprobante de pago (hora, lo que leyó la visión)».
+
+#### Scenario: Pagó mientras lo atendía el humano (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el cliente mandó el comprobante en el episodio y lo atiende un humano
+- WHEN el operador da «Crear pedido» con transferencia
+- THEN el pedido se registra, no sale «Aquí tienes los datos para tu pago anticipado» y el aviso confirma que no se le pidió el pago
+
+#### Scenario: El comprobante era de la compra anterior
+
+- GIVEN el comprobante está en un episodio ya cerrado
+- WHEN el operador registra el pedido nuevo con transferencia
+- THEN los datos de pago salen como siempre
+
+### Requirement: Acciones de venta del operador con el bot apagado (App Operador)
+
+Con un humano al mando el bot no corre y nadie escribe el borrador del pedido. Las acciones de la App Operador que
+dependen del pedido (`POST /api/chats/session-actions/{id}/tools/request_shipping_details`, `…/present_order_confirmation`)
+y las burbujas (`GET /api/chats/mobile/suggestions/{id}`) SHALL leer el borrador del episodio completado con lo que pasó
+con el humano al mando, sin escribirlo: el producto que el operador eligió en la app (formulario `{product, quantity}`
+o colores/aromas `{product, attribute}`) y lo que el cliente llenó en el formulario de envío. Solo cuenta lo del episodio
+(o, sin episodio activo, lo posterior al cierre del último). Un 422 `invalid_args` MUST traer `message`: la frase en
+español que la app le muestra al operador. Caso 2026-10-09: «faltan datos para esta acción» y la burbuja de colores que
+nunca salía.
+
+#### Scenario: Formulario con el producto que elige el operador
+
+- GIVEN un chat intervenido cuyo episodio tiene el borrador vacío
+- WHEN el operador pide los datos de envío con `{product: "duo-zodiacal", quantity: "2"}`
+- THEN el formulario sale con «2× Dúo Zodiacal» y el subtotal del catálogo, firmado por el humano
+
+#### Scenario: Resumen con lo que llenó el cliente
+
+- GIVEN el operador mandó el formulario de un producto y después el cliente lo llenó (`[datos de envío recibidos] …`)
+- WHEN el operador pide el resumen para confirmar con `{}`
+- THEN el resumen sale con ese producto, la dirección y el medio de pago del formulario; las burbujas lo ofrecen primero (`etapa_cierre`)
+
+#### Scenario: Pedido vacío
+
+- GIVEN el borrador no tiene productos y el operador no eligió ninguno
+- WHEN pide el formulario o el resumen con `{}`
+- THEN responde 422 `invalid_args` con un `message` que dice qué falta y qué hacer (nada sale al cliente)
+
+#### Scenario: Un producto sin colores no se queda en variantes
+
+- GIVEN un chat intervenido con un producto que no ofrece colores, su cantidad y todos los datos de envío
+- WHEN se piden las burbujas
+- THEN la etapa es `etapa_cierre` (la de la venta contra el catálogo, no la del bot) y se ofrece «Resumen para confirmar»
+
+### Requirement: «Crear pedido» desde la App Operador
+
+Con un humano al mando y sin pedido registrado en el episodio, `GET /api/chats/mobile/suggestions/{id}` SHALL ofrecer la
+burbuja «Crear pedido» (`tone: "order"`, `opens: "crear_pedido"`) cuando el cliente cerró la compra (tocó «Confirmar»
+en el último resumen o el borrador anotó su «sí») — primera — o cuando el pedido ya tiene producto y datos de envío —
+después del resumen. Solo a una app que declara `?features=open_screen`. El formulario de la app SHALL leer el pedido
+sugerido con `GET /api/chats/order-intake/{id}/form` (sin registrar nada) y registrarlo con
+`POST /api/chats/session-actions/{id}/order/app`, que responde `success` y, si no se creó, el motivo en palabras.
+
+#### Scenario: El cliente confirmó el resumen
+
+- GIVEN el operador mandó el resumen desde la app y el cliente tocó «✅ Confirmar»
+- WHEN la app pide las burbujas con `features=open_screen`
+- THEN «Crear pedido» va primera y marcada; una app que no declara `open_screen` no la recibe
+
+#### Scenario: Registrar desde la app
+
+- GIVEN el formulario prellenado con productos, envío y medio de pago
+- WHEN el operador lo crea
+- THEN el pedido queda registrado como con `/order` y la respuesta trae `success: true`; con un dato mal llenado o un
+  producto que ya no existe, `success: false` y qué revisar (nunca un 422 crudo)
 
 ## Out of scope
 

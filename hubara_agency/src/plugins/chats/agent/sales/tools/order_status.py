@@ -97,6 +97,8 @@ class CheckOrderStatusTool(ToolBase):
     """Consulta el estado de los pedidos del cliente actual."""
 
     name = "check_order_status"
+    # Solo lee: el reinicio del turno conserva su resultado (`read_only_tools.py`).
+    read_only = True
     description = (
         "Devuelve el estado actual de los pedidos del cliente de ESTA "
         "conversación: etapa de entrega y estado del pago (pay_status). "

@@ -60,7 +60,9 @@ class FakeOperatorApi : OperatorApi {
         return Response.success(HumanMessageResponseDto(true, ""))
     }
     override suspend fun sseTicket() = SseTicketDto("t")
-    override suspend fun suggestions(id: String) = suggestionsResponse(id).also { calls += "suggestions:$id" }
+    val suggestionFeatures = mutableListOf<String>()
+    override suspend fun suggestions(id: String, features: String) =
+        suggestionsResponse(id).also { calls += "suggestions:$id"; suggestionFeatures += features }
 
     override suspend fun runTool(key: String, tool: String, body: ToolRequest): Response<ToolResponseDto> {
         calls += "tool:$key:$tool"

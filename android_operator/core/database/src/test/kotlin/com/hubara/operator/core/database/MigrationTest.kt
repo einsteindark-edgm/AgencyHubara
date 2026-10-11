@@ -49,6 +49,24 @@ class MigrationTest {
         }
     }
 
+    @Test fun de_la_version_3_a_la_4_conserva_los_mensajes_sin_marca_de_tardio() {
+        helper.createDatabase(DB, 3).use { db ->
+            db.execSQL(
+                "INSERT INTO messages (sessionId, key, position, author, text, imageUrl, timestampMs) " +
+                    "VALUES ('wa_000000000101', 'w1', 0, 'CUSTOMER', 'hola', NULL, 1)",
+            )
+        }
+
+        helper.runMigrationsAndValidate(DB, 4, true).use { db ->
+            db.query("SELECT text, sentAtMs, arrivedAfterWindow FROM messages WHERE key = 'w1'").use { c ->
+                assertThat(c.moveToFirst()).isTrue()
+                assertThat(c.getString(0)).isEqualTo("hola")
+                assertThat(c.isNull(1)).isTrue()           // columnas nuevas de v4
+                assertThat(c.getInt(2)).isEqualTo(0)
+            }
+        }
+    }
+
     private companion object {
         const val DB = "migracion-test.db"
     }

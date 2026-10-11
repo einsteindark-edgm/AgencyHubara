@@ -28,6 +28,7 @@ Patron LLM (ver `workspace/TOOLS.md`):
     borrar un dato que quedo indefinido, mandalo como string vacio.
 """
 from __future__ import annotations
+from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors_sync
 
 import copy
@@ -74,6 +75,7 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
 )
 from src.plugins.chats.shared.draft_items import (
     ITEM_FIELDS,
+    NOT_OFFERED_KEY,
     draft_items,
     product_key,
 )
@@ -308,7 +310,7 @@ class SetOrderSlotTool(ToolBase):
         if self._catalog is None:
             return None
         try:
-            result = await self._catalog.search(q="", limit=30)
+            result = await self._catalog.search(q="", limit=WHOLE_CATALOG)
         except Exception as exc:  # noqa: BLE001 — catálogo caído: degradar abierto
             logger.warning(
                 "📝 [TOOL set_order_slot] catálogo no disponible para validar "
@@ -556,6 +558,7 @@ class SetOrderSlotTool(ToolBase):
         lines: list[dict[str, str]] = []
         rejected: list[dict[str, Any]] = []
         tones: list[str] = []
+        not_offered: set[str] = set()
         for n, line in enumerate(parsed, start=1):
             values = {k: v for k, v in shared.items() if isinstance(v, str) and v.strip()}
             values.update({k: line[k] for k in _LINE_VARIANTS if k in line})
@@ -570,10 +573,17 @@ class SetOrderSlotTool(ToolBase):
                         f"línea {n}: '{family_info['requested']}' (registrado como "
                         f"{family_info['captured']})"
                     )
+            if product is not None:
+                # Lo que el catálogo no deja elegir, también en cada línea.
+                filled, lacking = _only_options(product, values, {}, [])
+                values.update(filled)
+                not_offered.update(lacking)
             lines.append({**values, "cantidad": line["cantidad"]})
         if rejected:
             return producto, None, rejected
         set_product_lines(data, producto=producto, lines=lines, now_ms=now_ms)
+        if not_offered and product is not None:
+            _mark_not_offered(data, product, sorted(not_offered), producto)
         if tones:
             # El tono pedido queda para el operador (empaque), como en un ítem.
             note = f"{producto}: tono de color pedido por el cliente, " + "; ".join(tones)
@@ -976,6 +986,17 @@ class SetOrderSlotTool(ToolBase):
         ):
             rejected.append({"field": slot, "given": provided.pop(slot), "reason": "not_given_by_customer"})
 
+        # Lo que el catálogo no deja elegir (incidente del 2026-10-09): un
+        # producto con UNA opción de aroma o de color la trae anotada; uno sin
+        # ninguna queda marcado para que la etapa no la espere. Solo si esta
+        # llamada deja datos del ítem (un llamado rechazado sigue sin escribir)
+        # y nunca sobre lo que el modelo dio, borró o le rechazaron.
+        auto_filled: dict[str, str] = {}
+        not_offered: list[str] = []
+        if product is not None and len(own) <= 1 and any(k in provided for k in ITEM_FIELDS):
+            auto_filled, not_offered = _only_options(product, provided, target_item or {}, rejected)
+            provided.update(auto_filled)
+
         # El ítem destino viaja explícito al store (sin esto el dato iría al
         # último producto tocado). Si no queda NINGÚN dato real, no se escribe.
         injected = False
@@ -990,6 +1011,8 @@ class SetOrderSlotTool(ToolBase):
         wrote = bool(provided) and not (injected and set(provided) == {"producto"})
         if wrote:
             update_order_draft(data, slots=provided, now_ms=now_ms)
+            if not_offered and product is not None:
+                _mark_not_offered(data, product, not_offered, provided.get("producto"))
         if wrote or lines_written is not None:
             self._store.write_merged(ctx.session_key, base=base, ours=data)
         wrote = wrote or lines_written is not None
@@ -1003,10 +1026,11 @@ class SetOrderSlotTool(ToolBase):
             current_slots,
         )
 
+        captured = {k: v for k, v in provided.items() if k not in auto_filled}
         envelope: dict[str, Any] = {
             "updated": wrote,
             "captured": (
-                {**provided, "lineas": lines_written} if lines_written is not None else provided
+                {**captured, "lineas": lines_written} if lines_written is not None else captured
             ),
             "order_draft": current_slots,
             "summary": (
@@ -1067,6 +1091,13 @@ class SetOrderSlotTool(ToolBase):
                 f"referencia: la vela se hace en {custom_color['color']}, sin "
                 "costo extra. Confírmaselo con calidez; nunca le hagas elegir "
                 "entre su signo y su color."
+            )
+        if auto_filled:
+            # El producto no deja elegir: va anotado (no se le pregunta).
+            envelope["auto_filled"] = auto_filled
+            only = " y ".join(f"{k} {v}" for k, v in auto_filled.items())
+            envelope["summary"] += (
+                f" El producto tiene una sola opción de {only}: quedó anotada y NO se le pregunta al cliente."
             )
         if rejected:
             envelope["rejected"] = rejected
@@ -1133,6 +1164,54 @@ class SetOrderSlotTool(ToolBase):
                 "vuelve a llamar set_order_slot con la elección final."
             )
         return json.dumps(envelope, ensure_ascii=False)
+
+
+def offered_options(product: Any) -> dict[str, list[str]]:
+    """Las opciones que el catálogo le ofrece al cliente: aroma por tags;
+    color por la paleta real (`metadata.colores`) si existe, si no por tags
+    (la misma lista con que `_check_values` valida)."""
+    attrs = parse_variant_tags(product.tags)
+    variant_colors = parse_variant_colors(product.metadata)
+    colors = primary_colors(variant_colors) if variant_colors else list(attrs.colors)
+    return {"aroma": list(attrs.aromas), "color": colors}
+
+
+def _only_options(
+    product: Any, provided: dict[str, Any], item: dict[str, Any], rejected: list[dict[str, Any]]
+) -> tuple[dict[str, str], list[str]]:
+    """`(lo que se anota solo, lo que el producto no ofrece)` para aroma y
+    color: una sola opción se anota si el modelo no la dio ni la borró, no
+    se la rechazaron y el ítem no la tiene; ninguna opción se marca."""
+    rejected_fields = {r.get("field") for r in rejected}
+    filled: dict[str, str] = {}
+    not_offered: list[str] = []
+    for kind, options in offered_options(product).items():
+        if not options:
+            not_offered.append(kind)
+            continue
+        if (
+            len(options) == 1
+            and kind not in provided
+            and kind not in rejected_fields
+            and not str(item.get(kind) or "").strip()
+        ):
+            filled[kind] = options[0]
+    return filled, not_offered
+
+
+def _mark_not_offered(data: dict[str, Any], product: Any, kinds: list[str], name: Any) -> None:
+    """`order_draft[NOT_OFFERED_KEY][producto] = atributos sin opciones`, con
+    el nombre que quedó en el ítem (la etapa lo busca así: con el handle, la
+    marca por título no se encontraba — revisión del premortem 2026-10-09),
+    el título y el handle."""
+    draft = get_active_draft(data)
+    if not isinstance(draft, dict):
+        return
+    marks = draft.get(NOT_OFFERED_KEY)
+    marks = dict(marks) if isinstance(marks, dict) else {}
+    for key in {product_key(name), product_key(product.title), product_key(product.handle)} - {""}:
+        marks[key] = sorted(set(marks.get(key) or []) | set(kinds))
+    draft[NOT_OFFERED_KEY] = marks
 
 
 def _find_product(products: list[Any], name: Any) -> Any | None:

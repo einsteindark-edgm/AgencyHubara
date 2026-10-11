@@ -209,6 +209,27 @@ class InboxMsg:
     is_handoff: bool = False
 
 
+# Turno 1 de …7392 (2026-10-08): el reinicio recibe lo que el intento cortado
+# ya leyó (la búsqueda del catálogo) en vez de repetirlo.
+CARRY_READS_PATCH = "restart-carries-reads-v1"
+
+
+@dataclass(frozen=True)
+class CarriedReads:
+    """Lo que un intento cortado ya leyó (turno 1 de …7392, 2026-10-08): las
+    llamadas a las tools que el caller dice que solo leen (`read_only_tools`),
+    con su resultado, y sus eventos para la traza. El reinicio las recibe
+    (`carried`) y no las repite. Lo que muestra o cambia algo no viaja: el
+    mensaje nuevo del cliente puede cambiar qué hay que hacer."""
+
+    messages: tuple[dict[str, Any], ...] = ()
+    events: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def names(self) -> list[str]:
+        return [str(e.get("name") or "") for e in self.events]
+
+
 @dataclass
 class TurnResult:
     """Resultado de un turno LLM-tool-LLM.
@@ -283,6 +304,9 @@ class TurnResult:
     # (los veredictos del egreso: qué texto sale, si se frenó, el saludo…).
     # None sin gancho: el turno de siempre (V1, remarketing, ETA).
     egress: dict[str, Any] | None = None
+    # Turno cortado (`interrupted`): lo que ya leyó, para el reinicio. None
+    # sin `read_only_tools` o sin lecturas. En memoria (replay-safe).
+    carried: CarriedReads | None = None
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -424,6 +448,40 @@ def _forget_outbound_texts(outbound_tool_texts: list[str], args: Any) -> None:
             outbound_tool_texts.remove(value)
 
 
+def _reads_to_carry(
+    added: list[dict[str, Any]], events: list[dict[str, Any]], read_only: frozenset[str]
+) -> CarriedReads | None:
+    """Las lecturas de un intento cortado (`added`: lo que el intento sumó a
+    `messages`): las llamadas a `read_only` que tienen su resultado y no
+    fallaron, cada una con su resultado, y sus eventos. Lo demás (lo que
+    muestra o cambia algo, las notas, el texto) no viaja. Puro."""
+    if not read_only:
+        return None
+    ok_ids = {
+        str(m.get("tool_call_id"))
+        for m in added
+        if m.get("role") == "tool"
+        and m.get("name") in read_only
+        and not (_try_parse_decision_payload(str(m.get("content") or "")) or {}).get("error")
+    }
+    kept: list[dict[str, Any]] = []
+    for message in added:
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            calls = [c for c in message["tool_calls"] if str(c.get("id")) in ok_ids]
+            if calls:
+                kept.append({**message, "tool_calls": calls})
+        elif message.get("role") == "tool" and str(message.get("tool_call_id")) in ok_ids:
+            kept.append(message)
+    if not kept:
+        return None
+    reads = [
+        e for e in events
+        if e.get("name") in read_only
+        and not (_try_parse_decision_payload(str(e.get("result") or "")) or {}).get("error")
+    ]
+    return CarriedReads(messages=tuple(kept), events=tuple(reads))
+
+
 def _without_calls(recorded: list[dict[str, Any]], call_ids: list[str]) -> list[dict[str, Any]]:
     """El historial sin esas tool calls ni sus resultados: el LLM no recuerda
     haber dicho lo que el cliente nunca leyó. Un mensaje del asistente que se
@@ -454,6 +512,48 @@ def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
     salió (el corte conservador de L-11).
     """
     return isinstance(payload, dict) and payload.get("queued") is False
+
+
+#: Ronda de las promesas del texto (incidente del 2026-10-09): una history sin
+#: el marcador re-juega el turno viejo (el texto salía con la promesa rota).
+PROMISED_ACTIONS_PATCH = "promised-actions-round-v1"
+
+
+def _kept_by_tool(payload: dict[str, Any] | None) -> bool:
+    """¿La tool hizo lo suyo? Un rechazo (`queued: false`, `registered:
+    false` o un `error`) no cumple lo que el texto prometió. Sin envelope, se
+    asume que sí (como el corte L-11)."""
+    if not isinstance(payload, dict):
+        return True
+    if payload.get("queued") is False or payload.get("registered") is False:
+        return False
+    return not (isinstance(payload.get("error"), str) and payload["error"])
+
+
+def _promise_round_note(promises: list[dict[str, Any]], kept_tools: list[str]) -> str | None:
+    """La nota de la ronda si el texto (`promises`, grabadas por `send_reply`:
+    kind, tools que lo cumplen, nota) promete algo que ninguna tool del turno
+    hizo (`kept_tools`: las que salieron, no las rechazadas). Puro: lee
+    resultados grabados, ningún texto (L-21)."""
+    kept = set(kept_tools)
+    nudges: list[str] = []
+    seen: set[str] = set()
+    for promise in promises:
+        if not isinstance(promise, dict):
+            continue
+        tools = {str(t) for t in promise.get("tools") or []}
+        kind = str(promise.get("kind") or "")
+        if not tools or tools & kept or kind in seen:
+            continue
+        seen.add(kind)
+        nudges.append(str(promise.get("nudge") or f"llama {' o '.join(sorted(tools))}."))
+    if not nudges:
+        return None
+    return (
+        "[LO QUE PROMETISTE] " + " ".join(nudges)
+        + " Llama esa herramienta en esta respuesta y vuelve a llamar send_reply con tu texto; si todavía no "
+        "corresponde, quita esa promesa del texto."
+    )
 
 
 def _starts_outbound(tool_names: list[str]) -> bool:
@@ -668,11 +768,19 @@ def _history_view(
       few-shot que lo hacía narrar también en la respuesta final.
     * Cada `send_reply` con el texto que de verdad salió (la tool pudo haber
       quitado un párrafo de razonamiento).
+    * Sin las `promises` que grabó `send_reply` (premortem 2026-10-09): su
+      nota («no lo mandaste: llama…») sirve en SU turno; releída después, el
+      modelo pedía otra vez lo que la ronda o la red ya habían mandado.
 
     Solo cambia el payload de `record_turn`: replay-safe sin patch.
     """
     view: list[dict[str, Any]] = []
     for message in recorded:
+        if message.get("role") == "tool" and message.get("name") == "send_reply":
+            payload = _try_parse_decision_payload(message.get("content"))
+            if isinstance(payload, dict) and "promises" in payload:
+                payload = {k: v for k, v in payload.items() if k != "promises"}
+                message = {**message, "content": json.dumps(payload, ensure_ascii=False)}
         if message.get("role") == "assistant" and message.get("tool_calls"):
             calls = []
             for call in message["tool_calls"]:
@@ -859,8 +967,16 @@ async def run_agent_turn(
     turn_policy: TurnPolicy | None = None,
     egress: EgressHook | None = None,
     interrupt_before_record: bool = False,
+    read_only_tools: frozenset[str] = frozenset(),
+    carried: CarriedReads | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `read_only_tools` / `carried` (turno 1 de …7392, 2026-10-08): si el turno
+    se corta (`interrupted`), devuelve en `carried` las llamadas a esas tools
+    (las que solo leen) con su resultado; el caller se las pasa al reinicio,
+    que las ve como hechas: no se repiten, cuentan como usadas para el
+    contrato y quedan en el historial del turno. Default: el turno de hoy.
 
     `interrupt_before_record` (ráfagas sin cortes, incidente 2026-10-06): con
     `has_new_input`, el turno se revisa una vez más justo antes de grabarse
@@ -965,6 +1081,8 @@ async def run_agent_turn(
         turn_policy=turn_policy,
         egress=egress,
         interrupt_before_record=interrupt_before_record,
+        read_only_tools=read_only_tools,
+        carried=carried,
     )
 
 
@@ -1017,6 +1135,8 @@ async def _run_agent_turn_impl(
     turn_policy: TurnPolicy | None = None,
     egress: EgressHook | None = None,
     interrupt_before_record: bool = False,
+    read_only_tools: frozenset[str] = frozenset(),
+    carried: CarriedReads | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1084,6 +1204,19 @@ async def _run_agent_turn_impl(
     final_raw: str | None = None
     tools_used: list[str] = []
     extra_rounds = 0
+    # Lo que el texto promete (incidente del 2026-10-09): las tools del turno
+    # que hicieron lo suyo y las rondas de promesas. Listas en memoria.
+    kept_tools: list[str] = []
+    promise_rounds = 0
+    # El texto que la ronda retuvo y las tools que lo cumplen: si la ronda se
+    # contesta solo con esa tarjeta (que corta el turno), el texto sale igual.
+    promise_withheld_text: str | None = None
+    promise_tools: set[str] = set()
+    # Las llamadas a `send_reply` que la ronda retuvo (id → texto validado y
+    # sus argumentos) y su nota: si el texto sale igual, el LLM lo recuerda
+    # como salió (revisión de compuertas, L-22). En memoria, sin comandos.
+    promise_withheld: dict[str, tuple[str, dict[str, Any]]] = {}
+    promise_note_message: dict[str, Any] | None = None
     # Bug saludo descartado (run ddd0d472): textos client-facing emitidos JUNTO
     # con tool calls. Solo manipulación de lista en memoria → no agrega commands
     # al history (replay-safe sin gate; el gate vive en el workflow que decide
@@ -1143,6 +1276,19 @@ async def _run_agent_turn_impl(
     turn_cached_tokens = 0
     # Hasta dónde llegaba `messages` en la ronda anterior (0 = primera).
     sent_until = 0
+    # Lo que un intento cortado ya leyó (turno 1 de …7392, 2026-10-08): el
+    # modelo lo ve como hecho y no lo repite; cuenta como usado (contrato) y
+    # queda en el historial y en la traza. Desde `attempt_from`, lo que este
+    # intento agrega (si también se corta, lo que leyó viaja al siguiente).
+    attempt_from = len(messages)
+    # Cambia lo que cuenta como usado para el contrato (otra cantidad de
+    # rondas): las histories sin el marcador reinician como antes.
+    # `patched()` solo cuando hay algo que llevar.
+    if carried is not None and carried.messages and workflow.patched(CARRY_READS_PATCH):
+        messages = [*messages, *carried.messages]
+        tools_used.extend(carried.names)
+        tool_events.extend(dict(e) for e in carried.events)
+        steps.append({"kind": "carry", "at_ms": _now_ms(), "tools": carried.names})
 
     while iteration < session.llm.max_iterations:
         iteration += 1
@@ -1206,13 +1352,23 @@ async def _run_agent_turn_impl(
                 "turno interrumpido pre-outbound (corrientazo): llegó mensaje "
                 "nuevo del cliente; el caller recompone el batch y relanza"
             )
-            steps.append({"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a"})
+            # Lo que el modelo pidió y el corte no deja correr, con sus
+            # argumentos: el «Paso a paso» lo dibuja como «no se ejecutó»
+            # (turno 1 de …7392, 2026-10-08: `present_products` no se veía).
+            skipped = [
+                {"name": tc.name, "args": dict(tc.arguments) if isinstance(tc.arguments, dict) else {}}
+                for tc in response.tool_calls or []
+            ]
+            steps.append(
+                {"kind": "cut", "at_ms": _now_ms(), "reason": "checkpoint_a", **({"skipped": skipped} if skipped else {})}
+            )
             if interrupt_before_record:
                 await _record_cut_attempt_cost(
                     session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
                 )
             return TurnResult(
-                final_content="", tools_used=tools_used, interrupted=True, steps=steps
+                final_content="", tools_used=tools_used, interrupted=True, steps=steps,
+                carried=_reads_to_carry(messages[attempt_from:], tool_events, read_only_tools),
             )
 
         if response.has_tool_calls:
@@ -1234,6 +1390,11 @@ async def _run_agent_turn_impl(
             # Canal único al cliente (run 28a8e407): textos que `send_reply`
             # validó en este batch (`reply.text` del resultado grabado).
             batch_reply_texts: list[str] = []
+            # Lo que esos textos prometen y el estado no cumplía al validarlos
+            # (`promises` del resultado grabado de `send_reply`).
+            batch_promises: list[dict[str, Any]] = []
+            # Las tools de ESTE paso que hicieron lo suyo.
+            batch_kept: list[str] = []
             # DEFAULT-DENY (run 1c9ef231): el content que acompaña una tool
             # call es narración interna SIEMPRE — se descarta y se loguea. El
             # texto para el cliente viaja en los params de la tool
@@ -1322,6 +1483,9 @@ async def _run_agent_turn_impl(
                     [tc.name], version=ends_turn_version
                 ):
                     batch_awaits_customer = True
+                if tc.name != "send_reply" and _kept_by_tool(payload):
+                    kept_tools.append(tc.name)
+                    batch_kept.append(tc.name)
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
@@ -1331,6 +1495,9 @@ async def _run_agent_turn_impl(
                         if reply_text:
                             batch_reply_texts.append(reply_text)
                             delivered_replies[tc.id] = reply_text
+                            promises = payload.get("promises")
+                            if isinstance(promises, list):
+                                batch_promises.extend(p for p in promises if isinstance(p, dict))
                     if "transfer_decision" in payload and isinstance(payload["transfer_decision"], dict):
                         td = payload["transfer_decision"]
                         transfer_decision = TransferDecision(
@@ -1493,6 +1660,40 @@ async def _run_agent_turn_impl(
                         if not batch_awaits_customer and not batch_tag_ends_turn
                         else None
                     )
+                    # Lo que el texto promete (incidente del 2026-10-09): si ninguna
+                    # tool del turno que salió lo cumple, el texto no sale y hay
+                    # UNA ronda más con la nota (después del paso COMPLETO: el
+                    # orden de las tools del paso no importa). `patched()` se
+                    # consulta solo cuando hay una promesa rota: una history sin
+                    # el marcador re-juega igual.
+                    promise_note = (
+                        _promise_round_note(batch_promises, kept_tools)
+                        if not contract_note
+                        and promise_rounds < 1
+                        and not batch_awaits_customer
+                        and not batch_tag_ends_turn
+                        # La ronda necesita otra vuelta: en la última, el texto sale.
+                        and iteration < session.llm.max_iterations
+                        else None
+                    )
+                    if promise_note and workflow.patched(PROMISED_ACTIONS_PATCH):
+                        promise_rounds += 1
+                        promise_withheld_text = reply_text
+                        promise_tools = {
+                            str(t) for p in batch_promises if isinstance(p, dict) for t in p.get("tools") or []
+                        }
+                        steps.append(
+                            {"kind": "guard", "at_ms": _now_ms(), "name": "promised_action_round",
+                             "before": reply_text, "after": promise_note, "tools": list(tools_used)}
+                        )
+                        for tc in response.tool_calls:
+                            if tc.id in batch_reply_ids:
+                                promise_withheld[tc.id] = (delivered_replies.pop(tc.id, ""), dict(tc.arguments))
+                                withheld_reply_ids.append(tc.id)
+                                _forget_outbound_texts(outbound_tool_texts, tc.arguments)
+                        promise_note_message = {"role": "system", "content": f"Tu send_reply NO se envió. {promise_note}"}
+                        messages = [*messages, promise_note_message]
+                        continue
                     if contract_note:
                         extra_rounds += 1
                         steps.append(
@@ -1588,6 +1789,25 @@ async def _run_agent_turn_impl(
                         f"turno cortado: {batch_tool_names} espera respuesta del cliente"
                     )
                     final_content = ""
+                    # La ronda de las promesas se contestó con la tarjeta que
+                    # cumplía lo prometido y sin texto nuevo: sale el texto
+                    # retenido (la respuesta a lo que el cliente preguntó).
+                    if promise_withheld_text and not batch_reply_texts and promise_tools & set(batch_kept):
+                        final_content = promise_withheld_text
+                        # Salió: el LLM lo recuerda como salió (su `send_reply`
+                        # y después la tarjeta, sin la nota de la ronda). Solo
+                        # cambia lo que se graba: sin comandos.
+                        for call_id, (text, args) in promise_withheld.items():
+                            delivered_replies[call_id] = text
+                            if call_id in withheld_reply_ids:
+                                withheld_reply_ids.remove(call_id)
+                            outbound_tool_texts.extend(v for v in args.values() if isinstance(v, str))
+                        sent_reply_ids = list(promise_withheld)
+                        messages = [m for m in messages if m is not promise_note_message]
+                        steps.append(
+                            {"kind": "guard", "at_ms": _now_ms(), "name": "promised_action_text_kept",
+                             "before": "", "after": final_content, "tools": batch_tool_names}
+                        )
                     steps.append(
                         {"kind": "cut", "at_ms": _now_ms(), "reason": "awaits_customer", "tools": batch_tool_names}
                     )
@@ -1750,7 +1970,9 @@ async def _run_agent_turn_impl(
                     {"kind": "guard", "at_ms": _now_ms(), "name": "contract_extra_round",
                      "before": final_content, "after": contract_note, "tools": list(tools_used)}
                 )
-                messages = [*messages, {"role": "system", "content": contract_note}]
+                # Como con `send_reply`: el modelo sabe que su texto no salió
+                # (turno 1 de …7392, 2026-10-08: sin eso repitió el mismo).
+                messages = [*messages, {"role": "system", "content": f"Tu respuesta NO se envió. {contract_note}"}]
                 final_content = ""
                 final_raw = None
                 continue
@@ -1999,7 +2221,10 @@ async def _run_agent_turn_impl(
         await _record_cut_attempt_cost(
             session, episode_id, turn_prompt_tokens, turn_completion_tokens, turn_cached_tokens
         )
-        return TurnResult(final_content="", tools_used=tools_used, interrupted=True, steps=steps)
+        return TurnResult(
+            final_content="", tools_used=tools_used, interrupted=True, steps=steps,
+            carried=_reads_to_carry(messages[attempt_from:], tool_events, read_only_tools),
+        )
 
     skip_record = (
         skip_record_when is not None

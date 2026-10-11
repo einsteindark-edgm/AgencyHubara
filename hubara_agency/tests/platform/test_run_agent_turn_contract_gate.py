@@ -146,7 +146,9 @@ async def test_a_text_without_the_required_tool_gets_one_more_round_naming_it() 
     out = await _turn("gate", ["La Cubo Love cuesta $45.000 🤍", "Déjame confirmarlo 🤍"])
 
     assert len(STATE.calls) == 2
-    assert STATE.calls[1][-1] == {"role": "system", "content": NOTE}
+    # Turno 1 de …7392 (2026-10-08): la nota no decía que el texto no salió y
+    # el modelo volvió a escribir el mismo; ahora lo dice, como con send_reply.
+    assert STATE.calls[1][-1] == {"role": "system", "content": f"Tu respuesta NO se envió. {NOTE}"}
     assert out["final"] == "Déjame confirmarlo 🤍"
     assert "contract_extra_round" in out["guards"]
     assert "La Cubo Love cuesta $45.000 🤍" not in _remembered(), "el borrador que no salió no se recuerda"

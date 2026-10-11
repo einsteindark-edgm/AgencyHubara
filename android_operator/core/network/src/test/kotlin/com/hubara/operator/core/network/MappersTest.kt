@@ -14,6 +14,7 @@ import com.hubara.operator.core.network.dto.OrderDetailDto
 import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SessionsResponse
 import com.hubara.operator.core.network.dto.SuggestionsDto
+import com.hubara.operator.core.model.SuggestionTone
 import org.junit.Test
 
 class MappersTest {
@@ -85,6 +86,35 @@ class MappersTest {
         assertThat(detail.messages.map { it.key }.toSet()).hasSize(detail.messages.size)
     }
 
+    // Caso 2026-10-09: Meta re-entregó un mensaje de 3 días antes 19 s después de la plantilla
+    // del operador; con la hora de llegada parecía su respuesta.
+    @Test fun mensaje_que_llego_tarde_trae_cuando_lo_escribio_el_cliente() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"hola, ¿siguen teniendo velas?","timestamp":"2026-10-09T21:35:42+00:00",
+               "sent_at":"2026-10-06T17:02:04+00:00","arrived_after_window":true,"wamid":"w1"},
+              {"ui_type":"user_message","content":"a tiempo","timestamp":"2026-10-09T21:36:00+00:00","wamid":"w2"}
+            ]}""",
+        )
+        val (late, onTime) = dto.toDomain()!!.messages
+        assertThat(late.sentAtMs).isEqualTo(1791306124000L)
+        assertThat(late.arrivedAfterWindow).isTrue()
+        assertThat(onTime.sentAtMs).isNull()
+        assertThat(onTime.arrivedAfterWindow).isFalse()
+    }
+
+    // L-10: un valor raro en un campo nuevo no puede tumbar la sesión entera.
+    @Test fun marcas_de_tardio_raras_se_ignoran_sin_romper_el_chat() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"hola","sent_at":{"x":1},"arrived_after_window":"sí","wamid":"w1"}
+            ]}""",
+        )
+        val message = dto.toDomain()!!.messages.single()
+        assertThat(message.sentAtMs).isNull()
+        assertThat(message.arrivedAfterWindow).isFalse()
+    }
+
     // Un backend de desarrollo (FakeSend) repite el mismo id en cada envío; una clave repetida
     // colapsa filas en Room y revienta la lista de Compose ("Key was already used").
     @Test fun wamid_repetido_no_repite_la_clave_del_mensaje() {
@@ -116,6 +146,23 @@ class MappersTest {
         assertThat(set.humanInControl).isTrue()
         assertThat(set.suggestions.map { it.prominence }).containsExactly(Prominence.PRIMARY, Prominence.NORMAL).inOrder()
         assertThat(set.suggestions.first().action.args["product"].toString()).isEqualTo("\"duo-zodiacal\"")
+    }
+
+    /** «Crear pedido»: no le manda nada al cliente, abre el formulario (una pantalla del servidor) y va marcada. */
+    @Test fun la_burbuja_crear_pedido_abre_una_pantalla_y_va_marcada() {
+        val dto = json.decodeFromString<SuggestionsDto>(
+            """{"session_id":"wa_test_laura","version":8,"decided_by":"rules","stage":"etapa_cierre",
+            "window_open":true,"in_control":"human","suggestions":[
+              {"id":"create_order","label":"Crear pedido","prominence":"primary","editable":false,"tone":"order",
+               "opens":"crear_pedido","action":{"name":"create_order","args":{}}},
+              {"id":"send_payment_methods","label":"Medios de pago","prominence":"normal","editable":false,
+               "action":{"name":"send_payment_methods","args":{}}}]}""",
+        )
+        val (order, payment) = dto.toDomain()!!.suggestions
+        assertThat(order.tone).isEqualTo(SuggestionTone.ORDER)
+        assertThat(order.opens).isEqualTo("crear_pedido")
+        assertThat(payment.tone).isEqualTo(SuggestionTone.NORMAL)
+        assertThat(payment.opens).isNull()
     }
 
     @Test fun incendios_de_chat_y_de_orden_y_tolera_tipos_nuevos() {

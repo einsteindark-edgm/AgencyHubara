@@ -33,4 +33,12 @@ class TimeLabelsTest {
         assertThat(dayLabel(at(2026, 9, 2, 8, 0), now, bogota)).isEqualTo("2 de septiembre")
         assertThat(dayLabel(at(2025, 9, 2, 8, 0), now, bogota)).isEqualTo("2 de septiembre de 2025")
     }
+
+    // Caso 2026-10-09: un mensaje de días antes llegó tarde y, con la hora de llegada, parecía nuevo.
+    @Test fun un_mensaje_que_llego_tarde_dice_cuando_lo_escribio_el_cliente() {
+        assertThat(writtenLabel(at(2026, 9, 30, 9, 15), now, bogota)).isEqualTo("Escrito hoy, 9:15 a. m.")
+        assertThat(writtenLabel(at(2026, 9, 29, 22, 40), now, bogota)).isEqualTo("Escrito ayer, 10:40 p. m.")
+        assertThat(writtenLabel(at(2026, 9, 28, 12, 2), now, bogota)).isEqualTo("Escrito el lunes, 12:02 p. m.")
+        assertThat(writtenLabel(at(2026, 9, 2, 8, 0), now, bogota)).isEqualTo("Escrito el 2 de septiembre, 8:00 a. m.")
+    }
 }

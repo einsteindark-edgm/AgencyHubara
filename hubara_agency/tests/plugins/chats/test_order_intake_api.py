@@ -430,6 +430,33 @@ def test_el_formulario_avisa_si_la_sesion_ya_tiene_pedido_registrado(h: _Harness
     assert body["already_registered_order_id"] == "order_9"
 
 
+def test_el_formulario_sabe_que_el_cliente_ya_mando_el_comprobante(h: _Harness) -> None:
+    """Caso 2026-10-09 (pedido #64): el cliente pagó mientras lo atendía el
+    humano. El formulario lo dice y abre con «enviar datos de pago» apagado."""
+    h.llm.reply = _FULL_EXTRACTION
+    meta = _metadata(
+        media_index=[{"media_id": "m1", "filename": "m1.jpg", "episode_id": "ep_001",
+                      "kind": "comprobante_pago", "created_at_ms": 1_758_000_400_000}],
+        recent_image_descriptions=[{"media_id": "m1", "kind": "comprobante_pago", "episode_id": "ep_001",
+                                    "description": "Comprobante de pago por $48.500,00 a la llave Nequi"}],
+    )
+    h.write_session(events=_conversation(), metadata=meta)
+
+    body = h.suggest()
+
+    assert body["payment_receipt"] == {
+        "media_id": "m1", "kind": "comprobante_pago", "received_at_ms": 1_758_000_400_000,
+        "description": "Comprobante de pago por $48.500,00 a la llave Nequi",
+    }
+
+
+def test_sin_comprobante_el_formulario_no_avisa_nada(h: _Harness) -> None:
+    h.llm.reply = _FULL_EXTRACTION
+    h.write_session(events=_conversation(), metadata=_metadata())
+
+    assert h.suggest()["payment_receipt"] is None
+
+
 def test_session_key_invalida_es_422(h: _Harness) -> None:
     res = h.client.post("/api/chats/order-intake/..%2Fetc/suggest")
     assert res.status_code in (404, 422)
@@ -468,3 +495,86 @@ def test_sesion_devuelta_al_bot_no_marca_handoff(h: _Harness) -> None:
     body = h.suggest()
 
     assert body["handoff_at_ms"] is None
+
+
+def test_un_cliente_sin_telefono_abre_el_formulario_y_el_telefono_queda_por_pedir(h: _Harness) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta>`
+    (sin teléfono). El formulario abre, y su id NO se hace pasar por teléfono."""
+    session = "wa_CO9990000000000002"
+    h.llm.reply = json.dumps({"items": [], "shipping": {"city": "Bogotá"}, "payment_method": None})
+    h.write_session(events=_conversation(), metadata=_metadata(), session=session)
+
+    body = h.suggest(session)
+
+    assert body["shipping"].get("phone") in (None, "")
+    assert "phone" in body["missing"]
+
+
+# ── con el bot apagado y desde la App Operador (caso 2026-10-09) ─────────────
+#
+# Con el humano al mando el bot no llena el borrador: el formulario usa también
+# lo que el cliente llenó en el formulario de envío y el producto que el
+# operador eligió en la app. La app abre el formulario con un GET (sus pantallas
+# solo leen con GET) que trae el cuerpo listo para registrar.
+
+
+def _iso(seconds: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+
+
+_FORM_REPLY = {
+    "role": "user", "timestamp": _iso(_HANDOFF_S + 400),
+    "content": "[datos de envío recibidos] city=Medellín; neighborhood=Laureles; address=Cra 70 # 1-2; "
+               "phone=3000000000; receiver_name=Ana; payment_method=cash_on_delivery",
+}
+_OPERATOR_FORM = {"id": "act-form", "tool": "request_shipping_details", "sent": True,
+                  "at_ms": int((_HANDOFF_S + 200) * 1000), "args": {"product": "luz-serena", "quantity": "3"}}
+
+
+def test_lo_que_el_cliente_lleno_en_el_formulario_prellena_el_envio(h: _Harness) -> None:
+    h.write_session(events=[*_conversation(), _FORM_REPLY], metadata=_metadata())
+
+    got = h.suggest()
+
+    assert got["shipping"]["city"] == "Medellín" and got["shipping"]["address"] == "Cra 70 # 1-2"
+    assert got["payment_method"] == "cash_on_delivery"
+
+
+def test_si_el_modelo_no_da_productos_vale_el_que_eligio_el_operador(h: _Harness) -> None:
+    h.llm.fails = True
+    h.write_session(events=[*_conversation(), _FORM_REPLY],
+                    metadata=_metadata(operator_tool_actions=[_OPERATOR_FORM]))
+
+    got = h.suggest()
+
+    assert [(i["handle"], i["quantity"], i["unit_price_cop"]) for i in got["items"]] == [("luz-serena", 3, 29000)]
+    assert got["missing"] == []
+
+
+def test_la_app_abre_el_formulario_con_el_pedido_listo_para_registrar(h: _Harness) -> None:
+    h.llm.reply = _FULL_EXTRACTION
+    h.write_session(events=_conversation(), metadata=_metadata())
+
+    res = h.client.get(f"/api/chats/order-intake/{_S}/form")
+
+    assert res.status_code == 200, res.text
+    form = res.json()
+    # el cuerpo de `session-actions /order`, tal cual lo valida (`OrderItemBody`)
+    assert form["order_items"] == [{"handle": "duo-zodiacal", "variant_label": "Leo", "quantity": 2}]
+    assert form["payment_label"] == "Pago anticipado (transferencia o Nequi)"
+    assert form["ready"] is True and form["missing_text"] == ""
+    assert form["total_cop"] == form["subtotal_cop"] + form["shipping_cop"]
+
+
+def test_la_app_ve_en_palabras_lo_que_falta(h: _Harness) -> None:
+    h.llm.fails = True
+    h.write_session(events=_conversation(), metadata=_metadata())
+
+    form = h.client.get(f"/api/chats/order-intake/{_S}/form").json()
+
+    assert form["ready"] is False
+    assert form["missing_text"] == (
+        "Falta la ciudad, la dirección, quién recibe, los productos y el medio de pago. Complétalo antes de crear el pedido."
+    )

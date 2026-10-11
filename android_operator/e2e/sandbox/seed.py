@@ -63,6 +63,7 @@ SESSIONS = {
     "andres": "wa_000000000104",
     "valentina": "wa_000000000105",
     "daniela": "wa_000000000106",
+    "mariana": "wa_000000000107",
 }
 NAMES = {
     "laura": "Laura Prueba",
@@ -71,6 +72,7 @@ NAMES = {
     "andres": "Andrés Prueba",
     "valentina": "Valentina Prueba",
     "daniela": "Daniela Prueba",
+    "mariana": "Mariana Prueba",
 }
 #: A zeros-only "phone" for shipping forms / Medusa addresses (never a real number).
 FAKE_PHONE = "3000000000"
@@ -187,6 +189,17 @@ class Chat:
         self.last_inbound_ms, self.last_inbound_wamid = at, wamid
         return wamid
 
+    def late_user(self, arrived: int, sent: int, text: str) -> None:
+        """Un mensaje que Meta entregó tarde (caso 2026-10-09), como lo guarda el ingest: `timestamp` = llegada,
+        `sent_at` = cuándo lo escribió el cliente; la ventana sale del mensaje más nuevo que escribió."""
+        wamid = _wamid()
+        late = {"sent_at": iso_utc(sent)}
+        if sent + DAY_MS <= arrived:
+            late["arrived_after_window"] = True
+        self.events.append({"role": "user", "content": text, "timestamp": iso_utc(arrived), "wamid": wamid, **late})
+        if self.last_inbound_ms is None or sent > self.last_inbound_ms:
+            self.last_inbound_ms, self.last_inbound_wamid = sent, wamid
+
     def bot(self, at: int, text: str, tools: list[str] | None = None) -> None:
         ev: dict[str, Any] = {"role": "assistant", "content": text, "timestamp": iso_utc(at)}
         if tools:
@@ -235,7 +248,7 @@ def _payment_text(total: int, subtotal: int, shipping: int, reference: str) -> s
     )
 
 
-# ── the six customers ────────────────────────────────────────────────────────
+# ── the customers ────────────────────────────────────────────────────────
 
 
 def _laura(t: int) -> None:
@@ -378,6 +391,24 @@ def _valentina(t: int) -> None:
         "status_history": [_status("HUMANO", motivo, "humano", t - 27 * HOUR_MS, reason_category="EXPLICIT_REQUEST")],
         "episodes": [_episode("ep_001", t - 27 * HOUR_MS, msgs_count_at_start=0)],
     })  # last inbound 26 h ago → service_window_expires_at_ms = 2 h ago (CLOSED)
+
+
+def _mariana(t: int) -> None:
+    """Caso 2026-10-09: Meta re-entregó días después un mensaje perdido; con la ventana cerrada el bot no contesta y
+    la burbuja dice cuándo lo escribió el cliente. Ruta bot (no abre incendio) y se escribe primero: queda al fondo
+    de la bandeja sin mover a los demás."""
+    c = Chat("mariana")
+    c.user(t - 4 * DAY_MS, "Hola, ¿tienen velas aromáticas para regalo?")
+    c.bot(t - 4 * DAY_MS + 30_000, "¡Hola Mariana! 🤍 Sí, claro. ¿Qué aroma le gusta a la persona?")
+    c.late_user(t - 26 * HOUR_MS, t - 4 * DAY_MS + 2 * HOUR_MS, "Le gusta la lavanda")
+    motivo = "Pregunta por velas aromáticas para regalo"
+    c.write({
+        "active_route": "ventas",
+        "tag": "INTERESADO",
+        "motivo": motivo,
+        "status_history": [_status("INTERESADO", motivo, "ventas", t - 4 * DAY_MS)],
+        "episodes": [_episode("ep_001", t - 4 * DAY_MS, msgs_count_at_start=0)],
+    })  # el último mensaje lo escribió hace ~4 días → ventana CERRADA
 
 
 def _daniela(t: int) -> None:
@@ -619,7 +650,8 @@ def build(*, image_base: str = DEFAULT_IMAGE_BASE) -> dict[str, Any]:
         "source_etag": "sandbox",
     })
 
-    for build_chat in (_laura, _sofia, _camilo, _andres, _valentina, _daniela):
+    # Mariana primero: el JSONL más viejo (la bandeja ordena por mtime) → al fondo, sin mover a los demás.
+    for build_chat in (_mariana, _laura, _sofia, _camilo, _andres, _valentina, _daniela):
         build_chat(t)
 
     atomic_write_json(MEDUSA_STORE, _medusa_store(t, image_base))

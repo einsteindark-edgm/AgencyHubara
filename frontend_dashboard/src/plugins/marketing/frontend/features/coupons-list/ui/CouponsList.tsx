@@ -169,6 +169,9 @@ function CouponCard({
             {couponUnitsLabel(c.units)}
           </span>
         ) : null}
+        {c.firstPurchaseOnly ? (
+          <span className="text-[10.5px] text-fg-muted">Primera compra</span>
+        ) : null}
         {!c.manageable ? (
           <span className="text-[10.5px] text-fg-faint">Solo lectura</span>
         ) : null}

@@ -47,7 +47,6 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import json
-import re
 import time
 from dataclasses import dataclass
 from functools import lru_cache
@@ -57,7 +56,7 @@ from typing import Annotated, Any, Awaitable, Callable, Literal
 from exoclaw.agent.tools import ToolContext
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents,
@@ -84,6 +83,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
     get_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.payment_receipts import payment_receipt_in_active_episode
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.agent.sales.use_cases.tag_reconcile import TagDecision, reconcile_tag_proposal
 from src.plugins.chats.shared.contracts.events import EpisodeClosedEvent
@@ -105,6 +105,7 @@ from src.sdk.messagingkit import (
     resolve_local_timezone,
     set_manual_postponement,
 )
+from src.sdk.identitykit import is_customer_session_id
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore, get_temporal_client
 
 router = APIRouter()
@@ -115,7 +116,6 @@ ROUTE_VENTAS = "ventas"
 PAYMENT_PENDING_TAG = "CONFIRMADO_PAGO_PENDIENTE"
 PAYMENT_VERIFICATION_REASON = "PAYMENT_VERIFICATION_PENDING"
 _SOURCE = "session_actions"
-_SESSION_RE = re.compile(r"^wa_[0-9]{8,15}$")
 
 #: Lo único que un agente externo PROPONE (D1.3); el resto lo decide Hubara.
 PROPOSED_TAGS = Literal["INTERESADO", "RECHAZO"]
@@ -193,13 +193,14 @@ def _release_session_lock(session_key: str) -> None:
     lock = _SESSION_LOCKS.get(session_key)
     if lock is not None and not lock.locked() and not lock._waiters:  # noqa: SLF001 — sin esperas: liberar la entrada
         _SESSION_LOCKS.pop(session_key, None)
-SessionKey = Annotated[str, PathParam(min_length=1, max_length=64)]
+SessionKey = Annotated[str, PathParam(min_length=1, max_length=140)]
 
 
 def _session(session_key: str) -> str:
-    """Solo ``wa_<dígitos>``: el segmento llega al filesystem del vault."""
-    if not _SESSION_RE.fullmatch(session_key):
-        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<dígitos>)")
+    """Solo ``wa_<teléfono>`` o ``wa_<id de Meta sin punto>`` (cliente con nombre
+    de usuario): el segmento llega al filesystem del vault."""
+    if not is_customer_session_id(session_key):
+        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<teléfono> o wa_<id de Meta>)")
     return session_key
 
 
@@ -274,8 +275,9 @@ class OrderBody(BaseModel):
     #: link + recargo). Default ``True`` = comportamiento histórico, el que
     #: usa Meta Business Agent (no manda el campo). Lo apaga el formulario
     #: "Crear pedido" del chat cuando el OPERADOR ya acordó el pago a mano y
-    #: el mensaje automático encima sería ruido. El intent se encola igual
-    #: (auditoría); lo que se saltea es el flush.
+    #: el mensaje automático encima sería ruido. Apagado (o con un comprobante
+    #: del cliente en el episodio, aunque venga en ``True``) el intent sale de
+    #: la cola: no se manda ni ahora ni en un flush posterior.
     send_payment_instructions: bool = True
     #: Solo calcular (subtotal, envío, descuento del cupón y total) con estos
     #: ítems, sin registrar ni guardar nada: el formulario lo pide tras editar
@@ -471,6 +473,60 @@ async def draft(session_key: SessionKey, body: DraftBody, deps: Deps) -> dict[st
     return json.loads(raw)
 
 
+#: Por qué no se creó el pedido, para el operador (`error_detail` de `/order`).
+_APP_ORDER_ERRORS = {
+    "unknown_product": "Un producto del pedido ya no está en el catálogo. Créalo desde el dashboard.",
+    "catalog_unavailable": "El catálogo no está disponible en este momento. Intenta de nuevo en un rato.",
+    "invalid_variant_attribute": "Falta elegir bien el color o el aroma de un producto. Corrígelo desde el dashboard.",
+    "quota_changed": (
+        "El descuento del cupón cambió mientras tanto. Cierra y vuelve a abrir «Crear pedido» para ver el total nuevo."
+    ),
+    "quota_unavailable": "No se pudo confirmar el cupo del cupón. Intenta de nuevo en un momento.",
+}
+_APP_ORDER_FAILED = "No se pudo crear el pedido en la tienda. Intenta de nuevo o créalo desde el dashboard."
+#: Campo del cuerpo → cómo se nombra al operador (en el orden en que se dice).
+_APP_ORDER_FIELDS = {
+    "items": "los productos",
+    "city": "la ciudad",
+    "address": "la dirección",
+    "phone": "el teléfono",
+    "receiver_name": "quién recibe",
+    "payment_method": "el medio de pago",
+}
+
+
+def _app_validation_text(exc: ValidationError) -> str:
+    fields = {str(part) for error in exc.errors() for part in error.get("loc", ())}
+    named = [word for key, word in _APP_ORDER_FIELDS.items() if key in fields]
+    if not named:
+        return "Revisa los datos del pedido antes de crearlo."
+    listed = named[0] if len(named) == 1 else f"{', '.join(named[:-1])} y {named[-1]}"
+    return f"Revisa {listed} antes de crear el pedido."
+
+
+@router.post("/session-actions/{session_key}/order/app")
+async def order_from_app(session_key: SessionKey, body: dict[str, Any], deps: Deps) -> dict[str, Any]:
+    """«Crear pedido» desde la App Operador: el MISMO registro que `/order`,
+    con el resultado como lo leen sus pantallas (`success` y, si no, el motivo
+    en palabras en `error_detail`). Un dato mal llenado no es un 422 crudo:
+    se dice qué revisar."""
+    _session(session_key)
+    try:
+        parsed = OrderBody.model_validate(body)
+    except ValidationError as exc:
+        return {"success": False, "error_detail": _app_validation_text(exc)}
+    result = await order(session_key, parsed, deps)
+    if not result.get("registered"):
+        code = str(result.get("error_detail") or "")
+        return {"success": False, "error_detail": _APP_ORDER_ERRORS.get(code, _APP_ORDER_FAILED)}
+    return {
+        "success": True,
+        "order_id": result.get("order_id"),
+        "order_reference": result.get("order_reference"),
+        "already_registered": bool(result.get("already_registered")),
+    }
+
+
 @router.post("/session-actions/{session_key}/order")
 async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[str, Any]:
     """``register_order`` completo para un pedido que llega SIN precios."""
@@ -527,6 +583,9 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     # solo si el último episodio de la sesión ya la tiene anotada (el mismo
     # pedido semanas después, en un episodio nuevo, es una venta nueva).
     data_before = store.read(session)
+    # El comprobante que el cliente ya mandó en este episodio (caso pedido
+    # #64): con él, el pedido no le pide el pago otra vez.
+    receipt = payment_receipt_in_active_episode(data_before)
     variants, invalid = await resolve_item_variants(
         deps.catalog, items_with_attrs, data_before,
         strict_products=quota_product_ids(data_before, deps.quotas),
@@ -700,15 +759,27 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         await _notify(deps, session, outcome.get("closed_id"), PAYMENT_PENDING_TAG)
 
     sent = 0
-    if not already and body.send_payment_instructions and body.payment_method in ("transfer", "payment_link"):
-        try:
-            sent = await deps.flush(session)
-        except Exception as exc:  # noqa: BLE001 — el pedido ya está registrado; el intent queda encolado
-            logger.warning("[chats.session_actions] flush de instrucciones de pago falló session={} err={}", session, exc)
+    skipped: str | None = None
+    if not already and body.payment_method in ("transfer", "payment_link"):
+        if receipt is not None:
+            skipped = "receipt_received"
+        elif not body.send_payment_instructions:
+            skipped = "operator"
+        if skipped:
+            # Fuera de la cola: encolado, el próximo flush (el primer turno del
+            # bot cuando «Confirmar pago» le devuelve la conversación) lo
+            # mandaba igual.
+            store.update(session, lambda data: _drop_payment_instructions(data, order_id))
+        else:
+            try:
+                sent = await deps.flush(session)
+            except Exception as exc:  # noqa: BLE001 — el pedido ya está registrado; el intent queda encolado
+                logger.warning("[chats.session_actions] flush de instrucciones de pago falló session={} err={}", session, exc)
 
     logger.info(
-        "[chats.session_actions] order session={} order_id={} already={} closed={} escalated={} payinstr_sent={}",
-        session, order_id, already, outcome.get("closed_id"), outcome.get("escalated"), sent,
+        "[chats.session_actions] order session={} order_id={} already={} closed={} escalated={} payinstr_sent={} "
+        "payinstr_skipped={}",
+        session, order_id, already, outcome.get("closed_id"), outcome.get("escalated"), sent, skipped,
     )
     return {
         "registered": True,
@@ -729,7 +800,25 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
         ),
         "escalated": bool(outcome.get("escalated")),
         "payment_instructions_sent": sent > 0,
+        #: Por qué NO salieron los datos de pago: ``receipt_received`` (el
+        #: cliente ya mandó su comprobante en este episodio) u ``operator``
+        #: (el formulario lo apagó). ``None`` si salieron o no aplican.
+        "payment_instructions_skipped": skipped,
+        "payment_receipt": receipt.as_dict() if receipt is not None else None,
     }
+
+
+def _drop_payment_instructions(data: dict[str, Any], order_id: str) -> dict[str, Any] | None:
+    """Saca de la cola los datos de pago de ESTE pedido (lo demás no se toca)."""
+    queue = [i for i in data.get("pending_ui_intents") or [] if isinstance(i, dict)]
+    kept = [
+        i for i in queue
+        if not (i.get("kind") == "payment_instructions" and (i.get("params") or {}).get("order_id") == order_id)
+    ]
+    if len(kept) == len(queue):
+        return None
+    data["pending_ui_intents"] = kept
+    return data
 
 
 @router.post("/session-actions/{session_key}/tag")

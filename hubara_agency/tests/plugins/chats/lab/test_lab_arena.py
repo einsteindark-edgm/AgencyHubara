@@ -58,7 +58,19 @@ def test_the_second_gate_of_workflow_v2_counts_as_an_extra_round() -> None:
     m = arena_metrics([v2, _result(extra=True), _result()])
 
     assert m["extra_round_rate"] == pytest.approx(2 / 3)
-    assert m["extra_rounds"] == {"turn_policy_extra_round": 1, "contract_extra_round": 1}
+    assert m["extra_rounds"] == {"turn_policy_extra_round": 1, "contract_extra_round": 1, "promised_action_round": 0}
+
+
+def test_the_round_for_a_promised_action_counts_as_an_extra_round() -> None:
+    """Incidente del 2026-10-09: el texto prometía el formulario sin la tool y
+    el turno le dio al LLM una ronda más (`promised_action_round`)."""
+    promised = {"error": None, "llm_cost_usd": 0.01,
+                "trace": {"mode": "on", "steps": [{"kind": "guard", "name": "promised_action_round"}]}}
+
+    m = arena_metrics([promised, _result()])
+
+    assert m["extra_round_rate"] == pytest.approx(1 / 2)
+    assert m["extra_rounds"]["promised_action_round"] == 1
 
 
 # Las decisiones del motor que publica cada caso (sandbox/decisions.py).

@@ -10,7 +10,6 @@ import re
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._evidence import (
     CONFIRMED_TAGS,
-    confirmed_by,
     registered_order_turn,
 )
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
@@ -36,29 +35,53 @@ _CLAIM_RE = re.compile(
 )
 
 
-def _last_signal_text(traj: Trajectory, upto: int) -> str:
-    for t in reversed(traj.turns):
-        if t.turn <= upto and t.signal:
-            label = "aplazamiento" if t.signal == "deferral" else "afirmación"
-            return f"última señal del cliente: {label} {quote(t.inbound_text, 80)}"
-    return "el cliente no dijo que sí ni tocó Confirmar"
+def _product_chosen(traj: Trajectory, upto: int) -> bool:
+    """El borrador del pedido tenía un producto en algún turno hasta `upto`
+    (el borrador de la traza es el de después del turno)."""
+    for t in traj.turns:
+        if t.turn > upto:
+            break
+        draft = t.draft or {}
+        items = draft.get("items")
+        if str(draft.get("producto") or "").strip() or (
+            isinstance(items, list) and any(isinstance(i, dict) and i.get("producto") for i in items)
+        ):
+            return True
+    return False
+
+
+def _deferral_in_force(traj: Trajectory, upto: int) -> Turn | None:
+    """El aplazamiento que sigue vigente en `upto`: la última señal del cliente
+    hasta ese turno fue un «después» (un sí o el botón posteriores lo anulan)."""
+    last: Turn | None = None
+    for t in traj.turns:
+        if t.turn > upto:
+            break
+        if t.signal or t.confirm_button:
+            last = t
+    return last if last is not None and last.signal == "deferral" else None
 
 
 @code_check("CON-01")
 def con_01(traj: Trajectory, ctx: CheckContext) -> CheckResult:
+    """v10 (incidente del 2026-10-09, criterio del operador): el formulario no
+    espera un «sí». Sale con el producto elegido y sin un aplazamiento
+    vigente (el corazón del PR #281: «voy apenas en camino a casa»)."""
     forms = [t for t in judged_turns(traj) if "shipping_flow" in t.intents]
     if not forms:
         return not_judged("CON-01", traj, "no se envió el formulario de envío")
     for form in forms:
-        if confirmed_by(traj, form.turn) is None:
+        deferral = _deferral_in_force(traj, form.turn)
+        if deferral is not None:
             return failed(
                 "CON-01",
                 form.turn,
-                f"turno {form.turn}: formulario de envío sin confirmación de compra; "
-                + _last_signal_text(traj, form.turn),
+                f"turno {form.turn}: formulario de envío con el cliente aplazando "
+                f"{quote(deferral.inbound_text, 80)}",
             )
-    backing = confirmed_by(traj, forms[0].turn)
-    return passed("CON-01", f"confirmación en el turno {backing.turn if backing else '?'}", forms[0].turn)
+        if not _product_chosen(traj, form.turn):
+            return failed("CON-01", form.turn, f"turno {form.turn}: formulario de envío sin producto elegido")
+    return passed("CON-01", "formulario con producto elegido y sin aplazamiento", forms[0].turn)
 
 
 def _advanced(t: Turn, legacy: bool) -> str | None:

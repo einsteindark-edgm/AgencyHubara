@@ -73,6 +73,10 @@ export interface ChatMessage {
   turn_key?: string;
   /** Forma real del mensaje detrás del marker, o ausente. */
   event?: ChatEvent;
+  /** Mensaje del cliente entregado tarde por Meta: cuándo lo escribió (ISO o
+   *  epoch) y si llegó con la ventana de 24 h ya cerrada. */
+  sent_at?: string | number;
+  arrived_after_window?: boolean;
   /** Mensaje citado por el cliente (reply). Solo `id` si no se resolvió. */
   reply_to?: {
     id: string;

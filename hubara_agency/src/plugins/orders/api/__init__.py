@@ -65,6 +65,7 @@ from src.platform.orders.state import STAGE_VALUES
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.orders.vault_scanner import scan_vault_orders
 from src.sdk.dashboardkit import get_dashboard_event_bus
+from src.sdk.identitykit import is_user_id_address
 from src.sdk.messagingkit import is_in_service_window
 from src.sdk.mediakit import (
     delete_outbound_image,
@@ -1118,6 +1119,10 @@ def _resolve_session_id_for_phone(vault_dir: Path, phone: str) -> str | None:
     try:
         for entry in vault_dir.iterdir():
             if not entry.is_dir() or not entry.name.startswith("wa_"):
+                continue
+            # Un cliente sin teléfono (`wa_<país><id de Meta>`, #411): sus
+            # dígitos no son un teléfono (premortem 2026-10-09).
+            if is_user_id_address(entry.name[3:]):
                 continue
             if _phone_match_key(entry.name) != key:
                 continue

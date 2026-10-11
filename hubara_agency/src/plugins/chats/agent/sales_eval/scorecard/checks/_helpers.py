@@ -5,6 +5,7 @@ import re
 import unicodedata
 from collections.abc import Iterator
 
+from src.plugins.chats.shared.team_exchange import our_lines_in_turn
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
 
@@ -16,6 +17,22 @@ PRICE_RE = re.compile(
     r"\$\s?\d{1,3}(?:[.,]\d{3})+|\$\s?\d{4,}|\b\d{1,3}(?:[.,]\d{3})+\s?(?:cop|pesos)\b",
     re.IGNORECASE,
 )
+
+
+#: La nota con que el ingest cita el mensaje NUESTRO que el cliente contesta (una
+#: plantilla o el seguimiento de una asesora, `episode_memory.quote_template_in_turn`).
+_OUR_QUOTED_RE = re.compile(r"\[El cliente responde a este mensaje que le enviamos: «(.*?)»\]", re.DOTALL)
+
+
+def our_quoted_message(text: str) -> str | None:
+    """El mensaje que le mandamos y el cliente contesta, si el turno lo cita:
+    una plantilla o lo que escribió un colega desde el chat (caso del
+    2026-10-09, `chats/shared/team_exchange.py`)."""
+    m = _OUR_QUOTED_RE.search(text or "")
+    if m:
+        return m.group(1)
+    ours = our_lines_in_turn(text or "")
+    return "\n".join(ours) if ours else None
 
 
 def clip(text: str, limit: int = _EVIDENCE_MAX) -> str:
@@ -64,6 +81,13 @@ def all_read_texts(traj: Trajectory) -> Iterator[tuple[Turn, str]]:
 
 def quote(text: str, limit: int = 120) -> str:
     return f"«{clip(text, limit)}»"
+
+
+def fold(text: str) -> str:
+    """Minúsculas, sin tildes y con un espacio entre palabras («Trilogía del
+    Terror» = «trilogia del terror»)."""
+    text = unicodedata.normalize("NFKD", text or "")
+    return " ".join("".join(c for c in text if not unicodedata.combining(c)).split()).casefold()
 
 
 def _normalized(text: str) -> str:

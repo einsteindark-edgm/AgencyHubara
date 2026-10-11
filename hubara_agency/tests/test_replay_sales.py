@@ -372,3 +372,129 @@ async def test_the_v2_system_turn_history_breaks_if_the_clock_skips_its_gate(
     assert consultations["n"] == ungated_from_consultation, (
         f"{site}: el gate se consultó {consultations['n']} veces"
     )
+
+
+# Histories SINTÉTICAS del bot nuevo con la ronda de lo prometido (incidente
+# del 2026-10-09: «Te paso el formulario» sin `request_shipping_details`; gate
+# `promised-actions-round-v1`). La ronda se decide por una clave NUEVA del
+# resultado de `send_reply` (`promises`): una history real de antes del deploy
+# jamás la activa y no protege el gate. `..._prepatch_v1` es la ventana de
+# versiones mezcladas (la activity ya devuelve `promises`, el workflow todavía
+# sin la ronda: el texto sale en el `send_reply`); `..._round_v1`, el control
+# positivo con el marcador (la ronda, el formulario y el texto retenido que
+# sale). CONGELADAS — no se regeneran (procedencia en
+# `fixtures/generate_sales_v2_promises_fixtures.py`); se borran junto con
+# `workflow.deprecate_patch("promised-actions-round-v1")`.
+_PROMISES_GATE = "promised-actions-round-v1"
+PROMISES_PREPATCH_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_v2_promises_prepatch_v1.json"
+PROMISES_ROUND_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_v2_promises_round_v1.json"
+
+
+def _promises_history(path: Path) -> WorkflowHistory:
+    return WorkflowHistory.from_json(f"test-{path.stem}", path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("fixture", [PROMISES_PREPATCH_FIXTURE, PROMISES_ROUND_FIXTURE], ids=["prepatch", "ronda"])
+async def test_the_promise_histories_replay(fixture: Path) -> None:
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    await replayer.replay_workflow(_promises_history(fixture))
+
+
+@pytest.mark.parametrize(
+    ("fixture", "forced", "clash"),
+    [
+        # Sin el gate (la ronda siempre): la history pre-patch grabó el egreso
+        # después del `send_reply`; el código pide otra ronda al modelo.
+        (PROMISES_PREPATCH_FIXTURE, True, "llm_chat|decide_egress"),
+        # Con el gate apagado: el control positivo grabó el marcador de la
+        # ronda y el código no lo pide (deja salir el texto en el `send_reply`).
+        (PROMISES_ROUND_FIXTURE, False, "patch marker encountered for change promised-actions-round-v1"),
+    ],
+    ids=["prepatch-sin-gate", "ronda-sin-ronda"],
+)
+async def test_the_promise_histories_break_without_the_gate(
+    monkeypatch, fixture: Path, forced: bool, clash: str
+) -> None:
+    """Control negativo: las dos histories PROTEGEN el gate (un replay que no
+    puede fallar no prueba nada)."""
+    from temporalio import workflow
+
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    real_patched = workflow.patched
+    consulted = {"n": 0}
+
+    def forced_gate(patch_id: str) -> bool:
+        if patch_id != _PROMISES_GATE:
+            return real_patched(patch_id)
+        consulted["n"] += 1
+        return forced
+
+    monkeypatch.setattr(workflow, "patched", forced_gate)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    with pytest.raises(workflow.NondeterminismError, match=clash):
+        await replayer.replay_workflow(_promises_history(fixture))
+    assert consulted["n"] == 1, f"el gate se consultó {consulted['n']} veces"
+
+
+# ── Gate `restart-carries-reads-v1` (turno 1 de …7392, 2026-10-08) ─────────
+# El reinicio recibe lo que el intento cortado ya leyó: cuenta como usado para
+# el contrato del turno y, con eso, cambia cuántas rondas pide. Las dos
+# historias son sintéticas (un contrato que pide `search_products` para el
+# precio): `..._prepatch_v1` es el código anterior (el reinicio sin la
+# búsqueda, el contrato retiene el texto y pide otra ronda); `..._v1`, el
+# control positivo con el marcador (el texto sale en la primera ronda).
+# CONGELADAS — no se regeneran (procedencia en
+# `fixtures/generate_sales_v2_carry_reads_fixtures.py`); se borran junto con
+# `workflow.deprecate_patch("restart-carries-reads-v1")`.
+_CARRY_GATE = "restart-carries-reads-v1"
+CARRY_PREPATCH_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_v2_carry_reads_prepatch_v1.json"
+CARRY_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_v2_carry_reads_v1.json"
+
+
+@pytest.mark.parametrize("fixture", [CARRY_PREPATCH_FIXTURE, CARRY_FIXTURE], ids=["prepatch", "lecturas"])
+async def test_the_carry_reads_histories_replay(fixture: Path) -> None:
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    await replayer.replay_workflow(_promises_history(fixture))
+
+
+@pytest.mark.parametrize(
+    ("fixture", "forced", "clash"),
+    [
+        # Sin el gate (siempre lleva lo leído): la history pre-patch grabó la
+        # ronda del contrato; con la búsqueda contada, el código no la pide.
+        (CARRY_PREPATCH_FIXTURE, True, "llm_chat"),
+        # Con el gate apagado: el control positivo grabó el marcador y el
+        # código no lo pide (y el contrato pediría otra ronda).
+        (CARRY_FIXTURE, False, "patch marker encountered for change restart-carries-reads-v1"),
+    ],
+    ids=["prepatch-sin-gate", "lecturas-sin-lecturas"],
+)
+async def test_the_carry_reads_histories_break_without_the_gate(
+    monkeypatch, fixture: Path, forced: bool, clash: str
+) -> None:
+    """Control negativo: las dos histories PROTEGEN el gate."""
+    from temporalio import workflow
+
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    real_patched = workflow.patched
+    consulted = {"n": 0}
+
+    def forced_gate(patch_id: str) -> bool:
+        if patch_id != _CARRY_GATE:
+            return real_patched(patch_id)
+        consulted["n"] += 1
+        return forced
+
+    monkeypatch.setattr(workflow, "patched", forced_gate)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    with pytest.raises(workflow.NondeterminismError, match=clash):
+        await replayer.replay_workflow(_promises_history(fixture))
+    assert consulted["n"] == 1, f"el gate se consultó {consulted['n']} veces"

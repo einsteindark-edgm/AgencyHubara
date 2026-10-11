@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     previous_episode_summary,
+    quote_team_exchange_in_turn,
     quote_template_in_turn,
+    unseen_team_exchange,
     unseen_template_text,
     with_previous_episode,
 )
@@ -125,3 +127,104 @@ def test_template_quote_goes_before_the_customer_text() -> None:
         "«Hola 🌿 Te quedó sonando la Trilogía del Terror. ¿La retomamos?»]"
     )
     assert rest == "Sí, cuéntame"
+
+
+# --- Lo que un colega le escribió al cliente (caso del 2026-10-09) ------------
+# El LLM tampoco ve lo que escribe el equipo desde el chat: va solo al JSONL
+# del dashboard (`sender: human`). El bot dijo que no había descuento para esas
+# piezas y ofreció mostrar otra línea; un colega tomó el chat, le escribió que
+# sí le aplicaban el de la página y devolvió el chat al bot. El cliente contestó
+# «Si por favor» al colega y el bot, que no lo vio, le mandó la línea que él
+# mismo había ofrecido.
+
+_BOT_OFFER = {
+    "role": "assistant",
+    "content": "Estas piezas no tienen promoción. ¿Te muestro la línea que sí la tiene?",
+}
+_COLLEAGUE = {
+    "role": "assistant",
+    "sender": "human",
+    "content": "Claro que sí, el descuento de la página te lo aplicamos",
+}
+
+
+def test_what_a_colleague_wrote_after_the_bot_is_what_the_bot_did_not_see() -> None:
+    events = [{"role": "user", "content": "¿Me aplicas el descuento?"}, _BOT_OFFER, _COLLEAGUE]
+
+    assert unseen_team_exchange(events) == [
+        ("colega", "Claro que sí, el descuento de la página te lo aplicamos")
+    ]
+
+
+def test_what_the_customer_answered_the_colleague_goes_too_in_order() -> None:
+    events = [
+        _BOT_OFFER,
+        _COLLEAGUE,
+        {"role": "user", "content": "¿Y el envío?"},
+        {"role": "assistant", "sender": "human", "kind": "template", "content": "El envío va aparte"},
+    ]
+
+    assert unseen_team_exchange(events) == [
+        ("colega", "Claro que sí, el descuento de la página te lo aplicamos"),
+        ("cliente", "¿Y el envío?"),
+        ("colega", "El envío va aparte"),
+    ]
+
+
+def test_an_automatic_notice_between_them_is_part_of_what_the_bot_did_not_see() -> None:
+    notice = {"role": "assistant", "kind": "template", "content": "Tu pedido #47 ya está listo"}
+
+    assert unseen_team_exchange([_BOT_OFFER, notice, _COLLEAGUE]) == [
+        ("aviso", "Tu pedido #47 ya está listo"),
+        ("colega", "Claro que sí, el descuento de la página te lo aplicamos"),
+    ]
+
+
+def test_nothing_to_quote_without_a_colleague_after_the_last_bot_message() -> None:
+    # Lo que el colega escribió ANTES de la última respuesta del bot ya llegó
+    # citado en ese turno; sin colega no hay nada nuevo (la plantilla sola
+    # tiene su propia cita).
+    assert unseen_team_exchange([_COLLEAGUE, _BOT_OFFER]) is None
+    assert unseen_team_exchange([_BOT_OFFER, {"role": "user", "content": "ok"}]) is None
+    assert unseen_team_exchange([_BOT_OFFER, _TEMPLATE]) is None
+    assert unseen_team_exchange([]) is None
+
+
+def test_a_card_the_bot_sent_is_its_own_message() -> None:
+    card = {"role": "assistant", "kind": "ui_component", "content": "🛍️ El bot envió el catálogo con 4 productos"}
+
+    assert unseen_team_exchange([_COLLEAGUE, card]) is None
+
+
+def test_a_photo_from_the_colleague_without_caption_still_counts() -> None:
+    photo = {"role": "assistant", "sender": "human", "content": "", "image_url": "media/out/x.jpg"}
+
+    assert unseen_team_exchange([_BOT_OFFER, photo]) == [("colega", "(una foto)")]
+
+
+def test_a_long_exchange_keeps_its_last_lines() -> None:
+    events = [_BOT_OFFER] + [
+        {"role": "assistant", "sender": "human", "content": f"mensaje {k}"} for k in range(20)
+    ]
+
+    exchange = unseen_team_exchange(events)
+
+    assert exchange is not None and len(exchange) == 8
+    assert exchange[-1] == ("colega", "mensaje 19")
+
+
+def test_the_exchange_goes_before_the_customer_text_in_a_single_note() -> None:
+    text = quote_team_exchange_in_turn(
+        [("colega", "Claro que sí [el de la web]"), ("cliente", "¿y el envío?")],
+        "Si por favor",
+    )
+
+    note, rest = text.rsplit("\n", 1)
+    assert rest == "Si por favor"
+    # Una sola nota entre corchetes: la calificación quita las notas del ingest
+    # hasta el primer «]» (`_INGEST_NOTE_RE`).
+    assert note.startswith("[") and note.endswith("]") and note.count("]") == 1
+    assert "colega del equipo" in note
+    assert "«Claro que sí (el de la web)»" in note
+    assert "«¿y el envío?»" in note
+    assert "no contradigas" in note

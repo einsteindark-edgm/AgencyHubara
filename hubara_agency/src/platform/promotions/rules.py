@@ -52,23 +52,36 @@ def resolve_coupon(
     )
     if promo is None:
         return CouponResolution(False, REASON_NOT_FOUND, None)
+    problem = coupon_problem(promo, now_ms=now_ms)
+    if problem is not None:
+        return CouponResolution(False, problem, promo)
+    return CouponResolution(True, None, promo)
+
+
+def coupon_problem(promo: PromotionDTO, *, now_ms: int) -> str | None:
+    """Por qué `promo` no se puede aplicar en `now_ms` (None = rige).
+
+    La misma vara para aplicar un código y para listar los vigentes. Venta del
+    2026-10-09: una promoción sigue «active» en Medusa cuando su campaña
+    termina, y `list_promotions` ofreció como vigente un cupón que había
+    vencido ocho días antes."""
     if promo.status != "active":
-        return CouponResolution(False, REASON_INACTIVE, promo)
+        return REASON_INACTIVE
     if promo.starts_at_ms is not None and now_ms < promo.starts_at_ms:
-        return CouponResolution(False, REASON_NOT_STARTED, promo)
+        return REASON_NOT_STARTED
     if promo.ends_at_ms is not None and now_ms > promo.ends_at_ms:
-        return CouponResolution(False, REASON_EXPIRED, promo)
+        return REASON_EXPIRED
     if (
         promo.budget_limit is not None
         and promo.budget_used is not None
         and promo.budget_used >= promo.budget_limit
     ):
-        return CouponResolution(False, REASON_BUDGET, promo)
+        return REASON_BUDGET
     if promo.scope_unresolved:
-        return CouponResolution(False, REASON_SCOPE_UNRESOLVED, promo)
+        return REASON_SCOPE_UNRESOLVED
     if promo.target_type == "shipping_methods":
-        return CouponResolution(False, REASON_SHIPPING_NOT_SUPPORTED, promo)
-    return CouponResolution(True, None, promo)
+        return REASON_SHIPPING_NOT_SUPPORTED
+    return None
 
 
 @dataclass(frozen=True)
@@ -249,6 +262,7 @@ __all__ = [
     "DiscountResult",
     "LineDiscount",
     "compute_discount",
+    "coupon_problem",
     "normalize_coupon_code",
     "resolve_coupon",
 ]

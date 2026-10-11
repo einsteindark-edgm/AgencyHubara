@@ -26,6 +26,10 @@ SALES_WS = "hubara_agency/src/plugins/chats/agent/sales/workspace"
 RMKT_WS = "hubara_agency/src/plugins/chats/agent/remarketing/workspace"
 MBA_WS = "hubara_agency/src/plugins/mba/agents/sales"
 BUNDLES = "hubara_agency/src/plugins/chats/shared/decisions/bundles"
+# `ventas` (el del código), dos experimentos de la tienda madre y el que corre
+# hoy (decision_bundles.store): promover ventas-N en el manifest no rompe el fixture.
+STORE_BUNDLE = forge.load_manifest()["decision_bundles"]["store"]
+MOTHER_BUNDLES = tuple(dict.fromkeys(("ventas", "ventas-2", "ventas-3", STORE_BUNDLE)))
 ETA_WS = "hubara_agency/src/plugins/eta/agent/eta/workspace"
 ETA_FILES = ("IDENTITY.md", "SOUL.md", "AGENTS.md", "TOOLS.md", "USER.md")
 ACME_DOMAIN = (
@@ -212,10 +216,10 @@ FIXTURE_FILES = {
         "---\ntitle: persona-y-tono\ndescription: Siempre.\n---\n\nEres el asesor de Hubara.\n"
     ),
     # Paquetes de decisión: `ventas` (el del código) + las versiones de la
-    # tienda madre; `ventas-4` es el que corre hoy (manifest decision_bundles).
+    # tienda madre (MOTHER_BUNDLES).
     **{
         f"{BUNDLES}/{b}/{f}": text
-        for b in ("ventas", "ventas-2", "ventas-3", "ventas-4")
+        for b in MOTHER_BUNDLES
         for f, text in (
             ("bundle.yaml", f"# Paquete de decisión de Hubara (velas)\nid: {b}\n"),
             ("domain.yaml", "store_name: Hubara\nproduct_example: \"'Luz Serena'\"\n"),
@@ -981,7 +985,7 @@ def test_la_despedida_que_esperan_los_ejemplos_del_paquete_no_se_cambia(mini_rep
     nombre de la tienda, palabra por palabra: otra despedida hace fallar
     `decisions check` (el bot de ventas no arranca). forge lo dice al forjar."""
     farewell = "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
-    for b in ("ventas", "ventas-2", "ventas-3", "ventas-4"):
+    for b in MOTHER_BUNDLES:
         (mini_repo / BUNDLES / b / "domain.yaml").write_text(
             f'store_name: Hubara\nfarewell_order_registered: "{farewell}"\n', encoding="utf-8"
         )

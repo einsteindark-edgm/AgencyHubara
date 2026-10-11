@@ -64,6 +64,37 @@ def test_build_trajectory_orders_turns_and_derives_intents_from_ok_tools() -> No
     assert traj.first_contact is True
 
 
+def test_the_form_the_safety_net_sent_counts_as_sent() -> None:
+    """Incidente del 2026-10-09: el bot prometió el formulario sin la tool y
+    la red lo mandó (`ensure_promised_handoff_activity`). Ninguna tool del LLM
+    lo pidió, pero salió en el flush del turno: el cliente lo vio. Uno que no
+    llegó no cuenta."""
+    sent = _trace(1, steps=[{"kind": "outbound", "at_ms": 9, "bubbles": [
+        {"kind": "shipping_flow", "wamid": "wamid.f1", "delivered": True},
+    ]}])
+    lost = _trace(2, steps=[{"kind": "outbound", "at_ms": 9, "bubbles": [
+        {"kind": "shipping_flow", "wamid": None, "delivered": False},
+    ]}])
+
+    traj = build_trajectory([sent, lost], session_id="wa_100000000001", episode={"episode_id": "ep_007"})
+
+    assert traj.turns[0].intents == ("shipping_flow",)
+    assert traj.turns[1].intents == ()
+
+
+def test_the_rates_the_safety_net_sent_count_as_sent() -> None:
+    """Revisión del premortem (2026-10-09): la red también manda las tarifas
+    prometidas («te comparto las tarifas») sin tool del LLM; TAG-09 las daba
+    por no enviadas aunque el cliente las vio."""
+    sent = _trace(1, steps=[{"kind": "outbound", "at_ms": 9, "bubbles": [
+        {"kind": "shipping_rates", "wamid": "wamid.r1", "delivered": True},
+    ]}])
+
+    traj = build_trajectory([sent], session_id="wa_100000000001", episode={"episode_id": "ep_007"})
+
+    assert traj.turns[0].intents == ("shipping_rates",)
+
+
 def test_a_handoff_from_remarketing_is_read_as_a_handoff_not_as_the_customer() -> None:
     # La plataforma ya no marca el traspaso en `trigger` (siempre «customer»):
     # el turno que es SOLO un traspaso trae el encuadre de la plataforma como
@@ -184,3 +215,15 @@ def test_legacy_trajectory_drops_proactive_messages_from_other_agents() -> None:
 
     assert [t.sent_texts for t in traj.turns] == [("Tenemos tres formas de pago.",), ("Con gusto.",)]
     assert traj.turns[0].intents == ("reaction",)
+
+
+def test_an_episode_opened_right_after_a_purchase_carries_that_order() -> None:
+    """Caso 2026-10-09 (pedido #64): el episodio nuevo abrió con el pedido
+    anterior en curso (`after_order`, lo marca el ingest). La calificación
+    sabe que ese pedido existe aunque no se registró en este episodio."""
+    traj = build_trajectory(
+        [_trace(1)], session_id="wa_100000000001",
+        episode={"episode_id": "ep_002", "after_order": {"order_id": "order_64", "display_id": "#64"}},
+    )
+
+    assert traj.after_order_id == "order_64"

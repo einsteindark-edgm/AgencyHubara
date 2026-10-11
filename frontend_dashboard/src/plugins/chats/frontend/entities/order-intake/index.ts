@@ -13,5 +13,6 @@ export {
   type OrderIntakeShipping,
   type OrderSuggestion,
   type PaymentMethod,
+  type PaymentReceipt,
 } from "./contracts";
 export { orderIntakeKeys } from "./keys";

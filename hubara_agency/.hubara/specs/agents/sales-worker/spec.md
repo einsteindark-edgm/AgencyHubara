@@ -666,6 +666,14 @@ y validarse DENTRO de la tool (activity), nunca en el workflow.
 - THEN el turno continúa para que llame `escalate_to_human("ORDER_PENDING_SHIPPING_DETAILS", summary)`
 - AND si en vez de escalar acusa recibo, la red `ensure_closing_escalation` escala por él; el acuse no sale
 
+#### Scenario: Pedido a medio cerrar y el cliente se queda callado (2026-10-09)
+
+- GIVEN el cliente confirmó y no dio los datos de envío, o los dio y no tocó «Confirmar»
+- WHEN llega el cierre por ghosting
+- THEN el aviso de ghosting y el guion (`TOOLS.md`, `sales_script`) piden `INTERESADO` con un motivo que diga qué falta, sin escalar
+- AND el episodio sigue abierto con el pedido guardado y el Window Strategist lo retoma (gancho transaccional: 30–75 min de silencio)
+- AND ningún silencio pasa solo al equipo (decisión del operador); desde `ventas-6` la lectura del paquete `cierre` también decide `INTERESADO` cuando Jev lee «confirmó sin datos» (con `ventas-5` todavía era `CONFIRMADO_SIN_DATOS` + relevo)
+
 ### Requirement: Lo que no salió, el LLM no lo recuerda (run b06636a6 → 5ed9af2d)
 
 El historial que el LLM lee en la sesión siguiente MUST NOT contener como
@@ -756,7 +764,8 @@ migrarse en la primera escritura.
 
 #### Scenario: lo que ve el LLM y lo que mide el scorecard
 
-- THEN `[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE]` lista un renglón por producto con SUS variantes; la etapa `variantes` dura hasta que CADA producto tenga aroma, color y cantidad
+- THEN `[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE]` lista un renglón por producto con SUS variantes; la etapa `variantes` dura hasta que CADA producto tenga aroma, color y cantidad, menos lo que el catálogo no le ofrece (`order_draft.sin_opciones`)
+- AND un producto con UNA sola opción de aroma o de color la trae anotada por `set_order_slot` (`auto_filled`, la paleta real de `metadata.colores` manda sobre los tags) si el modelo no la dio, no la borró y no se la rechazaron (incidente del 2026-10-09: con un solo aroma y un solo color, la etapa se quedó en `variantes` todo el episodio)
 - AND la captura determinista de cantidad escribe en el producto en curso y NUNCA pisa la cantidad de otro
 - AND `quitar=true` saca un producto del pedido (el cliente lo descartó o lo cambió)
 - AND un `set_order_slot` que no guardó nada se traza como fallo (`slots_rejected`), no en verde
@@ -796,24 +805,132 @@ El sistema SHALL registrar de forma determinista la confirmación de compra del
 cliente (`episode.order_draft.confirmed_at_ms`): un mensaje afirmativo ("sí",
 "dale", "lo quiero", "dame 2") o el botón Confirmar, con un producto ya elegido
 en el draft del episodio activo. Sin esa confirmación (ni orden registrada):
-`request_shipping_details` SHALL rechazar la llamada con `purchase_not_confirmed`
-y el siguiente paso explícito; `manage_conversation_tag(CONFIRMADO_SIN_DATOS)`
-SHALL degradar a `INTERESADO` sin cerrar el episodio ni escalar; y
+`manage_conversation_tag(CONFIRMADO_SIN_DATOS)` SHALL degradar a `INTERESADO`
+sin cerrar el episodio ni escalar; y
 `escalate_to_human(ORDER_PENDING_SHIPPING_DETAILS)` SHALL rechazarse. La
 confirmación es episodio-scoped (incidente runs 01a0a0eb / 01a0a0f1, 2026-09-14).
 
-#### Scenario: El cliente eligió pero nunca dijo que sí
+`request_shipping_details` NO SHALL exigir esa confirmación (incidente del
+2026-10-09, criterio del operador: el formulario no espera confirmación de
+nada): solo SHALL rechazar con `customer_deferred` si el último mensaje del
+cliente aplazó. La confirmación vive donde compromete: la tarjeta ✅ y
+`register_order` (requirement siguiente).
 
-- GIVEN un draft con producto/aroma/color y sin `confirmed_at_ms`
+#### Scenario: El cliente eligió y sigue con la compra sin decir «sí»
+
+- GIVEN un draft con producto, ciudad y método de pago y sin `confirmed_at_ms`
 - WHEN el LLM llama `request_shipping_details`
-- THEN la tool devuelve `queued=false, error=purchase_not_confirmed` y no encola nada
+- THEN el formulario queda en la cola (`queued=true`)
 - AND si el ghosting etiqueta `CONFIRMADO_SIN_DATOS`, queda `INTERESADO` y la sesión sigue en ruta ventas
+
+#### Scenario: El cliente acaba de aplazar
+
+- GIVEN el último inbound "voy apenas en camino a casa"
+- WHEN el LLM llama `request_shipping_details`
+- THEN la tool devuelve `queued=false, error=customer_deferred` y no encola nada
+
+#### Scenario: Cliente que vuelve con un pedido de una compra anterior (2026-10-09)
+
+- GIVEN `registered_order` exitoso registrado ANTES de que empezara el episodio abierto, y el draft de hoy sin `confirmed_at_ms`
+- THEN no hay confirmación de compra: el pedido viejo no confirma la compra nueva
+- AND `CONFIRMADO_SIN_DATOS` degrada a `INTERESADO`, `escalate_to_human(ORDER_PENDING_SHIPPING_DETAILS)` se rechaza y la conversación sigue en ruta ventas
 
 #### Scenario: El cliente dijo que sí
 
 - GIVEN un draft con producto y el inbound "sí, déjalo en azul"
 - WHEN el ingest procesa el mensaje
-- THEN `order_draft.confirmed_at_ms` queda registrado y `request_shipping_details` procede
+- THEN `order_draft.confirmed_at_ms` queda registrado
+
+### Requirement: Lo que el texto promete, el turno lo hace (2026-10-09)
+
+Incidente del 2026-10-09: el bot V2 cerró dos turnos con «Te paso el
+formulario para los datos de envío» por `send_reply` y nunca llamó
+`request_shipping_details`; el operador lo mandó a mano. Un texto que le
+promete al cliente un componente PARA AHORA SHALL ir con la tool que lo manda:
+
+| Lo que promete | Lo cumple |
+|---|---|
+| el formulario de envío | `request_shipping_details` |
+| las tarifas de envío | `send_shipping_rates` |
+| el resumen del pedido | `present_order_confirmation` |
+| el catálogo | `present_products` / `list_categories` / `present_product_gallery` |
+| las fotos | `present_product_detail` / `present_product_gallery` / `present_products` |
+| las opciones (aromas, colores) | `present_variant_picker` |
+| «tu pedido quedó registrado» | `register_order` (una orden registrada) |
+
+`send_reply` SHALL grabar en su resultado (`promises`: kind, tools, nota) lo
+que el texto promete y el estado todavía no cumple: un componente ya en la cola
+del turno, el formulario ya entregado en el episodio o una orden registrada lo
+cumplen. Después del paso COMPLETO del modelo, `run_agent_turn` SHALL retener
+el texto y dar UNA ronda más con la nota que nombra la tool si ninguna tool del
+turno que salió (no rechazada) lo cumple; el orden del paso no importa. Si la
+ronda se contesta solo con la tool prometida, el texto retenido sale
+(`promised_action_text_kept`). Si el modelo insiste sin la tool, o es la última
+vuelta del turno, el texto sale. No hay ronda si la puerta del contrato ya pidió
+otra, si el turno espera al cliente o si una etiqueta lo cierra. Va detrás del
+parche `promised-actions-round-v1` y aplica a los dos bots (V1 y V2 comparten
+`send_reply` y `run_agent_turn`); remarketing y ETA no tienen `send_reply`.
+
+No son promesas: una oferta («si quieres te envío las fotos»), una pregunta
+(«¿te paso el formulario?»), un condicional antes o después («cuando me
+confirmes el color te paso el resumen», «te paso el formulario apenas elijas el
+aroma»), un pedido al cliente («dime el color y te paso el formulario») ni lo
+que ya salió («te dejo el formulario arriba»). El historial del LLM no guarda
+las notas (`promises` se quita del resultado de `send_reply`). El scorecard lo
+mide con TAG-09; el paso a paso lo muestra en palabras.
+
+#### Scenario: El bot promete el formulario sin la tool
+
+- GIVEN un borrador listo para el envío
+- WHEN el modelo llama solo `send_reply` con «Perfecto, contra entrega. Te paso el formulario para los datos de envío 🤍»
+- THEN el texto no sale en esa ronda y el modelo recibe «Tu send_reply NO se envió.» con la nota que nombra `request_shipping_details`
+- AND si la ronda siguiente llama `request_shipping_details`, sale el texto retenido y después el formulario
+
+#### Scenario: La tool va en el mismo paso
+
+- GIVEN el modelo llama `send_reply` («te paso el formulario») y `request_shipping_details` en el mismo paso, en cualquier orden
+- WHEN termina el paso
+- THEN no hay ronda extra
+
+#### Scenario: Una oferta no es promesa
+
+- WHEN el texto dice «Si quieres te envío las fotos del Velón Koala.»
+- THEN `send_reply` no graba `promises` y el turno sigue como siempre
+
+### Requirement: El formulario y las tarifas que el texto promete salen
+
+Detrás de la ronda (por si el modelo insiste sin la tool), antes de enviar el
+texto final del turno (`ensure_promised_handoff_activity`): si el texto le
+promete al cliente el formulario de envío ("te paso el formulario", "te envío
+el formulario", "ahí te va el formulario"; una pregunta no promete) y en el
+episodio activo el formulario no está en la cola ni salió, el sistema SHALL
+encolarlo con `request_shipping_details` y los ítems del borrador (producto del
+catálogo y cantidad). Sus guardas siguen valiendo (un
+aplazamiento no lo recibe; un formulario por turno). Si el borrador no se cruza
+con el catálogo, falta la cantidad o falta elegir una variante con varias
+opciones, no se adivina. Las tarifas prometidas («te comparto las tarifas de
+envío») que no están en la cola SHALL encolarse con `send_shipping_rates` (la
+tarjeta no lleva argumentos). Cada red es best-effort: su falla no tumba la del
+relevo. Incidente del 2026-10-09: el bot prometió el formulario dos turnos
+seguidos sin llamar la tool y el operador lo mandó a mano.
+
+#### Scenario: El bot promete el formulario sin la tool
+
+- GIVEN un draft con «Calabaza» × 3 y ningún formulario en el episodio
+- WHEN el texto final dice «Te paso el formulario para tus datos de envío»
+- THEN el formulario queda en la cola con `calabaza` × 3 y sale después del texto
+
+#### Scenario: El formulario ya salió en este episodio
+
+- GIVEN un formulario entregado después del inicio del episodio activo
+- WHEN el texto vuelve a decir «te paso el formulario»
+- THEN no se encola otro
+
+#### Scenario: El bot promete las tarifas sin la tarjeta
+
+- WHEN el texto final dice «Te comparto las tarifas de envío 🚚» y la tarjeta no está en la cola
+- THEN la tarjeta de tarifas queda en la cola y sale después del texto
+- AND TAG-09 la cuenta como enviada (la burbuja entregada en el paso a paso)
 
 ### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
 
@@ -851,11 +968,27 @@ rechazar `request_shipping_details` con `customer_deferred`; y, si el turno lo
 maneja remarketing, prefijar el resumen del handoff con `[EL CLIENTE APLAZÓ]`
 para que ventas no avance el cierre.
 
+Qué lee como aplazamiento la regla (`purchase_signals.detect_deferral`, el
+respaldo de `compra` cuando Jev duda o cae; premortem del 2026-10-09): las
+frases inequívocas («voy en camino», «ahora no», «lo pienso», «déjame
+pensarlo», «cuando llegue a la casa»), dejar algo para después con un momento
+(«luego te digo», «mañana te confirmo», «más tarde lo pido»), cerrar el
+mensaje con «te aviso», o un mensaje que solo dice un momento («Luego»,
+«Mañana», «Luego miro»). NO lo son: una pregunta («¿me llega mañana?»), decir
+cuándo paga («lo pago mañana», «lo pago cuando me llegue»), «ahorita» (ya
+mismo) ni un dato con «te confirmo» («te confirmo: lavanda»).
+
 #### Scenario: "Voy apenas en camino a casa" tras el gancho de remarketing
 
 - WHEN remarketing transfiere a ventas
 - THEN el handoff empieza con `[EL CLIENTE APLAZÓ]` y prohíbe pedir datos de envío
 - AND ventas responde texto y no manda el formulario
+
+#### Scenario: Una pregunta o un pago diferido no aplazan
+
+- GIVEN el cliente escribe «¿Me llega mañana?» o «Listo, lo pago mañana por nequi»
+- WHEN la regla lee el mensaje
+- THEN no es un aplazamiento y el formulario, el resumen y el registro no se frenan por eso
 
 ### Requirement: Lo que no existe en el catálogo se dice (2026-09-23, revisado 2026-09-29)
 
@@ -1101,6 +1234,59 @@ hora de Bogotá es `clock`; las demás notas del turno, `turn_context`).
 - WHEN el cliente contesta mientras el turno termina (el outbox de Meta, la traza)
 - THEN su mensaje forma el turno siguiente SIN la nota de continuación: es su respuesta
 
+### Requirement: El reinicio no repite lo que ya leyó y la nota del contrato dice qué falta (2026-10-09)
+
+Turno 1 de …7392 (2026-10-08, bot nuevo): el modelo buscó la colección de
+Halloween (`search_products`) y pidió la lista con botones (`present_products`);
+el cliente escribió («Que viene incluido») antes de que corriera y el turno
+volvió a empezar desde cero. El reinicio repitió la búsqueda (una ronda más,
+~2 s y ~29 mil tokens), contestó con un texto que listaba los productos, la
+segunda puerta lo retuvo con «… No le escribas al cliente hasta tener el dato
+de la herramienta» y el modelo, que ya tenía el dato, volvió a escribir el
+mismo texto: el catálogo con botones no salió. El bot nuevo
+(`HubaraSalesSessionWorkflowV2`):
+- SHALL pasarle al reinicio de un turno cortado (Checkpoint A o antes de
+  grabar) las llamadas a las tools que solo leen (`sales/read_only_tools.py`:
+  `search_products`, `get_product_by_handle`, `list_categories`,
+  `list_promotions`, `check_order_status`, `load_skill`; cada clase lo declara
+  con `read_only = True`), cada una con su resultado, si no falló. El modelo
+  las ve como hechas y no las repite, cuentan como usadas para el contrato
+  del turno, quedan en el historial del turno y la traza las muestra (paso
+  `carry`: «ya tenía: …»). Lo que muestra o cambia algo (las tarjetas,
+  `set_order_slot`, `send_reply`) no viaja: el mensaje nuevo puede cambiar
+  qué hay que hacer;
+- SHALL decirle al modelo que su respuesta no salió también cuando la segunda
+  puerta retiene un texto suelto («Tu respuesta NO se envió. [CONTRATO DEL
+  TURNO] …»), como ya lo hacía con `send_reply`;
+- SHALL cerrar la nota de la segunda puerta según lo que falta: si la fila
+  acepta una tool que solo lee, pide un dato («No le escribas al cliente hasta
+  tener el dato de la herramienta.»); si no, pide mostrarle algo al cliente
+  («Esa herramienta es la que se lo muestra al cliente: llámala en esta misma
+  respuesta, tu texto solo no basta.»). Si faltan de las dos, las dos frases.
+El V1 no cambia. Las sesiones vivas del V2 re-juegan igual: el reinicio con
+lecturas va detrás del gate `restart-carries-reads-v1` (dentro de
+`run_agent_turn`), protegido por dos historias congeladas con control negativo.
+El «Paso a paso» dibuja lo que el modelo pidió y el corte no dejó correr como
+«no se ejecutó» (PR #419).
+
+#### Scenario: El cliente escribe después de la búsqueda
+
+- GIVEN el modelo buscó en el catálogo y está pensando la siguiente ronda
+- WHEN el cliente escribe y el turno vuelve a empezar
+- THEN la búsqueda no se repite: el modelo la recibe hecha y responde con los dos mensajes
+
+#### Scenario: Lo que el turno cortado iba a mostrar no viaja
+
+- GIVEN el modelo pidió la lista de productos y anotó el producto en el pedido
+- WHEN el turno se corta antes de que la lista salga
+- THEN el reinicio recibe solo la búsqueda; la lista y la anotación las decide de nuevo
+
+#### Scenario: El contrato pide el catálogo y el modelo contesta con texto
+
+- GIVEN la fila del contrato solo acepta tools que le muestran algo al cliente (`present_products`) y el modelo ya tiene los productos
+- WHEN cierra con un texto que los lista
+- THEN el texto no sale y la nota le dice que no se envió y que esa herramienta es la que se los muestra
+
 ### Requirement: El carrito llega con los nombres del catálogo (2026-09-30)
 
 Cada ítem del carrito de WhatsApp (`product_retailer_id`: SKU o id de variante)
@@ -1136,6 +1322,12 @@ el cliente.
 
 - WHEN el LLM responde «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son: <11 aromas>. ¿Alguno de esos te llama la atención?»
 - THEN el cliente recibe «Jengibre no está entre los aromas de la Luz Serena. Los que maneja son:», el selector y «¿Alguno de esos te llama la atención?»
+
+#### Scenario: El selector de un producto muestra todas sus opciones (2026-10-09)
+
+- GIVEN Encanto Silvestre tiene 11 colores en el catálogo
+- WHEN el LLM llama `present_variant_picker(variant_type="color", handle="encanto-silvestre")` con 3 de ellos
+- THEN el cliente recibe los 11 (los que el LLM no pasó van al final, en su grupo) y el resumen de la tool dice cuáles se agregaron: el cliente lee el selector como todo lo que hay
 
 ### Requirement: La lista de opciones vuelve al modelo antes de salir (2026-09-30)
 
@@ -1413,6 +1605,14 @@ El modo de cada conversación SHALL salir del estado `<vault>/_rollout/perceptio
 
 En una conversación del workflow V2 (`HubaraSalesSessionWorkflowV2`), toda lectura semántica del texto del cliente o del LLM SHALL decidirse en el motor de decisiones: una capacidad con su pregunta a Jev, su política y la regla de hoy como respaldo DENTRO del motor. Ninguna regla de texto MUST volver a juzgar después lo que el motor decidió. V1, remarketing y ETA MUST seguir byte a byte como hoy. El laboratorio (brazo B) y el perfil por defecto de producción MUST correr el MISMO perfil del bot nuevo (`jev-v3`).
 
+Excepción (decisión del operador, 2026-10-09, opción B del premortem del incidente del formulario): lo que el texto del bot promete hacer AHORA (el formulario, las tarifas, el resumen, el catálogo, las fotos, las opciones, «tu pedido quedó registrado») lo lee el detector de código `chats/agent/sales/use_cases/promised_actions.py`, en V1 y V2, sin preguntarle a Jev. No juzga lo que el motor decidió: lee el texto que el bot ya decidió enviar, y su único efecto es una ronda más para la tool prometida (`promised-actions-round-v1`, también en V1 porque `run_agent_turn` es compartido) o la red que manda el formulario o las tarifas. Una frase mal leída se arregla ahí, con su caso en `test_promised_actions.py`; no es una capacidad del motor (ver «Lo que el texto promete, el turno lo hace»).
+
+#### Scenario: Lo que el bot promete lo lee el detector, no el motor (excepción 2026-10-09)
+
+- GIVEN una conversación V2 y el texto «Te paso el formulario para los datos de envío» sin `request_shipping_details` en el turno
+- WHEN `send_reply` lo valida
+- THEN el detector `promised_actions` graba la promesa sin preguntarle a Jev y el turno da UNA ronda más; ninguna capacidad del motor decide si el texto promete
+
 #### Scenario: El envío respeta lo que decidió el motor
 
 - GIVEN una conversación V2 con `destinatario` en Jev y un texto «Usa el código VELAS_10 al pagar» que el egreso aprobó
@@ -1543,6 +1743,13 @@ Antes de enviar el texto final de un turno que no escaló, V1 y V2 SHALL pregunt
 - WHEN el workflow envía la despedida
 - THEN la red no se consulta
 
+#### Scenario: Un aviso del pedido no es un relevo (premortem 2026-10-09)
+
+- GIVEN el texto dice «Nuestro equipo te avisa cuando despachemos tu pedido» o «El equipo te confirma la guía cuando salga el envío»
+- WHEN la red consulta `relevo`
+- THEN no escala (el aviso lo manda el sistema al despachar; escalar callaba al bot en plena venta)
+- AND «Alguien de despachos te contacta cuando salga tu pedido para coordinar la dirección» SÍ es relevo: coordinar, acordar o tomar algo con el cliente es hacerse cargo, aunque nombre el despacho (ventas-5, regla del bot y TAG-08)
+
 ### Requirement: Las notas del turno no cambian las instrucciones (2026-10-06)
 
 El caché de DeepSeek es de prefijo estricto y renderiza las tools después del
@@ -1575,6 +1782,52 @@ notas del turno en ambos casos.
 - WHEN escriben el operador y un cliente
 - THEN solo el turno del operador lleva las notas en el mensaje; el del cliente, en las instrucciones
 
+### Requirement: El bot sabe de qué color es la vela de la foto que manda (2026-10-09)
+
+`present_product_detail` y `present_product_gallery` SHALL preguntar el color de
+la vela de cada foto que mandan (lista cerrada = los colores del producto) y
+decírselo al bot; el color viaja en el intent y queda en
+`outbound_media_index`, así la cita de esa foto lo nombra. Se lee UNA vez por
+foto (`<snapshot>/photo_colors/`, alias `gemini-photo-match`) y se vuelve a
+leer solo si cambia la paleta del producto. Una foto que no permite decirlo
+(varias velas de colores distintos) no lleva color. La foto nunca espera más
+de `PHOTO_COLOR_TIMEOUT_S` (4 s) por el color.
+
+#### Scenario: «¿No viene en este color?» citando la foto
+
+- GIVEN el bot mandó la foto de Encanto Silvestre (una ardilla café) y la visión la leyó como «Café»
+- WHEN el cliente responde citando esa foto «¿no viene en este color?»
+- THEN la nota de la cita dice «la vela de esa foto es color «Café»» y que «este color» o «el de la foto» es ese color
+- AND la nota no presenta el nombre del archivo del banner («Copia de hero desktop 2560x1440») como un diseño
+
+### Requirement: El bot ve lo que un colega le escribió al cliente (2026-10-09)
+
+Los mensajes del equipo desde el chat (`sender: human`) van solo al JSONL del
+dashboard: el historial del LLM no los tiene. Cuando el bot vuelve a tener el
+turno, el ingest SHALL citar en el mensaje del cliente lo que pasó después del
+último mensaje del bot si un colega escribió algo: las líneas del colega, lo que
+el cliente le contestó y los avisos automáticos, en orden (hasta 8). Queda en
+el historial del LLM, como la plantilla citada; el laboratorio arma el mismo
+texto y la calificación lee lo del colega como un mensaje nuestro.
+
+#### Scenario: El cliente le contesta al colega
+
+- GIVEN el bot dijo que no había descuento y ofreció mostrar otra línea; un colega tomó el chat, escribió «claro que sí, el descuento de la página» y devolvió el chat al bot
+- WHEN el cliente escribe «Si por favor»
+- THEN el turno del bot empieza con «[Después de tu último mensaje, un colega del equipo le escribió al cliente…» con la línea del colega y la instrucción de seguir desde ahí sin contradecirlo, y luego «Si por favor»
+
+#### Scenario: La plantilla de seguimiento de un colega se cita una vez
+
+- GIVEN lo último que recibió el cliente es la plantilla de seguimiento que mandó un colega
+- WHEN el cliente responde
+- THEN la plantilla va dentro de la nota del colega (no además como «[El cliente responde a este mensaje que le enviamos…]»)
+
+#### Scenario: Lo del colega ya llegó al bot
+
+- GIVEN el bot ya respondió después del mensaje del colega
+- WHEN el cliente vuelve a escribir
+- THEN el turno no lleva la nota
+
 ## Out of scope
 
 - Detalle del prompt engineering / SOUL.md / USER.md — viven en `hubara_vault/_templates/sales/`
@@ -1592,3 +1845,48 @@ notas del turno en ambos casos.
 - **`exoclaw_temporal`** — `build_prompt`, `llm_chat`, `record_turn`
 - **`platform/tool_extensions`** — `register_tool_extension` + `apply_tool_extensions`
 - **`platform/orchestration`** — `dispatch_event_activity`
+
+### Requirement: El bot ve el mensaje que cita el cliente (2026-10-09)
+
+Cuando el cliente responde citando un mensaje (`context.id` del webhook), el ingest SHALL resolver la cita contra el historial de la sesión (sus mensajes, como un comprobante o una foto, y los nuestros con `wamid`) y contra `outbound_text_index` (las burbujas del bot), y dejarla en `reply_to` del evento con `author` (`user` · `agent` · `human`), `text` y, si la tiene, `image_url`. Jev la lee del evento («el cliente cita este mensaje: «…»») y el LLM recibe la nota «El cliente escribió este mensaje RESPONDIENDO (citando) a…» (`quote` en la traza). La foto de producto que mandó el bot sigue con su nota propia; la ficha del catálogo, con la suya. El laboratorio SHALL armar la misma nota con la cita del evento.
+
+#### Scenario: Cita su propio comprobante (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el cliente mandó su comprobante y la visión lo leyó
+- WHEN responde «…» citando ese mensaje
+- THEN el evento queda con la cita resuelta y el turno lleva la nota con el texto del comprobante
+
+#### Scenario: Preguntar a qué huele el aroma citado no trae otra vez la lista (`ventas-6`, cuestionario `rafaga-v7`)
+
+- GIVEN el bot recomendó el Caballero de la noche y el cliente cita esa burbuja: «¿Este qué esencia tiene?»
+- WHEN Jev lee el turno con la cita (`aroma.notas` ≥ `given`)
+- THEN la fila del asunto `aroma` no pide herramienta: el bot responde con las notas del aroma (`notas_olfativas`) y la segunda puerta no lo empuja al selector
+- AND con `ventas-5` la misma lectura pedía el selector o la ficha
+
+#### Scenario: «Me regalas…» es pedir, no un regalo (`ventas-6`, cuestionario `rafaga-v7`)
+
+- WHEN el cliente escribe «Me regalas también la de encanto silvestre»
+- THEN Jev no lo lee como `gusto` (sonda: 0,94 → 0,10) y el turno no pide recomendar; «es para regalarle a mi mamá» sigue siendo `gusto` (0,95)
+
+### Requirement: El cliente que escribe justo después de comprar está en post-venta (2026-10-09)
+
+Cuando un mensaje abre un episodio nuevo y el anterior cerró con un pedido (COMPRA_EXITOSA, CONFIRMADO_PAGO_PENDIENTE, CONFIRMADO_SIN_DATOS) de los últimos 30 días, el ingest SHALL leer ese pedido en OrderFacts (con tope de 3 s; nunca la copia del vault). Si el pedido sigue en curso (ni entregado ni cancelado):
+
+- la nota del episodio nuevo SHALL decir el número del pedido, su etapa y si el pago está confirmado; MUST NOT pedir «saluda con calidez y pregunta en qué puedes ayudar hoy» ni afirmar que el pago está en verificación cuando ya está pagado; con cortesía, la respuesta breve y cálida de siempre;
+- el episodio SHALL quedar marcado con `after_order` (solo `order_id` y `display_id`) y `resolve_funnel_stage` SHALL dar `etapa_postcierre` hasta que el cliente elija un producto (ahí es una venta nueva); la traza (`project_stage`) SHALL decir la misma etapa;
+- con `ventas-6` (política `turno-v5`), si Jev lee que el cliente manda o menciona el comprobante, la guía SHALL pedir mirar el pago con `check_order_status` y decir lo que diga, nunca «el equipo revisa el pago» a ciegas;
+- la calificación (TAG-09) SHALL aceptar «tu pedido quedó confirmado» en ese episodio: el pedido es el de `after_order`.
+
+Sin datos del pedido (Medusa caído o lento), o con el pedido entregado o cancelado, la nota y la etapa son las de siempre.
+
+#### Scenario: Escribe seis minutos después de que confirmaron su pago (caso de producción del 2026-10-09, pedido #64)
+
+- GIVEN el humano vendió, registró el pedido y «Confirmar pago» devolvió la conversación al bot
+- WHEN el cliente escribe citando su comprobante
+- THEN la nota dice «su pedido #64 está en preparación. El pago ya está confirmado…», no le da la bienvenida y la etapa es post-venta
+
+#### Scenario: El pedido ya se entregó
+
+- GIVEN el pedido anterior figura entregado en OrderFacts
+- WHEN el cliente vuelve a escribir
+- THEN la conversación nueva abre como siempre

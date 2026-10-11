@@ -13,14 +13,15 @@ Las reglas de `mobile_rules` arman lo legal y son la regla de cada capacidad.
 
 Aquí solo vive lo de la app: la latencia. La app nunca espera a Jev —la
 burbuja, a lo sumo `BUBBLE_WAIT_S`; los incendios, nada— y el veredicto queda
-guardado para la misma versión del chat y el mismo modo (la siguiente consulta
-lo usa). El veredicto se aplica tal cual: con la regla, la respuesta es la de
+guardado para lo mismo que Jev lee (etapa, burbujas y conversación) y el mismo
+modo (la siguiente consulta lo usa). El veredicto se aplica tal cual: con la regla, la respuesta es la de
 las reglas. Los incendios de pedidos (retraso, pago) son hechos: no son una
 decisión y no pasan por acá.
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -108,8 +109,11 @@ class OperatorDecisions:
             return payload  # sin jugadas legales no hay nada que decidir
         session_id = str(payload.get("session_id"))
         inp = BubbleInput(stage=str(payload.get("stage") or ""), suggestions=tuple(items), events=tuple(events))
+        # Lo que Jev lee, no la versión del chat: al decidir anota su costo en `metadata.json`, eso mueve la
+        # versión, el dashboard avisa y la app vuelve a pedir; con la versión en la llave, Jev se volvía a
+        # preguntar cada ~2,7 s mientras el chat estuviera abierto (caso 2026-10-09).
         key = (
-            "burbuja", session_id, self._provider("burbuja", session_id), payload.get("version"),
+            "burbuja", session_id, self._provider("burbuja", session_id), inp.stage, _conversation_mark(events),
             tuple(json.dumps(s.get("action"), sort_keys=True, ensure_ascii=False) for s in items),
         )
         verdict = self._cached(key)
@@ -248,6 +252,16 @@ class OperatorDecisions:
 
         task.add_done_callback(done)
         return task
+
+
+#: Cuántos mensajes del final entran en la huella de la conversación (Jev lee 12).
+_MARK_EVENTS = 40
+
+
+def _conversation_mark(events: Sequence[Mapping[str, Any]]) -> str:
+    """Huella de lo que hay en la conversación: cambia con cada mensaje nuevo, no con lo que se anota aparte."""
+    tail = json.dumps([len(events), list(events[-_MARK_EVENTS:])], sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(tail.encode("utf-8")).hexdigest()
 
 
 def _metadata(vault_dir: Path, session_id: str) -> dict[str, Any]:

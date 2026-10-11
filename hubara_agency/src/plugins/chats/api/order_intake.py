@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -52,10 +51,13 @@ from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import resolve_item_variants
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
+from src.plugins.chats.agent.sales.use_cases.payment_receipts import payment_receipt_in_active_episode
+from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
+from src.plugins.chats.shared.draft_items import draft_items, find_product
+from src.plugins.chats.shared.operator_order import operator_view
 from src.plugins.chats.shared.order_intake import (
     build_prompt,
     catalog_digest,
-    draft_slots_of,
     handoff_started_ms,
     llm_items,
     merge_shipping,
@@ -72,12 +74,11 @@ from src.sdk.connectorkit import (
     get_promo_quota_store,
     parse_variant_tags,
 )
+from src.sdk.identitykit import is_customer_session_id
 from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
 
 router = APIRouter()
 
-#: Mismo guard que ``session_actions``: el segmento llega al filesystem del vault.
-_SESSION_RE = re.compile(r"^wa_[0-9]{8,15}$")
 
 #: Modelo de extracción. DeepSeek vía el proxy litellm (`litellm_proxy/` le dice
 #: al SDK que resuelva el alias EN el proxy — la API key del vendor vive ahí,
@@ -151,12 +152,12 @@ def get_order_intake_deps() -> OrderIntakeDeps:
 
 
 Deps = Annotated[OrderIntakeDeps, Depends(get_order_intake_deps)]
-SessionKey = Annotated[str, PathParam(min_length=1, max_length=64)]
+SessionKey = Annotated[str, PathParam(min_length=1, max_length=140)]
 
 
 def _session(session_key: str) -> str:
-    if not _SESSION_RE.fullmatch(session_key):
-        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<dígitos>)")
+    if not is_customer_session_id(session_key):
+        raise HTTPException(status_code=422, detail="session_key inválida (esperado wa_<teléfono> o wa_<id de Meta>)")
     return session_key
 
 
@@ -261,17 +262,37 @@ def _resolve_items(
     return resolved
 
 
+def _view_items(view: dict[str, Any], products: list[Any]) -> list[dict[str, Any]]:
+    """Los productos del pedido que arma el operador (borrador + lo que eligió
+    en la app) con la forma de `llm_items`: el respaldo cuando el modelo no da
+    ninguno (caído o sin nada que leer)."""
+    out: list[dict[str, Any]] = []
+    for item in draft_items(view):
+        product = find_product(products, item.get("producto"))
+        quantity = parse_leading_quantity(str(item.get("cantidad") or ""))
+        if product is not None and quantity:
+            out.append({"handle": product.handle, "variant_label": None, "quantity": quantity, "evidence": None})
+    return out
+
+
 @router.post("/order-intake/{session_key}/suggest")
 async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
     """Lee la conversación y devuelve el pedido SUGERIDO (no lo registra)."""
-    session = _session(session_key)
+    return await _suggestion(_session(session_key), deps)
+
+
+async def _suggestion(session: str, deps: OrderIntakeDeps) -> dict[str, Any]:
     warnings: list[str] = []
 
     metadata = FilesystemMetadataStore(deps.vault_dir).read(session)
     events = _read_events(deps.vault_dir, session)
     handoff_ms = handoff_started_ms(metadata)
     conversation, considered = render_conversation(events, handoff_ms=handoff_ms)
-    draft_slots = draft_slots_of(metadata)
+    # El borrador con lo que pasó con el humano al mando (el bot no corre): lo
+    # que el cliente llenó en el formulario y el producto que eligió el operador.
+    view = operator_view(metadata, events)
+    view_items = draft_items(view)
+    draft_slots = {**view["slots"], **({"items": view_items} if len(view_items) > 1 else {})}
 
     products = await _load_catalog(deps, warnings)
     catalog = catalog_digest(products)
@@ -300,7 +321,7 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         draft_slots,
         session_phone=phone_from_session(session),
     )
-    items = _resolve_items(llm_items(extracted), products_by_handle, warnings)
+    items = _resolve_items(llm_items(extracted) or _view_items(view, products), products_by_handle, warnings)
 
     payment_method = normalize_payment_method(extracted.get("payment_method"))
     payment_source: str | None = "conversation" if payment_method else None
@@ -339,6 +360,7 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         item["coupon_units"] = sum(d.units for d in lines)
         item["coupon_discount_cop"] = sum(d.units * d.discount_unit_cop for d in lines)
     notes = extracted.get("notes")
+    receipt = payment_receipt_in_active_episode(metadata)
 
     logger.info(
         "[chats.order_intake] suggest session={} items={} faltan={} degraded={} model={}",
@@ -370,7 +392,58 @@ async def suggest(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
         "notes": str(notes)[:500] if isinstance(notes, str) and notes.strip() else None,
         "catalog": catalog,
         "already_registered_order_id": registered_order_id(metadata),
+        # El comprobante que el cliente ya mandó en este episodio: el formulario
+        # lo avisa y abre con «enviar datos de pago» apagado (pedido #64).
+        "payment_receipt": receipt.as_dict() if receipt is not None else None,
         "model": deps.llm.model,
         "degraded": degraded,
         "error_detail": error_detail,
+    }
+
+
+# ── el formulario de la App Operador ─────────────────────────────────────────
+
+#: Cómo se le muestra al operador el medio de pago del pedido.
+_PAYMENT_LABELS = {
+    "transfer": "Pago anticipado (transferencia o Nequi)",
+    "payment_link": "Link de pago",
+    "cash_on_delivery": "Contra entrega",
+}
+#: Lo que falta (`missing_fields`), en palabras.
+_MISSING_WORDS = {
+    "city": "la ciudad",
+    "address": "la dirección",
+    "phone": "el teléfono",
+    "receiver_name": "quién recibe",
+    "items": "los productos",
+    "payment_method": "el medio de pago",
+}
+
+
+def _order_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Un ítem con la forma de `session-actions /order` (`OrderItemBody`)."""
+    keys = ("handle", "variant_label", "quantity", "color", "aroma")
+    return {k: item[k] for k in keys if item.get(k) not in (None, "")}
+
+
+def _missing_text(missing: list[str]) -> str:
+    words = [_MISSING_WORDS.get(m, m) for m in missing]
+    if not words:
+        return ""
+    listed = words[0] if len(words) == 1 else f"{', '.join(words[:-1])} y {words[-1]}"
+    return f"Falta {listed}. Complétalo antes de crear el pedido."
+
+
+@router.get("/order-intake/{session_key}/form")
+async def form(session_key: SessionKey, deps: Deps) -> dict[str, Any]:
+    """El mismo pedido sugerido para la App Operador (sus pantallas solo leen
+    con GET), con el cuerpo de los ítems listo para `session-actions /order`,
+    el medio de pago y lo que falta en palabras. Tampoco registra nada."""
+    suggestion = await _suggestion(_session(session_key), deps)
+    return {
+        **suggestion,
+        "order_items": [_order_item(i) for i in suggestion["items"]],
+        "payment_label": _PAYMENT_LABELS.get(str(suggestion["payment_method"]), ""),
+        "ready": not suggestion["missing"],
+        "missing_text": _missing_text(suggestion["missing"]),
     }

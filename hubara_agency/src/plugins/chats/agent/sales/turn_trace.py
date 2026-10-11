@@ -17,7 +17,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.card_texts import envelope_card_text
 from src.plugins.chats.agent.sales.decisions.audit import contract_compliance
-from src.plugins.chats.shared.draft_items import draft_items
+from src.plugins.chats.shared.draft_items import draft_items, missing_variants
 
 _ARG_MAX = 160
 _EXCERPT_MAX = 240
@@ -139,7 +139,6 @@ STAGES: tuple[str, ...] = (
     "postcierre",
 )
 
-_VARIANT_SLOTS: tuple[str, ...] = ("aroma", "color", "cantidad")
 _SHIPPING_SLOTS: tuple[str, ...] = (
     "ciudad", "direccion", "telefono", "nombre_recibe", "metodo_pago"
 )
@@ -176,11 +175,11 @@ def project_stage(episode: dict[str, Any] | None) -> str:
         return "postcierre"
     slots = draft_slots(episode)
     if not slots.get("producto"):
-        return "descubrimiento"
-    items = draft_items((episode or {}).get("order_draft"))
-    if not items or not all(
-        all(item.get(k) for k in _VARIANT_SLOTS) for item in items
-    ):
+        # El episodio que abrió con el pedido anterior en curso (caso pedido #64).
+        return "postcierre" if episode.get("after_order") else "descubrimiento"
+    draft = (episode or {}).get("order_draft")
+    items = draft_items(draft)
+    if not items or any(missing_variants(draft if isinstance(draft, dict) else None, item) for item in items):
         return "variantes"
     shipping_started = any(slots.get(k) for k in _SHIPPING_SLOTS)
     if not is_confirmed(episode) and not shipping_started:
@@ -232,6 +231,8 @@ _TURN_CONTEXT = "[CONTEXTO DE TURNO"
 _TURN_CONTEXT_KINDS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*El cliente te escribió \d+ mensajes"), "burst_note"),
     (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*Hora actual en Colombia"), "clock"),
+    # El mensaje que citó el cliente (foto nuestra, su comprobante, un texto).
+    (re.compile(r"\[CONTEXTO DE TURNO[^\]]*\]\s*El cliente escribió este mensaje RESPONDIENDO"), "quote"),
 )
 
 

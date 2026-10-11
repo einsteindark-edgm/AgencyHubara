@@ -312,6 +312,12 @@ class MedusaOrderQuery:
     # Internals — mapeo Medusa → DTOs
     # ------------------------------------------------------------------
 
+    def summary_of(self, raw: dict[str, Any], *, is_draft: bool) -> OrderSummaryDTO:
+        """El resumen de un pedido crudo de Medusa con el mapeo de Órdenes,
+        para quien lista con otros filtros (los pedidos de una persona,
+        `customer_orders.py`): etapa, pago y «de prueba» salen iguales."""
+        return self._build_summary(raw, is_draft=is_draft)
+
     def _build_summary(
         self, raw: dict[str, Any], *, is_draft: bool
     ) -> OrderSummaryDTO:

@@ -13,6 +13,11 @@ from src.platform.promotions.admin import (
     UnavailablePromotionsAdmin,
 )
 from src.platform.promotions.audit import CouponAuditLog, CouponAuditPort
+from src.platform.promotions.conditions import (
+    ConditionedPromotionsPort,
+    CouponConditionsStore,
+    VaultCouponConditionsStore,
+)
 from src.platform.promotions.coupon_sales import (
     CouponSalesReader,
     UnavailableCouponSalesReader,
@@ -35,7 +40,11 @@ def get_promotions_port() -> PromotionsPort:
     if not getattr(settings, "base_url", None):
         log.warning("PromotionsPort = Null (MEDUSA_BASE_URL vacío)")
         return NullPromotionsPort()
-    return MedusaPromotionsPort(get_medusa_client())
+    # Las condiciones de Hubara (solo primera compra) van pegadas a cada
+    # cupón: las ven todas las puertas que leen promociones (L-32).
+    return ConditionedPromotionsPort(
+        MedusaPromotionsPort(get_medusa_client()), get_coupon_conditions_store
+    )
 
 
 def _invalidate_local_reader() -> None:
@@ -89,8 +98,14 @@ def get_quota_lock() -> VaultQuotaLock:
     return VaultQuotaLock(WORKSPACE_VAULT_DIR)
 
 
+def get_coupon_conditions_store() -> CouponConditionsStore:
+    """Condiciones de Hubara por cupón («solo primera compra»)."""
+    return VaultCouponConditionsStore(WORKSPACE_VAULT_DIR)
+
+
 __all__ = [
     "get_coupon_audit_log",
+    "get_coupon_conditions_store",
     "get_coupon_sales_reader",
     "get_promo_quota_store",
     "get_promotions_admin_port",

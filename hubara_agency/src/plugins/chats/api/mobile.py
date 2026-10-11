@@ -43,7 +43,11 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     _render_payment_instructions_text,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
-from src.plugins.chats.agent.sales.use_cases.funnel_stage import STAGE_POSTCIERRE, resolve_funnel_stage
+from src.plugins.chats.agent.sales.use_cases.funnel_stage import (
+    STAGE_POSTCIERRE,
+    resolve_funnel_stage,
+    shipping_slots_complete,
+)
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
 from src.plugins.chats.api.dashboard import (
@@ -60,7 +64,7 @@ from src.plugins.chats.api.mobile_devices import (
 )
 from src.plugins.chats.api.mobile_push import TEST_MESSAGE, PushDispatcher
 from src.plugins.chats.api.order_intake import _read_events
-from src.plugins.chats.shared.draft_items import draft_items, product_key
+from src.plugins.chats.shared.draft_items import draft_items, find_product
 from src.plugins.chats.shared.mobile_rules import (
     MAX_HUMAN,
     ChatFireFacts,
@@ -76,12 +80,13 @@ from src.plugins.chats.shared.mobile_rules import (
     hot_sales,
     human_chats,
     last_sent_action,
+    selling_stage,
     suggest_actions,
     unanswered_since,
 )
+from src.plugins.chats.shared.operator_order import customer_confirmed, operator_view
 from src.plugins.chats.shared.order_intake import normalize_payment_method
 from src.plugins.chats.shared.purchase_signals import (
-    has_purchase_confirmation,
     is_current_inbound_deferral,
 )
 from src.sdk.connectorkit import (
@@ -209,17 +214,6 @@ async def _catalog_products(deps: MobileDeps) -> list[Any] | None:
     return [p for p in result.results if getattr(p, "status", "published") == "published"]
 
 
-def find_product(products: list[Any], name: Any) -> Any | None:
-    """Producto cuyo título o handle es ``name`` (sin acentos/mayúsculas)."""
-    wanted = product_key(name)
-    if not wanted:
-        return None
-    return next(
-        (p for p in products if wanted in (product_key(p.title), product_key(p.handle))),
-        None,
-    )
-
-
 def _image_count(product: Any) -> int:
     urls = [img.url for img in (product.images or []) if getattr(img, "url", None)]
     if product.thumbnail and product.thumbnail not in urls:
@@ -239,7 +233,10 @@ def _item_facts(item: dict[str, Any], products: list[Any]) -> DraftItemFacts:
         return DraftItemFacts(quantity=quantity)
     attrs = parse_variant_tags(product.tags)
     offered = {"aroma": attrs.aromas, "color": attrs.colors}
-    missing = tuple(a for a, options in offered.items() if not item.get(a) and len(options) >= 2)
+    # El producto del formulario que mandó el operador: él ya dio las variantes por buenas.
+    missing = () if item.get("operador") else tuple(
+        a for a, options in offered.items() if not item.get(a) and len(options) >= 2
+    )
     return DraftItemFacts(
         handle=product.handle,
         quantity=quantity,
@@ -326,8 +323,13 @@ def _stage_and_episode(metadata: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
 
 @router.get("/mobile/suggestions/{session_id}")
-async def suggestions(session_id: str, deps: Deps) -> Any:
-    """Burbujas de acción para el chat: jugadas legales de la etapa del embudo."""
+async def suggestions(session_id: str, deps: Deps, features: str = "") -> Any:
+    """Burbujas de acción para el chat: jugadas legales de la etapa del embudo.
+
+    ``features``: lo que sabe hacer la app, separado por comas (`open_screen`:
+    una burbuja puede abrir una pantalla del servidor, como «Crear pedido»).
+    Una app que no lo manda no recibe esas burbujas: las mandaría como una tool
+    que no existe."""
     session_dir = _session_dir(deps, session_id)
     if session_dir is None:
         return _error(404, "session_not_found")
@@ -335,21 +337,29 @@ async def suggestions(session_id: str, deps: Deps) -> Any:
     now_ms = deps.now_ms()
     window_open = not is_service_window_closed(now_ms, metadata)
     stage, episode = _stage_and_episode(metadata)
-    draft = episode.get("order_draft") if isinstance(episode.get("order_draft"), dict) else {}
+    events = _read_events(deps.vault_dir, session_id)
+    human = metadata.get("active_route") == ROUTE_HUMANO
+    # Con el humano al mando el bot no llena el borrador: cuenta lo que hizo el
+    # operador y lo que llenó el cliente (las burbujas solo se ven así).
+    draft = (
+        operator_view(metadata, events) if human
+        else episode.get("order_draft") if isinstance(episode.get("order_draft"), dict) else {}
+    )
     slots = draft.get("slots") if isinstance(draft.get("slots"), dict) else {}
     products = await _catalog_products(deps) if window_open else None
     last_inbound = metadata.get("last_inbound_at_ms")
-    events = _read_events(deps.vault_dir, session_id)
+    items = tuple(_item_facts(i, products or []) for i in draft_items(draft))
+    if human:
+        stage = selling_stage(stage, items, shipping_complete=shipping_slots_complete(slots))
     facts = SuggestionFacts(
         session_id=session_id,
         version=_version_ms(session_dir, session_id),
         stage=stage,
         window_open=window_open,
-        in_control="human" if metadata.get("active_route") == ROUTE_HUMANO else "bot",
+        in_control="human" if human else "bot",
         catalog_available=bool(products),
         payment_methods_available=deps.payment_instructions_text() is not None,
-        items=tuple(_item_facts(i, products or []) for i in draft_items(draft)),
-        purchase_confirmed=has_purchase_confirmation(metadata),
+        items=items,
         customer_deferred=is_current_inbound_deferral(metadata),
         shipping_ready=bool(
             slots.get("ciudad") and slots.get("direccion") and normalize_payment_method(slots.get("metodo_pago"))
@@ -360,6 +370,8 @@ async def suggestions(session_id: str, deps: Deps) -> Any:
         last_action=last_sent_action(events),
         operator_moves=_operator_moves(metadata),
         last_inbound_ms=last_inbound if isinstance(last_inbound, int) else None,
+        customer_confirmed=human and customer_confirmed(metadata, events),
+        app_features=frozenset(f.strip() for f in features.split(",") if f.strip()),
     )
     payload = suggest_actions(facts)
     if deps.decisions is None:

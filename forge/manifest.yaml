@@ -635,7 +635,7 @@ commerce_literals:
 decision_bundles:
   dir: "hubara_agency/src/plugins/chats/shared/decisions/bundles"
   default: ventas
-  store: ventas-4
+  store: ventas-6
 
 # Archivos REGENERADOS desde forge/templates/ (no editados).
 templates:

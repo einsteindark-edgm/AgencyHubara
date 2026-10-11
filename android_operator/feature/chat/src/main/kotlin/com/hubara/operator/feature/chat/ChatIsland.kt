@@ -41,7 +41,10 @@ object ChatNativeComponent : NativeComponent {
     override fun Content(props: NativeProps, modifier: Modifier) {
         val session = props["session"]?.let(SessionId::parse) ?: return
         val vm = hiltViewModel<ChatViewModel, ChatViewModel.Factory>(key = "chat:${session.raw}", creationCallback = { it.create(session.raw) })
-        ChatIsland(vm, onMore = props.action("on_more") ?: {}, onReactivate = props.action("on_reactivate") ?: {}, modifier = modifier)
+        ChatIsland(
+            vm, onMore = props.action("on_more") ?: {}, onReactivate = props.action("on_reactivate") ?: {},
+            onOpen = { screen -> props.open(screen, mapOf("session" to session.raw)) }, modifier = modifier,
+        )
     }
 }
 
@@ -53,7 +56,13 @@ object ChatNativeModule {
 }
 
 @Composable
-fun ChatIsland(vm: ChatViewModel, onMore: () -> Unit, onReactivate: () -> Unit, modifier: Modifier = Modifier) {
+fun ChatIsland(
+    vm: ChatViewModel,
+    onMore: () -> Unit,
+    onReactivate: () -> Unit,
+    modifier: Modifier = Modifier,
+    onOpen: (String) -> Unit = {},
+) {
     // Leído mientras está en pantalla; con la app en segundo plano, no.
     LifecycleResumeEffect(vm) {
         vm.onVisible(true)
@@ -65,6 +74,7 @@ fun ChatIsland(vm: ChatViewModel, onMore: () -> Unit, onReactivate: () -> Unit, 
         actions = ChatActions(
             onMore = onMore, onReactivate = onReactivate, onIntervene = vm::intervene, onSend = vm::send, onSendText = vm::sendText,
             onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss, onClearError = vm::clearError, onReload = vm::refresh,
+            onOpen = onOpen,
         ),
     )
 }
@@ -81,6 +91,8 @@ class ChatActions(
     val onDismiss: (String) -> Unit,
     val onClearError: () -> Unit,
     val onReload: () -> Unit = {},
+    /** Abre una pantalla del servidor (la burbuja «Crear pedido» → `crear_pedido`). */
+    val onOpen: (String) -> Unit = {},
 )
 
 /** El chat sin ViewModel: lo que se ve dado un [ChatUiState]. */
@@ -103,7 +115,13 @@ fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modif
                 !ui.humanInControl -> Unit
                 !ui.windowOpen -> WindowClosedCard(actions.onReactivate)
                 else -> {
-                    QuickActionStrip(ui.suggestions, onSend = actions.onSend, onEdit = { actions.onMore() }, onMore = actions.onMore)
+                    QuickActionStrip(
+                        ui.suggestions,
+                        // «Crear pedido» abre el formulario (pantalla del servidor); las demás van por el outbox.
+                        onSend = { s -> s.opens?.let(actions.onOpen) ?: actions.onSend(s) },
+                        onEdit = { actions.onMore() },
+                        onMore = actions.onMore,
+                    )
                     Composer(draft, enabled = true, onSend = actions.onSendText)
                 }
             }

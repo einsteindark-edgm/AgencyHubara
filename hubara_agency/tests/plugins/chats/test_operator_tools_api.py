@@ -99,6 +99,11 @@ class _Harness:
     def sent_texts(self) -> list[str]:
         return [call.args[2] for call in self.wa["send_text"].await_args_list]
 
+    def write_history(self, events: list[dict[str, Any]]) -> None:
+        (self.vault / _S / "sessions").mkdir(parents=True, exist_ok=True)
+        (self.vault / _S / "sessions" / f"{_S}.jsonl").write_text(
+            "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events), encoding="utf-8")
+
 
 @pytest.fixture
 def h(_isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch) -> _Harness:
@@ -397,14 +402,29 @@ def test_asking_shipping_details_builds_the_items_from_the_draft(h: _Harness) ->
 
 
 def test_asking_shipping_details_keeps_the_bot_guard_and_needs_a_resolvable_draft(h: _Harness) -> None:
-    h.seed(_human(episodes=_draft(_CHOSEN, confirmed=False)))
+    # El formulario no espera un «sí» (incidente del 2026-10-09); un cliente
+    # que acaba de aplazar sí lo frena, también desde la app.
+    h.seed(_human(
+        episodes=_draft(_CHOSEN, confirmed=False),
+        last_inbound_message_id="wamid.defer",
+        last_inbound_signal={"kind": "deferral", "at_ms": _now(), "message_id": "wamid.defer", "text": "luego"},
+    ))
     r = h.run("request_shipping_details", cid="s1")
-    assert (r.status_code, r.json()["reason"]) == (422, "purchase_not_confirmed")
+    assert (r.status_code, r.json()["reason"]) == (422, "customer_deferred")
 
     h.seed(_human(episodes=_draft({**_CHOSEN, "producto": "Vela que no existe"})))
     r = h.run("request_shipping_details", cid="s2")
     assert r.status_code == 422 and r.json()["error"] == "invalid_args"
     assert h.sent_texts() == []
+
+
+def test_asking_shipping_details_does_not_wait_for_a_yes(h: _Harness) -> None:
+    h.seed(_human(episodes=_draft(_CHOSEN, confirmed=False)))
+
+    r = h.run("request_shipping_details", cid="s3")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sent"] is True
 
 
 _CLOSING = {**_CHOSEN, "ciudad": "Bogotá", "barrio": "Chapinero", "direccion": "Cl 1 # 2-3",
@@ -434,6 +454,102 @@ def test_the_order_summary_needs_address_and_a_known_payment_method(h: _Harness)
     assert r.status_code == 422 and r.json()["error"] == "invalid_args"
     problems = " ".join(r.json()["problems"])
     assert "dirección" in problems and "medio de pago" in problems
+    assert not h.wa["send_interactive_buttons"].await_count
+
+
+# ── con el bot apagado nadie llena el borrador (caso 2026-10-09) ─────────────
+#
+# «Pedir datos de envío» y «Resumen para confirmar» respondían «faltan datos
+# para esta acción»: el episodio tenía el borrador vacío porque con un humano
+# al mando el bot no corre. El operador elige el producto en la app y el
+# resumen sale con ese producto y lo que el cliente llenó en el formulario.
+
+
+def _iso(ms: int) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+
+
+_FORM_REPLY = ("[datos de envío recibidos] city=Bogotá; neighborhood=Chapinero; address=Cl 1 # 2-3; "
+               "phone=3000000000; receiver_name=Ana; payment_method=transfer; order_total_cop=179800; "
+               "items_summary=2× Dúo Zodiacal")
+
+
+def test_with_no_products_in_the_order_the_form_goes_with_the_product_the_operator_picks(
+    h: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("META_FLOW_ID_SHIPPING", "flow-envio-prueba")  # el formulario nativo, como en producción
+    # sin un «sí» anotado: con el bot apagado nadie lo anota, y el formulario no lo espera (PR #412)
+    h.seed(_human(episodes=_draft({}, confirmed=False)))
+
+    r = h.run("request_shipping_details", {"product": "duo-zodiacal", "quantity": "2"}, cid="act-form")
+
+    assert r.status_code == 200, r.text
+    flow = h.wa["send_flow"].await_args.args[2]
+    assert "2× Dúo Zodiacal" in flow.body and "Subtotal en productos: $179.800" in flow.body
+    [event] = h.history()
+    assert event["operator_tool"] == "request_shipping_details" and event["component_kind"] == "shipping_flow"
+    assert h.meta()["operator_tool_actions"][-1]["args"] == {"product": "duo-zodiacal", "quantity": "2"}
+
+
+def test_an_order_without_products_tells_the_operator_what_to_do(h: _Harness) -> None:
+    h.seed(_human(episodes=_draft({})))
+
+    r = h.run("request_shipping_details", cid="act-empty")
+
+    assert r.status_code == 422
+    assert r.json()["error"] == "invalid_args"
+    # la app muestra `message` tal cual: nada de «faltan datos para esta acción»
+    assert r.json()["message"] == "El pedido todavía no tiene productos: elige el producto y la cantidad."
+    assert h.sent_texts() == []
+
+
+def test_the_form_needs_a_real_product_and_a_positive_quantity(h: _Harness) -> None:
+    h.seed(_human(episodes=_draft({})))
+
+    for cid, args, said in (
+        ("q1", {"product": "duo-zodiacal", "quantity": "0"}, "La cantidad tiene que ser un número de 1 a 999."),
+        ("q2", {"product": "duo-zodiacal", "quantity": "muchas"}, "La cantidad tiene que ser un número de 1 a 999."),
+        ("q3", {"product": "no-existe", "quantity": "1"}, "El producto «no-existe» no está en el catálogo."),
+    ):
+        r = h.run("request_shipping_details", args, cid=cid)
+        assert (r.status_code, r.json()["error"], r.json()["message"]) == (422, "invalid_args", said), cid
+    assert h.sent_texts() == []
+
+
+def test_with_the_bot_off_the_summary_uses_the_form_the_operator_sent_and_what_the_customer_filled_in(
+    h: _Harness,
+) -> None:
+    now = _now()
+    h.seed(_human(
+        episodes=_draft({}),
+        operator_tool_actions=[{"id": "act-form", "tool": "request_shipping_details", "sent": True,
+                                "at_ms": now - 10 * _MIN, "args": {"product": "duo-zodiacal", "quantity": "2"}}],
+    ))
+    h.write_history([{"role": "user", "timestamp": _iso(now - 5 * _MIN), "content": _FORM_REPLY}])
+
+    r = h.run("present_order_confirmation", cid="act-summary-off")
+
+    assert r.status_code == 200, r.text
+    card = h.wa["send_interactive_buttons"].await_args.args[2]
+    assert "2× Dúo Zodiacal — $89.900" in card.body and "Total: $187.700 COP" in card.body
+    assert "Cl 1 # 2-3, Chapinero, Bogotá" in card.body and "Pago anticipado (Nequi)" in card.body
+
+
+def test_the_summary_says_what_is_missing_in_words_the_operator_reads(h: _Harness) -> None:
+    now = _now()
+    # el formulario y el pedido del episodio ANTERIOR no cuentan para este
+    h.seed(_human(episodes=_draft({})))
+    h.write_history([{"role": "user", "timestamp": _iso(now - 2 * 60 * _MIN), "content": _FORM_REPLY}])
+
+    r = h.run("present_order_confirmation", cid="act-summary-empty")
+
+    assert r.status_code == 422 and r.json()["error"] == "invalid_args"
+    assert r.json()["message"] == (
+        "Para el resumen falta el producto, la ciudad, la dirección y el medio de pago. "
+        "Elige el producto en «Pedir datos de envío» y espera a que el cliente llene el formulario."
+    )
     assert not h.wa["send_interactive_buttons"].await_count
 
 
@@ -481,6 +597,28 @@ def test_apply_coupon_stores_it_on_the_order_without_sending_anything(h: _Harnes
 
     unknown = h.run("apply_coupon", {"code": "NOEXISTE"}, cid="act-cupon-2")
     assert (unknown.status_code, unknown.json()["error"], unknown.json()["reason"]) == (422, "tool_rejected", "not_found")
+
+
+def test_the_welcome_coupon_from_the_operator_looks_at_every_order_of_the_person(h: _Harness) -> None:
+    """El operador aplica el de bienvenida con la misma vara que el bot (caso
+    2026-10-09): si la persona ya compró, aunque sea en otra conversación de
+    su número, se rechaza con la razón."""
+    from dataclasses import replace
+
+    from src.sdk.connectorkit import FakePromotionsPort, InMemoryCustomerOrders, InMemoryOrderFacts, OrderFacts
+
+    h.deps.promotions = FakePromotionsPort([replace(_promo("BIENVENIDA"), first_purchase_only=True)])
+    h.deps.order_facts = InMemoryOrderFacts()
+    h.deps.customer_orders = InMemoryCustomerOrders({_S: [OrderFacts(
+        order_id="order_09WEB", display_id="#12", total_cop=60000, currency_code="cop", pay_status="paid",
+        stage="delivered", customer="Cliente", is_draft=False,
+    )]})
+    h.seed(_human(episodes=_draft(_CHOSEN)))
+
+    r = h.run("apply_coupon", {"code": "bienvenida"}, cid="act-bienvenida")
+
+    assert (r.status_code, r.json()["reason"]) == (422, "first_purchase_only")
+    assert "applied_coupon" not in h.meta()["episodes"][-1]
 
 
 def test_missing_catalog_or_promotions_is_503_not_a_crash(h: _Harness) -> None:
@@ -636,3 +774,18 @@ def test_every_suggested_action_runs_verbatim_on_the_tools_endpoint(h: _Harness,
         )
         assert r.status_code == 200, (action, r.text)
         assert r.json()["sent"] is True
+
+
+def test_the_operator_can_act_on_a_customer_without_phone(h: _Harness) -> None:
+    """Cliente con nombre de usuario de WhatsApp: su sesión es `wa_<id de Meta
+    sin punto>`. La app no podía mandarle nada (404 `session_not_found`)."""
+    session = "wa_CO9990000000000002"
+    (h.vault / session).mkdir(parents=True)
+    (h.vault / session / "metadata.json").write_text(json.dumps(_human()), encoding="utf-8")
+
+    r = h.client.post(
+        f"/api/chats/session-actions/{session}/tools/send_shipping_rates",
+        json={"client_action_id": "act-bsuid", "args": {}},
+    )
+
+    assert r.status_code == 200, r.text

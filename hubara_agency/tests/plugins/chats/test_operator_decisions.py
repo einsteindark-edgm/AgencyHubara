@@ -11,8 +11,8 @@ la conversación, sus métricas, la cola de desacuerdos y el costo de Jev. Las
 reglas de `mobile_rules` arman lo legal y son el respaldo.
 
 Lo único propio de la app es la latencia: nunca espera a Jev (la burbuja, a lo
-sumo `BUBBLE_WAIT_S`; los incendios, nada) y guarda el veredicto para la misma
-versión del chat.
+sumo `BUBBLE_WAIT_S`; los incendios, nada) y guarda el veredicto para lo mismo
+que Jev lee (etapa, burbujas y conversación).
 """
 from __future__ import annotations
 
@@ -221,6 +221,29 @@ async def test_the_same_chat_version_asks_jev_once(vault: Path, monkeypatch) -> 
     second = await engine.suggestions(_bubbles(), events=_CHAT, metadata={})
 
     assert first == second and len(port.asked) == 1
+
+
+async def test_jevs_own_cost_note_does_not_make_it_ask_again(vault: Path, monkeypatch) -> None:
+    """Caso 2026-10-09: con el chat abierto Jev decidía la burbuja cada ~2,7 s, sin parar. Al decidir anota su
+    costo en `metadata.json`; eso cambia la versión del chat, el dashboard avisa que la sesión cambió, la app
+    vuelve a pedir las burbujas y la versión nueva no estaba en la caché: otra pregunta, otro costo… La
+    decisión depende de lo que Jev lee (etapa, burbujas, conversación), no de la hora del archivo."""
+    bots.write_capability_modes(vault, {"burbuja": "on"})
+    port = _jev(monkeypatch, {"burbuja.cual": _choice("burbuja.cual", "mas_fotos", 0.9)}, cost_usd=0.00003)
+    _seed(vault, LAURA, _CHAT)
+    engine = _engine(vault)
+
+    first = await engine.suggestions(_bubbles(), events=_CHAT, metadata={})
+    # la nota del costo movió la versión: es lo que la app vuelve a pedir tras el aviso del dashboard
+    again = await engine.suggestions({**_bubbles(), "version": 8}, events=_CHAT, metadata={})
+
+    assert len(port.asked) == 1
+    assert again["decided_by"] == "jev" and again["suggestions"] == first["suggestions"]
+
+    # el cliente escribe: eso sí es otra cosa que leer
+    more = [*_CHAT, {"role": "user", "content": "¿y en rosa?", "timestamp": "2027-01-15T08:05:00+00:00"}]
+    await engine.suggestions({**_bubbles(), "version": 9}, events=more, metadata={})
+    assert len(port.asked) == 2
 
 
 async def test_turning_the_decision_on_takes_effect_without_waiting_for_a_new_message(vault: Path, monkeypatch) -> None:
