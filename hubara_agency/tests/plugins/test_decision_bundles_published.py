@@ -34,7 +34,7 @@ PUBLISHED = {
     # Editado A PROPÓSITO el 2026-10-13 (decisión del operador, urgencia de los
     # anuncios de velitas): cuestionario `rafaga-v8`, la traza lo distingue por
     # ese id. Antes: b65c88ae1c5a853e3959735ef3dbece79e167226150d46b72b4dba3eb11878bc.
-    "ventas-6@6": "8e6d194f3b6d6afd955040e3b26dd9b9efe9f09dc621b90eb295ebcd2f149ac4",
+    "ventas-6@6": "1a9b4ab0b8f52634a6586bcb10ea45308216729cf533b0353cc502d6c9f3ddfd",
     "centinela@1": "59200ee02051d7867a113259a44b396be8ae448c7cec88c2dd61e0f7767285ef",
     "operador@1": "136c79489136666aa6632bfee8c86329d2f04b5e29929e2cdaace15bd4434f26",
     "operador-2@2": "a48b58350cda620ec8f5db0b8b6676d80174cb429f5f8ed2cebcdd3d164d413b",

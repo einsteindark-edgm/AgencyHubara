@@ -297,6 +297,8 @@ def test_asking_for_information_about_an_occasion_or_a_kit_is_a_catalog_request(
 
     assert hint.startswith("pide ver el catálogo, o pide información o pregunta por")
     assert "kit u ocasión de velas" in hint and "las velitas del 7 de diciembre" in hint
+    # Pedido del operador (2026-10-13): la fecha sola y la Navidad también.
+    assert "para el 7 de diciembre" in hint and "velas para navidad" in hint
     assert "de Halloween" in hint and "religiosas" in hint
 
 

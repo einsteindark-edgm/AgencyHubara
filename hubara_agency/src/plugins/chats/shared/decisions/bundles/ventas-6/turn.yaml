@@ -73,8 +73,9 @@ questionnaire:
 
   topics:
     # rafaga-v8 (2026-10-13): «pide información» y «kit u ocasión», con las
-    # velitas del 7 de diciembre de ejemplo (antes solo pescaba Halloween).
-    - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo, o pide información o pregunta por un tipo, estilo, colección, kit u ocasión de velas (p. ej. religiosas, de Halloween, las velitas del 7 de diciembre, para regalo), o por los diseños o modelos"}
+    # velitas del 7 de diciembre, la fecha sola y las velas para navidad de
+    # ejemplo (antes solo pescaba Halloween).
+    - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo, o pide información o pregunta por un tipo, estilo, colección, kit u ocasión de velas (p. ej. religiosas, de Halloween, las velitas del 7 de diciembre, para el 7 de diciembre, velas para navidad, para regalo), o por los diseños o modelos"}
     - {id: precio, label: "precio", hint: "pregunta cuánto vale o cuánto cuesta algo"}
     - {id: envio, label: "envío", hint: "pregunta por el envío o el domicilio (costo o cobertura)"}
     - {id: tiempos, label: "tiempos de entrega", hint: "pregunta cuánto tarda en llegar o cuándo está listo"}
