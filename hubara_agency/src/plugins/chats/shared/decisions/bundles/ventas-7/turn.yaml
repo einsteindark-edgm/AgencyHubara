@@ -4,6 +4,14 @@
 # la fila `catalogo` del contrato y el cuestionario `rafaga-v7` (venta del
 # 2026-10-09, Encanto Silvestre) con la fila de `aroma.notas`. Ver `bundle.yaml`.
 #
+# 2026-10-13 (decisión del operador: urgente, dentro de ventas-6 y sin el
+# Terraform apply de un paquete nuevo): `rafaga-v8` = `rafaga-v7` con la pista
+# de `catalogo` ampliada. Los anuncios de velitas dejan escrito «¡Hola! Quiero
+# más información sobre las velitas del 7 de diciembre.»; Jev lo leía saludo
+# (catalogo 0,16–0,31) y el bot saludaba con botones sin buscar. Halloween
+# funcionaba solo porque era el ejemplo de la pista. Sonda con Jev real en
+# test_decisions_ventas_6.py.
+#
 # El turno del paquete `ventas-4`: el de `ventas-3` con la política `turno-v4`
 # (2026-10-07, ficha de la Calabaza): en la etapa de descubrimiento, si el
 # cliente escribe desde un producto (ficha del catálogo o página de la web),
@@ -61,10 +69,13 @@ thresholds:
 # el tiempo quedó sin respuesta. Con esta pregunta el contrato pide la tarjeta
 # solo cuando preguntan el costo (el banco de referencia califica por id).
 questionnaire:
-  id: rafaga-v7
+  id: rafaga-v8
 
   topics:
-    - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo o pregunta por un tipo, estilo o colección de velas (p. ej. religiosas, de Halloween, para regalo), o por los diseños o modelos"}
+    # rafaga-v8 (2026-10-13): «pide información» y «kit u ocasión», con las
+    # velitas del 7 de diciembre, la fecha sola y las velas para navidad de
+    # ejemplo (antes solo pescaba Halloween).
+    - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo, o pide información o pregunta por un tipo, estilo, colección, kit u ocasión de velas (p. ej. religiosas, de Halloween, las velitas del 7 de diciembre, para el 7 de diciembre, velas para navidad, para regalo), o por los diseños o modelos"}
     - {id: precio, label: "precio", hint: "pregunta cuánto vale o cuánto cuesta algo"}
     - {id: envio, label: "envío", hint: "pregunta por el envío o el domicilio (costo o cobertura)"}
     - {id: tiempos, label: "tiempos de entrega", hint: "pregunta cuánto tarda en llegar o cuándo está listo"}

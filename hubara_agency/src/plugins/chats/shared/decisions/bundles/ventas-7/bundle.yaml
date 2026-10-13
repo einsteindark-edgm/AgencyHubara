@@ -46,6 +46,12 @@
 #   Sonda (Jev real, frases sintéticas): «me regalas…» `gusto` 0,45–0,94 → 0,10;
 #   regalos de verdad 0,90–0,96; `aroma.notas` 0,96–0,98 al preguntar a qué huele
 #   y 0,02–0,05 al elegir o pedir la lista.
+# Y, editado en el lugar el 2026-10-13 (decisión del operador: urgente, sin el
+# Terraform apply de un paquete nuevo), el cuestionario `rafaga-v8`: la pista de
+# `catalogo` cuenta «quiero más información sobre…» un tipo, kit u ocasión de
+# velas. Los anuncios de velitas del 7 de diciembre saludaban con botones sin
+# buscar (Jev: catalogo 0,16–0,31); ahora 0,97. La traza lo distingue por el id
+# del cuestionario (`rafaga-v8`), no por la versión del paquete.
 #
 # ventas-5:
 # Es `ventas-4@4` con dos preguntas reescritas (incidente del 2026-10-09 y su
