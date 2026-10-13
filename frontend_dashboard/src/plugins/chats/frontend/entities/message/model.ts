@@ -28,7 +28,24 @@ export type ChatEvent =
       receipt: boolean;
     }
   | { kind: "reaction"; emoji: string | null; author: "user" | "bot" }
-  | ShippingFormEvent;
+  | ShippingFormEvent
+  | BotCardEvent;
+
+/** Un envío no-textual del bot (o del operador desde la app) con el mensaje
+ *  ENTERO que leyó el cliente: el catálogo con su texto y sus productos, el
+ *  menú de categorías, el botón con enlace, las fotos del producto.
+ *  `component` es el `component_kind` del backend (`products_list`,
+ *  `categories`, `cta_url`, `product_detail`, `product_gallery`…). */
+export interface BotCardEvent {
+  kind: "bot_card";
+  component: string;
+  /** La categoría de un catálogo por categoría, o null. */
+  title: string | null;
+  text: string | null;
+  items: { title: string; detail: string | null }[];
+  link: { label: string; url: string } | null;
+  images: { url: string; caption: string | null }[];
+}
 
 /** Respuesta del formulario (Flow) de envío. null = el campo no llegó. */
 export interface ShippingFormEvent {

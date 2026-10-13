@@ -17,6 +17,13 @@ escrito (todas las conversaciones del vault) se ve con la forma nueva sin
 migración ni reprocesamiento. Lo único irrecuperable es el emoji de las
 reacciones VIEJAS — se perdía al traducir, y no se inventa.
 
+**La excepción, `card`** (2026-10-13, run 2395ffd6): la línea del historial
+recorta los textos largos (Jev la lee) y no lista los productos, así que el
+saludo que el bot escribió en el texto del catálogo no se veía en el panel.
+El flush guarda aparte el mensaje entero que leyó el cliente y lo que traía
+(`card`); acá se valida y sale como `bot_card` (o completa el cuerpo de
+`bot_buttons`). El historial anterior no la tiene y sigue como nota.
+
 Productores de estos markers (si cambian su formato, los round-trip tests de
 `tests/plugins/chats/test_chat_events.py` truenan):
   * inbound  — `sales/translate.py::translate_to_effective_text`
@@ -84,9 +91,14 @@ def _bot_event(message: dict[str, Any], content: str) -> dict[str, Any] | None:
     if message.get("kind") != "ui_component":
         return None
     component_kind = message.get("component_kind")
+    card = _card(message.get("card"))
 
     if component_kind == "quick_replies":
-        return _bot_buttons(content)
+        buttons = _bot_buttons(content)
+        if buttons is not None and card and card["text"]:
+            # La línea recorta el cuerpo; la tarjeta lo trae entero.
+            buttons["body"] = card["text"]
+        return buttons
 
     if component_kind == "reaction":
         match = _BOT_REACTION_RE.search(content)
@@ -96,9 +108,46 @@ def _bot_event(message: dict[str, Any], content: str) -> dict[str, Any] | None:
             "author": "bot",
         }
 
-    # El resto de componentes (catálogo, flow, galería…) sigue como nota de
-    # sistema: su marker ya es una frase legible y no hay forma que recuperar.
+    if card:
+        return {"kind": "bot_card", "component": str(component_kind or ""), **card}
+
+    # Sin tarjeta (historial viejo, flow, pedido…) sigue como nota de sistema:
+    # su marker ya es una frase legible y no hay forma que recuperar.
     return None
+
+
+def _str(value: Any) -> str | None:
+    return (value.strip() or None) if isinstance(value, str) else None
+
+
+def _card(raw: Any) -> dict[str, Any] | None:
+    """La tarjeta que el flush guardó con el mensaje (`card`), validada: lo
+    mal formado se descarta y, si no queda nada que mostrar, None."""
+    if not isinstance(raw, dict):
+        return None
+    items = [
+        {"title": title, "detail": _str(item.get("detail"))}
+        for item in raw.get("items") or []
+        if isinstance(item, dict) and (title := _str(item.get("title")))
+    ] if isinstance(raw.get("items"), list) else []
+    images = [
+        {"url": url, "caption": _str(image.get("caption"))}
+        for image in raw.get("images") or []
+        if isinstance(image, dict) and (url := _str(image.get("url")))
+    ] if isinstance(raw.get("images"), list) else []
+    link_raw = raw.get("link")
+    link_url = _str(link_raw.get("url")) if isinstance(link_raw, dict) else None
+    link = {"label": _str(link_raw.get("label")) or link_url, "url": link_url} if link_url else None
+    text = _str(raw.get("text"))
+    if not (text or items or images or link):
+        return None
+    return {
+        "title": _str(raw.get("title")),
+        "text": text,
+        "items": items,
+        "link": link,
+        "images": images,
+    }
 
 
 def _bot_buttons(content: str) -> dict[str, Any] | None:

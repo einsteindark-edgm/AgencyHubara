@@ -713,6 +713,31 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
   padding: 1px 5px; border-radius: 4px; background: rgba(255,255,255,0.28);
 }
 
+/* Tarjeta de un envío del bot (catálogo, menú, enlace, fotos): el texto
+   ENTERO que leyó el cliente, con sus saltos de línea, y debajo lo que traía —
+   cada fila con filete, como la lista de WhatsApp. */
+.wa-card { overflow: hidden; min-width: 220px; }
+.wa-card-text { white-space: pre-line; }
+.wa-card-photo { margin: 0 0 6px; }
+.wa-card-photo .wa-card-text { font-size: 12.5px; opacity: 0.92; }
+.wa-card-items { list-style: none; margin: 8px -12px 0; padding: 0; }
+.wa-card-item {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 6px 12px; font-size: 12.5px;
+  border-top: 0.5px solid rgba(255,255,255,0.22);
+}
+.wa-card-item-title { font-weight: 600; }
+.wa-card-item-detail {
+  flex: none; font-size: 11.5px; color: rgba(255,255,255,0.78); font-variant-numeric: tabular-nums;
+}
+.wa-card-link {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 8px -12px 0; padding: 7px 12px; font-size: 13px; font-weight: 600;
+  color: #fff; text-decoration: none; border-top: 0.5px solid rgba(255,255,255,0.22);
+}
+.wa-card-link svg { width: 13px; height: 13px; }
+a.wa-card-link:hover { background: rgba(255,255,255,0.12); }
+
 /* Un clic o una reacción no son un mensaje escrito: no merecen una burbuja. */
 .wa-chip {
   align-self: flex-start;

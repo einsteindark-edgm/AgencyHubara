@@ -434,6 +434,19 @@ marker MUST NOT bloquear ni duplicar el envío al cliente.
 - AND `GET /api/dashboard/sessions/{id}` lo proyecta como `ui_type: ui_component_sent`
 - AND el frontend lo pinta como nota de sistema visible en el panel central
 
+#### Scenario: El panel muestra el mensaje entero que leyó el cliente
+
+Caso 2026-10-13 (run 2395ffd6): el bot saludó dentro del texto del catálogo y
+el panel solo decía «El bot envió el catálogo con 2 productos».
+
+- GIVEN un intent `products_list` cuyo `intro_text` saluda al cliente
+- WHEN el flush lo envía con éxito
+- THEN el `content` del marker incluye ese texto (`— con el mensaje: «…»`, recortado para la ventana de Jev)
+- AND el marker lleva `card` con el texto ENTERO que salió (con la guía de la ficha si fue por el catálogo de WhatsApp) y los productos con su precio
+- AND `GET /api/dashboard/sessions/{id}` lo proyecta como `event: {kind: bot_card, …}` y el panel lo pinta como burbuja del bot («Bot · Catálogo») con el texto y los productos
+- AND lo mismo vale para el menú de categorías, el botón con enlace (`cta_url`), la foto y la galería del producto; los botones (`quick_replies`) muestran su cuerpo entero
+- AND el historial anterior, sin `card`, sigue como nota de sistema
+
 #### Scenario: Variant picker persiste el texto real
 
 - GIVEN un intent `variant_picker` (que envía TEXTO renderizado al cliente y el workflow suprime el final_content del LLM)

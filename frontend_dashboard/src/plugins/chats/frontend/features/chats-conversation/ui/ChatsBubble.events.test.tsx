@@ -224,3 +224,107 @@ describe("datos de envío del formulario", () => {
     expect(screen.queryByRole("link")).toBeNull();
   });
 });
+
+/**
+ * Tarjetas del bot: el mensaje entero que leyó el cliente y lo que traía.
+ * Caso 2026-10-13 (run 2395ffd6): el bot saludó dentro del texto del catálogo
+ * y el panel solo decía «El bot envió el catálogo con 2 productos» — no se
+ * podía saber si había saludado.
+ */
+describe("tarjetas del bot", () => {
+  const greeting = "Buenas tardes, bienvenido a *Hubara*, velas artesanales hechas a mano.";
+  const catalog: ChatMessageItem = {
+    kind: "out",
+    author: "bot",
+    time: "15:41",
+    event: {
+      kind: "bot_card",
+      component: "products_list",
+      title: null,
+      text: `${greeting}\n\nPara la Noche de Velitas tenemos estas velas de deseos:`,
+      items: [
+        { title: "Velas de deseos onduladas", detail: "$22.500 COP" },
+        { title: "Velas de deseos cuadradas", detail: null },
+      ],
+      link: null,
+      images: [],
+    },
+  };
+
+  it("el catálogo muestra el saludo que leyó el cliente", () => {
+    render(<ChatsBubble message={catalog} />);
+    expect(screen.getByText("Bot · Catálogo")).toBeTruthy();
+    expect(screen.getByText(/Buenas tardes, bienvenido a \*Hubara\*/)).toBeTruthy();
+    expect(screen.getByText(/Para la Noche de Velitas/)).toBeTruthy();
+    expect(screen.queryByText(/El bot envió el catálogo/)).toBeNull();
+  });
+
+  it("y los productos que traía, con su precio", () => {
+    render(<ChatsBubble message={catalog} />);
+    const items = screen.getAllByTestId("wa-card-item").map((li) => li.textContent);
+    expect(items).toEqual([
+      "Velas de deseos onduladas$22.500 COP",
+      "Velas de deseos cuadradas",
+    ]);
+  });
+
+  it("el catálogo de una categoría la nombra en la etiqueta", () => {
+    const m = { ...catalog, event: { ...catalog.event!, title: "Religiosas" } } as ChatMessageItem;
+    render(<ChatsBubble message={m} />);
+    expect(screen.getByText("Bot · Catálogo · Religiosas")).toBeTruthy();
+  });
+
+  it("lo que mandó el operador desde la app lleva su etiqueta", () => {
+    render(<ChatsBubble message={{ ...catalog, author: "human" }} />);
+    expect(screen.getByText("Humano · Catálogo")).toBeTruthy();
+  });
+
+  it("el botón con enlace muestra su mensaje y abre el enlace", () => {
+    render(
+      <ChatsBubble
+        message={{
+          kind: "out",
+          author: "bot",
+          event: {
+            kind: "bot_card",
+            component: "cta_url",
+            title: null,
+            text: "Aquí puedes pagar tu pedido",
+            items: [],
+            link: { label: "Pagar ahora", url: "https://pago.hubara.co/x" },
+            images: [],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Bot · Botón con enlace")).toBeTruthy();
+    expect(screen.getByText("Aquí puedes pagar tu pedido")).toBeTruthy();
+    const link = screen.getByRole("link", { name: /Pagar ahora/ });
+    expect(link.getAttribute("href")).toBe("https://pago.hubara.co/x");
+  });
+
+  it("la foto del producto se ve, con el texto que llevaba", () => {
+    render(
+      <ChatsBubble
+        message={{
+          kind: "out",
+          author: "bot",
+          event: {
+            kind: "bot_card",
+            component: "product_detail",
+            title: null,
+            text: null,
+            items: [],
+            link: null,
+            images: [{ url: "https://cdn.hubara.co/cruz.jpg", caption: "Vela Cruz de Vida" }],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Bot · Foto del producto")).toBeTruthy();
+    expect(screen.getByRole("img", { name: "Vela Cruz de Vida" }).getAttribute("src")).toBe(
+      "https://cdn.hubara.co/cruz.jpg",
+    );
+    expect(screen.getByText("Vela Cruz de Vida")).toBeTruthy();
+  });
+});

@@ -65,6 +65,18 @@ export const chatEventSchema = z.discriminatedUnion("kind", [
     items_summary: z.string().nullable(),
     extra: z.array(z.object({ key: z.string(), value: z.string() })),
   }),
+  z.object({
+    /** Envío no-textual con el mensaje entero que leyó el cliente (catálogo,
+     *  menú, enlace, fotos). Caso 2026-10-13: el saludo iba en el texto del
+     *  catálogo y el panel solo mostraba «envió el catálogo con 2 productos». */
+    kind: z.literal("bot_card"),
+    component: z.string(),
+    title: z.string().nullable(),
+    text: z.string().nullable(),
+    items: z.array(z.object({ title: z.string(), detail: z.string().nullable() })),
+    link: z.object({ label: z.string(), url: z.string() }).nullable(),
+    images: z.array(z.object({ url: z.string(), caption: z.string().nullable() })),
+  }),
 ]);
 
 export const chatMessageSchema = z.object({
@@ -95,8 +107,10 @@ export const chatMessageSchema = z.object({
    *  eventos de sistema e historial sin traza. Un valor raro deja la burbuja
    *  sin botón: nunca tumba la sesión (L-10). */
   turn_key: z.string().optional().catch(undefined),
-  /** Forma real del mensaje (ver `chatEventSchema`). Ausente = normal. */
-  event: chatEventSchema.optional(),
+  /** Forma real del mensaje (ver `chatEventSchema`). Ausente = normal. Un
+   *  evento que este panel no conoce (backend más nuevo que el frontend) se
+   *  ignora y el mensaje se pinta como su nota: nunca tumba la sesión (L-10). */
+  event: chatEventSchema.optional().catch(undefined),
   /** Mensaje del cliente que Meta entregó tarde: cuándo lo escribió de verdad
    *  (`timestamp` es la llegada) y si llegó con la ventana de 24 h cerrada
    *  (el bot no pudo contestarle). Caso 2026-10-09: un mensaje de 3 días antes
