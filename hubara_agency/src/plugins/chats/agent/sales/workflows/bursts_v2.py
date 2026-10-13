@@ -95,11 +95,18 @@ def _clip(text: str) -> str:
     return text if len(text) <= _CONTINUATION_TEXT_MAX else text[: _CONTINUATION_TEXT_MAX - 1] + "…"
 
 
-def _listed(texts: Sequence[str]) -> str:
-    return "\n".join(f'  {i}) "{_clip(text)}"' for i, text in enumerate(texts, 1))
+#: Marca del mensaje que cita otro (WhatsApp «responder»): su nota de cita dice cuál.
+_QUOTING = " (citando un mensaje anterior)"
 
 
-def continuation_note(previous: Sequence[str], current: Sequence[str], later: Sequence[str] = ()) -> str:
+def _listed(texts: Sequence[str], quotes: Sequence[bool] = ()) -> str:
+    marks = [*quotes, *[False] * len(texts)]
+    return "\n".join(f'  {i}) "{_clip(text)}"' + (_QUOTING if marks[i - 1] else "") for i, text in enumerate(texts, 1))
+
+
+def continuation_note(
+    previous: Sequence[str], current: Sequence[str], later: Sequence[str] = (), *, quotes: Sequence[bool] = ()
+) -> str:
     """Nota del turno que sigue a una ráfaga que no terminó a tiempo.
 
     `previous`: los mensajes del cliente de la respuesta anterior (se citan los
@@ -107,20 +114,36 @@ def continuation_note(previous: Sequence[str], current: Sequence[str], later: Se
     mientras esa respuesta se preparaba (antes de que saliera); se citan
     siempre, así nunca queda en duda cuáles son. `later`: los que llegaron
     DESPUÉS de que salió, en el mismo lote: esos sí pueden ser la respuesta del
-    cliente, y la nota lo dice aparte. Va a `plugin_context`, no al rol user.
+    cliente, y la nota lo dice aparte. `quotes[i]`: el mensaje `current[i]`
+    cita otro (su nota de cita va en el mismo turno). Ese mensaje se refiere
+    al citado: pedir leerlo «como un solo hilo» con lo anterior contradecía a
+    la nota de la cita (caso del 2026-10-13: «Estás» citando la línea del set
+    se leyó «¿estás ahí?»). Va a `plugin_context`, no al rol user.
     Determinista; solo payload (L-22). Tono en tuteo (guard
     `test_no_voseo_in_agent_strings.py`)."""
     quoted = "\n".join(f"  «{_clip(text)}»" for text in list(previous)[-CONTINUATION_MAX:])
     news = list(current)
     if len(news) > 1:
+        refers = (
+            "Los que van citando un mensaje se refieren a ESE mensaje (la nota de la cita dice cuál). "
+            if any(quotes)
+            else ""
+        )
         body = (
             f"El cliente te escribió estos {len(news)} mensajes mientras preparabas tu "
-            f"respuesta anterior:\n{_listed(news)}\n"
+            f"respuesta anterior:\n{_listed(news, quotes)}\n"
             f"Pueden continuar lo que venía escribiendo justo antes:\n{quoted}\n"
-            "Léelos como un solo hilo con eso, sin ignorar ninguno. Si completan o "
+            f"Léelos como un solo hilo con eso, sin ignorar ninguno. {refers}Si completan o "
             "corrigen un dato (una dirección, un nombre, una cantidad), actualízalo "
             "con todo junto. No los tomes como la respuesta a tu última pregunta si no "
             "lo son."
+        )
+    elif quotes and quotes[0]:
+        body = (
+            f'Este mensaje del cliente llegó mientras preparabas tu respuesta anterior: "{_clip(news[0] if news else "")}". '
+            "Lo escribió citando un mensaje anterior (la nota de la cita dice cuál): lo que dice "
+            f"se refiere a ESE mensaje. Justo antes había escrito:\n{quoted}\n"
+            "No lo tomes como la respuesta a tu última pregunta."
         )
     else:
         body = (
