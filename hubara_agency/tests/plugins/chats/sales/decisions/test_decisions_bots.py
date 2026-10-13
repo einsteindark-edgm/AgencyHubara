@@ -168,3 +168,20 @@ def test_the_sandbox_pins_the_bundle_of_its_arm_too(tmp_path: Path, monkeypatch)
     monkeypatch.setenv("DECISIONS_BOT", "B@ventas")
 
     assert bots.bot_for_session(OTHER, vault_dir=tmp_path).bundle == "ventas"
+
+
+def test_every_decision_the_catalog_asks_for_has_its_switch() -> None:
+    """Una decisión que nace en una versión del paquete (`capabilities_since`,
+    `aroma_ajeno` desde ventas-7) también se enciende por comando
+    (`bot_control.sh`): sin su interruptor queda en `reglas` para siempre."""
+    import yaml
+
+    from src.plugins.chats.shared.store_pack import CATALOG_PATH
+
+    catalog = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8"))
+    asked = {*catalog["capabilities"], *catalog.get("capabilities_since", {})}
+
+    # Las variantes (`control:`) comparten el interruptor de su decisión.
+    missing = asked - {"destinatario_oracion", "destinatario_plantilla"} - set(bots.CAPABILITIES)
+
+    assert not missing, sorted(missing)

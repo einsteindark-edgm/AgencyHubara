@@ -48,6 +48,14 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   relevo: "Colega prometido",
   cupon: "Cupón",
   fuera_de_catalogo: "Fuera de catálogo",
+  aroma_ajeno: "Aromas de otro producto",
+  color_ajeno: "Colores de otro producto",
+  variante_ajena: "Presentación que no existe",
+  precio_ajeno: "Precio que no es el del catálogo",
+  pago_ajeno: "Pago que no aplica al pedido",
+  estado_ajeno: "Estado del pedido que no es cierto",
+  cupon_ajeno: "Cupón que no está vigente",
+  negacion_falsa: "Negar lo que sí tenemos",
   cantidad: "Cantidad",
   categoria: "Categoría",
   familia_de_color: "Familia de color",
@@ -178,6 +186,24 @@ function quoted(values: unknown[]): string {
   return values.map((v) => `«${String(v)}»`).join(", ");
 }
 
+/** Pago y estado: lo que la regla propone es una frase («puede pagar su pedido contra entrega»). */
+function claimSentence(value: unknown, wrong: string, fine: string): Sentence {
+  const terms = list(value);
+  return terms.length ? warn(`Devuelve el texto al modelo: le dijo que ${quoted(terms)}, y ${wrong}`) : plain(fine);
+}
+
+function factSentence(value: unknown, wrong: string, fine: string): Sentence {
+  const terms = list(value);
+  return terms.length ? warn(`Devuelve el texto al modelo: ${quoted(terms)} ${wrong}`) : plain(fine);
+}
+
+function foreignLabels(value: unknown, noun: string, plural: string): Sentence {
+  const terms = list(value);
+  return terms.length
+    ? warn(`Devuelve el texto al modelo: ${quoted(terms)} ${terms.length === 1 ? `no es ${noun}` : `no son ${plural}`} de ese producto`)
+    : plain(`Los ${plural} que nombra son del producto`);
+}
+
 const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   compra: (value) => {
     const [kind, source] = list(value);
@@ -204,6 +230,21 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
       ? warn(`Avisa al modelo que no aparece por nombre en el catálogo: ${quoted(terms)}`)
       : plain("Nada fuera del catálogo");
   },
+  // `aroma_ajeno` y `color_ajeno` (ventas-7): lo que el texto le ofrecía al
+  // producto y es de otro; `variante_ajena`: una presentación que no tiene.
+  // `send_reply` le devolvió el texto al modelo una vez.
+  aroma_ajeno: (value) => foreignLabels(value, "aroma", "aromas"),
+  color_ajeno: (value) => foreignLabels(value, "color", "colores"),
+  variante_ajena: (value) =>
+    value === true
+      ? warn("Devuelve el texto al modelo: le ofrece una presentación que no tiene")
+      : plain("Las presentaciones que ofrece son del producto"),
+  // Los hechos que el texto afirma (ventas-7): lo que quedó vuelve al modelo una vez.
+  precio_ajeno: (value) => factSentence(value, "no es el precio del catálogo", "Los precios que dice son los del catálogo"),
+  pago_ajeno: (value) => claimSentence(value, "no es así para su pedido", "Lo que dice del pago aplica a su pedido"),
+  estado_ajeno: (value) => claimSentence(value, "el sistema dice otra cosa", "Lo que dice del pedido coincide con el sistema"),
+  cupon_ajeno: (value) => factSentence(value, "no está vigente", "Los cupones que ofrece están vigentes"),
+  negacion_falsa: (value) => factSentence(value, "sí lo tenemos", "No niega nada que tengamos"),
   cantidad: (value) => {
     const n = obj(value).cantidad;
     return plain(typeof n === "number" ? `Cantidad: ${n}` : "No dio cantidad");
@@ -319,6 +360,7 @@ export function decisionSentence(d: EngineDecisionView): Sentence {
 
 const QUESTIONS: Record<string, string> = {
   "burbuja.cual": "¿Qué acción le conviene enviar al operador?",
+  "variante.ajena": "¿El texto le ofrece una presentación que el producto no tiene?",
   "incendio.gravedad": "¿Qué tan urgente es responderle?",
   "incendio.tipo": "¿Qué plantea el cliente?",
   "incendio.empeora": "¿Empeoró desde la última lectura?",
@@ -402,6 +444,14 @@ function percent(p: number): string {
   return `${Math.round(p * 100)} %`;
 }
 
+const FACT_QUESTIONS: Record<string, (term: string) => string> = {
+  precio_ajeno: (term) => `¿El texto le dice que ${term} es el precio del producto?`,
+  pago_ajeno: (term) => `¿El texto le dice que ${term}, para su pedido de ahora?`,
+  estado_ajeno: (term) => `¿El texto le dice, como algo que ya pasó, que ${term}?`,
+  cupon_ajeno: (term) => `¿El texto le ofrece ${term} como cupón vigente?`,
+  negacion_falsa: (term) => `¿El texto le dice que no tenemos ${term}?`,
+};
+
 function questionText(d: EngineDecisionView, q: string): string {
   if (QUESTIONS[q]) return QUESTIONS[q];
   const term = /^fuera_de_catalogo\.termino_(\d+)$/.exec(q);
@@ -410,6 +460,23 @@ function questionText(d: EngineDecisionView, q: string): string {
     const terms = list(d.rule !== undefined ? d.rule : d.value);
     const word = terms[Number(term[1]) - 1];
     return word !== undefined ? `¿«${String(word)}» es algo que el cliente pide o muestra?` : `¿El término ${term[1]} es algo que el cliente pide o muestra?`;
+  }
+  const foreign = /^(aroma|color)_ajeno\.termino_(\d+)$/.exec(q);
+  if (foreign) {
+    // Jev revisa los aromas (o colores) que propuso la regla, en su orden.
+    const terms = list(d.rule !== undefined ? d.rule : d.value);
+    const word = terms[Number(foreign[2]) - 1];
+    return word !== undefined
+      ? `¿El texto le ofrece «${String(word)}» como ${foreign[1]} del producto?`
+      : `¿El texto le ofrece el ${foreign[1]} ${foreign[2]} como ${foreign[1]} del producto?`;
+  }
+  const fact = /^(precio_ajeno|pago_ajeno|estado_ajeno|cupon_ajeno|negacion_falsa)\.termino_(\d+)$/.exec(q);
+  if (fact) {
+    // Jev revisa lo que propuso la regla, en su orden.
+    const terms = list(d.rule !== undefined ? d.rule : d.value);
+    const word = terms[Number(fact[2]) - 1];
+    const term = word !== undefined ? `«${String(word)}»` : `lo ${fact[2]}`;
+    return FACT_QUESTIONS[fact[1]](term);
   }
   const slot = /^datos\.([a-z_]+)$/.exec(q);
   if (slot) return `¿El cliente sí dio ${SLOT_LABELS[slot[1]] ?? slot[1]}?`;

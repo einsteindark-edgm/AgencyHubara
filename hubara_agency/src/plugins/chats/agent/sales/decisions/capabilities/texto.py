@@ -147,6 +147,105 @@ class TextoCatalogo:
     colors: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class OpcionesDelTexto:
+    """Un texto para el cliente, los productos de los que habla (`products`,
+    sus títulos: los del pedido y los que el texto nombra), lo que tienen de
+    una dimensión (`own`: sus aromas, o sus colores), las etiquetas de esa
+    dimensión en el catálogo (`labels`) y las de la otra (`others`: un nombre
+    que está en las dos no se juzga). Capacidades `aroma_ajeno` y
+    `color_ajeno` (incidente 2026-10-13). Solo la entrada: la decisión vive
+    en el paquete (`ventas-7` en adelante)."""
+
+    text: str
+    products: tuple[str, ...]
+    own: tuple[str, ...]
+    labels: tuple[str, ...]
+    others: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PreciosDelTexto:
+    """Un texto para el cliente, los productos de los que habla con su precio
+    del catálogo (`products`: «Título: $25.000»), los precios que valen para
+    ellos (`prices`: unidad, precio en vivo y con el descuento aplicado) y los
+    montos de política (`policy`: mínimo de contra entrega, tarifas de envío).
+    Capacidad `precio_ajeno` (incidente 2026-10-13: «las cuadradas en
+    $23.000», catálogo $25.000)."""
+
+    text: str
+    products: tuple[str, ...]
+    prices: tuple[int, ...]
+    policy: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class PagoDelTexto:
+    """Un texto para el cliente y las reglas de pago de su pedido: el subtotal
+    de productos (`subtotal`, None = no se sabe), el mínimo de contra entrega
+    (`cod_min`) y los recargos del link de pago (`surcharges`: «1,5 %»).
+    Capacidad `pago_ajeno` (2026-10-13)."""
+
+    text: str
+    subtotal: int | None
+    cod_min: int
+    surcharges: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EstadoDelTexto:
+    """Un texto para el cliente y lo que dice el sistema de su pedido
+    (`OrderFacts`): número (`order`), etapa (`stage`) y pago (`pay_status`);
+    None = no hay pedido o no se pudo leer. Capacidad `estado_ajeno`."""
+
+    text: str
+    order: str | None
+    stage: str | None
+    pay_status: str | None
+
+
+@dataclass(frozen=True)
+class CuponDelTexto:
+    """Un texto para el cliente y los cupones: los que Medusa conoce
+    (`known`), los vigentes hoy (`valid`, `valid_lines`: «CÓDIGO:
+    descripción»; más el ya aplicado) y sus porcentajes (`valid_percents`).
+    Capacidad `cupon_ajeno` (venta del 2026-10-09: AMOR2026 vencido como
+    vigente)."""
+
+    text: str
+    known: tuple[str, ...]
+    valid: tuple[str, ...]
+    valid_lines: tuple[str, ...]
+    valid_percents: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class NegacionDelTexto:
+    """Un texto para el cliente, los títulos del catálogo (`titles`), lo que
+    tienen los productos de los que habla (`own`: aromas, colores y
+    presentaciones) y sus títulos (`products`). Capacidad `negacion_falsa`:
+    lo que el texto niega tener y el catálogo sí tiene."""
+
+    text: str
+    titles: tuple[str, ...]
+    own: tuple[str, ...]
+    products: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class VariantesDelTexto:
+    """Un texto para el cliente y la ficha de cada producto en foco que tiene
+    presentaciones para escoger (`sheets`: aromas, colores y presentaciones),
+    y la de los de una sola presentación (`single`: el paquete decide cuándo
+    se pregunta). Capacidad `variante_ajena` (incidente 2026-10-13): una
+    presentación inventada no está en ningún catálogo, así que la lee Jev con
+    la ficha."""
+
+    text: str
+    sheets: tuple[str, ...]
+    single: tuple[str, ...] = ()
+
+
 def _choice(result: Any, qid: str) -> tuple[str | None, float]:
     answer = answer_of(result, qid)
     choice = getattr(answer, "choice", None)
@@ -429,13 +528,20 @@ __all__ = [
     "Afirmacion",
     "AfirmacionSinConsultar",
     "Botones",
+    "CuponDelTexto",
     "Enumeracion",
+    "EstadoDelTexto",
     "Frases",
     "Monto",
+    "NegacionDelTexto",
+    "OpcionesDelTexto",
     "OracionesPrecio",
+    "PagoDelTexto",
     "Persona",
+    "PreciosDelTexto",
     "Selector",
     "TextoCatalogo",
+    "VariantesDelTexto",
 ]
 
 

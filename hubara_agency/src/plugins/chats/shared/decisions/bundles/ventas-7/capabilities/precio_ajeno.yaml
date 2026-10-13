@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El texto le dice al cliente un precio que no es el del catálogo?»
+# (incidente 2026-10-13, turno 3: «las cuadradas en $23.000», catálogo
+# $25.000; antes, run ebbc203d: el precio del anuncio). La regla propone los
+# montos del texto que no explica el precio del catálogo de los productos de
+# los que habla —por unidad, por la cantidad, en vivo o con el descuento
+# aplicado, y sus sumas— ni la política (mínimo de contra entrega, tarifas
+# de envío, en una oración que habla de eso): `price_quotes`. Por cada uno,
+# Jev dice si el texto se lo cotiza como precio del producto; solo QUITA, y
+# solo con certeza (piso: lo de la regla, en su orden). Lo pide `send_reply`
+# (y las tarjetas) antes de enviar.
+capability: precio_ajeno
+value: "list<string>"
+input: PreciosDelTexto
+items: {builtin: unexplained_price_items}
+rule: {builtin: unexplained_prices_rule}
+state: {builtin: text_and_product_prices}
+each:
+  id: "precio_ajeno.termino_{n}"
+  kind: noul
+  text: "¿El texto le dice que «{term}» es el precio del producto del pedido (por unidad o por la cantidad que pide)? Si el texto no nombra otro producto, habla del producto del pedido; si le pone ese precio a otro producto que nombra, no."
+  criteria:
+    "true": "sí: se lo cotiza como precio del producto del pedido, aunque no nombre el producto"
+    "false": "no: es el precio de otro producto que el texto nombra, un total con envío, una tarifa, un mínimo, lo que le falta para un mínimo o un abono"
+thresholds: {"no": 0.15}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, !has(i.p) || i.p > th['no']).map(i, i.term)"}
+floor: {builtin: rule_order_subset}
+same: {builtin: tuple_eq}
+examples:
+  # El incidente: «las cuadradas en $23.000» se lo cotiza como precio.
+  - {items: [{term: "$23.000", p: 0.95}], expect: ["$23.000"]}
+  # «Te faltan $20.000 para el contra entrega»: no es un precio, Jev lo quita.
+  - {items: [{term: "$20.000", p: 0.05}], expect: []}
+  # Borde de la certeza: 0,15 quita; 0,16 queda.
+  # Sonda con Jev real (2026-10-13, frases sintéticas): lo que se cotiza 0,78–0,88 (también
+  # un precio por mayor inventado); un abono 0,06. El precio de otro producto que el texto nombra
+  # por su título ni llega aquí: ese producto entra al foco con su precio.
+  - {items: [{term: "$20.000", p: 0.15}, {term: "$23.000", p: 0.16}], expect: ["$23.000"]}
+  # Un monto que Jev no contestó queda (lo propuso la regla).
+  - {items: [{term: "$23.000", p: 0.9}, {term: "$29.000"}], expect: ["$23.000", "$29.000"]}
+  - {items: [{term: "$23.000"}], expect: doubt}

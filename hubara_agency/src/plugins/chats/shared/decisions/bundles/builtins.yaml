@@ -39,6 +39,13 @@ inputs:
   DatoDelItem: {actual: int}
   ProductosDeLaCharla: {text: string, titles: "tuple<string>", named: "tuple<string>"}
   TextoCatalogo: {text: string, aromas: "tuple<string>", colors: "tuple<string>"}
+  OpcionesDelTexto: {text: string, products: "tuple<string>", own: "tuple<string>", labels: "tuple<string>", others: "tuple<string>"}
+  VariantesDelTexto: {text: string, sheets: "tuple<string>", single: "tuple<string>"}
+  PreciosDelTexto: {text: string, products: "tuple<string>", prices: "tuple<int>", policy: "tuple<int>"}
+  PagoDelTexto: {text: string, subtotal: "int?", cod_min: int, surcharges: "tuple<string>"}
+  EstadoDelTexto: {text: string, order: "string?", stage: "string?", pay_status: "string?"}
+  CuponDelTexto: {text: string, known: "tuple<string>", valid: "tuple<string>", valid_lines: "tuple<string>", valid_percents: "tuple<int>"}
+  NegacionDelTexto: {text: string, titles: "tuple<string>", own: "tuple<string>", products: "tuple<string>"}
   TextCheck: {text: string, extended: bool}
   GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
   Frases: {parts: "tuple<string>"}
@@ -179,6 +186,36 @@ builtins:
     value: "list<string>"
     input: PedidoDelCliente
     doc: "Los términos que el cliente pide y no están en el catálogo (unavailable_terms)."
+  unexplained_prices_rule:
+    kind: rule
+    value: "list<string>"
+    input: PreciosDelTexto
+    doc: "Los montos del texto que no explica el precio del catálogo de los productos de los que habla (por cantidad, sumas, en vivo o con descuento) ni la política (price_quotes.find_unexplained_amounts)."
+  payment_claims_rule:
+    kind: rule
+    value: "list<string>"
+    input: PagoDelTexto
+    doc: "Contra entrega ofrecida a un pedido que no llega al mínimo, o un recargo del link distinto del configurado (fact_rules.payment_claims)."
+  status_claims_rule:
+    kind: rule
+    value: "list<string>"
+    input: EstadoDelTexto
+    doc: "El pago dado por confirmado o el pedido dado por despachado o entregado cuando OrderFacts dice otra cosa (fact_rules.status_claims)."
+  coupon_claims_rule:
+    kind: rule
+    value: "list<string>"
+    input: CuponDelTexto
+    doc: "Un código que no está vigente o un porcentaje que ningún cupón vigente da (fact_rules.coupon_claims)."
+  denial_claims_rule:
+    kind: rule
+    value: "list<string>"
+    input: NegacionDelTexto
+    doc: "Lo que el texto niega tener y el catálogo sí tiene (fact_rules.denial_claims)."
+  foreign_labels_rule:
+    kind: rule
+    value: "list<string>"
+    input: OpcionesDelTexto
+    doc: "Las etiquetas del catálogo (aromas o colores) que el texto nombra y no son del producto del que habla (product_truth.foreign_labels)."
   model_preamble:
     kind: rule
     value: string
@@ -289,6 +326,26 @@ builtins:
     takes_items: true
     input: PedidoDelCliente
     doc: "El mensaje del cliente, si la regla propone algún término."
+  text_and_product_labels:
+    kind: state
+    takes_items: true
+    input: OpcionesDelTexto
+    params: {noun: str}
+    doc: "El texto para el cliente con los productos de los que habla y lo que tienen (`noun`: aromas, colores), si la regla propone algo ajeno."
+  text_and_product_prices:
+    kind: state
+    takes_items: true
+    input: PreciosDelTexto
+    doc: "El texto para el cliente con los productos de los que habla y su precio del catálogo, si la regla propone algún monto."
+  text_and_claim_facts:
+    kind: state
+    takes_items: true
+    doc: "El texto para el cliente con lo que dice el sistema de cada cosa que la regla propone (pago, estado, cupón, negación)."
+  text_and_option_sheets:
+    kind: state
+    input: VariantesDelTexto
+    params: {words: str}
+    doc: "El texto para el cliente con la ficha de cada producto con presentaciones para escoger, y la de los de una sola presentación si el texto nombra una de `words` (palabras de presentación de la tienda, separadas por comas); sin ninguna ficha, no se pregunta."
   # ── ítems ──
   items_of:
     kind: items
@@ -321,6 +378,36 @@ builtins:
     input: PedidoDelCliente
     fields: {term: string}
     doc: "Un ítem por término que la regla propone."
+  unexplained_price_items:
+    kind: items
+    input: PreciosDelTexto
+    fields: {term: string}
+    doc: "Un ítem por monto que la regla propone («$23.000»)."
+  payment_claim_items:
+    kind: items
+    input: PagoDelTexto
+    fields: {term: string, fact: string}
+    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+  status_claim_items:
+    kind: items
+    input: EstadoDelTexto
+    fields: {term: string, fact: string}
+    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+  coupon_claim_items:
+    kind: items
+    input: CuponDelTexto
+    fields: {term: string, fact: string}
+    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+  denial_claim_items:
+    kind: items
+    input: NegacionDelTexto
+    fields: {term: string, fact: string}
+    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+  foreign_label_items:
+    kind: items
+    input: OpcionesDelTexto
+    fields: {term: string}
+    doc: "Un ítem por etiqueta ajena que la regla propone (la del catálogo)."
   # ── opciones de la entrada ──
   catalog_categories:
     kind: options
@@ -433,6 +520,22 @@ builtins:
 # paquete tiene que traerlas todas (DB003). Sin esto, el resolutor corría en
 # silencio la clase de Python de la que faltara (la inteligencia de velas).
 capabilities: [acuse, afirmacion, baja, cantidad, categoria, cierre, compra, contactar, cortesia, cupon, datos, destinatario, destinatario_oracion, destinatario_plantilla, enumeracion, familia_de_color, fuera_de_catalogo, item_del_pedido, monto, persona, portavelas, preambulo, producto_nombrado, relevo, rescate, retoma, saludo, selector, zona_de_envio]
+
+# Las que el código pide desde una versión del paquete: las versiones
+# publicadas antes no las traen (no se editan) y siguen certificando; con
+# ellas el código no las corre (`registry.capability_if_present`). Desde esa
+# versión, un paquete sin ella no certifica (DB003).
+capabilities_since:
+  # Incidente 2026-10-13: el bot le ofreció a las Velas de deseos aromas de la
+  # Plegaria de Luz. Las tres las pide `send_reply` antes de enviar.
+  aroma_ajeno: 7
+  color_ajeno: 7
+  variante_ajena: 7
+  precio_ajeno: 7
+  pago_ajeno: 7
+  estado_ajeno: 7
+  cupon_ajeno: 7
+  negacion_falsa: 7
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -631,6 +734,72 @@ about:
       Revisa los botones que el bot quiere mostrar: los que piden elegir un
       producto o una variante que no corresponde se quitan, para que el
       cliente no elija algo que no existe.
+  aroma_ajeno:
+    name: Aromas de otro producto
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que los aromas que el bot nombra sean del
+      producto del que habla. Si le ofrece a un producto un aroma que es de
+      otro, el bot corrige el mensaje con los aromas reales antes de que
+      salga. Jev quita los avisos falsos (cuando habla de otro producto o dice
+      que no lo tiene).
+  color_ajeno:
+    name: Colores de otro producto
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que los colores que el bot nombra sean del
+      producto del que habla. Si le ofrece a un producto un color que es de
+      otro, el bot corrige el mensaje con los colores reales antes de que
+      salga. Jev quita los avisos falsos (otro producto, el color de la caja).
+  precio_ajeno:
+    name: Precio que no es el del catálogo
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el precio que el bot le dice al cliente sea
+      el del catálogo para el producto del que habla (por unidad o por la
+      cantidad, con el descuento que tenga). Si no, el bot corrige el mensaje
+      con el precio real. Jev quita los avisos falsos (un total con envío, lo
+      que le falta para un mínimo).
+  pago_ajeno:
+    name: Pago que no aplica al pedido
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa lo que el bot dice del pago: no le ofrece
+      contra entrega a un pedido que no llega al mínimo, ni un recargo del
+      link de pago distinto del vigente. La regla solo propone: decide Jev
+      (lo dicho como regla general o que no aplica no cuenta).
+  estado_ajeno:
+    name: Estado del pedido que no es cierto
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que lo que el bot dice del pedido coincida con
+      el sistema: no le dice que el pago quedó confirmado, que ya salió o
+      que ya llegó si no es así. La regla solo propone: decide Jev (lo que
+      le avisan después no cuenta).
+  cupon_ajeno:
+    name: Cupón que no está vigente
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el cupón o el descuento que el bot ofrece
+      esté vigente (no el que ya venció, ni un porcentaje que ningún cupón
+      da). El bot corrige con los cupones vigentes. Solo con Jev.
+  negacion_falsa:
+    name: Negar lo que sí tenemos
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el bot no le diga al cliente que no
+      tenemos un producto, un aroma, un color o una presentación que el
+      catálogo sí tiene. Si de verdad está agotado hoy, el bot puede
+      dejarlo como está. La regla solo propone: decide Jev.
+  variante_ajena:
+    name: Presentación que no existe
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, Jev lee la ficha del producto (sus presentaciones,
+      signos o diseños) y avisa si el bot le ofrece una que no tiene, como un
+      signo que no existe o un tamaño inventado. El bot corrige el mensaje
+      con las presentaciones reales. Sin Jev no revisa nada: no hay una lista
+      donde buscar lo inventado.
   monto:
     name: Precios cotizados
     where: [herramientas]

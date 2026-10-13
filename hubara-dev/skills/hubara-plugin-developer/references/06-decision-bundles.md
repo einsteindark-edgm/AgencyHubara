@@ -82,7 +82,8 @@ fuera del resolutor.
 | `each.id` sin `{n}`/`{index}`/llave del ítem, o con un campo de texto del cliente | DB005 |
 | Una fila `when` sin ningún ejemplo que la decida; un ejemplo que solo pasa porque la tabla falló | DB010 |
 | Cambiar la regla de la baja legal o del relevo (`required_rules`) | DB012 |
-| Falta una capacidad que el catálogo lista (`capabilities:`) | DB003 |
+| Falta una capacidad que el catálogo lista (`capabilities:`, o `capabilities_since` desde su versión) | DB003 |
+| La misma capacidad en `capabilities:` y en `capabilities_since` | DB003 |
 | El estado de una capacidad con ítems que no los recibe (`takes_items`) | DB004 |
 | `oracle:` que ningún perfil usa | DB016 |
 
@@ -230,7 +231,7 @@ formulario, las tarifas, el resumen…) lo lee el detector de código
 | `by=reglas` (off o sombra) | subir el modo con la vara, o el builtin de la regla si sigue off | tocar el paquete por Jev |
 | `by=piso` | casi nunca es bug; los obligatorios no cambian (DB012) | quitar el piso |
 | `timeout` / `http_*` / `model_changed` | infraestructura / perfil del oráculo | bajar umbrales |
-| hace falta una decisión nueva | catálogo (`capabilities` + `about`) + YAML + UN `capability("x")`; nace off → sombra | una función nueva en el lugar |
+| hace falta una decisión nueva | catálogo (`capabilities_since: {x: N}` + `about`) + YAML en la versión N + UN `capability_if_present("x")` + su interruptor en `bots.CAPABILITIES`; nace off → sombra | una función nueva en el lugar; ponerla en `capabilities:` (rompe las versiones publicadas) |
 | el bot redactó mal sin decisión fallida | `turn.yaml: guide`/`nudge`, `domain.yaml`; `SOUL.md` solo si es conducta general | guarda que reescriba el texto |
 | un hecho mal (precio, cupo, stock, envío) | donde vive el dato, una vez (lo verificado manda) | pedirle a Jev un hecho |
 | el bot prometió algo para ahora y no salió (TAG-09), o leyó una promesa que no era | el detector `use_cases/promised_actions.py`: su caso en `test_promised_actions.py` y su fila en `_PROMISES` (excepción del operador, 2026-10-09) | una capacidad nueva o una guarda en la tool |

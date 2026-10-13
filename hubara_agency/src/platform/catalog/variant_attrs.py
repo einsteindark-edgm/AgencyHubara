@@ -35,6 +35,22 @@ def normalize_label(raw: str) -> str:
     return " ".join(text.casefold().split())
 
 
+def stem_word(word: str) -> str:
+    """Una palabra ya normalizada sin género ni número (castellano liviano,
+    sin diccionario): corta el plural (`es`/`s`) y UNA vocal final (a/o/e).
+    «rojas» → «roj», «azules» → «azul», «celestes» → «celest», «velones» →
+    «velon». Las cortas (≤3) quedan intactas («mar», «oro»). La única regla
+    para comparar palabras del catálogo (familias de color, colores por
+    variante, el scorecard de envío y la verdad del producto)."""
+    if len(word) > 4 and word.endswith("es"):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s"):
+        word = word[:-1]
+    if len(word) > 3 and word[-1] in "aoe":
+        word = word[:-1]
+    return word
+
+
 @dataclass(frozen=True)
 class VariantAttrs:
     """Listas cerradas de un producto, con el casing canonico del catalogo."""

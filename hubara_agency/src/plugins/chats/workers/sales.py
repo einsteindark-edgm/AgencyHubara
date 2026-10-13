@@ -90,6 +90,7 @@ from src.plugins.chats.agent.sales.tools.coupons import (
 )
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusTool
+from src.plugins.chats.agent.sales.tools.fact_check import FactCheck
 from src.plugins.chats.agent.sales.tools.reply import SendReplyTool
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
@@ -164,8 +165,11 @@ register_tool_extension(
     # registro de bots y de la cola de desacuerdos. El catálogo (aromas y
     # colores): una lista para escoger vuelve al modelo para que la mande con
     # el selector (laboratorio caso-fotos-0930-r10, 4567 t20).
+    # Los hechos antes de enviar (2026-10-13): lo que el texto le dice al
+    # cliente contra el catálogo, el pedido, el pago y los cupones.
     lambda workspace: SendReplyTool(
-        workspace=str(workspace), vault_dir=build_vault_dir(), catalog=get_catalog_client()
+        workspace=str(workspace), vault_dir=build_vault_dir(), catalog=get_catalog_client(),
+        fact_check=_fact_check(),
     ),
 )
 
@@ -215,6 +219,13 @@ def _customer_orders_port():
     except Exception as exc:  # noqa: BLE001 — sin Medusa la tool degrada
         logger.warning("Pedidos de la persona no disponibles para el cupón de bienvenida: {}", exc)
         return None
+
+
+def _fact_check() -> FactCheck:
+    """Los hechos antes de enviar (incidente 2026-10-13): `send_reply` y las
+    tarjetas con texto del modelo revisan contra el catálogo, el pedido
+    (OrderFacts) y los cupones (Medusa) lo que le dicen al cliente."""
+    return FactCheck(build_vault_dir(), _catalog, promotions=_promotions, order_facts=_order_facts_port())
 
 
 register_tool_extension(
@@ -378,13 +389,13 @@ _photo_colors = build_photo_color_reader()
 register_tool_extension(
     "sales.present_product_detail",
     lambda workspace: PresentProductDetailTool(
-        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors
+        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors, fact_check=_fact_check()
     ),
 )
 register_tool_extension(
     "sales.present_products",
     lambda workspace: PresentProductsTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, fact_check=_fact_check()
     ),
 )
 # sales.request_location removido (sesión adc6400c) — el botón nativo de
@@ -425,7 +436,7 @@ register_tool_extension(
 )
 register_tool_extension(
     "sales.send_cta_url",
-    lambda workspace: SendCTAUrlTool(workspace=str(workspace)),
+    lambda workspace: SendCTAUrlTool(workspace=str(workspace), fact_check=_fact_check()),
 )
 # HU-002 / fix sesión a56bfaa9: cuando el cliente pide "más fotos", el LLM
 # debe usar esta tool en vez de send_cta_url (anti-patrón que sacaba al
@@ -445,7 +456,7 @@ register_tool_extension(
     # sean productos/aromas/colores/diseños del catálogo (máx 3 botones =
     # el LLM recorta opciones); eso va por present_products / variant_picker.
     lambda workspace: SendQuickRepliesTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, fact_check=_fact_check()
     ),
 )
 # Fix sesión 71f479f7: cuando hay ≥4 aromas/colores, lista tappable con
@@ -461,6 +472,7 @@ register_tool_extension(
         catalog=_catalog,
         # Cupón con cupo: sus combinaciones van arriba del picker.
         metadata_store=build_session_metadata_store(),
+        fact_check=_fact_check(),
     ),
 )
 

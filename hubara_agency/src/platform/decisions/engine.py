@@ -390,6 +390,9 @@ class CompiledBundle:
     places: tuple[tuple[str, str], ...] = ()
     #: capacidad → qué resuelve y dónde actúa (Calidad LLM → «Motor de decisiones»).
     about: Mapping[str, DecisionAbout] = field(default_factory=dict)
+    #: Las decisiones que el catálogo pide desde una versión posterior a esta
+    #: (`capabilities_since`): el lugar que las pide no las corre con este paquete.
+    later: frozenset[str] = frozenset()
 
     @property
     def ref(self) -> str:

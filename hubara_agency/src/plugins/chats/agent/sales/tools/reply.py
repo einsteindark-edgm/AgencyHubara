@@ -29,6 +29,8 @@ from src.plugins.chats.agent.sales.decisions.guards import (
     option_list,
 )
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+from src.plugins.chats.agent.sales.tools.fact_check import FactCheck
+from src.plugins.chats.agent.sales.tools.retention import held_before, hold_once
 from src.plugins.chats.agent.sales.use_cases.photo_product import (
     PROMISE_MESSAGE,
     denies_availability,
@@ -83,7 +85,11 @@ class SendReplyTool(ToolBase):
     }
 
     def __init__(
-        self, workspace: str | Path, vault_dir: str | Path | None = None, catalog: Any = None
+        self,
+        workspace: str | Path,
+        vault_dir: str | Path | None = None,
+        catalog: Any = None,
+        fact_check: FactCheck | None = None,
     ) -> None:
         self._workspace = Path(workspace)
         # Vault del motor de decisiones (registro de bots, cola de
@@ -92,35 +98,14 @@ class SendReplyTool(ToolBase):
         # Catálogo (aromas y colores) para ver si el texto es una lista para
         # escoger. Sin él, el texto sale y la protección decide después.
         self._catalog = catalog
+        # Los hechos antes de enviar (incidente 2026-10-13): lo que el texto le
+        # dice al cliente contra el catálogo y el pedido. El worker arma uno
+        # con las fuentes de verdad; sin él, el del catálogo.
+        self._fact_check = fact_check or FactCheck(self._vault_dir, catalog)
 
     def _hold_once(self, session_key: str, key: str, error: str, message: str) -> str | None:
-        """Retiene el texto si todavía no se retuvo uno por `key` en este
-        mensaje del cliente (`last_inbound_message_id`) y lo anota. Sin vault,
-        sin mensaje del cliente o si no se puede anotar: el texto sale."""
-        if self._vault_dir is None:
-            return None
-        store = FilesystemMetadataStore(self._vault_dir)
-        try:
-            metadata = store.read(session_key) or {}
-        except Exception:  # noqa: BLE001 — sin metadata legible: el texto sale
-            return None
-        inbound = metadata.get("last_inbound_message_id")
-        if not inbound or metadata.get(key) == inbound:
-            return None
-
-        def _mark(fresh: dict[str, Any]) -> dict[str, Any] | None:
-            if not fresh:
-                return None
-            fresh[key] = inbound
-            return fresh
-
-        try:
-            if store.update(session_key, _mark) is None:
-                return None
-        except Exception:  # noqa: BLE001 — sin la marca podría repetirse: el texto sale
-            return None
-        logger.info("💬 [TOOL send_reply] retenido ({}) session={}", error, session_key)
-        return json.dumps({"sent": False, "error": error, "message": message}, ensure_ascii=False)
+        """Retiene el texto UNA vez por mensaje del cliente (`retention.hold_once`)."""
+        return hold_once(self._vault_dir, session_key, key, tool=self.name, error=error, message=message)
 
     def _held_for_promise(self, session_key: str, text: str) -> str | None:
         """Laboratorio caso-fotos-0930-r9, 4567 t13 (bot nuevo): «Déjame
@@ -197,12 +182,7 @@ class SendReplyTool(ToolBase):
     def _held_before(self, session_key: str, key: str) -> bool:
         """¿Ya se retuvo un texto por `key` en este mensaje del cliente? Evita
         repetir la consulta (catálogo, Jev) en el segundo intento."""
-        try:
-            metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
-        except Exception:  # noqa: BLE001 — ilegible: `_hold_once` decide
-            return False
-        inbound = metadata.get("last_inbound_message_id")
-        return bool(inbound) and metadata.get(key) == inbound
+        return held_before(self._vault_dir, session_key, key)
 
     async def _held_for_option_list(self, session_key: str, text: str) -> str | None:
         """Laboratorio caso-fotos-0930-r10, 4567 t19 y t20 (los dos bots): el
@@ -259,6 +239,7 @@ class SendReplyTool(ToolBase):
         held = (
             self._held_for_verified_photos(ctx.session_key, cleaned)
             or self._held_for_promise(ctx.session_key, cleaned)
+            or await self._fact_check.held(ctx.session_key, cleaned, tool=self.name)
             or await self._held_for_option_list(ctx.session_key, cleaned)
         )
         if held is not None:

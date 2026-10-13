@@ -23,7 +23,16 @@ from src.plugins.chats.agent.sales.variant_enumeration import (
     enumeration_candidates,
     find_enumerated_variants,
 )
-from src.sdk.catalogkit import family_of_color, normalize_label, resolve_category, resolve_color_family
+from src.plugins.chats.agent.sales.price_quotes import find_unexplained_amounts
+from src.plugins.chats.agent.sales.pricing import format_cop
+from src.plugins.chats.agent.sales.use_cases.fact_rules import (
+    coupon_claims,
+    denial_claims,
+    payment_claims,
+    status_claims,
+)
+from src.plugins.chats.shared.product_truth import foreign_labels
+from src.sdk.catalogkit import family_of_color, normalize_label, resolve_category, resolve_color_family, stem_word
 
 Options = dict[str, tuple[str, Any]]
 
@@ -73,6 +82,89 @@ def named_titles(inp: Any) -> tuple[str, ...]:
 def enumerated_variants(inp: Any) -> tuple:
     hit = find_enumerated_variants(inp.text, aromas=list(inp.aromas), colors=list(inp.colors))
     return () if hit is None else (hit[0], tuple(hit[1]))
+
+
+def unexplained_prices_rule(inp: Any) -> list[str]:
+    """Los montos del texto que no explica el precio del catálogo de los
+    productos de los que habla ni la política (sin precios, no se juzga)."""
+    if not inp.prices:
+        return []
+    found = find_unexplained_amounts(inp.text, catalog_prices=inp.prices, policy_amounts=inp.policy)
+    return list(dict.fromkeys(format_cop(u.amount) for u in found))
+
+
+def _payment(inp: Any) -> list[tuple[str, str]]:
+    return payment_claims(inp.text, subtotal=inp.subtotal, cod_min=inp.cod_min, surcharges=inp.surcharges)
+
+
+def _status(inp: Any) -> list[tuple[str, str]]:
+    return status_claims(inp.text, order=inp.order, stage=inp.stage, pay_status=inp.pay_status)
+
+
+def _coupon(inp: Any) -> list[tuple[str, str]]:
+    return coupon_claims(
+        inp.text, known=inp.known, valid=inp.valid, valid_lines=inp.valid_lines, valid_percents=inp.valid_percents
+    )
+
+
+def _denial(inp: Any) -> list[tuple[str, str]]:
+    return denial_claims(inp.text, titles=inp.titles, own=inp.own, products=inp.products)
+
+
+def payment_claims_rule(inp: Any) -> list[str]:
+    """Contra entrega o recargo del link que no coinciden con la configuración."""
+    return [term for term, _fact in _payment(inp)]
+
+
+def status_claims_rule(inp: Any) -> list[str]:
+    """Pago o etapa del pedido que no coinciden con OrderFacts."""
+    return [term for term, _fact in _status(inp)]
+
+
+def coupon_claims_rule(inp: Any) -> list[str]:
+    """Cupones o porcentajes de descuento que no están vigentes para el cliente."""
+    return [term for term, _fact in _coupon(inp)]
+
+
+def denial_claims_rule(inp: Any) -> list[str]:
+    """Lo que el texto niega tener y el catálogo sí tiene."""
+    return [term for term, _fact in _denial(inp)]
+
+
+def foreign_labels_rule(inp: Any) -> list[str]:
+    """Las etiquetas del catálogo (aromas o colores) que el texto nombra y no son del producto del que habla."""
+    return list(foreign_labels(inp.text, own=inp.own, labels=inp.labels, others=inp.others))
+
+
+# ── ítems ──
+
+
+def unexplained_price_items(inp: Any) -> list[dict[str, Any]]:
+    return [{"term": term} for term in unexplained_prices_rule(inp)]
+
+
+def _claim_items(claims: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    return [{"term": term, "fact": fact} for term, fact in claims]
+
+
+def payment_claim_items(inp: Any) -> list[dict[str, Any]]:
+    return _claim_items(_payment(inp))
+
+
+def status_claim_items(inp: Any) -> list[dict[str, Any]]:
+    return _claim_items(_status(inp))
+
+
+def coupon_claim_items(inp: Any) -> list[dict[str, Any]]:
+    return _claim_items(_coupon(inp))
+
+
+def denial_claim_items(inp: Any) -> list[dict[str, Any]]:
+    return _claim_items(_denial(inp))
+
+
+def foreign_label_items(inp: Any) -> list[dict[str, Any]]:
+    return [{"term": term} for term in foreign_labels_rule(inp)]
 
 
 # ── vistas ──
@@ -126,6 +218,57 @@ def chat_and_catalog(inp: Any) -> str | None:
         "Conversación de una tienda con un cliente (lo último al final):\n"
         f"{inp.text.strip()}\n\nProductos del catálogo: " + ", ".join(inp.titles) + "."
     )
+
+
+def text_and_product_labels(inp: Any, *, noun: str, items: list[dict[str, Any]] | None = None) -> str | None:
+    """El texto y los productos de los que habla con lo que tienen (`noun`:
+    aromas, colores), si la regla propone algo ajeno (sin candidatos no se le
+    pregunta a Jev)."""
+    if not items:
+        return None
+    # Sonda con Jev real (2026-10-13): con varios productos, una línea por
+    # producto con sus aromas le rinde peor (0,11-0,16 a una oferta real) que
+    # los títulos juntos y los aromas juntos (0,23-0,68; lo que no se ofrece ≤ 0,13).
+    return (
+        f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Producto del pedido (del que hablan): {' y '.join(inp.products)}. Sus {noun}: {', '.join(inp.own)}."
+    )
+
+
+def text_and_product_prices(inp: Any, *, items: list[dict[str, Any]] | None = None) -> str | None:
+    """El texto y los productos de los que habla con su precio del catálogo,
+    si la regla propone algún monto (sin candidatos no se le pregunta a Jev)."""
+    if not items:
+        return None
+    return (
+        f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Producto del pedido (del que hablan) y su precio en el catálogo: {'; '.join(inp.products)}."
+    )
+
+
+def text_and_claim_facts(inp: Any, *, items: list[dict[str, Any]] | None = None) -> str | None:
+    """El texto y lo que dice el sistema de cada cosa que la regla propone
+    (pago, estado, cupón, negación); sin candidatos no se le pregunta a Jev."""
+    if not items:
+        return None
+    facts = list(dict.fromkeys(item["fact"] for item in items))
+    return (
+        f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Lo que dice el sistema: {'; '.join(facts)}."
+    )
+
+
+def text_and_option_sheets(inp: Any, *, words: str) -> str | None:
+    """El texto y la ficha de cada producto con presentaciones para escoger
+    (`variante_ajena`), más la de los de una sola presentación si el texto
+    nombra una de `words` («vaso, tamaño, caja…»: de la tienda, en el
+    paquete). Sin ninguna ficha, no se le pregunta a Jev."""
+    triggers = {stem_word(w) for w in normalize_label(words.replace(",", " ")).split()}
+    said = {stem_word(w) for w in normalize_label(inp.text).split()}
+    sheets = [*inp.sheets, *(inp.single if triggers & said else ())]
+    if not sheets:
+        return None
+    return f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n" + "\n\n".join(sheets)
 
 
 def text_with_lists(inp: Any) -> str | None:

@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El texto le dice algo de su pedido que el sistema no dice?» (2026-10-13;
+# la regla vivía solo en el prompt: «nunca afirmar pago confirmado si
+# pay_status != paid»). La regla propone el pago dado por confirmado, el
+# pedido dado por despachado o por entregado cuando OrderFacts dice otra cosa;
+# Jev, por cada uno, dice si el texto se lo da como un hecho de ahora. Solo
+# QUITA («te avisamos cuando esté en camino»), y solo con certeza.
+capability: estado_ajeno
+value: "list<string>"
+input: EstadoDelTexto
+items: {builtin: status_claim_items}
+# La regla es de palabras: solo PROPONE (los ítems). Sin Jev no se retiene nada
+# —en `reglas` y en sombra decide `no_items`; en sombra Jev contesta al lado y se
+# mide—: frases ciertas como «te he enviado el link» o «una vez despachado…»
+# no pueden frenar un mensaje por una palabra (revisión del 2026-10-13).
+rule: {builtin: no_items}
+state: {builtin: text_and_claim_facts}
+each:
+  id: "estado_ajeno.termino_{n}"
+  kind: noul
+  text: "¿El texto le dice, como algo que ya pasó, que {term}? Lo que dice el sistema: {fact}."
+  criteria:
+    "true": "sí: se lo da como un hecho de ahora"
+    "false": "no: le dice que se lo avisan después, que lo están revisando o habla de otro pedido"
+thresholds: {"no": 0.15}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, !has(i.p) || i.p > th['no']).map(i, i.term)"}
+floor: {builtin: jev}
+same: {builtin: tuple_eq}
+examples:
+  # «Tu pago quedó confirmado» con el pago pendiente.
+  - {items: [{term: el pago de su pedido quedó confirmado, fact: x, p: 0.94}], expect: [el pago de su pedido quedó confirmado]}
+  # «Te avisamos apenas esté en camino»: algo por venir, Jev lo quita.
+  - {items: [{term: su pedido ya salió o va en camino, fact: x, p: 0.04}], expect: []}
+  # Borde de la certeza: 0,15 quita; 0,16 queda.
+  # Sonda con Jev real (2026-10-13): lo dado como hecho 0,91–0,97; lo que avisan después
+  # («te avisamos apenas esté en camino», «apenas confirmemos») 0,04–0,06.
+  - {items: [{term: a, fact: x, p: 0.15}, {term: b, fact: x, p: 0.16}], expect: [b]}
+  # Lo que Jev no contestó queda (lo propuso la regla).
+  - {items: [{term: a, fact: x, p: 0.9}, {term: b, fact: x}], expect: [a, b]}
+  - {items: [{term: a, fact: x}], expect: doubt}

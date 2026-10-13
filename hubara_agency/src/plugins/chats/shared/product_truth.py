@@ -25,6 +25,10 @@ import re
 import unicodedata
 from typing import Any
 
+from rapidfuzz.distance import OSA
+
+from src.sdk.catalogkit import normalize_label, stem_word
+
 #: «en vaso», «las de vaso», «con diseño de dragón», «tipo difusor»: lo que el
 #: cliente pide va pegado a una preposición. Solo la palabra INMEDIATA (sin
 #: saltar artículos): «en el catálogo» no es un pedido de producto.
@@ -140,3 +144,161 @@ def invented_product_claim(text: str, terms: list[str]) -> str | None:
         if match:
             return match.group(0)
     return None
+
+
+# ── Aromas de otro producto (incidente 2026-10-13) ─────────────────────────
+#
+# El bot escribió «las de deseos cuadradas vienen en Chanel, Drakar y Ylang
+# Ylang»: Drakar e Ylang Ylang eran de la Plegaria de Luz (misma búsqueda) y
+# el producto tenía un solo aroma. Lo de abajo encuentra los aromas del
+# catálogo que un texto nombra, tolerando cómo los escribe un modelo
+# («Drakkar», «Ylang Ylang» contra el «Ylan ylang» del catálogo, «moradas» por
+# «Morado»); qué hacer con ellos lo deciden las capacidades `aroma_ajeno` y
+# `color_ajeno` del paquete de decisión. Las distancias son de RapidFuzz; la
+# normalización y el género/número, los del catálogo (`catalogkit`).
+
+#: Cuántos errores de escritura admite un nombre según sus letras (ya sin
+#: género, número ni letras dobles): corto, ninguno («lila» no es «lela»);
+#: mediano, uno («ylanylang» = «ylangylang»); largo, dos.
+_EDITS_BY_LENGTH = ((12, 2), (6, 1), (0, 0))
+#: Lo que corta una cláusula: una negación vale dentro de la suya («no vienen
+#: en Chanel ni en Drakar»), no en la siguiente («No te preocupes, te las
+#: dejo en Drakar»).
+#: (El punto y la coma de un número —«$45.000», «1,5 %»— no cortan.)
+_CLAUSE = re.compile(r"(?:(?<!\d)[.,]|[.,](?!\d)|[;:!?¿¡()\n])+")
+#: Antes del aroma en su cláusula, lo niega; justo después, «no» también
+#: («Lavanda no la manejamos»).
+_DENIES_BEFORE = frozenset({"no", "ni", "tampoco"})
+_DENIES_AFTER = frozenset({"no"})
+
+
+def _words(text: str) -> list[str]:
+    return re.findall(r"[^\W_]+", normalize_label(text or ""))
+
+
+def _squash(words: list[str]) -> str:
+    """Las palabras sin género ni número, juntas y sin letras dobles:
+    «Drakkar» = «Drakar», «Rojas» = «rojo», «Ylang Ylang» = «ylangylang»."""
+    return re.sub(r"(.)\1+", r"\1", "".join(stem_word(w) for w in words))
+
+
+def _same_name(said: str, label: str) -> bool:
+    """¿Lo escrito es el nombre del catálogo, con los errores que admite su largo?"""
+    allowed = next(edits for length, edits in _EDITS_BY_LENGTH if len(label) >= length)
+    return OSA.distance(said, label, score_cutoff=allowed) <= allowed
+
+
+def _spans(tokens: list[str], labels: tuple[str, ...] | list[str]) -> list[tuple[int, int, str]]:
+    """`(inicio, fin, etiqueta)` de cada etiqueta que nombran las palabras,
+    en orden (cada una una vez; la más larga gana el lugar)."""
+    taken: set[int] = set()
+    hits: list[tuple[int, int, str]] = []
+    for label in sorted(labels, key=lambda lb: (len(_words(lb)), len(lb)), reverse=True):
+        words = _words(label)
+        if not words:
+            continue
+        key, size = _squash(words), len(words)
+        for start in range(len(tokens) - size + 1):
+            span = range(start, start + size)
+            if taken.intersection(span) or not _same_name(_squash(tokens[start:start + size]), key):
+                continue
+            taken.update(span)
+            hits.append((start, start + size, label))
+            break
+    return sorted(hits)
+
+
+def mentioned_labels(text: str | None, labels: tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    """Las etiquetas del catálogo que el texto nombra, en el orden en que
+    aparecen (cada una una vez). Sin tildes ni mayúsculas, con letras dobles
+    de más o de menos y, desde 6 letras, con una letra distinta. El nombre más
+    largo gana: «Noche de Navidad» no cuenta también como «Navidad»."""
+    return tuple(label for _start, _end, label in _spans(_words(text or ""), labels))
+
+
+def _offered_labels(text: str | None, labels: list[str]) -> list[str]:
+    """Las etiquetas que el texto nombra sin negarlas en su cláusula."""
+    out: list[str] = []
+    for clause in _CLAUSE.split(text or ""):
+        tokens = _words(clause)
+        for start, end, label in _spans(tokens, labels):
+            denied = _DENIES_BEFORE.intersection(tokens[:start]) or _DENIES_AFTER.intersection(tokens[end:end + 2])
+            if not denied and label not in out:
+                out.append(label)
+    return out
+
+
+def foreign_labels(
+    text: str | None, *, own: tuple[str, ...] | list[str], labels: tuple[str, ...] | list[str],
+    others: tuple[str, ...] | list[str] = (),
+) -> tuple[str, ...]:
+    """Las etiquetas del catálogo de una dimensión (`labels`: los aromas, o
+    los colores) que el texto nombra y no son del producto del que habla
+    (`own`). Sin las del producto no se juzga (es un dato que falta, no una
+    ajena). Un nombre que el catálogo usa también en la otra dimensión
+    (`others`: «Café» es aroma y color) queda fuera: «trae velas café» no
+    dice cuál de las dos. Lo que su cláusula niega tampoco («no vienen en
+    Chanel ni en Drakar»): la regla decide sola mientras la decisión no tiene a Jev."""
+    if not own:
+        return ()
+    others_keys = {_squash(_words(o)) for o in others}
+    # Las del producto también se buscan: la más larga gana el lugar («Rojo y
+    # verde», presentación de las velas de deseos, no es también «verde»).
+    candidates = [label for label in dict.fromkeys([*labels, *own]) if _squash(_words(label)) not in others_keys]
+    own_keys = [_squash(_words(o)) for o in own]
+    return tuple(
+        label for label in _offered_labels(text, candidates)
+        if not any(_same_name(_squash(_words(label)), key) for key in own_keys)
+    )
+
+
+#: Lo que niega TENER algo (no cualquier «no»: «¿No te gustaría…?» no niega
+#: nada). Va en la misma cláusula que el nombre, antes o después.
+_DENIAL_HEAD = r"\b(?:no|ya no|tampoco|ni)\s+(?:(?:lo|la|los|las|le|les|nos|te)\s+)?"
+#: Negar TENER algo (un producto): «no tenemos», «no la manejamos», «ya no hay».
+HAVE_DENIAL = _DENIAL_HEAD + (
+    # «no hay problema / afán / de qué»: no niega tener nada.
+    r"(?:tenemos|manejamos|hay(?!\s+(?:problema|lio|afan|de que|cuidado|inconveniente|prisa))|"
+    r"existe|existen|hacemos|trabajamos|contamos|queda|quedan|"
+    r"ofrecemos|vendemos|esta disponible|estan disponibles)\b"
+)
+#: Además, negar cómo VIENE (un aroma, un color, una presentación): «no viene en».
+COMES_DENIAL = _DENIAL_HEAD + r"(?:viene|vienen)\b"
+
+
+def clauses(text: str | None) -> list[str]:
+    """Las cláusulas del texto, sin tildes ni mayúsculas (`_CLAUSE`)."""
+    return [normalize_label(c) for c in _CLAUSE.split(text or "") if c.strip()]
+
+
+def affirms(text: str | None, pattern: str) -> bool:
+    """¿El texto dice `pattern` (regex sobre el texto sin tildes ni
+    mayúsculas) en una cláusula que no lo niega antes ni justo después?
+    «puedes pagar contra entrega» sí; «este pedido no aplica para contra
+    entrega» y «contra entrega no aplica» no."""
+    regex = re.compile(pattern)
+    for clause in clauses(text):
+        for match in regex.finditer(clause):
+            before, after = _words(clause[: match.start()]), _words(clause[match.end():])[:3]
+            if not _DENIES_BEFORE.intersection(before) and not _DENIES_AFTER.intersection(after):
+                return True
+    return False
+
+
+def denied_labels(
+    text: str | None, labels: tuple[str, ...] | list[str], *, how: tuple[str, ...] = (HAVE_DENIAL, COMES_DENIAL)
+) -> tuple[str, ...]:
+    """Las etiquetas (títulos, aromas, colores) que el texto niega tener: las
+    que nombra en una cláusula con un verbo que niega tenerlas («no tenemos
+    la Plegaria de Luz», «Lavanda no la manejamos»), en orden. `how`: qué
+    negaciones cuentan (para un producto, solo las de tenerlo: «la Plegaria
+    no viene en Chanel» niega el aroma, no el producto)."""
+    denials = re.compile("|".join(f"(?:{p})" for p in how))
+    out: list[str] = []
+    for clause in clauses(text):
+        if not denials.search(clause):
+            continue
+        for _start, _end, label in _spans(_words(clause), labels):
+            if label not in out:
+                out.append(label)
+    return tuple(out)

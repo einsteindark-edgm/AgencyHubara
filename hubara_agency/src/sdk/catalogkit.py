@@ -80,3 +80,6 @@ from src.platform.catalog.portavelas import (
 from src.platform.catalog.variant_attrs import (
     normalize_label as normalize_label,
 )
+from src.platform.catalog.variant_attrs import (
+    stem_word as stem_word,
+)

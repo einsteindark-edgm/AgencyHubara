@@ -30,6 +30,7 @@ no el LLM.
 | `CatalogCategoryDTO` / `CategoryResolution` / `resolve_category` | `platform/catalog/categories` | lista cerrada de categorías y su resolver (regla de hoy de la capacidad `categoria` del motor de decisiones) |
 | `ColorFamilies` / `resolve_color_family` / `family_of_color` | `platform/catalog/color_families` | tabla de familias de color del tenant y su resolver (regla de hoy de la capacidad `familia_de_color`) |
 | `normalize_label` | `platform/catalog/variant_attrs` | normalización para comparar etiquetas (sin tildes, casefold) |
+| `stem_word` | `platform/catalog/variant_attrs` | una palabra ya normalizada sin género ni número («rojas» → «roj», «azules» → «azul»): la única regla para comparar palabras del catálogo (familias de color, colores por variante, scorecard de envío, verdad del producto) |
 
 ## `product_includes_portavelas` — cómo decide
 

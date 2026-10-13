@@ -36,7 +36,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
-from src.plugins.chats.agent.sales.decisions.registry import capability
+from src.plugins.chats.agent.sales.decisions.registry import capability, capability_if_present
 
 __all__ = [
     "CategoriaPedida",
@@ -50,6 +50,9 @@ __all__ = [
     "clean_llm_text",
     "customer_reply_text",
     "decide_for_session",
+    "FACT_CAPABILITIES",
+    "check_facts",
+    "facts_in_bundle",
     "is_internal_text",
     "option_list",
     "product_quote_sentences",
@@ -174,6 +177,93 @@ async def option_list(
         vault_dir=vault_dir,
     )
     return tuple(verdict.value or ())
+
+
+#: Las decisiones de los hechos antes de enviar (ventas-7, 2026-10-13).
+FACT_CAPABILITIES: tuple[str, ...] = (
+    "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
+    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa",
+)
+
+
+def facts_in_bundle() -> bool:
+    """¿El paquete activo trae alguna decisión de los hechos? Con uno anterior
+    (ventas-6 y antes) no hay nada que revisar ni que leer."""
+    return any(capability_if_present(name) is not None for name in FACT_CAPABILITIES)
+
+
+async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path | None) -> Any:
+    """Lo que el texto le dice al cliente y no coincide con los hechos que
+    armó el código (`use_cases.reply_facts.ReplyFacts`): cada capacidad del
+    paquete revisa lo suyo, en paralelo (incidente 2026-10-13). Con un paquete
+    anterior a una decisión (ventas-6 y antes), esa no revisa nada: todavía no
+    existe para la tienda. Devuelve `reply_facts.Findings`."""
+    import asyncio
+
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
+        CuponDelTexto,
+        EstadoDelTexto,
+        NegacionDelTexto,
+        OpcionesDelTexto,
+        PagoDelTexto,
+        PreciosDelTexto,
+        VariantesDelTexto,
+    )
+    from src.plugins.chats.agent.sales.use_cases import fact_rules
+    from src.plugins.chats.agent.sales.use_cases.reply_facts import Findings
+
+    async def ask(name: str, inp: Any, default: Any) -> Any:
+        cap = capability_if_present(name)
+        if cap is None:
+            return default
+        verdict = await decide_for_session(cap, inp, session_id=session_id, vault_dir=vault_dir)
+        return verdict.value if verdict.value is not None else default
+
+    def labels(own: Sequence[str], found: Sequence[str], others: Sequence[str]) -> OpcionesDelTexto:
+        return OpcionesDelTexto(
+            text=text, products=tuple(facts.titles), own=tuple(own), labels=tuple(found), others=tuple(others)
+        )
+
+    prices = PreciosDelTexto(
+        text=text, products=tuple(facts.price_lines), prices=tuple(facts.prices), policy=tuple(facts.policy)
+    )
+    payment = PagoDelTexto(text=text, subtotal=facts.subtotal, cod_min=facts.cod_min, surcharges=tuple(facts.surcharges))
+    status = EstadoDelTexto(text=text, order=facts.order, stage=facts.stage, pay_status=facts.pay_status)
+    coupon = CuponDelTexto(
+        text=text, known=tuple(facts.coupons_known), valid=tuple(facts.coupons_valid),
+        valid_lines=tuple(facts.coupons_lines), valid_percents=tuple(facts.coupons_percents),
+    )
+    denial = NegacionDelTexto(
+        text=text, titles=tuple(facts.titles_all), own=tuple(facts.own_labels), products=tuple(facts.titles)
+    )
+    (aromas, colors, variant, wrong_prices, payments, states, coupons, denials) = await asyncio.gather(
+        ask("aroma_ajeno", labels(facts.own_aromas, facts.aromas, facts.colors), ()),
+        ask("color_ajeno", labels(facts.own_colors, facts.colors, facts.aromas), ()),
+        ask("variante_ajena", VariantesDelTexto(text=text, sheets=tuple(facts.sheets), single=tuple(facts.single)), False),
+        ask("precio_ajeno", prices, ()),
+        ask("pago_ajeno", payment, ()),
+        ask("estado_ajeno", status, ()),
+        ask("cupon_ajeno", coupon, ()),
+        ask("negacion_falsa", denial, ()),
+    )
+
+    def pairs(terms: Sequence[str], claims: list[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
+        """Lo que quedó, con lo cierto que leyó Jev (la misma regla)."""
+        truth = dict(claims)
+        return tuple((term, truth.get(term) or "lo que dice el sistema es distinto") for term in terms)
+
+    return Findings(
+        aromas=tuple(aromas), colors=tuple(colors), variant=bool(variant), prices=tuple(wrong_prices),
+        payments=pairs(payments, fact_rules.payment_claims(
+            text, subtotal=facts.subtotal, cod_min=facts.cod_min, surcharges=facts.surcharges)),
+        states=pairs(states, fact_rules.status_claims(
+            text, order=facts.order, stage=facts.stage, pay_status=facts.pay_status)),
+        coupons=pairs(coupons, fact_rules.coupon_claims(
+            text, known=facts.coupons_known, valid=facts.coupons_valid, valid_lines=facts.coupons_lines,
+            valid_percents=facts.coupons_percents)),
+        denials=pairs(denials, fact_rules.denial_claims(
+            text, titles=facts.titles_all, own=facts.own_labels, products=facts.titles)),
+    )
 
 
 async def catalog_choice_buttons(

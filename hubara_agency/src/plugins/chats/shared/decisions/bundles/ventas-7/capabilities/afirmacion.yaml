@@ -1,0 +1,57 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El texto le afirma algo que solo se sabe consultando, sin haber
+# consultado?» (stock, entrega, estado del pedido). Arranca en SOMBRA: lo
+# pregunta la activity de la traza después de enviar; la regla no marca nada.
+#
+# ventas-3 (2026-10-06): la pregunta de sí/no le pedía a Jev dos cosas a la
+# vez, qué afirma el texto y si se consultó. Lo segundo ya lo sabe el código
+# (las herramientas del turno van en la entrada): Jev daba 0,12-0,40 a
+# mensajes normales y quedaba en duda 6 de 9 veces, una llamada por turno que
+# no medía nada. Ahora Jev solo dice QUÉ afirma el texto y la tabla lo cruza
+# con las herramientas que se usaron. `exists` sobre `inp.tools_used` (no
+# `'x' in inp.tools_used`: el certificador lo lee como una llave de `inp`).
+capability: afirmacion
+value: bool
+input: Afirmacion
+rule: {builtin: constant_false}
+state: {builtin: sent_message_with_tools}
+questions:
+  - id: afirmacion.que_afirma
+    kind: choice
+    text: "¿Qué le afirma el mensaje al cliente como un hecho?"
+    criteria:
+      stock: "que un producto, un color o un aroma está disponible o agotado, o que hay unidades"
+      entrega: "cuándo le llega o cuándo estará listo SU pedido (un día o una fecha), no los tiempos generales de envío"
+      estado_pedido: "en qué va su pedido (en preparación, despachado, en camino o entregado)"
+      nada: "nada de eso (precios, tiempos generales de envío, preguntas, saludos u otra cosa)"
+thresholds: {"choice": 0.7}
+decide:
+  - when: "!('afirmacion.que_afirma' in choice) || conf['afirmacion.que_afirma'] < th['choice']"
+    then: doubt
+  - when: "choice['afirmacion.que_afirma'] == 'nada'"
+    then: false
+  # El stock lo dicen el catálogo (búsqueda, ficha, lista, selector) y la verificación del pedido.
+  - when: "choice['afirmacion.que_afirma'] == 'stock'"
+    then: {expr: "!inp.tools_used.exists(t, t in ['search_products', 'get_product_by_handle', 'present_products', 'present_product_detail', 'present_product_gallery', 'present_variant_picker', 'verify_order_for_checkout'])"}
+  # Cuándo llega o en qué va SU pedido: solo check_order_status.
+  - when: "choice['afirmacion.que_afirma'] in ['entrega', 'estado_pedido']"
+    then: {expr: "!inp.tools_used.exists(t, t == 'check_order_status')"}
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: bool_eq}
+examples:
+  # Afirma stock sin haber mirado el catálogo en el turno: sí; con la consulta, no.
+  - {answers: {afirmacion.que_afirma: {choice: stock, p: 0.9}}, input: {tools_used: [send_reply]}, expect: true}
+  - {answers: {afirmacion.que_afirma: {choice: stock, p: 0.9}}, input: {tools_used: [search_products, send_reply]}, expect: false}
+  - {answers: {afirmacion.que_afirma: {choice: stock, p: 0.9}}, input: {tools_used: [verify_order_for_checkout]}, expect: false}
+  # Cuándo llega o en qué va SU pedido: solo lo sabe check_order_status.
+  - {answers: {afirmacion.que_afirma: {choice: entrega, p: 0.9}}, input: {tools_used: []}, expect: true}
+  - {answers: {afirmacion.que_afirma: {choice: entrega, p: 0.9}}, input: {tools_used: [search_products]}, expect: true}
+  - {answers: {afirmacion.que_afirma: {choice: estado_pedido, p: 0.9}}, input: {tools_used: [check_order_status, send_reply]}, expect: false}
+  # No afirma nada de eso (precios, tiempos generales de envío, preguntas).
+  - {answers: {afirmacion.que_afirma: {choice: nada, p: 0.9}}, input: {tools_used: []}, expect: false}
+  # Bordes de la certeza: 0,7 decide; 0,69 duda (la regla: nada que marcar).
+  - {answers: {afirmacion.que_afirma: {choice: stock, p: 0.7}}, input: {tools_used: []}, expect: true}
+  - {answers: {afirmacion.que_afirma: {choice: stock, p: 0.69}}, input: {tools_used: []}, expect: doubt}
+  - {answers: {}, expect: doubt}

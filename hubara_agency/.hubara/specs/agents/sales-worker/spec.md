@@ -1340,6 +1340,147 @@ de variantes): el selector trae las opciones del catálogo.
 - WHEN el bot escribe «Ese color no lo manejamos, pero sí el lila» o nombra dos opciones
 - THEN el texto sale como está
 
+### Requirement: Lo que el bot ofrece de un producto es de ese producto (`ventas-7`, 2026-10-13)
+
+Antes de enviar, `send_reply` y las tarjetas con texto del modelo (el cuerpo
+de la lista y del selector, el pie de la ficha, el texto sobre los botones y
+sobre el enlace) SHALL preguntarle al motor, en paralelo y con los hechos
+armados UNA vez (`tools/fact_check.py`), si el texto le ofrece al producto en
+foco algo que no es suyo:
+
+- **Aromas o colores de otro producto** (`aroma_ajeno`, `color_ajeno`). El
+  error es tomar prestado el nombre real de otro producto, y eso lo sabe el
+  catálogo. La regla propone las etiquetas del catálogo que el texto nombra y
+  no son del foco. Tolera la escritura con distancias de RapidFuzz y la regla
+  de género y número del catálogo (`catalogkit.stem_word`): «Drakkar», «Ylang
+  Ylang» frente al «Ylan ylang» del catálogo, «moradas» por «Morado»,
+  «azules» por «Azul»; ningún error en nombres cortos, uno en medianos y dos
+  en largos. Deja fuera los nombres que
+  están en las dos dimensiones («Café») y lo que su cláusula niega («no vienen
+  en Chanel ni en Drakar»). Gana el nombre más largo: «Rojo y verde» no es
+  también «verde». Los colores del producto son la paleta de sus variantes si
+  la tiene (Duo Zodiacal); si no, sus etiquetas «Color: …» y su opción
+  «Color» (Multicolor, Rojo y verde). Con Jev (sombra o canary del control),
+  por cada candidato Jev solo QUITA los avisos falsos (otro producto, una
+  fecha, el color de la caja), y solo con certeza (umbral 0,15).
+- **Una presentación, signo, diseño o tamaño que no tiene** (`variante_ajena`).
+  Lo inventado no está en ningún catálogo, así que no hay qué buscar: Jev lee
+  la ficha de cada producto en foco que tiene presentaciones para escoger
+  (aromas, colores y presentaciones) y contesta (marca desde 0,60, duda entre
+  0,40 y 0,60). La regla no marca nada: sin Jev no revisa. La ficha de un
+  producto de una sola presentación («el Cubo Love también viene en vaso»)
+  solo se pregunta si el texto nombra una presentación (las palabras van en el
+  paquete: vaso, tamaño, caja, set…).
+
+El foco son los productos del pedido, los que el texto nombra por su título y
+los que nombra con una palabra que solo tienen uno o dos títulos («la
+plegaria»). Lo encontrado MUST volver en UNA retención por mensaje del cliente
+(`fact_check`), con lo que el producto sí tiene y la salida: si hablaba de
+otro producto o le decía que no lo tiene, reenvía el mismo texto. El segundo
+intento MUST salir: un aviso falso cuesta un reenvío.
+
+Sin catálogo, sin vault, sin producto en foco o con un paquete anterior a las
+decisiones (`ventas-6` y antes), el texto sale como siempre. El catálogo las
+pide desde `ventas-7` (`capabilities_since`): las versiones publicadas no las
+traen y siguen certificando.
+
+Límites conocidos:
+- Los aromas y colores del foco se juntan: con Velas de deseos y Plegaria en
+  el pedido, «las de deseos vienen en Drakar» sale (Drakar es de la Plegaria).
+- Un color inventado que no tiene ningún producto («dorado» en la Plegaria)
+  solo lo ve `variante_ajena`, y solo en productos con presentaciones.
+
+### Requirement: Los hechos que el bot afirma coinciden con el sistema (`ventas-7`, 2026-10-13)
+
+Con la misma revisión (y la misma retención única), el motor SHALL comparar
+lo que el texto le afirma al cliente con lo que sabe el código. En
+`precio_ajeno` la regla propone y decide (Jev solo QUITA, umbral 0,15). En
+`pago_ajeno`, `estado_ajeno`, `cupon_ajeno` y `negacion_falsa` la regla es de
+palabras: solo PROPONE y decide Jev con la comparación ya armada; en `reglas`
+y en sombra no retienen nada (revisión del 2026-10-13: «te he enviado el
+link», «una vez despachado…» o «las velas de Halloween en promoción» no
+pueden frenar un mensaje por una palabra). Futuro y condicional («será»,
+«apenas», «si agregas otra…»), la regla general («desde $45.000», «en
+adelante») y los modismos («no hay problema») no se proponen.
+
+- `precio_ajeno`: los montos que no son el precio del catálogo del producto en
+  foco (por unidad o por la cantidad, en vivo o con el cupón aplicado, y sus
+  sumas) ni un monto de política en su contexto (`price_quotes`).
+- `pago_ajeno`: contra entrega ofrecida a un pedido cuyo subtotal de productos
+  no llega al mínimo (no la regla general: «contra entrega es desde $45.000»),
+  y un recargo del link distinto del vigente o «sin recargo».
+- `estado_ajeno`: el pago dado por confirmado o el pedido dado por despachado o
+  entregado cuando OrderFacts dice otra cosa. Solo se consulta el pedido si el
+  texto habla del pago o del envío.
+- `cupon_ajeno`: un código que Medusa conoce y no rige para el cliente, o un
+  porcentaje de descuento que ningún cupón vigente da. Solo se consulta Medusa
+  si el texto habla de cupones o descuentos.
+- `negacion_falsa`: lo que el texto niega tener (con un verbo de tenerlo; para
+  un aroma, color o presentación también «no viene en») y el catálogo tiene.
+
+Lo que quede MUST volver en la misma retención con lo cierto (las mismas
+frases que leyó Jev). El foco de una tarjeta es su producto (la ficha, el
+selector, la lista), no el pedido. El pedido se lee FRESCO de OrderFacts (se
+invalida su caché antes) y un valor viejo o sin confirmar no se juzga. Si una
+fuente no responde (Medusa, OrderFacts), ese hecho no se revisa y el texto no
+espera más de 3 s por ellas (se consultan en paralelo). Con un paquete que no
+trae ninguna de estas decisiones no se lee nada.
+
+#### Scenario: «las cuadradas en $23.000» (producción, 2026-10-13, turno 3)
+
+- GIVEN las Velas de deseos cuadradas a $25.000 en el catálogo
+- WHEN el bot escribe «Las cuadradas te quedan en $23.000 cada una»
+- THEN el texto vuelve una vez con el precio del catálogo
+- AND «las dos te quedan en $50.000» o «el total con envío es $66.940» salen
+
+#### Scenario: Contra entrega a un pedido que no llega al mínimo
+
+- GIVEN una vela de $25.000 en el pedido y `pago_ajeno` con Jev (sombra o canary)
+- WHEN el bot escribe «Claro, puedes pagar contra entrega»
+- THEN el texto vuelve con «este pedido suma $25.000 en productos y contra entrega es desde $45.000»
+- AND «contra entrega es desde $45.000; te paso el link» sale (la regla no lo propone)
+- AND sin Jev (`reglas`) el texto sale
+
+#### Scenario: «Tu pago quedó confirmado» con el pago pendiente
+
+- GIVEN el pedido #67 en preparación y sin pago según OrderFacts (leído fresco) y `estado_ajeno` con Jev
+- WHEN el bot escribe «¡Listo! Tu pago quedó confirmado»
+- THEN el texto vuelve con «el pago del pedido #67 está pendiente»
+- AND «te avisamos apenas esté en camino» sale (Jev: 0,06)
+
+#### Scenario: «vienen en Chanel, Drakar y Ylang Ylang» (producción, 2026-10-13)
+
+- GIVEN 2 Velas de deseos cuadradas en el pedido, con un solo aroma en el catálogo
+- WHEN el bot responde con `send_reply` «Las de deseos cuadradas vienen en Chanel, Drakar y Ylang Ylang»
+- THEN el texto no sale y el modelo recibe que esos aromas no son del producto y cuál es el real
+- AND si insiste con el mismo texto, sale
+
+#### Scenario: Aroma y color ajenos en una sola retención
+
+- GIVEN las Velas de deseos en el pedido (presentaciones Multicolor y Rojo y verde)
+- WHEN el bot escribe «Las de deseos te las dejo en Drakar y en azul»
+- THEN el texto vuelve una vez con «Drakar» como aroma y «Azul» como color, y lo que el producto tiene
+
+#### Scenario: Un signo que no existe (con Jev)
+
+- GIVEN un Duo Zodiacal en el pedido y `variante_ajena` en sombra o canary
+- WHEN el bot escribe «Lo tenemos en Ofiuco»
+- THEN el texto vuelve una vez con las presentaciones reales del producto
+- AND sin Jev (`reglas`), el texto sale
+
+#### Scenario: Habla de otro producto o lo niega
+
+- GIVEN las Velas de deseos en el pedido
+- WHEN el bot escribe «La plegaria sí viene en Drakar» o «Las de deseos no vienen en Chanel»
+- THEN el texto sale: el producto nombrado entra al foco, o la cláusula niega el aroma
+
+#### Scenario: Un aviso falso con la regla sola
+
+- GIVEN una Plegaria de Luz en el pedido y las decisiones en `reglas`
+- WHEN el bot escribe «Tu Plegaria de Luz te llega antes de la noche de Navidad»
+- THEN el texto vuelve una vez con la salida «reenvía el mismo texto» y el segundo intento sale
+- AND con Jev el aviso no ocurre (Jev lee que es una fecha: 0,06–0,11 en la sonda)
+
 ### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
 
 Cuando el cliente escribe desde la ficha de un producto del catálogo de

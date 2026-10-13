@@ -55,6 +55,7 @@ from src.sdk.connectorkit import has_real_variants, product_retailer_id
 from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.plugins.chats.agent.sales.decisions.guards import catalog_choice_buttons
+from src.plugins.chats.agent.sales.tools.fact_check import held_text
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
 from src.plugins.chats.agent.sales.card_messages import (
@@ -340,13 +341,17 @@ class PresentProductDetailTool(ToolBase):
         workspace: str | Path,
         catalog: CatalogPort,
         photo_colors: PhotoColorReader | None = None,
+        fact_check: Any = None,
     ) -> None:
         """`photo_colors`: de qué color es la vela de la foto (caso
         2026-10-09: el cliente citó la foto de una ardilla café, «¿no viene en
-        este color?», y nadie lo sabía). Sin él, la foto va como siempre."""
+        este color?», y nadie lo sabía). Sin él, la foto va como siempre.
+        `fact_check`: los hechos del pie de foto que redacta el modelo
+        (`tools/fact_check.py`); sin él, sale como siempre."""
         self._workspace = Path(workspace)
         self._catalog = catalog
         self._photo_colors = photo_colors
+        self._fact_check = fact_check
 
     async def execute_with_context(
         self,
@@ -359,6 +364,9 @@ class PresentProductDetailTool(ToolBase):
             "🖼️ [TOOL present_product_detail] session={} handle={!r} design={!r}",
             ctx.session_key, handle, design,
         )
+        held = await held_text(self._fact_check, ctx, self.name, caption_suffix, handles=[handle])
+        if held is not None:
+            return held
         try:
             product = await self._catalog.get_by_handle(handle)
         except ProductNotFoundError:
@@ -579,9 +587,11 @@ class PresentProductsTool(ToolBase):
         "required": ["intro_text"],
     }
 
-    def __init__(self, workspace: str | Path, catalog: CatalogPort) -> None:
+    def __init__(self, workspace: str | Path, catalog: CatalogPort, fact_check: Any = None) -> None:
         self._workspace = Path(workspace)
         self._catalog = catalog
+        # Los hechos del cuerpo de la lista que redacta el modelo (2026-10-13).
+        self._fact_check = fact_check
 
     async def execute_with_context(
         self,
@@ -591,6 +601,9 @@ class PresentProductsTool(ToolBase):
         group_by: str = "categories",
         category: str | None = None,
     ) -> str:
+        held = await held_text(self._fact_check, ctx, self.name, intro_text, handles=handles or None)
+        if held is not None:
+            return held
         # Un handle repetido sería una fila repetida: WhatsApp rechaza la lista.
         wanted = list(dict.fromkeys(handles or []))
         logger.info(
@@ -2349,8 +2362,10 @@ class SendCTAUrlTool(ToolBase):
         "/cart",
     )
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(self, workspace: str | Path, fact_check: Any = None) -> None:
         self._workspace = Path(workspace)
+        # Los hechos del texto sobre el botón que redacta el modelo (2026-10-13).
+        self._fact_check = fact_check
 
     async def execute_with_context(
         self,
@@ -2359,6 +2374,9 @@ class SendCTAUrlTool(ToolBase):
         button_text: str,
         body_text: str,
     ) -> str:
+        held = await held_text(self._fact_check, ctx, self.name, body_text)
+        if held is not None:
+            return held
         if any(blocked in url for blocked in self._BLOCKED_PATTERNS):
             return json.dumps({
                 "queued": False,
@@ -2696,10 +2714,12 @@ class SendQuickRepliesTool(ToolBase):
     )
 
     def __init__(
-        self, workspace: str | Path, catalog: CatalogPort | None = None
+        self, workspace: str | Path, catalog: CatalogPort | None = None, fact_check: Any = None
     ) -> None:
         self._workspace = Path(workspace)
         self._catalog = catalog
+        # Los hechos del texto sobre los botones que redacta el modelo (2026-10-13).
+        self._fact_check = fact_check
 
     async def _catalog_vocabulary(self) -> dict[str, str]:
         """{label normalizado: tipo} con todo lo elegible del catálogo.
@@ -2778,6 +2798,9 @@ class SendQuickRepliesTool(ToolBase):
             "🔘 [TOOL send_quick_replies] session={} count={}",
             ctx.session_key, len(buttons),
         )
+        held = await held_text(self._fact_check, ctx, self.name, body)
+        if held is not None:
+            return held
         # Validar/normalizar: trim de títulos a 20 chars, IDs a 256.
         normalized: list[dict[str, str]] = []
         for b in buttons[: wa_limits.MAX_REPLY_BUTTONS]:
@@ -2975,12 +2998,15 @@ class PresentVariantPickerTool(ToolBase):
         workspace: str | Path,
         catalog: CatalogPort | None = None,
         metadata_store: Any = None,
+        fact_check: Any = None,
     ) -> None:
         """`metadata_store`: metadata de la sesión (DI) para ver el cupón
-        aplicado y lo ya elegido; sin él, el picker sale como siempre."""
+        aplicado y lo ya elegido; sin él, el picker sale como siempre.
+        `fact_check`: los hechos del texto del selector (2026-10-13)."""
         self._workspace = Path(workspace)
         self._catalog = catalog
         self._metadata_store = metadata_store
+        self._fact_check = fact_check
 
     async def _valid_labels_for(
         self, variant_type: str, handle: str | None
@@ -3034,6 +3060,9 @@ class PresentVariantPickerTool(ToolBase):
             "🎨 [TOOL present_variant_picker] session={} type={} count={}",
             ctx.session_key, variant_type, len(options),
         )
+        held = await held_text(self._fact_check, ctx, self.name, intro_text, handles=[handle] if handle else None)
+        if held is not None:
+            return held
 
         # Sanity check
         labels = [str(o.get("label", "")).strip() for o in options]

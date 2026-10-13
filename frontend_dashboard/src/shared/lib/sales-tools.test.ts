@@ -82,6 +82,13 @@ describe("describeTool", () => {
     ]);
   });
 
+  it("un texto que ofrece lo que el producto no tiene dice que no salió por eso", () => {
+    // Incidente 2026-10-13: «las de deseos vienen en Chanel, Drakar…» (`aroma_ajeno`, `color_ajeno`, `variante_ajena`).
+    expect(describeTool({ name: "send_reply", args: { text: "…" }, ok: false, error: "fact_check" }).result).toBe(
+      "no salió: decía algo que no coincide con el catálogo o con el pedido",
+    );
+  });
+
   it("una herramienta que no conoce se muestra con su nombre", () => {
     expect(describeTool({ name: "tool_nueva", ok: true })).toEqual({
       action: "tool_nueva",

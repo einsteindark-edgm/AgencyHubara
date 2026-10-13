@@ -237,7 +237,7 @@ laboratorio antes de promover una versión.
 |---|---|
 | DB001 | YAML ilegible o estructura inválida (llave desconocida, tipo equivocado, campo faltante) — Pydantic estricto; una llave repetida; `yes:`/`no:` sin comillas como opción de una pregunta de opciones |
 | DB002 | `engine_contract` que el motor no corre (`SUPPORTED_CONTRACTS`: al subir el contrato, el viejo se queda) |
-| DB003 | capacidad listada sin archivo, archivo sin listar, `capability` distinto del nombre del archivo, o una capacidad que el catálogo exige (`capabilities:`) y el paquete no trae; una capacidad del catálogo sin su `about` (nombre, dónde actúa y qué resuelve), un `about` de una capacidad que el código no pide, o un `where` que `places:` no declara |
+| DB003 | capacidad listada sin archivo, archivo sin listar, `capability` distinto del nombre del archivo, o una capacidad que el catálogo exige (`capabilities:`, o `capabilities_since` desde su versión) y el paquete no trae; una capacidad del catálogo sin su `about` (nombre, dónde actúa y qué resuelve), un `about` de una capacidad que el código no pide, o un `where` que `places:` no declara |
 | DB004 | builtin que no existe en el catálogo, o de otro tipo (un piso usado como regla); el estado de una capacidad con ítems que no los recibe (`takes_items`) |
 | DB005 | id de pregunta repetido; llave `p['…']` / `choice['…']` / `th['…']` que no es literal o no está declarada; una lectura sin llave a la vista (`(choice)['x']`, `size(p)`); `dom.seccion.campo` o `i.campo` (dentro de `items.filter(i, …)`) que no existen; una opción mal escrita (`choice['x'] == 'otra'`); el id de cada ítem sin su posición o su llave |
 | DB006 | condición que no compila en CEL (tipos, nombres) o que no devuelve bool |
@@ -359,6 +359,15 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   operar y queda fuera (exigiría pasar el paquete por cada lugar que decide).
 - Recargar: hoy los YAML se cachean; un paquete nuevo entra con el despliegue
   (como los cuestionarios). Recarga en caliente queda para después.
+- **Una decisión nueva nace en una versión** (2026-10-13, las ocho de
+  `ventas-7`: `aroma_ajeno`, `color_ajeno`, `variante_ajena`, `precio_ajeno`,
+  `pago_ajeno`, `estado_ajeno`, `cupon_ajeno`, `negacion_falsa`): las versiones publicadas no
+  la traen y tienen que seguir certificando, así que el catálogo no la pone en
+  `capabilities:` (todas la exigirían) sino en `capabilities_since:
+  {aroma_ajeno: 7, …}`. Desde esa versión, falta = DB003; antes, el código no
+  la corre: el lugar que la pide usa `registry.capability_if_present(…)` (None
+  con un paquete anterior: `CompiledBundle.later`) y no decide nada. Su `about` y su interruptor
+  (`bots.CAPABILITIES`) son obligatorios como los de cualquier decisión.
 
 **Promover un paquete (procedimiento, premortem del 2026-10-02):**
 
@@ -692,6 +701,16 @@ tocarlos.
    `docs/motor-de-decisiones/index.html` (§07 y §08): el veredicto dice dónde
    cae el arreglo (pregunta, umbral, fila, builtin o modo) y nunca es un `if`
    en el lugar que decide.
+9. Una decisión nueva va en `capabilities_since` con la versión que la trae,
+   nunca en `capabilities:` (rompe las versiones publicadas), y el lugar que
+   la pide usa `capability_if_present` (§9).
+10. Un hecho que el bot le afirma al cliente (precio, pago, estado, cupón,
+   lo que tiene un producto) se revisa con la comparación YA ARMADA: el código
+   pone lo que sabe junto a lo que dice el texto y Jev solo juzga lo semántico
+   («¿se lo ofrece a ESTE pedido?»). Jev no consulta nada: preguntarle a
+   ciegas rinde menos (sonda 2026-10-13: con solo la ficha del producto, «Te
+   las dejo en Drakkar» dio 0,06; con el candidato armado por el código, las
+   ofertas de un aroma ajeno dieron 0,31–0,88 y los avisos falsos ≤ 0,13).
 
 ## 13. Premortem del 2026-10-02
 
