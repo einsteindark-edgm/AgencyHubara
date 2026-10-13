@@ -108,20 +108,31 @@ class Questionnaire:
                 )
         return out
 
+    def topic_spec(self, topic: str) -> Mapping[str, Any]:
+        """El asunto tal como lo escribió el paquete (con su `verify` o su
+        `complement`, si trae); vacío si no está."""
+        return next((t for t in self.raw.get("topics") or [] if isinstance(t, Mapping) and t.get("id") == topic), {})
+
     def verify_questions(self, plan: Any) -> list[TypedQuestion]:
+        """③: una pregunta por asunto. La del asunto si el paquete la trae
+        (`topics[].verify`, ventas-7: la del catálogo pregunta si le MUESTRA lo
+        que pidió); si no, la de todos."""
         v = self.raw.get("verify") or {}
-        return [
-            TypedQuestion(
-                id=str(v["id"]).format(topic=t.topic),
-                kind=v["kind"],
-                text=str(v["text"]).format(
-                    label=self.label(t.topic),
-                    where=str(v["where_msg"]).format(msg=t.msg) if t.msg else str(v["where_none"]),
-                ),
-                criteria=_criteria(v.get("criteria")),
+        out = []
+        for t in getattr(plan, "topics", ()):
+            own = self.topic_spec(t.topic).get("verify") or {}
+            out.append(
+                TypedQuestion(
+                    id=str(v["id"]).format(topic=t.topic),
+                    kind=v["kind"],
+                    text=str(own.get("text") or v["text"]).format(
+                        label=self.label(t.topic),
+                        where=str(v["where_msg"]).format(msg=t.msg) if t.msg else str(v["where_none"]),
+                    ),
+                    criteria=_criteria(own.get("criteria") or v.get("criteria")),
+                )
             )
-            for t in getattr(plan, "topics", ())
-        ]
+        return out
 
     # ── state ────────────────────────────────────────────────────────────────
 
@@ -179,12 +190,32 @@ class Questionnaire:
             lines.append(str(s["pending"]).format(pending=", ".join(pending)))
         return "\n".join(lines)
 
-    def reply_state(self, messages: Sequence[dict[str, Any]], reply_text: str, components: Sequence[str]) -> str:
-        """El `state` de la verificación: la ráfaga y lo que el asesor envía."""
+    @property
+    def verify_uses_context(self) -> bool:
+        """¿③ ve el contexto del turno? Solo si el paquete lo pide
+        (`reply_state.with_context`): entonces la activity lo lee del vault."""
+        return bool((self.raw.get("reply_state") or {}).get("with_context")) and self.uses_context
+
+    def reply_state(
+        self,
+        messages: Sequence[dict[str, Any]],
+        reply_text: str,
+        components: Sequence[str],
+        *,
+        contents: Sequence[str] = (),
+        context: Any = None,
+    ) -> str:
+        """El `state` de la verificación: la ráfaga y lo que el asesor envía.
+        Con `reply_state.with_context`, la ráfaga con su contexto (lo que se
+        habló antes); con `reply_state.contents`, lo que MUESTRAN las tarjetas
+        (ventas-7). Sin esas llaves, lo de siempre aunque viajen."""
         r = self.raw.get("reply_state") or {}
-        lines = [self.burst_state(messages), str(r["header"]), reply_text.strip() or str(r["empty"])]
+        burst = self.burst_state(messages, context=context if r.get("with_context") else None)
+        lines = [burst, str(r["header"]), reply_text.strip() or str(r["empty"])]
         if components:
             lines.append(str(r["components"]).format(components=", ".join(components)))
+        if contents and r.get("contents"):
+            lines.append(str(r["contents"]).format(contents="; ".join(contents)))
         return "\n".join(lines)
 
 

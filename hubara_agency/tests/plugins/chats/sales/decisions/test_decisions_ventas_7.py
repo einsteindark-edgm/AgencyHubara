@@ -1,5 +1,6 @@
 """`ventas-7`: `ventas-6` con las decisiones nuevas `aroma_ajeno`, `color_ajeno` y
-`variante_ajena` y nada más (esta prueba lo exige, como `test_decisions_ventas_6.py`).
+`variante_ajena` y ③ del catálogo en el turno (`test_decisions_ventas_7_verifica.py`),
+y nada más (esta prueba lo exige, como `test_decisions_ventas_6.py`).
 
 Caso de producción del 2026-10-13 (bot V2, ventas-6): el cliente armó un
 carrito con 2 Velas de deseos cuadradas y el bot escribió «vienen en Chanel,
@@ -127,6 +128,17 @@ def test_ventas_7_is_certified() -> None:
     assert load_bundle(V7, CATALOG_PATH).ref == "ventas-7@7"
 
 
+def _without_catalog_verification(turn: dict[str, Any]) -> dict[str, Any]:
+    """El turno sin ③ del catálogo (test_decisions_ventas_7_verifica.py): la
+    pregunta y el complemento del asunto `catalogo` y lo que ve ③
+    (`reply_state.contents`, `with_context`). Lo demás tiene que ser ventas-6."""
+    q = turn["questionnaire"]
+    topics = [{k: v for k, v in t.items() if not (t["id"] == "catalogo" and k in {"verify", "complement"})}
+              for t in q["topics"]]
+    reply_state = {k: v for k, v in q["reply_state"].items() if k not in {"contents", "with_context"}}
+    return {**turn, "questionnaire": {**q, "topics": topics, "reply_state": reply_state}}
+
+
 def test_ventas_7_is_ventas_6_with_the_fact_decisions_and_nothing_else() -> None:
     _need_v7()
 
@@ -135,7 +147,9 @@ def test_ventas_7_is_ventas_6_with_the_fact_decisions_and_nothing_else() -> None
     v7_files = sorted(str(p.relative_to(V7)) for p in V7.rglob("*.yaml"))
     assert v7_files == sorted([*v6_files, *new])
     for rel in v6_files:
-        if rel != "bundle.yaml":
+        if rel == "turn.yaml":
+            assert _without_catalog_verification(_load(V7 / rel)) == _load(V6 / rel), rel
+        elif rel != "bundle.yaml":
             assert _load(V7 / rel) == _load(V6 / rel), rel
     head = _load(V7 / "bundle.yaml")
     assert {**head, "id": "ventas-6", "version": 6, "capabilities": _load(V6 / "bundle.yaml")["capabilities"]} == _load(

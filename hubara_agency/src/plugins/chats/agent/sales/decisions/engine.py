@@ -82,6 +82,14 @@ def needs_context(profile_id: str) -> bool:
     return False
 
 
+def verify_needs_context(profile_id: str) -> bool:
+    """¿③ ve el contexto del turno con este perfil? Solo si su paquete lo pide
+    (`reply_state.with_context`, ventas-7): entonces la activity lo lee del
+    vault, como en ①."""
+    resolved = _resolve(profile_id)
+    return resolved is not None and resolved[1].questionnaire.verify_uses_context
+
+
 def _oracle(profile: EngineProfile) -> tuple[Any, float]:
     from src.sdk.connectorkit import get_perception_port, oracle_timeout_s
 
@@ -238,8 +246,9 @@ def _plan_of_rows(rows: Sequence[dict]) -> TurnPlan:
     )
 
 
-async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutput:
-    """③ Antes de enviar: ¿la respuesta atiende cada asunto del plan?"""
+async def verify(inp: VerifyInput, *, redact: Sequence[str] = (), context: Any = None) -> VerifyOutput:
+    """③ Antes de enviar: ¿la respuesta atiende cada asunto del plan? Con el
+    contexto del turno y lo que muestran las tarjetas si el paquete lo pide."""
     plan = _plan_of_rows(inp.topics)
     if not plan.topics:
         return VerifyOutput(ok=True, decision="send")
@@ -251,7 +260,9 @@ async def verify(inp: VerifyInput, *, redact: Sequence[str] = ()) -> VerifyOutpu
     try:
         port, timeout_s = _oracle(profile)
         result = await port.ask(
-            questionnaire.reply_state(inp.messages, inp.reply_text, inp.components),
+            questionnaire.reply_state(
+                inp.messages, inp.reply_text, inp.components, contents=inp.card_contents, context=context
+            ),
             questionnaire.verify_questions(plan),
             timeout_s=timeout_s,
             redact=redact,

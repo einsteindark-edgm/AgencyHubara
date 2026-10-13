@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
 #
 # Paquete de decisión de Hubara (velas), ventas, versión 7. PAQUETES_DE_DECISION.md.
-# Es `ventas-6@6` con tres decisiones nuevas y nada más (una prueba lo exige:
-# test_decisions_ventas_7.py). Caso de producción del 2026-10-13: el cliente
+# Es `ventas-6@6` con tres decisiones nuevas y ③ del catálogo, y nada más (una prueba
+# lo exige: test_decisions_ventas_7.py). Caso de producción del 2026-10-13: el cliente
 # armó un carrito con 2 Velas de deseos cuadradas y el bot escribió «vienen en
 # Chanel, Drakar y Ylang Ylang»; Drakar e Ylang Ylang eran de la Plegaria de
 # Luz (salió en la misma búsqueda) y el producto tiene un solo aroma.
@@ -24,6 +24,16 @@
 # segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
 # Las frases que buscan las reglas viven en el `with:` de cada capacidad.
 # El catálogo las pide desde esta versión (`capabilities_since`).
+# Y ③ del catálogo en el turno (anuncio de velitas, 2026-10-13, 16:53 Bogotá;
+# una prueba lo exige: test_decisions_ventas_7_verifica.py). El bot mandó botones
+# y después el catálogo completo a quien pidió las velitas del 7 de diciembre; ③
+# dudó (0,56) y después aprobó (0,96): preguntaba «¿atiende el asunto?» y no veía
+# qué mostraban las tarjetas ni lo que se habló antes. Ahora el catálogo tiene su
+# pregunta («¿le MUESTRA los productos que pidió?») y su complemento (mostrarlos,
+# no un texto), y ③ ve lo que muestran las tarjetas y el contexto
+# (`reply_state.contents`, `with_context`). Sonda con Jev real: botones 0,56 →
+# 0,05 y catálogo completo 0,71 → 0,13 (los dos «falta»); las dos velitas 0,81;
+# los demás asuntos, igual que con ventas-6.
 #
 # ventas-6:
 # Es `ventas-5@5` con la política del turno `turno-v5` y nada más (una prueba lo

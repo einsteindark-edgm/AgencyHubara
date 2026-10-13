@@ -77,6 +77,10 @@ class VerifyInput:
     topics: list[dict] = field(default_factory=list)
     reply_text: str = ""
     components: list[str] = field(default_factory=list)
+    #: Lo que MUESTRAN esas tarjetas (`facade.delivered_card_contents`): los
+    #: productos de la lista, las etiquetas de los botones. Jev lo ve solo si
+    #: el paquete lo pide (`reply_state.contents`, ventas-7).
+    card_contents: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

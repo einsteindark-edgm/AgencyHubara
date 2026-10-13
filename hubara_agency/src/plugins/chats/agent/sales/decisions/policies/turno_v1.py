@@ -165,13 +165,26 @@ def coverage_decision(
     return CoverageDecision(decision="send", covered=covered)
 
 
+def _own_complement(questionnaire: Any, topic: str) -> str:
+    """Lo que hace la burbuja de más para este asunto, si el paquete lo dice
+    (`topics[].complement`, ventas-7: el catálogo se MUESTRA, un texto no)."""
+    spec = getattr(questionnaire, "topic_spec", None)
+    return str((spec(topic) if callable(spec) else {}).get("complement") or "").strip()
+
+
 def complement_note(plan: TurnPlan, missing: Sequence[str], questionnaire: Any) -> str:
-    """③ El turno de sistema del complemento: UNA burbuja con lo que faltó."""
+    """③ El turno de sistema del complemento: UNA burbuja con lo que faltó.
+    Un asunto con su propio complemento dice qué hacer (p. ej. mostrar los
+    productos); los demás van por texto, como siempre."""
     wanted = set(missing)
     topics = [t for t in plan.topics if t.topic in wanted] or [PlanTopic(m) for m in missing]
-    return (
+    head = (
         "[SISTEMA] Complemento del turno: el cliente también preguntó por "
         + ", ".join(_label(t, questionnaire) for t in topics)
-        + " y la respuesta que ya le enviaste no lo cubrió. Responde SOLO eso, breve, "
-        "en un único mensaje con send_reply. No repitas lo que ya le enviaste."
+        + " y la respuesta que ya le enviaste no lo cubrió."
     )
+    own = [c for c in (_own_complement(questionnaire, t.topic) for t in topics) if c]
+    if not own:
+        return head + " Responde SOLO eso, breve, en un único mensaje con send_reply. No repitas lo que ya le enviaste."
+    rest = " Lo demás respóndelo breve, en un único mensaje con send_reply." if len(own) < len(topics) else ""
+    return head + " " + " ".join(own) + rest + " No repitas lo que ya le enviaste."
