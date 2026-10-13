@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from src.plugins.chats.agent.sales.decisions.policies import turno_v1, turno_v2, turno_v3, turno_v4, turno_v5
+from src.plugins.chats.agent.sales.decisions.policies import turno_v1, turno_v2, turno_v3, turno_v4, turno_v5, turno_v6
 from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
 
 _POLICIES: dict[str, ModuleType] = {
@@ -14,6 +14,7 @@ _POLICIES: dict[str, ModuleType] = {
     turno_v3.POLICY_ID: turno_v3,
     turno_v4.POLICY_ID: turno_v4,
     turno_v5.POLICY_ID: turno_v5,
+    turno_v6.POLICY_ID: turno_v6,
 }
 
 
