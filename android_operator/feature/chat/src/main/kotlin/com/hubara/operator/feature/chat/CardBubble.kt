@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -28,7 +29,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.ColorPainter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -161,15 +161,20 @@ private fun CardHeader(card: MessageCard, fg: Color) {
 @Composable
 private fun CardPhoto(image: CardImage, fg: Color) {
     Column(Modifier.padding(start = CardPadding, end = CardPadding, top = Spacing.sm)) {
-        // Sin foto (sin red, enlace vencido) queda el recuadro con su tono: el texto de la foto se sigue leyendo.
-        AsyncImage(
-            model = image.url,
-            contentDescription = image.caption?.let { "Foto enviada: $it" } ?: "Foto enviada",
-            contentScale = ContentScale.Crop,
-            placeholder = ColorPainter(fg.copy(alpha = 0.10f)),
-            error = ColorPainter(fg.copy(alpha = 0.10f)),
-            modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(MaterialTheme.shapes.large),
-        )
+        // Mientras carga, o si no carga (sin red, enlace vencido), se ve el ícono de foto sobre su tono: un recuadro
+        // vacío parecía roto (lo vio Artemis en S30). La foto, cuando llega, lo tapa.
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(4f / 3f).clip(MaterialTheme.shapes.large).background(fg.copy(alpha = 0.10f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(OperatorIcons.Image, contentDescription = null, tint = fg.copy(alpha = 0.45f), modifier = Modifier.size(40.dp))
+            AsyncImage(
+                model = image.url,
+                contentDescription = image.caption?.let { "Foto enviada: $it" } ?: "Foto enviada",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
         image.caption?.let {
             Text(
                 waText(it), style = MaterialTheme.typography.bodyMedium, color = fg,
