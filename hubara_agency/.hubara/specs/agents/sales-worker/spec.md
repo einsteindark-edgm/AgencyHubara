@@ -171,12 +171,12 @@ Medusa live durante la conversación (latency + cuota).
 
 #### Scenario: la cantidad de un producto que se cobra por caja son cajas (···0686, 2026-10-14)
 
-- GIVEN un producto que se cobra por caja (la metadata de Medusa `unidades_por_caja` o la descripción: «Cada caja trae 12 velas»; `product_options.pack_units`), las Velas de deseos cuadradas a $25.000 la caja de 12
+- GIVEN un producto que se cobra por caja, que la tienda declara en su paquete (`domain.yaml: sold_by_box`; decisión del operador: SOLO las velas de deseos, 12 las cuadradas y 10 las onduladas): las Velas de deseos cuadradas a $25.000 la caja de 12
 - WHEN el LLM invoca `set_order_slot(cantidad="24")` (o una línea de `lineas`) tras «Dos cajas de 12, ¿cómo sería el envío y el pago?»
 - THEN desde una caja entera (24 de 12, no 2) decide la capacidad `cajas` (ventas-7): Jev lee lo último de la charla y las dos cuentas («24 cajas = 288 velas, $600.000» / «24 velas = 2 cajas, $50.000») y dice si pide esa cantidad de CAJAS
 - AND «velas» anota las cajas que son (`cantidad: "2"`) y el sobre lo dice; «cajas» deja la cantidad
 - AND la duda (sin Jev, la regla siempre duda) no anota la cantidad: vuelve al modelo con las dos cuentas UNA vez por mensaje del cliente (`cajas_revisadas`); el segundo intento con la misma cantidad se anota
-- AND menos de una caja, un producto que no va por caja y `ventas-6` no cambian; el sobre dice siempre que la cantidad es de cajas
+- AND menos de una caja, cualquier otro producto (aunque su descripción hable de una caja) y `ventas-6` no cambian; en las velas de deseos el sobre dice que la cantidad es de cajas. La descripción de `cantidad`, `TOOLS.md` y `escalate_to_human` no hablan de cajas
 
 #### Scenario: get_product_by_handle
 

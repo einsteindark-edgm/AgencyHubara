@@ -80,7 +80,7 @@
       "type": "string"
      },
      "cantidad": {
-      "description": "Cuántas se cobran (ej. '2'): en un producto que va por caja o kit, las CAJAS, no las velas que trae.",
+      "description": "Cantidad de unidades (ej. '2').",
       "type": "string"
      },
      "cedula": {

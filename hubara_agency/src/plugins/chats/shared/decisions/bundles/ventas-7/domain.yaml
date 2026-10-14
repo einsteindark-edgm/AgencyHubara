@@ -7,6 +7,13 @@
 # Certificar: cd hubara_agency && uv run python -m src.sdk.cli decisions check
 store_name: Hubara
 farewell_order_registered: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+# Lo único que se cobra por caja, con las velas que trae (decisión del operador,
+# 2026-10-14: «solo aplica para las velas de deseos», las del 7 de diciembre).
+# `set_order_slot` anota cajas, no velas (capacidad `cajas`). Otro producto
+# que se venda por caja se agrega aquí, en una versión nueva del paquete.
+sold_by_box:
+  - {producto: velas-de-deseos-cuadradas, por_caja: 12}
+  - {producto: velas-de-deseos-onduladas, por_caja: 10}
 vocabulary:
   search_examples: "'lavanda', 'religiosa', 'cera de palma'"
   product_example: "'Luz Serena'"

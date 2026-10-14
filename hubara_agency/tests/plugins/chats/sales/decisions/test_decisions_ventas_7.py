@@ -165,7 +165,8 @@ CORRECTION_TONE = ("correction_tone", "correction_examples", "sum_correction_exa
 def _without_remarketing_facts(domain: dict[str, Any]) -> dict[str, Any]:
     new = (*REMARKETING_FACTS, *CORRECTION_TONE)
     vocabulary = {k: v for k, v in domain["vocabulary"].items() if k not in new}
-    return {**domain, "vocabulary": vocabulary}
+    # Lo que se cobra por caja (test_order_slot_boxes.py): solo las velas de deseos.
+    return {**{k: v for k, v in domain.items() if k != "sold_by_box"}, "vocabulary": vocabulary}
 
 
 def test_ventas_7_is_ventas_6_with_the_fact_decisions_and_nothing_else() -> None:

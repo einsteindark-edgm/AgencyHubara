@@ -171,33 +171,27 @@ def _message(focus, **found) -> str:
 # ── Cuántas trae la caja (2026-10-14): se cobra por caja ──────────────────
 #
 # Laboratorio de ···0686: «Dos cajas de 12» se anotó `cantidad: 24` y el
-# resumen salió con 24 cajas ($600.000). El catálogo lo dice en la
-# descripción («Cada caja trae 12 velas», «El kit trae 10 velas en su caja»);
-# un campo de Medusa (`unidades_por_caja`) manda si está.
+# resumen salió con 24 cajas ($600.000). Solo las velas de deseos (las del 7
+# de diciembre) se cobran por caja (decisión del operador): la tienda las
+# declara en el paquete (`domain.yaml: sold_by_box`); ningún otro producto,
+# aunque su descripción hable de una caja.
 
-CUADRADAS_TEXT = (
-    "Kit de Velitas 2026 · Velitas 7 de diciembre. Pequeñas velas con grandes intenciones.\n\n"
-    "El kit trae 12 velas en su caja, puedes escoger entre las multicolor. Cada caja trae 12 velas"
-)
-ONDULADAS_TEXT = "Deseos que toman forma.\nEl kit trae 10 velas en su caja, puedes escoger. Cada caja trae 10 velas"
-
-
-def _with(description: str | None = None, metadata: dict | None = None) -> SimpleNamespace:
-    return SimpleNamespace(title="x", handle="x", tags=[], options={}, metadata=metadata or {},
-                           description=description)
+BOXES = [
+    {"producto": "velas-de-deseos-cuadradas", "por_caja": 12},
+    {"producto": "velas-de-deseos-onduladas", "por_caja": 10},
+]
 
 
-def test_the_units_of_a_box_come_from_the_description() -> None:
-    assert pack_units(_with(CUADRADAS_TEXT)) == 12
-    assert pack_units(_with(ONDULADAS_TEXT)) == 10
-    assert pack_units(_with("Una caja de 6 velitas de té para tu mesa.")) == 6
+def _with(handle: str, title: str = "x", description: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(title=title, handle=handle, tags=[], options={}, metadata={}, description=description)
 
 
-def test_the_field_of_medusa_wins() -> None:
-    assert pack_units(_with(CUADRADAS_TEXT, {"unidades_por_caja": "24"})) == 24
+def test_only_the_declared_products_are_sold_by_the_box() -> None:
+    assert pack_units(_with("velas-de-deseos-cuadradas"), BOXES) == 12
+    assert pack_units(_with("velas-de-deseos-onduladas"), BOXES) == 10
 
 
-def test_a_product_sold_by_the_unit_has_no_box() -> None:
-    assert pack_units(_with("Vela artesanal de 40 horas, 12 cm de alto, en caja de regalo.")) is None
-    assert pack_units(_with("Este set incluye tres esculturas únicas.")) is None
-    assert pack_units(_with(None)) is None
+def test_a_product_the_store_did_not_declare_has_no_box() -> None:
+    assert pack_units(_with("velitas-de-te", description="Cada caja trae 6 velas de té."), BOXES) is None
+    assert pack_units(_with("velas-de-deseos-cuadradas"), []) is None
+    assert pack_units(_with("velas-de-deseos-cuadradas"), None) is None

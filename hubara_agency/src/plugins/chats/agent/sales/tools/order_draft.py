@@ -89,7 +89,7 @@ from src.plugins.chats.shared.draft_items import (
     product_key,
     to_choose,
 )
-from src.plugins.chats.shared.store_pack import vocabulary
+from src.plugins.chats.shared.store_pack import store_domain, vocabulary
 
 #: La duda de cajas o velas vuelve al modelo UNA vez por mensaje del cliente:
 #: la marca es el `last_inbound_message_id` en que volvió (···0686, 2026-10-14).
@@ -198,7 +198,7 @@ class SetOrderSlotTool(ToolBase):
             },
             "cantidad": {
                 "type": "string",
-                "description": "Cuántas se cobran (ej. '2'): en un producto que va por caja o kit, las CAJAS, no las velas que trae.",
+                "description": "Cantidad de unidades (ej. '2').",
             },
             "ciudad": {"type": "string", "description": "Ciudad de envio."},
             "barrio": {"type": "string", "description": "Barrio de envio."},
@@ -442,7 +442,7 @@ class SetOrderSlotTool(ToolBase):
         cliente (`BOXES_CHECK_KEY` en `data`: el segundo intento es el modelo
         que ya lo revisó y se anota; sin Jev la regla siempre duda). Sin la
         decisión en el paquete (ventas-6) o sin caja, como siempre."""
-        units = pack_units(product)
+        units = pack_units(product, store_domain().get("sold_by_box"))
         text = str(raw).strip()
         if not units or not text.isdigit():
             return text, None, None

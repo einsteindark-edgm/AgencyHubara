@@ -104,29 +104,19 @@ def options_to_choose(product: Any) -> dict[str, list[str]]:
     }
 
 
-#: Las llaves de la metadata de Medusa que dicen cuántas trae la caja (mandan
-#: sobre la descripción).
-PACK_METADATA_KEYS = ("unidades_por_caja", "unidades_por_kit", "unidades_por_empaque")
-#: «Cada caja trae 12 velas», «El kit trae 10 velas en su caja», «una caja de
-#: 6 velitas»: la caja (o kit) y cuántas velas o unidades trae, en una frase.
-_PACK = re.compile(
-    r"\b(?:caja|kit|empaque|paquete)\b[^.\n]{0,30}?\b(?:trae|incluye|con|de)\s+(\d{1,3})\s+(?:velas?|velitas?|unidades)\b"
-)
-
-
-def pack_units(product: Any) -> int | None:
-    """Cuántas velas trae la caja de un producto que se cobra por caja (las
-    velas de deseos: 12 las cuadradas, 10 las onduladas); None si se vende por
-    unidad. Un campo de la metadata de Medusa (`unidades_por_caja`) manda; si
-    no, la descripción. Laboratorio de ···0686 (2026-10-14): «Dos cajas de 12»
-    se anotó `cantidad: 24` y el resumen salió con 24 cajas."""
-    metadata = getattr(product, "metadata", None) or {}
-    for key in PACK_METADATA_KEYS:
-        raw = metadata.get(key) if isinstance(metadata, dict) else None
-        if isinstance(raw, int | str) and str(raw).strip().isdigit() and int(raw) >= 2:
-            return int(raw)
-    found = _PACK.search(product_key(getattr(product, "description", None) or ""))
-    return int(found.group(1)) if found and int(found.group(1)) >= 2 else None
+def pack_units(product: Any, boxes: Any) -> int | None:
+    """Cuántas velas trae la caja de un producto que se cobra por caja; None
+    si se vende por unidad. Solo los que la tienda declara en su paquete
+    (`domain.yaml: sold_by_box`, `boxes`): las velas de deseos, 12 las
+    cuadradas y 10 las onduladas (decisión del operador, 2026-10-14: «solo
+    aplica para las velas de deseos»). Laboratorio de ···0686: «Dos cajas de
+    12» se anotó `cantidad: 24` y el resumen salió con 24 cajas."""
+    names = {product_key(getattr(product, "handle", None)), product_key(getattr(product, "title", None))} - {""}
+    for entry in boxes or ():
+        if isinstance(entry, dict) and product_key(entry.get("producto")) in names:
+            units = entry.get("por_caja")
+            return units if isinstance(units, int) and not isinstance(units, bool) and units >= 2 else None
+    return None
 
 
 def colors_of(product: Any) -> list[str]:

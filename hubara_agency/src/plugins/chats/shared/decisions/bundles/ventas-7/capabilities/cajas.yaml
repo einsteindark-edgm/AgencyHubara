@@ -5,9 +5,10 @@
 # trae 12 velas a $25.000 y la ondulada 10 a $22.500. «Dos cajas de 12» se
 # anotó `cantidad: 24` dos de cuatro veces y el resumen salió con 24 cajas
 # ($600.000), aunque el bot había escrito «dos cajas son 24 velas: $50.000».
-# El código arma la comparación: cuántas trae la caja (la metadata de Medusa
-# `unidades_por_caja` o la descripción: `product_options.pack_units`) y las
-# dos cuentas con su precio. Jev lee lo que escribió el cliente y dice si
+# Solo las velas de deseos se cobran por caja (decisión del operador): la
+# tienda las declara en `domain.yaml: sold_by_box`. El código arma la
+# comparación: cuántas trae la caja (`product_options.pack_units`) y las dos
+# cuentas con su precio. Jev lee lo que escribió el cliente y dice si
 # pide esa cantidad de CAJAS. Solo desde una caja entera (24 de 12, no 2).
 # Lo pide `set_order_slot`: «velas» anota las cajas que son; «duda» devuelve
 # el texto al modelo con las dos cuentas.

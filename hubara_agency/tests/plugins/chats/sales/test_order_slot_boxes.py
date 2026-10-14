@@ -205,13 +205,26 @@ async def test_the_doubt_goes_back_once_per_customer_message(tmp_path: Path) -> 
     assert "rejected" not in second and _quantity(tmp_path) == "24"
 
 
-def test_a_bulk_order_counts_boxes_not_the_candles_they_bring() -> None:
-    """Laboratorio (2026-10-14): «me vendes 36 velitas de deseos cuadradas?» (3
-    cajas de 12) se escaló como pedido al por mayor (>20 unidades)."""
-    from src.platform.tools.escalation import EscalateToHumanTool
+def test_only_the_wishing_candles_are_sold_by_the_box(tmp_path: Path, monkeypatch) -> None:
+    """Decisión del operador (2026-10-14): solo las velas de deseos van por
+    caja. Otro producto cuya descripción habla de una caja se anota tal cual."""
+    import asyncio
 
-    tools_md = Path("src/plugins/chats/agent/sales/workspace/TOOLS.md").read_text(encoding="utf-8")
-    reason = EscalateToHumanTool.parameters["properties"]["reason_category"]["description"]
+    fake = _jev(monkeypatch, 0.04)
+    other = CatalogProductDTO(
+        id="prod_te", handle="velitas-de-te", title="Velitas de té", status="published", tags=["Aroma: Vainilla"],
+        description="Cada caja trae 6 velas de té.", variants=[_variant("Unico")],
+    )
 
-    assert "| Pide >20 unidades de venta | `BULK_ORDER` |" in tools_md
-    assert "una caja o kit cuenta como 1" in reason
+    class _WithOther(_Catalog):
+        async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+            found = await super().search(q, limit=limit)
+            return SearchResult(query=q, count=3, truncated=False, stale=False, manifest=found.manifest,
+                                results=[*found.results, other])
+
+    tool = SetOrderSlotTool(workspace=tmp_path, vault_dir=tmp_path / "vault", catalog=_WithOther(),
+                            history_reader=lambda _key: [{"role": "user", "content": "quiero 12 velitas de té"}])
+    asyncio.run(_set(tool, producto="Velitas de té", cantidad="12"))
+
+    assert _quantity(tmp_path) == "12"
+    assert not any("cajas.pide_cajas" in qs for _s, qs in fake.calls)

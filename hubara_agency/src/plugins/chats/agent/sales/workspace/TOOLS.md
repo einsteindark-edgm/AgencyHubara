@@ -91,7 +91,7 @@ Tu línea al cliente va en `customer_message`: UNA, breve, sin prometer tiempos.
 
 | Trigger | `reason_category` |
 |---|---|
-| Pide >20 unidades de venta | `BULK_ORDER` |
+| Pide >20 unidades | `BULK_ORDER` |
 | Pide descuento sin cupón válido | `DISCOUNT_REQUEST` |
 | B2B / mayorista / reventa / distribuidor | `WHOLESALE_B2B` |
 | Evento / corporativo / boda / graduación / feria | `CORPORATE_EVENT` |

@@ -72,6 +72,10 @@ constants:
 # el valor en el dominio de cada paquete (DB014).
 domain:
   store_name: string
+  # Los productos que se cobran por caja y cuántas velas trae cada caja
+  # (`set_order_slot`, capacidad `cajas`; 2026-10-14: solo las velas de
+  # deseos). Opcional: sin él, nada se cobra por caja.
+  sold_by_box: "list<{producto: string, por_caja: int}>?"
   # La despedida si todo el texto hablaba del portavelas (el cliente que acaba
   # de dar sus datos nunca recibe silencio). La MISMA del workflow V1.
   farewell_order_registered: string
