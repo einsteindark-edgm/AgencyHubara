@@ -159,6 +159,7 @@ from src.plugins.chats.agent.sales.use_cases.web_cart import (
 )
 from src.plugins.chats.shared.contracts.events import (
     CustomerRepliedEvent,
+    ReviewSubmittedEvent,
     ServiceWindowOpenedEvent,
 )
 
@@ -1349,6 +1350,20 @@ class IngestInboundMessage:
             # el pop para que no quede zombie en metadata.
             self._safe_write_metadata(session_id, metadata, base)
 
+        # --- 7.5. Calificación del pedido (reseñas, 2026-10-13) ---
+        # La respuesta del formulario de calificación la procesa el plugin
+        # `reviews` (reseña, cupón, gracias): ya quedó en el chat; el bot de
+        # ventas no toma el turno. Va antes del corte por re-entrega tardía:
+        # una calificación vale aunque llegue con la ventana cerrada.
+        if (effective.structured_payload or {}).get("kind") == "review_reply":
+            await self._emit_review_submitted(
+                session_id,
+                parsed.message_id or "",
+                effective.structured_payload.get("response_json") or {},
+                sent_ms,
+            )
+            return
+
         # Re-entrega tardía (ver 2): el mensaje ya quedó en el chat con la
         # ventana cerrada; el bot no puede escribirle texto libre (Meta lo
         # rechaza, 131047). No es un traspaso al humano (una falla técnica no
@@ -1645,6 +1660,46 @@ class IngestInboundMessage:
             return list(read_events(session_id) or [])
         except Exception:  # noqa: BLE001
             return []
+
+    async def _emit_review_submitted(
+        self,
+        session_id: str,
+        wa_message_id: str,
+        response_json: dict[str, Any],
+        received_at_ms: int,
+    ) -> None:
+        """`ReviewSubmittedEvent` al plugin de reseñas por el dispatcher.
+
+        Se espera (no fire-and-forget): perder la calificación es perder el
+        cupón prometido. Si Temporal falla queda en el log con el wamid para
+        re-despacharla; el mensaje ya está en el chat."""
+        import json as _json
+
+        if self._temporal_client_factory is None:
+            logger.warning("review_submitted_without_dispatcher", session_id=session_id)
+            return
+        try:
+            client = await self._temporal_client_factory()
+            await dispatch_envelope_with_client(
+                envelope_for(
+                    ReviewSubmittedEvent(
+                        session_id=session_id,
+                        wa_message_id=wa_message_id,
+                        response_json=_json.dumps(response_json, ensure_ascii=False),
+                        received_at_ms=received_at_ms,
+                    ),
+                    source_plugin="chats",
+                    source_worker="sales",
+                ),
+                client,
+            )
+        except Exception as exc:  # noqa: BLE001 — el webhook no se cae
+            logger.error(
+                "review_submitted_dispatch_failed",
+                session_id=session_id,
+                wa_message_id=wa_message_id,
+                reason=type(exc).__name__,
+            )
 
     async def _check_thanks_coupon(
         self, session_id: str, now_ms: int

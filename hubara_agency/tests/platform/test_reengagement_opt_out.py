@@ -73,3 +73,15 @@ async def test_el_gate_suprime_a_quien_pidio_la_baja(
     )
     assert decision.allowed is False
     assert decision.suppress_reason == "marketing_opt_out"
+
+
+def test_no_mas_tras_la_plantilla_de_calificacion_es_baja():
+    """Reseñas (2026-10-13): la invitación a calificar es MARKETING (dice el
+    descuento) y promete la baja; un «NO MÁS» después la registra."""
+    meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "template"}]}
+    assert detect_marketing_opt_out("NO MÁS", meta, NOW) is True
+
+
+def test_no_mas_tras_la_invitacion_dentro_de_la_ventana_no_es_baja():
+    meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "flow"}]}
+    assert detect_marketing_opt_out("NO MÁS", meta, NOW) is False

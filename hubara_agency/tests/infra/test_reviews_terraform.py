@@ -1,0 +1,40 @@
+"""La configuración de las reseñas nace en Terraform (regla del operador).
+
+Todo lo que `ReviewSettings` lee del entorno está declarado por tenant: los
+interruptores y tiempos en `modules/review-config` (git = verdad, nace
+apagado), el `flow_id` del formulario como clave secreta (lo publica el CLI de
+provisioning en el WABA del tenant), y el plugin habilitado en Hubara.
+"""
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+from src.plugins.reviews.agent.settings import CONFIG_ENV_KEYS, SECRET_ENV_KEYS
+
+_TERRAFORM = Path(__file__).resolve().parents[3] / "infra" / "terraform" / "platform"
+
+
+def _hcl(path: Path) -> str:
+    return "\n".join(line.split("#", 1)[0] for line in path.read_text(encoding="utf-8").splitlines())
+
+
+def test_every_review_knob_the_code_reads_is_a_tenant_parameter() -> None:
+    text = _hcl(_TERRAFORM / "modules" / "review-config" / "main.tf")
+    for key in CONFIG_ENV_KEYS:
+        assert re.search(rf"^\s*{key}\s*=", text, re.M), f"review-config no declara {key}"
+
+
+def test_the_flow_id_is_a_secret_key_set_out_of_band() -> None:
+    text = _hcl(_TERRAFORM / "variables.tf")
+    for key in SECRET_ENV_KEYS:
+        assert f'"{key}"' in text, f"{key} falta en secret_keys"
+
+
+def test_reviews_are_born_off_and_the_mode_is_validated() -> None:
+    text = _hcl(_TERRAFORM / "variables.tf")
+    assert re.search(r'mode\s*=\s*optional\(string,\s*"off"\)', text)
+    assert "t.reviews.mode" in text, "falta la validación off | test | on"
+    main = _hcl(_TERRAFORM / "main.tf")
+    assert 'source   = "./modules/review-config"' in main
+

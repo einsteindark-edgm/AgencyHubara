@@ -85,7 +85,29 @@ variable "tenants" {
       remarketing_max_touches = optional(number, 5)        # TECHO de toques del remarketing (0..5): el dashboard (Agents → Remarketing → Frecuencia) elige dentro de él; 5 = la escalera completa
       prompt_turn_context     = optional(string, "off")    # notas del turno (hora, pedido) en el mensaje del turno y no en las instrucciones (caché de DeepSeek): off | team | on
     }), {})
+
+    # Reseñas tras la entrega (plugin `reviews`, 2026-10-13): invitación a
+    # calificar el pedido entregado + cupón de agradecimiento + botón a Google.
+    # Nace APAGADA; se enciende por PR (test → on). modules/review-config.
+    reviews = optional(object({
+      mode                   = optional(string, "off")       # off | test (solo test_sessions) | on (todos)
+      test_sessions          = optional(list(string), [])    # sesiones del vault (wa_57…) para el modo test
+      min_delay_minutes      = optional(number, 120)         # mínimo tras la entrega (abrir y oler la vela)
+      window_margin_minutes  = optional(number, 60)          # el formulario sale a más tardar esto antes de que cierre la ventana
+      template_after_minutes = optional(number, 1200)        # con la ventana cerrada, la plantilla de marketing desde aquí (20 h)
+      give_up_minutes        = optional(number, 2880)        # pasado esto no se pide (48 h)
+      poll_minutes           = optional(number, 30)          # cada cuánto se mira si el cliente abrió la ventana
+      coupon_code            = optional(string, "GRACIAS5")  # cupón personal por calificar (5 %)
+      coupon_photo_code      = optional(string, "GRACIAS10") # con foto y permiso para publicarla (10 %)
+      coupon_days            = optional(number, 60)          # vigencia del cupón
+      google_review_url      = optional(string, "https://hubara.com.co/opinar/")
+    }), {})
   }))
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : contains(["off", "test", "on"], t.reviews.mode)])
+    error_message = "tenants.*.reviews.mode: off | test | on."
+  }
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
@@ -211,6 +233,12 @@ variable "secret_keys" {
     # CLI de provisioning (`flows`) y lo consumen chats + el agent.yaml de MBA
     # (`${META_FLOW_ID_SHIPPING}`). Tenant existente: `terraform import` del param antes del apply.
     "META_FLOW_ID_SHIPPING",
+    # Flow `review_v1` (formulario de calificación, plugin reviews) publicado en
+    # el WABA del tenant: lo resuelve el CLI de provisioning (`flows`).
+    "META_FLOW_ID_REVIEW",
+    # Deploy hook de Cloudflare Pages de la tienda web: el plugin reviews lo
+    # llama al aprobar reseñas (las fichas de producto son estáticas).
+    "STOREFRONT_DEPLOY_HOOK_URL",
     "META_SYSTEM_USER_TOKEN",
     "TEMPORAL_ADDRESS",
     "TEMPORAL_NAMESPACE",

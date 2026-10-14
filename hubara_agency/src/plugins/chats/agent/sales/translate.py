@@ -197,6 +197,21 @@ async def translate_to_effective_text(
 
         if sub == "nfm_reply":
             response_json = msg.interactive.get("response_json")
+            if _is_review_reply(response_json):
+                # Reseñas tras la entrega (2026-10-13): el formulario de
+                # calificación no son datos de envío — lo procesa el plugin
+                # `reviews`; el chat muestra lo que calificó.
+                tags.append("interactive:review_reply")
+                return EffectiveText(
+                    text=_format_review_response(response_json),
+                    structured_payload={
+                        "kind": "review_reply",
+                        "name": msg.interactive.get("name"),
+                        "response_json": response_json,
+                    },
+                    quoted_message_id=_qmid(msg),
+                    debug_tags=tags,
+                )
             if isinstance(response_json, dict):
                 fields = _format_flow_response(response_json)
                 text = f"[datos de envío recibidos] {fields}"
@@ -450,6 +465,31 @@ def _prepend_referral_banner_if_needed(
     banner = ", ".join(parts) + "]"
     tags.append("referral:banner_injected")
     return f"{banner}\n{text}"
+
+
+#: Prefijo del `flow_token` del formulario de calificación (plugin reviews).
+REVIEW_FLOW_TOKEN_PREFIX = "review:"
+
+
+def _is_review_reply(response_json: Any) -> bool:
+    return isinstance(response_json, dict) and str(
+        response_json.get("flow_token") or ""
+    ).startswith(REVIEW_FLOW_TOKEN_PREFIX)
+
+
+def _format_review_response(payload: dict[str, Any]) -> str:
+    """`[calificación recibida] ★★★★☆ (4/5) · «comentario» · con foto`."""
+    try:
+        rating = max(0, min(5, int(str(payload.get("rating")).strip())))
+    except (TypeError, ValueError):
+        rating = 0
+    parts = [f"{'★' * rating}{'☆' * (5 - rating)} ({rating}/5)"]
+    comment = str(payload.get("comment") or "").strip()
+    if comment:
+        parts.append(f"«{comment[:300]}»")
+    if payload.get("photo"):
+        parts.append("con foto")
+    return "[calificación recibida] " + " · ".join(parts)
 
 
 def _format_flow_response(payload: dict[str, Any]) -> str:

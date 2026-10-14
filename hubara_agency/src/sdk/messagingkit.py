@@ -167,6 +167,7 @@ from src.platform.whatsapp.activities import (
 from src.platform.whatsapp.dtos import (
     InteractiveCTAUrlOutbound as InteractiveCTAUrlOutbound,
     InteractiveFlowOutbound as InteractiveFlowOutbound,
+    OutboundResult as OutboundResult,
 )
 
 # Los envíos del turno de ventas (motor de decisiones F4): el workflow V2 nace

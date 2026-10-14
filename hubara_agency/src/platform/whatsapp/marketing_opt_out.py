@@ -81,6 +81,7 @@ def has_recent_marketing_context(metadata: dict[str, Any], now_ms: int) -> bool:
     return (
         matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is not None
         or _recent_ladder_template(metadata, now_ms)
+        or _recent_template(metadata.get("review_request_touches"), now_ms)
     )
 
 
@@ -108,7 +109,14 @@ def _recent_ladder_template(metadata: dict[str, Any], now_ms: int) -> bool:
     prometen la baja igual que la de campañas — hallazgo H-2 (2026-09-18): la
     promesa no se cumplía porque el detector solo miraba `campaign_touches`.
     Un gancho free-form NO cuenta: no promete baja."""
-    for touch in metadata.get("remarketing_touches") or []:
+    return _recent_template(metadata.get("remarketing_touches"), now_ms)
+
+
+def _recent_template(touches: Any, now_ms: int) -> bool:
+    """¿Alguno de estos toques es una PLANTILLA de los últimos 7 días? También
+    la invitación a calificar (`review_request_touches`, reseñas 2026-10-13):
+    es de marketing (dice el descuento) y promete la baja."""
+    for touch in touches or []:
         if (
             isinstance(touch, dict)
             and touch.get("kind") == "template"
