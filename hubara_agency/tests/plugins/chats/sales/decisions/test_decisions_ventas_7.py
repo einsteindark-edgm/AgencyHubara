@@ -142,10 +142,13 @@ def _without_catalog_verification(turn: dict[str, Any]) -> dict[str, Any]:
 #: El dominio de ventas-7 trae además los datos de envío/pago del 2º toque del
 #: remarketing (test_remarketing_catalog_silent.py): exactamente estas llaves.
 REMARKETING_FACTS = ("practical_facts", "hook_examples_practical")
+#: El tono con que el bot corrige algo que dijo mal (pedido del operador, 2026-10-14).
+CORRECTION_TONE = ("correction_tone", "correction_examples")
 
 
 def _without_remarketing_facts(domain: dict[str, Any]) -> dict[str, Any]:
-    vocabulary = {k: v for k, v in domain["vocabulary"].items() if k not in REMARKETING_FACTS}
+    new = (*REMARKETING_FACTS, *CORRECTION_TONE)
+    vocabulary = {k: v for k, v in domain["vocabulary"].items() if k not in new}
     return {**domain, "vocabulary": vocabulary}
 
 
@@ -160,7 +163,7 @@ def test_ventas_7_is_ventas_6_with_the_fact_decisions_and_nothing_else() -> None
         if rel == "turn.yaml":
             assert _without_catalog_verification(_load(V7 / rel)) == _load(V6 / rel), rel
         elif rel == "domain.yaml":
-            assert set(REMARKETING_FACTS) <= set(_load(V7 / rel)["vocabulary"]), rel
+            assert {*REMARKETING_FACTS, *CORRECTION_TONE} <= set(_load(V7 / rel)["vocabulary"]), rel
             assert _without_remarketing_facts(_load(V7 / rel)) == _load(V6 / rel), rel
         elif rel != "bundle.yaml":
             assert _load(V7 / rel) == _load(V6 / rel), rel

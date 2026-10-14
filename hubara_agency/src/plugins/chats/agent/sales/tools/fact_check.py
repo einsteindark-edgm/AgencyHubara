@@ -55,6 +55,7 @@ from src.plugins.chats.agent.sales.use_cases.fact_rules import (
     talks_about_order,
 )
 from src.plugins.chats.shared.draft_items import draft_items, find_product
+from src.plugins.chats.shared.store_pack import vocabulary
 from src.sdk.connectorkit import coupon_problem
 from src.plugins.chats.agent.sales.use_cases.reply_facts import ReplyFacts, discounted, fact_message
 
@@ -258,7 +259,11 @@ class FactCheck:
             findings = await check_facts(text, facts, session_id=session_key, vault_dir=self._vault_dir)
             if not findings or (holds and set(findings.terms) <= reported):
                 return None
-            message = fact_message(findings, facts, tool=tool)
+            store = vocabulary()
+            message = fact_message(
+                findings, facts, tool=tool, tone=store.get("correction_tone"),
+                price_examples=list(store.get("correction_examples") or ()),
+            )
         except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
             logger.warning("💬 [TOOL {}] sin revisar los hechos ({!r}) session={}", tool, exc, session_key)
             return None

@@ -95,6 +95,10 @@ domain:
     hook_examples_explain: "list<string>?"    # 1er toque: le explica lo que vio
     practical_facts: "string?"                # 2º toque: envío, tiempos y pago (la única fuente)
     hook_examples_practical: "list<string>?"  # 2º toque: ejemplos
+    # Cómo corrige el bot algo que le dijo mal al cliente (los hechos, 2026-10-14).
+    # Opcionales: sin ellos, la corrección sin tono de la tienda.
+    correction_tone: "string?"                # el tono de la corrección (suave, sin regaño)
+    correction_examples: "list<string>?"      # ejemplos de corregir un precio
 
 builtins:
   # ── reglas ──

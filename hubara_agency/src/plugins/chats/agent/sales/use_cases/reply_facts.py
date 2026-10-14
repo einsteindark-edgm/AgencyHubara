@@ -11,6 +11,7 @@ lo que las capacidades del paquete encontraron que no coincide, y
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, fields
 from typing import Any
 
@@ -161,9 +162,9 @@ def _price_problem(found: tuple[str, ...], facts: ReplyFacts) -> str:
     # Laboratorio del 2026-10-14: con «¿son $46.000 las dos, cierto?» el bot
     # corrigió el monto pero empezó con «Así es» y nunca desmintió el anterior.
     return (
-        f"Le dijiste {said} como precio, y {real}. Corrígeselo de frente: no empieces con «así es» ni con "
-        "«sí» como si fuera correcto; dale el valor del catálogo y, si antes le habías dado otro valor, dile "
-        "que ese valor estaba mal."
+        f"Le dijiste {said} como precio, y {real}. No empieces con «así es» ni con «sí» como si fuera "
+        "correcto: dale el valor del catálogo y, si antes le habías dado otro valor, cuéntale que fue un "
+        "error tuyo."
     )
 
 
@@ -176,9 +177,13 @@ def _truth(pairs: tuple[tuple[str, str], ...]) -> str:
     return "; ".join(dict.fromkeys(fact for _term, fact in pairs))
 
 
-def fact_message(findings: Findings, facts: ReplyFacts, *, tool: str = "send_reply") -> str:
+def fact_message(
+    findings: Findings, facts: ReplyFacts, *, tool: str = "send_reply", tone: str | None = None,
+    price_examples: Sequence[str] = (),
+) -> str:
     """El mensaje con que el texto vuelve al modelo: cada cosa que no
-    coincide con lo cierto y, al final, la salida (mismo texto si no aplica)."""
+    coincide con lo cierto, cómo corregirlo (`tone`, `price_examples`: de la
+    tienda, en el paquete) y, al final, la salida (mismo texto si no aplica)."""
     problems: list[str] = []
     option = option_problem(
         list(facts.focus), aromas=findings.aromas, colors=findings.colors, variant=findings.variant
@@ -196,6 +201,10 @@ def fact_message(findings: Findings, facts: ReplyFacts, *, tool: str = "send_rep
             f"Le dijiste que no tenemos {_said(findings.denials)}, y lo cierto es que {_truth(findings.denials)}. "
             "Si de verdad está agotado hoy, déjalo como está."
         )
+    if tone:
+        problems.append(tone.strip())
+    if findings.prices and price_examples:
+        problems.append("Por ejemplo: " + " / ".join(f"«{e}»" for e in price_examples) + ".")
     return f"No se envió: {' '.join(problems)} {correction_tail(tool)}"
 
 
