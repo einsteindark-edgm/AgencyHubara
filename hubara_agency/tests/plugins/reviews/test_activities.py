@@ -462,10 +462,15 @@ async def test_a_template_meta_has_not_approved_yet_releases_the_invitation(tmp_
     deps, calls = _deps(tmp_path)
 
     async def send_template(session_id, name, variables, **kwargs):
+        # Como el adaptador real (`send_template_to_session`): un rechazo de
+        # Meta LANZA `ApplicationError`, no devuelve ok=False (revisión de gates).
+        from temporalio.exceptions import ApplicationError
+
         calls.templates.append((session_id, name, variables, kwargs))
-        return OutboundResult(wa_message_id=None, ok=False, error=(
-            'http_404: {"error":{"message":"(#132001) Template name does not exist in the translation",'
-            '"code":132001}}'))
+        raise ApplicationError(
+            'WhatsApp template send failed (non-retryable, code=132001): http_404: {"error":{"message":'
+            '"(#132001) Template name does not exist in the translation","code":132001}}',
+            non_retryable=True, type="TemplateMetaError132001")
 
     deps.send_template = send_template
     out = await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_template", now_ms=T0 + 20 * HOUR))

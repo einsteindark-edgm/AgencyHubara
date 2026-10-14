@@ -83,10 +83,11 @@ def has_recent_marketing_context(
     reactivación. Fuera de ese contexto, "no más" es conversación normal.
 
     La invitación a calificar (premortem C4) da contexto 48 h y, si viene el
-    `text` del cliente, solo cuando el mensaje es la frase de baja sola: tras
-    un pedido entregado el cliente sigue comprando, y «quiero otra igual, no
-    más que en azul» no puede ser una baja para siempre. Sin `text`, cuenta
-    (el piso legal: ante la duda, la baja)."""
+    `text` del cliente, solo con una baja sin ambigüedad: tras un pedido
+    entregado el cliente sigue comprando, y «quiero otra igual, no más que en
+    azul» no puede ser una baja para siempre — pero «no quiero recibir más
+    mensajes» sí lo es en cualquier mensaje. Sin `text`, cuenta (el piso
+    legal: ante la duda, la baja)."""
     if (
         matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is not None
         or _recent_ladder_template(metadata, now_ms)
@@ -96,7 +97,22 @@ def has_recent_marketing_context(
         metadata.get("review_request_touches"), now_ms, window_ms=_REVIEW_TEMPLATE_CONTEXT_MS
     ):
         return False
-    return text is None or is_standalone_opt_out(text)
+    return text is None or _is_unambiguous_opt_out(text)
+
+
+#: «no más» en Colombia también es «solo» («no más que en azul»): tras la
+#: invitación a calificar cuenta solo si es el mensaje entero.
+_AMBIGUOUS_PHRASES: frozenset[str] = frozenset({"no mas"})
+
+
+def _is_unambiguous_opt_out(text: str) -> bool:
+    """Tras la invitación a calificar: las frases sin ambigüedad («no quiero
+    recibir», «de baja», «no me mandes»…) cuentan en cualquier mensaje; la
+    ambigua («no más») y las palabras sueltas, solo como mensaje entero."""
+    normalized = _normalize(text)
+    if any(p in normalized for p in _OPT_OUT_PHRASES if p not in _AMBIGUOUS_PHRASES):
+        return True
+    return is_standalone_opt_out(text)
 
 
 def detect_marketing_opt_out(

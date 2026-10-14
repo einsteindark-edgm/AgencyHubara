@@ -109,10 +109,13 @@ class StorefrontRebuild:
         return True
 
     async def flush(self, now_ms: int) -> bool:
-        """Pide la reconstrucción pendiente si ya venció. True si la pidió."""
+        """Pide la reconstrucción pendiente si ya venció. True si la pidió.
+        La toma (borra `due_at_ms`) ANTES de llamar: dos `flush` a la vez no
+        piden dos reconstrucciones."""
         due = self.due_at_ms()
         if due is None or now_ms < due or is_placeholder(self._url):
             return False
+        self._write(due_at_ms=None)
         await self._fire(now_ms)
         return True
 
@@ -120,8 +123,13 @@ class StorefrontRebuild:
         try:
             await self._post(self._url)
         except Exception as exc:
-            # Solo un llamado que salió bien cuenta para el espaciado.
-            self._write(last_error=f"{type(exc).__name__}: {exc}"[:300], last_error_at_ms=now_ms)
+            # Solo un llamado que salió bien cuenta para el espaciado; el que
+            # falló queda pendiente para la próxima ventana.
+            self._write(
+                last_error=f"{type(exc).__name__}: {exc}"[:300],
+                last_error_at_ms=now_ms,
+                due_at_ms=now_ms + self._every_ms,
+            )
             raise
         self._write(last_at_ms=now_ms, due_at_ms=None, last_error=None)
 

@@ -98,8 +98,8 @@ def _schedule_pending_rebuild(rb: Any) -> None:
     """Lo moderado dentro de la ventana de 10 min sale al vencer (premortem
     M3), aunque nadie vuelva a tocar el panel."""
     due = rb.due_at_ms()
-    if due is None:
-        return
+    if due is None or _PENDING_FLUSHES:
+        return  # ya hay una programada (lee el marcador al despertar)
     task = asyncio.create_task(_flush_later(rb, max(0.0, (due - now_ms()) / 1000)))
     _PENDING_FLUSHES.add(task)
     task.add_done_callback(_PENDING_FLUSHES.discard)

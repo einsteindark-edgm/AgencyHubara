@@ -271,3 +271,34 @@ async def test_the_deploy_hook_status_is_checked_and_remembered(tmp_path):
         await rebuild(NOW)
     status = rebuild.status()
     assert status["last_ok_at_ms"] is None and "404" in status["last_error"]
+
+
+@pytest.mark.asyncio
+async def test_two_flushes_of_the_same_pending_rebuild_post_once(tmp_path):
+    """Revisión de gates: varias moderaciones dentro de la ventana no piden
+    varias reconstrucciones al vencer."""
+    import asyncio
+
+    posts = []
+
+    async def slow_post(url):
+        await asyncio.sleep(0.01)
+        posts.append(url)
+
+    rebuild = StorefrontRebuild(tmp_path, url="https://hooks.test/deploy", post=slow_post, every_ms=600_000)
+    await rebuild(NOW)
+    await rebuild(NOW + 60_000)
+    await asyncio.gather(rebuild.flush(NOW + 600_000), rebuild.flush(NOW + 600_000))
+    assert len(posts) == 2  # la primera inmediata + UNA pendiente
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rebuild_stays_pending(tmp_path):
+    """Revisión de gates: un hook que falló no pierde la reconstrucción."""
+    async def broken(url):
+        raise RuntimeError("cloudflare 500")
+
+    rebuild = StorefrontRebuild(tmp_path, url="https://hooks.test/deploy", post=broken, every_ms=600_000)
+    with pytest.raises(RuntimeError):
+        await rebuild(NOW)
+    assert rebuild.due_at_ms() == NOW + 600_000

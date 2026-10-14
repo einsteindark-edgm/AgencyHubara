@@ -349,19 +349,30 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
         if marketing_opt_out_info(metadata) is not None:
             return ReviewSendOut(status="skipped", error="opted_out")
 
-    result = await deps.send_template(
-        inp.session_id,
-        TEMPLATE_NAME,
-        template_variables(reference),
-        header_media_id=media_id,
-        flow_token=token,
-        flow_action_data=action_data,
-    )
+    try:
+        result = await deps.send_template(
+            inp.session_id,
+            TEMPLATE_NAME,
+            template_variables(reference),
+            header_media_id=media_id,
+            flow_token=token,
+            flow_action_data=action_data,
+        )
+    except Exception as exc:
+        # `send_template_to_session` LANZA ante un rechazo de Meta.
+        if _template_not_ready(str(exc)):
+            raise _NotSent(f"plantilla no disponible en Meta: {str(exc)[:200]}") from exc
+        raise
     if not result.ok:
-        if any(code in str(result.error or "") for code in _TEMPLATE_NOT_READY_CODES):
+        if _template_not_ready(str(result.error or "")):
             raise _NotSent(f"plantilla no disponible en Meta: {str(result.error)[:200]}")
         return ReviewSendOut(status="failed", channel="template", error=str(result.error)[:300])
     return ReviewSendOut(status="sent", channel="template", wa_message_id=result.wa_message_id)
+
+
+def _template_not_ready(error: str) -> bool:
+    """Sin aprobar, pausada o deshabilitada: no salió nada (premortem I3)."""
+    return any(code in error for code in _TEMPLATE_NOT_READY_CODES)
 
 
 def _rejected_for_sure(result: Any) -> bool:

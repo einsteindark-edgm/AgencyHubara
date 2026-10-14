@@ -99,6 +99,22 @@ def test_tras_la_calificacion_la_frase_sola_sigue_siendo_baja(text: str) -> None
 @pytest.mark.parametrize(
     "text",
     [
+        "No quiero recibir más mensajes",
+        "no me mandes más promociones",
+        "denme de baja de la lista",
+        "Por favor no me escriban más, no me envíes nada",
+    ],
+)
+def test_tras_la_calificacion_una_baja_sin_ambiguedad_cuenta_en_cualquier_mensaje(text: str) -> None:
+    """Revisión de gates: solo «no más» es ambiguo en Colombia («no más que
+    en azul» = «solo»); las demás frases piden la baja en cualquier mensaje."""
+    meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "template"}]}
+    assert detect_marketing_opt_out(text, meta, NOW) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
         "quiero otra igual, no más que en azul",
         "Me encantó, no más llegó la caja la abrí",
         "No más de 50 mil, ¿qué me recomiendas?",

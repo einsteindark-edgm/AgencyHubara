@@ -195,3 +195,18 @@ def test_opening_the_panel_sends_a_due_storefront_rebuild(env):
     rebuild.due = NOW
     client.get("/api/reviews/summary")
     assert rebuild.flushed == [NOW + 10]
+
+
+@pytest.mark.asyncio
+async def test_a_pending_rebuild_is_scheduled_once(monkeypatch):
+    """Revisión de gates: aprobar en tanda programa UNA reconstrucción."""
+    rebuild = _FakeRebuild()
+    rebuild.due = NOW + 60_000
+    monkeypatch.setattr(reviews_api, "now_ms", lambda: NOW)
+    reviews_api._schedule_pending_rebuild(rebuild)
+    reviews_api._schedule_pending_rebuild(rebuild)
+    try:
+        assert len(reviews_api._PENDING_FLUSHES) == 1
+    finally:
+        for task in list(reviews_api._PENDING_FLUSHES):
+            task.cancel()

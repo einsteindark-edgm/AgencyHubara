@@ -359,10 +359,14 @@ def _escalate_requested(data: dict[str, Any], *, reason_category: str, motivo: s
     2026-10-14: una calificación de 2★ quedaba sin nadie)."""
     if _escalate(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms):
         return True
-    if data.get("tag") == "HUMANO":
-        return False
+    if data.get("tag") != _POST_SALE_TAG:
+        return False  # un humano trabaja el hilo (HUMANO, pago por verificar…): no se pisa
     _mark_human(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms)
     return True
+
+
+#: La posventa: ruta humano sin nadie atendiendo (la pone confirm-payment).
+_POST_SALE_TAG = "COMPRA_EXITOSA"
 
 
 def _episode_id_with_order(data: dict[str, Any], order_id: str) -> str | None:
