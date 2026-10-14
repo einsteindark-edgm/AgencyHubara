@@ -65,6 +65,11 @@ class _Catalog:
                             manifest=CatalogManifestDTO(version="v", fetched_at="t", product_count=len(results)),
                             results=results)
 
+    async def list_categories(self):
+        from src.platform.catalog.categories import collect_categories
+
+        return collect_categories(list(self._by.values()))
+
 
 def _now() -> int:
     return int(time.time() * 1000)
@@ -564,6 +569,110 @@ def test_products_with_no_args_sends_the_visible_catalog(h: _Harness) -> None:
     assert [row.id for section in listing.sections for row in section.rows] == ["duo-zodiacal"]
     [event] = h.history()
     assert event["operator_tool"] == "present_products" and event["content"].startswith("🛍️ El operador envió")
+
+
+def _candle(handle: str, title: str, category: str | None = None) -> CatalogProductDTO:
+    labels = {"velas-religiosas": "Velas Religiosas", "difusores": "Difusores"}
+    return CatalogProductDTO(
+        id=f"p_{handle}", handle=handle, title=title, status="published",
+        thumbnail=f"https://cdn.test/{handle}.jpg",
+        variants=[CatalogVariantDTO(id=f"v_{handle}", title="Unico",
+                                    prices=[CatalogPriceDTO(amount="25000", currency_code="cop")])],
+        categories=[category] if category else [],
+        category_labels={category: labels[category]} if category else None,
+    )
+
+
+_STORE = (
+    _candle("san-miguel", "Vela San Miguel Arcángel", "velas-religiosas"),
+    _candle("difusor-lavanda", "Difusor Lavanda", "difusores"),
+    _candle("virgen-guadalupe", "Vela Virgen de Guadalupe", "velas-religiosas"),
+    _candle("luz-serena", "Luz Serena"),
+)
+
+
+def _rows(h: _Harness) -> list[str]:
+    listing = h.wa["send_interactive_list"].await_args.args[2]
+    return [row.id for section in listing.sections for row in section.rows]
+
+
+def test_products_of_one_category_send_only_that_category(h: _Harness) -> None:
+    """«Enviar productos» mandaba el catálogo entero (caso 2026-10-13): con una
+    categoría elegida en la app sale SOLO esa, con su nombre."""
+    h.deps.catalog = _Catalog(products=_STORE)
+    h.seed(_human())
+
+    r = h.run("present_products", {"category": "velas-religiosas", "q": ""}, cid="act-religiosas")
+
+    assert r.status_code == 200, r.text
+    assert _rows(h) == ["san-miguel", "virgen-guadalupe"]
+    [event] = h.history()
+    assert event["content"] == "🛍️ El operador envió los productos de la categoría Velas Religiosas (2)"
+
+
+def test_products_matching_a_name_send_only_those(h: _Harness) -> None:
+    h.deps.catalog = _Catalog(products=_STORE)
+    h.seed(_human())
+
+    r = h.run("present_products", {"category": "", "q": "virgen guadalupe"}, cid="act-buscar")
+
+    assert r.status_code == 200, r.text
+    assert _rows(h) == ["virgen-guadalupe"]
+
+    h.run("present_products", {"category": "velas-religiosas", "q": "vela"}, cid="act-buscar-2")
+    assert _rows(h) == ["san-miguel", "virgen-guadalupe"]
+
+
+def test_a_category_that_is_gone_or_a_name_with_no_match_sends_nothing_and_says_why(h: _Harness) -> None:
+    h.deps.catalog = _Catalog(products=_STORE)
+    h.seed(_human())
+
+    gone = h.run("present_products", {"category": "ya-no-existe"}, cid="act-gone")
+    none = h.run("present_products", {"category": "difusores", "q": "miguel"}, cid="act-none")
+
+    assert (gone.status_code, gone.json()["error"]) == (422, "invalid_args")
+    assert gone.json()["message"] == "Esa categoría ya no está en el catálogo: vuelve a abrir «Enviar productos»."
+    assert (none.status_code, none.json()["error"]) == (422, "invalid_args")
+    assert none.json()["message"] == "Ningún producto de Difusores coincide con «miguel»."
+    # Una categoría que solo tiene borradores (el snapshot la lista, pero nada se puede mandar).
+    from dataclasses import replace
+
+    draft = replace(_candle("aroma-borrador", "Aroma en borrador", "velas-religiosas"), status="draft")
+    h.deps.catalog = _Catalog(products=(_STORE[1], draft))
+    empty = h.run("present_products", {"category": "velas-religiosas"}, cid="act-empty")
+    assert (empty.status_code, empty.json()["message"]) == (422, "La categoría Velas Religiosas no tiene productos para enviar.")
+    h.wa["send_interactive_list"].assert_not_awaited()
+    assert h.history() == []
+
+
+def test_what_the_app_lists_is_what_the_customer_gets(h: _Harness) -> None:
+    """La lista de «Enviar productos» (`GET /catalog`) y lo que sale al tocar
+    «Enviar» (`present_products` con los MISMOS filtros) son lo mismo."""
+    from src.plugins.chats.api import mobile
+    from src.plugins.chats.api.mobile import MobileDeps
+    from src.sdk.connectorkit import InMemoryOrderFacts
+
+    h.deps.catalog = _Catalog(products=_STORE)
+    mobile_deps = MobileDeps(
+        vault_dir=h.vault, catalog=h.deps.catalog, order_facts=InMemoryOrderFacts(), now_ms=_now,
+        payment_instructions_text=lambda: "datos de pago",
+    )
+    app = FastAPI()
+    app.include_router(mobile.router, prefix="/api/chats")
+    app.include_router(operator_tools.router, prefix="/api/chats")
+    app.dependency_overrides[mobile.get_mobile_deps] = lambda: mobile_deps
+    app.dependency_overrides[operator_tools.get_operator_tools_deps] = lambda: h.deps
+    client = TestClient(app)
+    h.seed(_human())
+
+    for i, filters in enumerate(({"category": "velas-religiosas", "q": ""}, {"category": "_sin_categoria", "q": ""},
+                                 {"category": "", "q": "lavanda"}, {"category": "", "q": ""})):
+        listed = [p["handle"] for p in client.get("/api/chats/catalog", params=filters).json()["products"]]
+        r = client.post(f"/api/chats/session-actions/{_S}/tools/present_products",
+                        json={"client_action_id": f"act-{i}", "args": filters})
+        assert r.status_code == 200, (filters, r.text)
+        # Los mismos productos; el mensaje los agrupa por categoría.
+        assert sorted(_rows(h)) == sorted(listed), filters
 
 
 # ── apply_coupon: aplica en el pedido, no manda nada ─────────────────────────
