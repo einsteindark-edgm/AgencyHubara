@@ -71,6 +71,9 @@ MAX_PHOTO_BYTES = 10 * 1024 * 1024 + 512 * 1024
 #: Intentos de la actividad antes de guardar la reseña sin la foto que no bajó.
 _PHOTO_ATTEMPTS = 4
 _FOOTER = "Hubara · Velas artesanales de Bogotá"
+#: Quién manda la invitación y el gracias en el historial: un aviso de
+#: reseñas, no el bot (el turno siguiente los cita — premortem C5).
+_SENDER = "reviews"
 
 
 @dataclass(frozen=True)
@@ -330,14 +333,14 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
             header_media_id=media_id,
         )
         history_text = f"{invitation_body(reference)}\n[{FLOW_CTA}]"
-        result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
+        result = await deps.send_flow(inp.session_id, flow, history_text=history_text, sender=_SENDER)
         if _rejected_for_sure(result) and _WINDOW_CLOSED_CODE not in str(result.error or ""):
             # Revisión L4: si Meta no acepta la foto arriba del formulario, va
             # con un título de texto (la invitación no se pierde por la foto).
             # Solo ante un rechazo seguro (4xx): un timeout o un 5xx pudo haber
             # llegado y se mandaría dos veces (premortem P3).
             flow = replace(flow, header_media_id=None, header_text="Califica tu pedido")
-            result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
+            result = await deps.send_flow(inp.session_id, flow, history_text=history_text, sender=_SENDER)
         if result.ok:
             return ReviewSendOut(status="sent", channel="flow", wa_message_id=result.wa_message_id)
         if _WINDOW_CLOSED_CODE not in str(result.error or ""):
@@ -525,7 +528,7 @@ async def process_submission(deps: Any, inp: ReviewSubmissionInput, *, attempt: 
             url=deps.settings.google_url,
         )
         try:
-            result = await deps.send_cta(inp.session_id, cta)
+            result = await deps.send_cta(inp.session_id, cta, sender=_SENDER)
             if not result.ok:
                 activity_logger().warning("review thanks not delivered %s: %s", inp.session_id, result.error)
         except Exception as exc:  # noqa: BLE001 — el cupón ya quedó; el gracias es best-effort

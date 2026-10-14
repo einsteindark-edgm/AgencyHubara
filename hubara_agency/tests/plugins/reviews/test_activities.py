@@ -83,6 +83,7 @@ class _Calls:
     ctas: list = field(default_factory=list)
     uploads: list = field(default_factory=list)
     escalations: list = field(default_factory=list)
+    senders: list = field(default_factory=list)
 
 
 def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
@@ -100,8 +101,9 @@ def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
     async def fetch_url(url):
         return None
 
-    async def send_flow(session_id, flow, *, history_text, image_url=None):
+    async def send_flow(session_id, flow, *, history_text, image_url=None, sender="aviso"):
         calls.flows.append((session_id, flow, history_text))
+        calls.senders.append(sender)
         return OutboundResult(wa_message_id="wamid.F" if flow_ok else None, ok=flow_ok,
                               error=None if flow_ok else "(#131047) Re-engagement message")
 
@@ -111,8 +113,9 @@ def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
         calls.templates.append((session_id, name, variables, kwargs))
         return OutboundResult(wa_message_id="wamid.T", ok=True)
 
-    async def send_cta(session_id, cta):
+    async def send_cta(session_id, cta, *, sender="aviso"):
         calls.ctas.append((session_id, cta))
+        calls.senders.append(sender)
         return OutboundResult(wa_message_id="wamid.C", ok=True)
 
     async def escalate(session_id, summary):
@@ -360,7 +363,7 @@ async def test_a_rejected_photo_header_resends_the_flow_without_it(tmp_path):
         OutboundResult(wa_message_id="wamid.F2", ok=True),
     ]
 
-    async def send_flow(session_id, flow, *, history_text, image_url=None):
+    async def send_flow(session_id, flow, *, history_text, image_url=None, sender="aviso"):
         calls.flows.append((session_id, flow, history_text))
         return results.pop(0)
 
@@ -442,7 +445,7 @@ async def test_an_ambiguous_flow_send_is_never_sent_twice(tmp_path, error):
     """P3: un timeout o un 5xx pudo haber llegado a Meta: no se reenvía."""
     deps, calls = _deps(tmp_path)
 
-    async def send_flow(session_id, flow, *, history_text, image_url=None):
+    async def send_flow(session_id, flow, *, history_text, image_url=None, sender="aviso"):
         calls.flows.append((session_id, flow, history_text))
         return OutboundResult(wa_message_id=None, ok=False, error=error)
 
@@ -623,3 +626,13 @@ async def test_a_delivered_or_unknown_invitation_stays_sent(tmp_path, status):
     deps = _sent_with_status(tmp_path, channel="flow", status=status)
     assert await check_delivery(deps, ReviewDeliveryInput(session_id=S, order_id=ORDER)) == "sent"
     assert deps.store.get_request(ORDER)["status"] == "sent"
+
+
+@pytest.mark.asyncio
+async def test_the_invitation_and_the_thanks_are_marked_as_reviews_notices(tmp_path):
+    """C5: el historial los marca como aviso de reseñas (no del bot) y el
+    turno siguiente los cita: el bot sabe a qué responde el cliente."""
+    deps, calls = _deps(tmp_path)
+    await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_flow", now_ms=T0 + 3 * HOUR))
+    await process_submission(deps, _submission())
+    assert calls.senders == ["reviews", "reviews"]
