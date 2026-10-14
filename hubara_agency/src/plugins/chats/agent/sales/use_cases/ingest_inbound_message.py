@@ -199,6 +199,17 @@ CampaignCouponApplier = Callable[[str, int], Awaitable[CouponApplication]]
 #: cupón aplicado (el cupo del vault menos lo vendido en Medusa).
 CouponUnitsReader = Callable[[dict[str, Any]], Awaitable[QuotaOffer]]
 
+def _has_coupon(metadata: dict[str, Any]) -> bool:
+    """¿El episodio activo ya tiene un cupón (cualquiera, aunque su snapshot
+    sea viejo)? Un cupón aplicado nunca se pisa con otro."""
+    episodes = metadata.get("episodes") or []
+    return bool(episodes and isinstance(episodes[-1], dict) and episodes[-1].get("applied_coupon"))
+
+
+#: `(sesión, now_ms) → CouponApplication | None`: el cupón de agradecimiento
+#: por calificar (personal) de quien escribe, validado; None = no tiene.
+ThanksCouponApplier = Callable[[str, int], Awaitable["CouponApplication | None"]]
+
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
@@ -355,8 +366,12 @@ class IngestInboundMessage:
         photo_wait_s: float = PHOTO_WAIT_MAX_S,
         photo_notifier: PhotoNotifier | None = None,
         order_facts: OrderFactsReader | None = None,
+        thanks_coupon: ThanksCouponApplier | None = None,
     ) -> None:
         self._history_store = history_store
+        # Cupón de agradecimiento por calificar (reseñas, 2026-10-13): se
+        # aplica solo cuando quien lo tiene nos escribe ("lo aplicamos solo").
+        self._thanks_coupon = thanks_coupon
         # Los datos reales de un pedido (OrderFacts): el cliente que escribe
         # justo después de comprar abre el episodio en post-venta, con la etapa
         # y el pago del pedido (caso pedido #64). Sin él, la nota de siempre.
@@ -1027,6 +1042,28 @@ class IngestInboundMessage:
                     campaign_reply_touch, coupon=application
                 )
 
+        # --- 2h. Cupón de agradecimiento por calificar: se aplica solo ---
+        # Reseñas tras la entrega (2026-10-13): el gracias promete «cuando nos
+        # escribas, lo aplicamos solo». Como el de la campaña: validado acá
+        # (timeout corto, L-2) y guardado en el episodio sin pisar otro cupón.
+        if self._thanks_coupon is not None and not _has_coupon(metadata):
+            thanks = await self._check_thanks_coupon(session_id, now_ms)
+            if thanks is not None and thanks.applied:
+                thanks_episode_id = (metadata.get("episodes") or [{}])[-1].get("episode_id")
+
+                def _thanks_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    episodes = fresh.get("episodes") or []
+                    if episodes and episodes[-1].get("episode_id") != thanks_episode_id:
+                        return None  # otra ráfaga abrió otro episodio
+                    if _has_coupon(fresh):
+                        return None  # ya tiene un cupón: no se pisa
+                    return store_coupon_application(fresh, thanks, now_ms=now_ms)
+
+                stored = self._update_best_effort(session_id, _thanks_mutator, what="cupon_de_agradecimiento")
+                if stored is not None:
+                    metadata = stored
+                    _rebase(base, metadata)
+
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
         # dispatcher manifest convertirá en (a) arranque del
@@ -1608,6 +1645,27 @@ class IngestInboundMessage:
             return list(read_events(session_id) or [])
         except Exception:  # noqa: BLE001
             return []
+
+    async def _check_thanks_coupon(
+        self, session_id: str, now_ms: int
+    ) -> CouponApplication | None:
+        """El cupón de agradecimiento vigente de quien escribe, validado con
+        timeout corto (L-2). None = no tiene o no se pudo saber: nunca tumba
+        el ingest (el bot igual lo ve en `list_promotions`)."""
+        import asyncio
+
+        if self._thanks_coupon is None:
+            return None
+        try:
+            return await asyncio.wait_for(
+                self._thanks_coupon(session_id, now_ms),
+                timeout=_CAMPAIGN_COUPON_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrada a list_promotions/apply_coupon
+            logger.warning(
+                "thanks_coupon_check_failed", session_id=session_id, reason=type(exc).__name__
+            )
+            return None
 
     async def _check_campaign_coupon(
         self, code: str, now_ms: int

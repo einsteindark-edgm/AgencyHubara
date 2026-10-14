@@ -167,6 +167,7 @@ def build_ingest_use_case() -> IngestInboundMessage:
     from src.sdk.connectorkit import get_catalog_client, get_web_cart_reader
 
     validate_campaign_coupon, coupon_units_now = _coupon_checks()
+    thanks_coupon = _thanks_coupon_check()
     catalog = get_catalog_client()
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
@@ -183,6 +184,8 @@ def build_ingest_use_case() -> IngestInboundMessage:
         photo_notifier=load_session.notify_photo_reading,
         # El cliente que escribe tras comprar: post-venta con el pedido real.
         order_facts=build_order_facts_reader(),
+        # Cupón de agradecimiento por calificar: se aplica solo al escribirnos.
+        thanks_coupon=thanks_coupon,
     )
     return _INGEST_USE_CASE
 
@@ -244,6 +247,40 @@ def build_photo_identifier(catalog: Any) -> PhotoIdentifier:
         embedder=get_image_embedding_port(),
         matcher=get_photo_match_port(),
     )
+
+
+def _thanks_coupon_check() -> Callable[[str, int], Awaitable[CouponApplication | None]]:
+    """El cupón de agradecimiento por calificar de quien escribe (reseñas,
+    2026-10-13): la concesión que vence primero, validada con los mismos
+    puertos del SDK que `apply_coupon` (L-32). None = no tiene ninguna."""
+
+    async def _check(session_id: str, now_ms: int) -> CouponApplication | None:
+        from src.sdk.connectorkit import (
+            get_catalog_client,
+            get_coupon_grants_store,
+            get_promo_quota_store,
+            get_promotions_port,
+        )
+
+        grants = get_coupon_grants_store()
+        grant = grants.first_active(session_id, now_ms)
+        if grant is None:
+            return None
+
+        async def _has_grant(code: str) -> bool:
+            return grants.active(session_id, code, now_ms) is not None
+
+        return await resolve_coupon_application(
+            grant.code,
+            promotions=get_promotions_port(),
+            quotas=get_promo_quota_store(),
+            sales=None,
+            catalog=get_catalog_client(),
+            now_ms=now_ms,
+            has_grant=_has_grant,
+        )
+
+    return _check
 
 
 def _coupon_checks() -> tuple[
