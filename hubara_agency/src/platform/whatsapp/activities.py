@@ -44,7 +44,12 @@ from src.platform.whatsapp.cost import (
     add_outbound_to_summary,
     empty_episode_cost_summary,
 )
-from src.platform.whatsapp.dtos import CarouselCard, OutboundResult
+from src.platform.whatsapp.dtos import (
+    CarouselCard,
+    InteractiveCTAUrlOutbound,
+    InteractiveFlowOutbound,
+    OutboundResult,
+)
 from src.platform.whatsapp.quiet_hours import is_quiet_hours_for_session
 from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
@@ -525,6 +530,91 @@ async def send_photo_message_to_session(
     return result
 
 
+async def send_flow_to_session(
+    session_id: str,
+    flow: InteractiveFlowOutbound,
+    *,
+    history_text: str,
+    image_url: str | None = None,
+) -> OutboundResult:
+    """Abre un WhatsApp Flow como mensaje NORMAL (dentro de la ventana 24h).
+
+    Fuera de la ventana Meta lo rechaza (131047): el caller cae a una plantilla
+    con botón FLOW. Si Meta lo aceptó, queda en el log de salientes del
+    episodio y en el historial del chat (`history_text`, con la foto del
+    encabezado en `image_url` si la hubo).
+    """
+    phone_number_id, to = _interactive_destination(session_id)
+    result = await whatsapp_client.send_flow(phone_number_id, to, flow)
+    if result.ok:
+        _record_interactive(session_id, result, history_text, image_url)
+    return result
+
+
+async def send_cta_url_to_session(
+    session_id: str, cta: InteractiveCTAUrlOutbound
+) -> OutboundResult:
+    """Texto + un botón con enlace como mensaje NORMAL (dentro de la ventana)."""
+    phone_number_id, to = _interactive_destination(session_id)
+    result = await whatsapp_client.send_cta_url(phone_number_id, to, cta)
+    if result.ok:
+        _record_interactive(
+            session_id, result, f"{cta.body}\n[{cta.button_text}] {cta.url}", None
+        )
+    return result
+
+
+def _interactive_destination(session_id: str) -> tuple[str, str]:
+    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or ""
+    metadata = _read_metadata(session_id)
+    phone_number_id = metadata.get("phone_number_id", phone_number_id)
+    if not phone_number_id:
+        raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID not configured")
+    return phone_number_id, session_id.replace(WHATSAPP_SESSION_PREFIX, "")
+
+
+def _record_interactive(
+    session_id: str, result: OutboundResult, history_text: str, image_url: str | None
+) -> None:
+    log_entry = OutboundLogEntry(
+        sent_at_ms=_now_ms(),
+        wa_message_id=result.wa_message_id or "",
+        kind="interactive",
+        template_name=None,
+        pricing=None,
+        cost_usd_micros=None,
+        rate_card_version=None,
+    )
+
+    def _record(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        if not fresh:
+            # Lectura fresca vacía: no pisar la metadata con un dict vacío.
+            log.error("interactive outbound log skipped: empty metadata", session_id=session_id)
+            return None
+        _append_outbound_to_active_episode(fresh, log_entry)
+        fresh["last_outbound"] = asdict(log_entry)
+        return fresh
+
+    _update_metadata(session_id, _record)
+    history_path = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        event: dict[str, Any] = {
+            "role": "assistant",
+            "content": history_text,
+            "timestamp": _now_iso_utc(),
+        }
+        if image_url:
+            event["image_url"] = image_url
+        if result.wa_message_id:
+            event["wamid"] = result.wa_message_id
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError as e:
+        # El mensaje YA salió: perder el rastro es malo, pero no se re-envía.
+        log.warning("interactive_history_persist_failed", session_id=session_id, error=str(e))
+
+
 async def send_document_to_session(
     session_id: str,
     media_id: str,
@@ -948,8 +1038,14 @@ async def send_template_to_session(
     header_media_id: str | None = None,
     header_image_url: str | None = None,
     carousel_cards: list[CarouselCard] | None = None,
+    flow_token: str | None = None,
+    flow_action_data: dict[str, Any] | None = None,
 ) -> OutboundResult:
     """Envía un template aprobado y persiste el OutboundLogEntry.
+
+    `flow_token` / `flow_action_data`: plantillas con botón FLOW (la invitación
+    a calificar). El token identifica qué se responde y entra al fingerprint:
+    misma referencia visible con otro token = otro envío.
 
     `carousel_cards`: tarjetas de producto para plantillas con carrusel
     (campañas): viajan al cliente, entran al fingerprint de idempotencia y
@@ -1002,6 +1098,8 @@ async def send_template_to_session(
     fingerprint_extra: dict[str, str] = {}
     if header_media_id:
         fingerprint_extra["__header_media_id"] = header_media_id
+    if flow_token:
+        fingerprint_extra["__flow_token"] = flow_token
     if carousel_cards:
         fingerprint_extra["__carousel"] = json.dumps(
             [asdict(card) for card in carousel_cards], sort_keys=True
@@ -1030,6 +1128,8 @@ async def send_template_to_session(
         variables,
         header_media_id=header_media_id,
         carousel_cards=carousel_cards,
+        flow_token=flow_token,
+        flow_action_data=flow_action_data,
     )
 
     # 4. Parse error y decidir retry policy

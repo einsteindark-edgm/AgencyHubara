@@ -170,6 +170,8 @@ class InteractiveFlowOutbound:
     header_text: str | None = None
     footer: str | None = None
     mode: Literal["draft", "published"] = "published"
+    #: Foto arriba del mensaje (ya subida a Meta). Gana sobre `header_text`.
+    header_media_id: str | None = None
 
 
 # =============================================================================

@@ -156,6 +156,19 @@ from src.platform.whatsapp.cost import (
     OutboundLogEntry as OutboundLogEntry,
 )
 
+# Mensajes interactivos DENTRO de la ventana 24h, con historial y log de
+# salientes: el plugin de reseñas abre el formulario de calificación (Flow) y
+# manda el botón «Opinar en Google». Fuera de la ventana Meta los rechaza
+# (131047) y el caller cae a la plantilla con botón FLOW.
+from src.platform.whatsapp.activities import (
+    send_cta_url_to_session as send_cta_url_to_session,
+    send_flow_to_session as send_flow_to_session,
+)
+from src.platform.whatsapp.dtos import (
+    InteractiveCTAUrlOutbound as InteractiveCTAUrlOutbound,
+    InteractiveFlowOutbound as InteractiveFlowOutbound,
+)
+
 # Los envíos del turno de ventas (motor de decisiones F4): el workflow V2 nace
 # importando solo el SDK (P-28). El texto al cliente, el "escribiendo…", el
 # evento de Meta del cierre (CAPI) y el flush del outbox de eventos del turno.
