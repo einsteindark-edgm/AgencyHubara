@@ -2,22 +2,68 @@
  * Encabezado de la sección Reseñas: cómo van las calificaciones, cuántas
  * invitaciones salieron y por qué camino, los cupones de agradecimiento y si
  * el envío está prendido. Solo lectura — el modo se cambia por Terraform.
+ *
+ * También dice por qué NO salen invitaciones (premortem P4/I5): lo que falta
+ * configurar («Qué falta»), los pedidos sin invitar y los que esperan, con su
+ * motivo, los envíos cortados a mitad y si la tienda web se está
+ * actualizando. El cupón es por calificar el pedido en NUESTRO formulario de
+ * WhatsApp — nunca por opinar en Google (Google prohíbe premiar reseñas).
  */
 
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 import {
   MODE_META,
+  NOT_INVITED_LABELS,
   Stars,
   TONE_CLASS,
+  WAITING_LABELS,
   formatAverage,
+  formatTimeBogota,
+  reasonLabel,
   reviewErrorDetail,
   useReviewsSummary,
+  type ReasonCount,
+  type ReviewTone,
   type ReviewsSummary,
 } from "@plugins/reviews/frontend/entities/review";
 
 const INT = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 0 });
 const fmtN = (n: number) => INT.format(n);
+
+const MISSING_FLOW = "Falta el formulario de Meta (META_FLOW_ID_REVIEW): no se invita a nadie.";
+const MISSING_COUPONS =
+  "Faltan los cupones GRACIAS5 y GRACIAS10 en Marketing → Cupones, marcados «solo quien lo recibió» y vigentes 60 días más: no se invita a nadie hasta crearlos.";
+
+/** Lo que impide invitar. Con el envío apagado no hay nada que avisar. */
+function missingSetup(settings: ReviewsSummary["settings"]): string[] {
+  if (settings.mode === "off") return [];
+  return [
+    ...(settings.flowConfigured ? [] : [MISSING_FLOW]),
+    ...(settings.couponsReady ? [] : [MISSING_COUPONS]),
+  ];
+}
+
+/** Cómo va la actualización de la tienda web (donde salen las reseñas). */
+function storefrontLines(st: ReviewsSummary["storefront"]): Array<{ text: string; tone: ReviewTone }> {
+  return [
+    ...(st.configured
+      ? []
+      : [{ text: "La tienda web no se reconstruye sola (falta STOREFRONT_DEPLOY_HOOK_URL)", tone: "warn" as const }]),
+    ...(st.lastError
+      ? [{ text: `Último intento de actualizar la tienda falló: ${st.lastError}`, tone: "danger" as const }]
+      : []),
+    ...(st.dueAtMs !== null
+      ? [{ text: `Actualización de la tienda programada a las ${formatTimeBogota(st.dueAtMs)}`, tone: "info" as const }]
+      : []),
+  ];
+}
+
+function unconfirmedLabel(n: number): string {
+  return n === 1
+    ? "1 envío sin confirmar (se cortó a mitad; no se reintenta)"
+    : `${fmtN(n)} envíos sin confirmar (se cortaron a mitad; no se reintentan)`;
+}
 
 export function ReviewSummary() {
   const { data, error, isPending, refetch } = useReviewsSummary();
@@ -52,9 +98,11 @@ export function ReviewSummary() {
 }
 
 function SummaryView({ summary }: { summary: ReviewsSummary }) {
-  const { requests, reviews, coupons, settings } = summary;
+  const { requests, reviews, coupons, settings, notInvited, waiting, storefront } = summary;
   const mode = MODE_META[settings.mode];
   const sent = requests.sentFlow + requests.sentTemplate;
+  const missing = missingSetup(settings);
+  const store = storefrontLines(storefront);
 
   return (
     <section aria-label="Resumen de reseñas" className="flex flex-col gap-3 px-4 py-3">
@@ -63,7 +111,19 @@ function SummaryView({ summary }: { summary: ReviewsSummary }) {
         <span className={`rounded-full px-2.5 py-0.5 font-semibold ${TONE_CLASS[mode.tone]}`}>
           {mode.label}
         </span>
+        {settings.googleUrl ? (
+          <a
+            href={settings.googleUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="ml-auto text-[11.5px] text-accent-fg underline-offset-2 hover:underline"
+          >
+            Ver la página para opinar en Google
+          </a>
+        ) : null}
       </div>
+
+      {missing.length > 0 ? <MissingSetup items={missing} /> : null}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Card title="Calificación">
@@ -107,6 +167,9 @@ function SummaryView({ summary }: { summary: ReviewsSummary }) {
             />
             <Stat label="No se enviaron (no aplicaba)" value={requests.skipped} />
           </dl>
+          {requests.unconfirmed > 0 ? (
+            <p className="m-0 text-[11.5px] font-semibold text-warn">{unconfirmedLabel(requests.unconfirmed)}</p>
+          ) : null}
         </Card>
 
         <Card title="Cupones de agradecimiento">
@@ -114,19 +177,67 @@ function SummaryView({ summary }: { summary: ReviewsSummary }) {
             <Stat label="Cupones dados" value={coupons.granted} strong />
             <Stat label="Cupones usados" value={coupons.used} />
           </dl>
-          {settings.googleUrl ? (
-            <a
-              href={settings.googleUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-1 text-[11.5px] text-accent-fg underline-offset-2 hover:underline"
-            >
-              Ver la página para opinar en Google
-            </a>
-          ) : null}
+          <p className="m-0 text-[11.5px] text-fg-muted">
+            Por calificar el pedido en nuestro formulario de WhatsApp.
+          </p>
         </Card>
       </div>
+
+      {notInvited.length > 0 || waiting.length > 0 ? (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {notInvited.length > 0 ? (
+            <Card title="Sin invitar">
+              <p className="m-0 text-[11.5px] text-fg-muted">Pedidos que no recibieron la invitación, y por qué.</p>
+              <Reasons rows={notInvited} labels={NOT_INVITED_LABELS} />
+            </Card>
+          ) : null}
+          {waiting.length > 0 ? (
+            <Card title="En espera">
+              <p className="m-0 text-[11.5px] text-fg-muted">Pedidos cuya invitación todavía no sale.</p>
+              <Reasons rows={waiting} labels={WAITING_LABELS} />
+            </Card>
+          ) : null}
+        </div>
+      ) : null}
+
+      {store.length > 0 ? (
+        <ul aria-label="Tienda web" className="m-0 flex list-none flex-col gap-1.5 p-0">
+          {store.map((line) => (
+            <li key={line.text} className={`rounded-md px-2.5 py-1.5 text-[12px] ${TONE_CLASS[line.tone]}`}>
+              {line.text}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </section>
+  );
+}
+
+/** Lo que falta configurar para que salgan invitaciones. */
+function MissingSetup({ items }: { items: string[] }) {
+  const titleId = useId();
+  return (
+    <div role="alert" aria-labelledby={titleId} className={`rounded-xl px-3 py-2 ${TONE_CLASS.danger}`}>
+      <p id={titleId} className="m-0 text-[12.5px] font-semibold">
+        Qué falta
+      </p>
+      <ul className="m-0 mt-1 flex list-disc flex-col gap-0.5 pl-4 text-[12px]">
+        {items.map((text) => (
+          <li key={text}>{text}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Motivo → cuántos pedidos. Un motivo nuevo sale con su nombre tal cual. */
+function Reasons({ rows, labels }: { rows: ReasonCount[]; labels: Readonly<Record<string, string>> }) {
+  return (
+    <dl className="m-0 flex flex-col gap-1">
+      {rows.map(({ reason, count }) => (
+        <Stat key={reason} label={reasonLabel(labels, reason)} value={count} />
+      ))}
+    </dl>
   );
 }
 

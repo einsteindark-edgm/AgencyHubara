@@ -76,6 +76,28 @@ export const backendReviewEnvelopeSchema = z.object({
   review: backendReviewSchema,
 });
 
+/** `motivo → cuántos pedidos`. Cualquier motivo puede faltar o ser nuevo; un
+ *  valor que no sea un número cuenta 0 y un mapa roto queda vacío. */
+const reasonCounts = z.record(z.string(), count).catch({});
+
+const STOREFRONT_UNKNOWN = {
+  configured: true,
+  last_ok_at_ms: null,
+  last_error: null,
+  due_at_ms: null,
+} as const;
+
+/** La reconstrucción de la tienda web (para que salgan las reseñas
+ *  publicadas). Sin la llave (backend anterior) no se inventa una alarma. */
+export const backendStorefrontSchema = z.object({
+  /** false = falta STOREFRONT_DEPLOY_HOOK_URL: la tienda no se reconstruye sola. */
+  configured: z.boolean().catch(true),
+  last_ok_at_ms: z.number().nullable().catch(null),
+  last_error: z.string().nullable().catch(null),
+  /** Próxima reconstrucción pendiente (epoch ms); null = ninguna. */
+  due_at_ms: z.number().nullable().catch(null),
+});
+
 export const backendSummarySchema = z.object({
   requests: z.object({
     /** Formulario dentro de la ventana de 24 h. */
@@ -84,8 +106,15 @@ export const backendSummarySchema = z.object({
     sent_template: count.default(0),
     failed: count.default(0),
     skipped: count.default(0),
+    /** El envío se cortó a mitad: no se sabe si llegó (no se reintenta). */
+    unconfirmed: count.default(0),
     total: count.default(0),
   }),
+  /** Por qué no se invitó a un pedido (p. ej. `opted_out`, `expired`). */
+  not_invited: reasonCounts,
+  /** Qué espera un pedido para que salga su invitación (p. ej. `quiet_hours`). */
+  waiting: reasonCounts,
+  storefront: backendStorefrontSchema.catch({ ...STOREFRONT_UNKNOWN }),
   reviews: z.object({
     total: count.default(0),
     average_rating: z.number().nullable().default(null),
@@ -101,6 +130,11 @@ export const backendSummarySchema = z.object({
   settings: z.object({
     mode: z.enum(["off", "test", "on"]).catch("off"),
     google_url: z.string().nullable().default(null),
+    /** false = falta META_FLOW_ID_REVIEW: no se invita a nadie. Sin la llave
+     *  (backend anterior) se asume listo — no se inventa una alarma. */
+    flow_configured: z.boolean().catch(true),
+    /** false = faltan los cupones GRACIAS5/GRACIAS10 en Medusa. */
+    coupons_ready: z.boolean().catch(true),
   }),
 });
 

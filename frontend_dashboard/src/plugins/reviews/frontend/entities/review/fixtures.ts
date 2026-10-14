@@ -44,8 +44,14 @@ export const BARE_REVIEW_FIXTURE = {
   published: null,
 };
 
+/** El resumen como lo manda hoy el backend: todo listo para invitar (sin
+ *  alerta de «Qué falta») y la tienda web al día. */
 export const SUMMARY_FIXTURE = {
-  requests: { sent_flow: 12, sent_template: 30, failed: 1, skipped: 4, total: 47 },
+  requests: { sent_flow: 12, sent_template: 30, failed: 1, skipped: 4, unconfirmed: 0, total: 47 },
+  /** Por qué no se invitó a un pedido (motivo → cuántos pedidos). */
+  not_invited: { disabled: 3, not_in_test_list: 2, opted_out: 1, expired: 4 },
+  /** Qué espera un pedido para que salga su invitación (motivo → cuántos). */
+  waiting: { quiet_hours: 1, waiting_for_window: 2 },
   reviews: {
     total: 20,
     average_rating: 4.6,
@@ -54,5 +60,20 @@ export const SUMMARY_FIXTURE = {
     low_rating: 2,
   },
   coupons: { granted: 20, used: 5 },
+  settings: {
+    mode: "test",
+    google_url: "https://hubara.com.co/opinar/",
+    flow_configured: true,
+    coupons_ready: true,
+  },
+  storefront: { configured: true, last_ok_at_ms: 1791000000000, last_error: null, due_at_ms: null },
+};
+
+/** El resumen de un backend anterior: sin `not_invited`, `waiting`,
+ *  `storefront`, `unconfirmed` ni los avisos de `settings`. */
+export const LEGACY_SUMMARY_FIXTURE = {
+  requests: { sent_flow: 12, sent_template: 30, failed: 1, skipped: 4, total: 47 },
+  reviews: SUMMARY_FIXTURE.reviews,
+  coupons: SUMMARY_FIXTURE.coupons,
   settings: { mode: "test", google_url: "https://hubara.com.co/opinar/" },
 };

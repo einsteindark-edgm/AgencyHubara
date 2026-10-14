@@ -26,6 +26,7 @@ import {
 } from "./contracts";
 import { reviewKeys } from "./keys";
 import type {
+  ReasonCount,
   Review,
   ReviewList,
   ReviewStatus,
@@ -76,6 +77,15 @@ export function mapBackendReviewList(b: BackendReviewList): ReviewList {
 
 const STARS_DESC: StarCount[] = [5, 4, 3, 2, 1];
 
+/** `{motivo: n}` → filas de más a menos pedidos (empate: por nombre), sin
+ *  ceros. El motivo queda tal cual; la vista lo traduce. */
+function reasonRows(counts: Record<string, number>): ReasonCount[] {
+  return Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .sort(([a, x], [b, y]) => y - x || a.localeCompare(b))
+    .map(([reason, count]) => ({ reason, count }));
+}
+
 export function mapBackendSummary(b: BackendSummary): ReviewsSummary {
   return {
     requests: {
@@ -83,8 +93,11 @@ export function mapBackendSummary(b: BackendSummary): ReviewsSummary {
       sentTemplate: b.requests.sent_template,
       failed: b.requests.failed,
       skipped: b.requests.skipped,
+      unconfirmed: b.requests.unconfirmed,
       total: b.requests.total,
     },
+    notInvited: reasonRows(b.not_invited),
+    waiting: reasonRows(b.waiting),
     reviews: {
       total: b.reviews.total,
       averageRating: b.reviews.average_rating,
@@ -96,7 +109,18 @@ export function mapBackendSummary(b: BackendSummary): ReviewsSummary {
       lowRating: b.reviews.low_rating,
     },
     coupons: { granted: b.coupons.granted, used: b.coupons.used },
-    settings: { mode: b.settings.mode, googleUrl: b.settings.google_url },
+    settings: {
+      mode: b.settings.mode,
+      googleUrl: b.settings.google_url,
+      flowConfigured: b.settings.flow_configured,
+      couponsReady: b.settings.coupons_ready,
+    },
+    storefront: {
+      configured: b.storefront.configured,
+      lastOkAtMs: b.storefront.last_ok_at_ms,
+      lastError: b.storefront.last_error,
+      dueAtMs: b.storefront.due_at_ms,
+    },
   };
 }
 

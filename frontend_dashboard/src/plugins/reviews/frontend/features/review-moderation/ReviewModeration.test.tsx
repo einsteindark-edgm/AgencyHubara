@@ -181,9 +181,10 @@ describe("ReviewModeration — la tarjeta", () => {
 
     expect(within(card).getByText("Se avisó al equipo")).toBeInTheDocument();
     expect(
-      within(card).getByText("Sin permiso para publicar: solo cuenta en el promedio"),
+      within(card).getByText(
+        "Sin permiso del cliente: en la web sale anónima, solo con sus estrellas (sin comentario ni foto).",
+      ),
     ).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "Publicar" })).toBeDisabled();
     // Sin comentario, ciudad ni cupón: no inventa nada.
     expect(within(card).getByText("Luis P.")).toBeInTheDocument();
     expect(within(card).getByText("Sin comentario")).toBeInTheDocument();
@@ -195,8 +196,31 @@ describe("ReviewModeration — la tarjeta", () => {
     const card = await findCard();
 
     expect(within(card).queryByText("Se avisó al equipo")).not.toBeInTheDocument();
-    expect(within(card).queryByText(/Sin permiso para publicar/)).not.toBeInTheDocument();
+    expect(within(card).queryByText(/Sin permiso del cliente/)).not.toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "Publicar" })).toBeEnabled();
+    expect(within(card).queryByRole("button", { name: "Publicar solo estrellas" })).not.toBeInTheDocument();
+  });
+
+  it("sin permiso del cliente se publica igual, pero solo las estrellas (anónima)", async () => {
+    lists.pending = [{ ...BARE_REVIEW_FIXTURE, status: "pending" }];
+    actionResponse = { status: 200, body: { review: { ...BARE_REVIEW_FIXTURE, status: "approved" } } };
+    renderModeration();
+    const card = await findCard("#32");
+
+    const publish = within(card).getByRole("button", { name: "Publicar solo estrellas" });
+    expect(publish).toBeEnabled();
+    expect(publish).toHaveAccessibleDescription(
+      "Sin permiso del cliente: en la web sale anónima, solo con sus estrellas (sin comentario ni foto).",
+    );
+    expect(within(card).queryByRole("button", { name: "Publicar" })).not.toBeInTheDocument();
+
+    fireEvent.click(publish);
+
+    await waitFor(() =>
+      expect(posts()).toEqual([
+        { url: "http://localhost:8000/api/reviews/reviews/rev_order_02K/approve", body: undefined },
+      ]),
+    );
   });
 });
 

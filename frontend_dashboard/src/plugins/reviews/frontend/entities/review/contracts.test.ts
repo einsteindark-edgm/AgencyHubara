@@ -16,7 +16,12 @@ import {
   backendReviewListSchema,
   backendSummarySchema,
 } from "./contracts";
-import { BARE_REVIEW_FIXTURE, REVIEW_FIXTURE, SUMMARY_FIXTURE } from "./fixtures";
+import {
+  BARE_REVIEW_FIXTURE,
+  LEGACY_SUMMARY_FIXTURE,
+  REVIEW_FIXTURE,
+  SUMMARY_FIXTURE,
+} from "./fixtures";
 
 describe("backendReviewListSchema (GET /api/reviews/reviews)", () => {
   it("parsea la lista real y la pasa a camelCase", () => {
@@ -110,7 +115,18 @@ describe("backendSummarySchema (GET /api/reviews/summary)", () => {
     const summary = mapBackendSummary(backendSummarySchema.parse(SUMMARY_FIXTURE));
 
     expect(summary).toEqual({
-      requests: { sentFlow: 12, sentTemplate: 30, failed: 1, skipped: 4, total: 47 },
+      requests: { sentFlow: 12, sentTemplate: 30, failed: 1, skipped: 4, unconfirmed: 0, total: 47 },
+      // De más a menos pedidos; los motivos quedan tal cual (los traduce la vista).
+      notInvited: [
+        { reason: "expired", count: 4 },
+        { reason: "disabled", count: 3 },
+        { reason: "not_in_test_list", count: 2 },
+        { reason: "opted_out", count: 1 },
+      ],
+      waiting: [
+        { reason: "waiting_for_window", count: 2 },
+        { reason: "quiet_hours", count: 1 },
+      ],
       reviews: {
         total: 20,
         averageRating: 4.6,
@@ -125,8 +141,69 @@ describe("backendSummarySchema (GET /api/reviews/summary)", () => {
         lowRating: 2,
       },
       coupons: { granted: 20, used: 5 },
-      settings: { mode: "test", googleUrl: "https://hubara.com.co/opinar/" },
+      settings: {
+        mode: "test",
+        googleUrl: "https://hubara.com.co/opinar/",
+        flowConfigured: true,
+        couponsReady: true,
+      },
+      storefront: { configured: true, lastOkAtMs: 1791000000000, lastError: null, dueAtMs: null },
     });
+  });
+
+  it("los avisos nuevos llegan al dominio: formulario, cupones, envíos cortados y la tienda", () => {
+    const summary = mapBackendSummary(
+      backendSummarySchema.parse({
+        ...SUMMARY_FIXTURE,
+        requests: { ...SUMMARY_FIXTURE.requests, unconfirmed: 2 },
+        settings: { ...SUMMARY_FIXTURE.settings, flow_configured: false, coupons_ready: false },
+        storefront: {
+          configured: false,
+          last_ok_at_ms: null,
+          last_error: "HTTP 500",
+          due_at_ms: 1791003600000,
+        },
+      }),
+    );
+
+    expect(summary.requests.unconfirmed).toBe(2);
+    expect(summary.settings).toMatchObject({ flowConfigured: false, couponsReady: false });
+    expect(summary.storefront).toEqual({
+      configured: false,
+      lastOkAtMs: null,
+      lastError: "HTTP 500",
+      dueAtMs: 1791003600000,
+    });
+  });
+
+  it("un backend anterior (sin las llaves nuevas) no tumba la página ni inventa alarmas", () => {
+    const summary = mapBackendSummary(backendSummarySchema.parse(LEGACY_SUMMARY_FIXTURE));
+
+    expect(summary.requests.unconfirmed).toBe(0);
+    expect(summary.notInvited).toEqual([]);
+    expect(summary.waiting).toEqual([]);
+    expect(summary.settings).toMatchObject({ flowConfigured: true, couponsReady: true });
+    expect(summary.storefront).toEqual({
+      configured: true,
+      lastOkAtMs: null,
+      lastError: null,
+      dueAtMs: null,
+    });
+  });
+
+  it("un motivo desconocido se conserva; los ceros y los valores raros no salen", () => {
+    const summary = mapBackendSummary(
+      backendSummarySchema.parse({
+        ...SUMMARY_FIXTURE,
+        not_invited: { disabled: 0, motivo_nuevo: 3, roto: "x" },
+        waiting: "no es un mapa",
+        storefront: { configured: "sí" },
+      }),
+    );
+
+    expect(summary.notInvited).toEqual([{ reason: "motivo_nuevo", count: 3 }]);
+    expect(summary.waiting).toEqual([]);
+    expect(summary.storefront.configured).toBe(true);
   });
 
   it("sin reseñas todavía: promedio null y reparto en cero aunque falten llaves", () => {

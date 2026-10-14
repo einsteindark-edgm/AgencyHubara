@@ -5,9 +5,10 @@
  *  - Por revisar: Publicar, Ocultar, Responder
  *  - Publicadas:  Ocultar, Responder
  *  - Ocultas:     Publicar, Responder
- * Sin permiso del cliente, «Publicar» queda apagado (solo cuenta en el
- * promedio). Los errores salen de cada mutation (regla #3), no de un estado
- * copiado.
+ * Sin permiso del cliente se publica igual, pero el botón dice «Publicar solo
+ * estrellas»: el backend la manda a la tienda anónima («Cliente de Hubara»),
+ * sin comentario, ciudad ni foto, y solo cuenta en el promedio. Los errores
+ * salen de cada mutation (regla #3), no de un estado copiado.
  */
 
 import { useState } from "react";
@@ -107,11 +108,11 @@ export function ReviewCard({ review }: { review: Review }) {
         {review.authorCity ? `${author} · ${review.authorCity}` : author}
       </p>
 
-      {review.coupon || review.teamAlerted || !review.publishConsent ? (
+      {review.coupon || review.teamAlerted ? (
         <div className="flex flex-wrap gap-1.5">
           {review.coupon ? (
             <span
-              title="Cupón que recibió el cliente por calificar"
+              title="Cupón que recibió el cliente por calificar su pedido en el formulario de WhatsApp"
               className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${TONE_CLASS.ok}`}
             >
               <Icon.tag />
@@ -123,15 +124,13 @@ export function ReviewCard({ review }: { review: Review }) {
               Se avisó al equipo
             </span>
           ) : null}
-          {!review.publishConsent ? (
-            <span
-              id={consentHintId}
-              className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${TONE_CLASS.neutral}`}
-            >
-              Sin permiso para publicar: solo cuenta en el promedio
-            </span>
-          ) : null}
         </div>
+      ) : null}
+
+      {!review.publishConsent ? (
+        <p id={consentHintId} className={`m-0 rounded-md px-2.5 py-1.5 text-[12px] ${TONE_CLASS.neutral}`}>
+          Sin permiso del cliente: en la web sale anónima, solo con sus estrellas (sin comentario ni foto).
+        </p>
       ) : null}
 
       {publishError ? (
@@ -168,11 +167,15 @@ export function ReviewCard({ review }: { review: Review }) {
           <button
             type="button"
             className={BTN_PRIMARY}
-            disabled={busy || !review.publishConsent}
+            disabled={busy}
             aria-describedby={review.publishConsent ? undefined : consentHintId}
             onClick={() => approve.mutate()}
           >
-            {approve.isPending ? "Publicando…" : "Publicar"}
+            {approve.isPending
+              ? "Publicando…"
+              : review.publishConsent
+                ? "Publicar"
+                : "Publicar solo estrellas"}
           </button>
         ) : null}
         {review.status !== "hidden" ? (
