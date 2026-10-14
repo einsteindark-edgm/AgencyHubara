@@ -343,12 +343,20 @@ def _escalate(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms
     return True
 
 
+def _episode_id_with_order(data: dict[str, Any], order_id: str) -> str | None:
+    for ep in reversed(data.get("episodes") or []):
+        if isinstance(ep, dict) and ep.get("order_id") == order_id:
+            return str(ep.get("episode_id") or "") or None
+    return None
+
+
 def _close_payment_pending(
-    data: dict[str, Any], *, order_id: str, motivo: str, now_ms: int, msgs_at_close: int
+    data: dict[str, Any], *, session_id: str, order_id: str, motivo: str, now_ms: int, msgs_at_close: int
 ) -> tuple[str | None, bool]:
     """Lo que garantiza ``ensure_payment_pending_closure`` en el workflow:
     cierre del episodio activo con CONFIRMADO_PAGO_PENDIENTE + escalación
-    PAYMENT_VERIFICATION_PENDING. Devuelve ``(episode_id cerrado | None, escaló)``."""
+    PAYMENT_VERIFICATION_PENDING + el LeadSubmitted que el bot encola al
+    etiquetar. Devuelve ``(episode_id cerrado | None, escaló)``."""
     closed_id: str | None = None
     if get_active_episode(data) is not None:
         closed = close_episode(
@@ -375,6 +383,16 @@ def _close_payment_pending(
                     "source": _SOURCE,
                 }
             )
+    # El lead a Meta (pedidos #41 y #66, 2026-10-13: «Ganado» sin ningún evento
+    # CAPI hasta «Confirmar pago»). Es del episodio que quedó con el pedido: el
+    # que se acaba de cerrar o, si ya estaba cerrado sin pedido, al que
+    # `attach_order_to_active_episode` se lo anotó.
+    lead_episode_id = _episode_id_with_order(data, order_id)
+    if lead_episode_id:
+        enqueue_capi_for_tag(
+            data, tag=PAYMENT_PENDING_TAG, session_id=session_id, now_ms=now_ms,
+            source=f"{_SOURCE}:order", episode_id=lead_episode_id,
+        )
     escalated = _escalate(data, reason_category=PAYMENT_VERIFICATION_REASON, motivo=motivo, now_ms=now_ms)
     if not escalated and data.get("active_route") == ROUTE_HUMANO:
         # Un humano YA tenía el hilo (p.ej. registró el pedido con "Crear
@@ -555,7 +573,7 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
             registered = await _register(session, body, priced, deps)
     finally:
         _release_session_lock(session)  # fuera del `async with`: ya no está tomado
-    schedule_capi_flush(session)  # OrderCreated / LeadSubmitted encolados por las tools
+    schedule_capi_flush(session)  # OrderCreated (la tool) / LeadSubmitted (el cierre)
     return registered
 
 
@@ -749,7 +767,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     def _mutate(data: dict[str, Any]) -> dict[str, Any]:
         msgs = count_session_jsonl_lines(deps.vault_dir, session)
         outcome["closed_id"], outcome["escalated"] = _close_payment_pending(
-            data, order_id=order_id, motivo=motivo, now_ms=now_ms, msgs_at_close=msgs
+            data, session_id=session, order_id=order_id, motivo=motivo, now_ms=now_ms, msgs_at_close=msgs
         )
         return data
 

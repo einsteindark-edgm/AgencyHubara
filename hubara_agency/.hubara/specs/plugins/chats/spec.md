@@ -408,6 +408,14 @@ entrega ya asignada (`summary.due_iso != null`).
 - AND "Confirmar pago" cierra ese mismo episodio con COMPRA_EXITOSA
 - AND si ese episodio ya tenía su propio pedido, el pedido nuevo abre otro episodio (nunca pisa una venta)
 
+#### Scenario: "Crear pedido" en una conversación de anuncio le avisa el lead a Meta (2026-10-13)
+
+- GIVEN una conversación que entró por un anuncio con `ctwa_clid`
+- WHEN el operador registra el pedido con "Crear pedido" (o MBA vía `/order`)
+- THEN el cierre CONFIRMADO_PAGO_PENDIENTE encola `LeadSubmitted` (`lead_<sesión>_<episodio>`, source `session_actions:order`) para el episodio que quedó con el pedido, igual que el bot al etiquetar
+- AND si ese episodio ya había encolado o enviado su lead (p.ej. cerró CONFIRMADO_SIN_DATOS), no se repite: Meta no deduplica eventos de mensajería
+- AND el `Purchase` sigue saliendo solo de «Confirmar pago» (casos: pedidos #41 y #66, «Ganado» en Ads sin ningún evento CAPI)
+
 #### Scenario: Agendar sobre stage avanzado se rechaza
 
 - GIVEN un pedido en stage `ready`/`shipping`/`delivered`/`cancelled`

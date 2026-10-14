@@ -758,6 +758,75 @@ def test_tag_interesado_via_api_enqueues_qualified_lead_for_ctwa_sessions(h: _Ha
     ]
 
 
+def _with_ctwa_click(h: _Harness) -> None:
+    """Conversación que entró por un anuncio (clic con ``ctwa_clid``)."""
+    h.client.post(_url("draft"), json={"producto": "luz-serena"})
+    meta = h.meta()
+    meta["ctwa_referrals"] = [{"ctwa_clid": "CLID_API", "captured_at_ms": 1_757_350_000_000}]
+    (h.vault / _A / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _leads_queued(h: _Harness) -> list[tuple[str, str]]:
+    return [
+        (e["event_id"], e["source"])
+        for e in h.meta().get("capi_outbox", [])
+        if e["event_name"] == "LeadSubmitted"
+    ]
+
+
+def test_order_created_by_the_team_tells_meta_the_lead_like_the_bot_does(
+    h: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pedidos #41 y #66 (revisados 2026-10-13): el equipo los registró con
+    «Crear pedido» en conversaciones de anuncio. El cierre CONFIRMADO_PAGO_PENDIENTE
+    no avisaba a Meta del lead (el bot sí, al etiquetar): Ads los mostraba
+    «Ganado» sin ningún evento CAPI hasta «Confirmar pago», que en contra
+    entrega llega tarde o nunca."""
+    monkeypatch.setattr(session_actions, "schedule_capi_flush", lambda _session: None)
+    _with_ctwa_click(h)
+
+    body = h.client.post(_url("order"), json={**_ORDER, "payment_method": "cash_on_delivery"}).json()
+
+    assert body["registered"] is True
+    ep = h.meta()["episodes"][-1]["episode_id"]
+    assert _leads_queued(h) == [(f"lead_{_A}_{ep}", "session_actions:order")]
+
+
+def test_order_created_after_a_close_without_lead_tells_meta_the_lead_of_that_episode(
+    h: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Variante del pedido #65: el episodio ya estaba cerrado sin pedido (acá,
+    el operador lo marcó RECHAZO) y el pedido se le anota a ESE episodio. Su
+    cierre pasa a CONFIRMADO_PAGO_PENDIENTE: el lead es de ese episodio."""
+    monkeypatch.setattr(session_actions, "schedule_capi_flush", lambda _session: None)
+    _with_ctwa_click(h)
+    h.client.post(_url("operator-tag"), json={"tag": "RECHAZO", "motivo": "dijo que no"})
+    (closed,) = h.meta()["episodes"]
+    assert closed["closing_tag"] == "RECHAZO" and _leads_queued(h) == []
+
+    body = h.client.post(_url("order"), json=_ORDER).json()
+
+    assert body["registered"] is True
+    assert _leads_queued(h) == [(f"lead_{_A}_{closed['episode_id']}", "session_actions:order")]
+
+
+def test_order_does_not_repeat_a_lead_meta_already_has(h: _Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """El bot cerró CONFIRMADO_SIN_DATOS (eso ya encoló el lead) y el equipo
+    registró el pedido después: Meta no deduplica eventos de mensajería, así
+    que el mismo lead no sale dos veces."""
+    monkeypatch.setattr(session_actions, "schedule_capi_flush", lambda _session: None)
+    _with_ctwa_click(h)
+    h.client.post(_url("draft"), json={"ciudad": "Bogotá", "direccion": "Cl 1 # 2-3"})
+    h.client.post(_url("tag"), json={"tag": "INTERESADO", "motivo": "no tocó Confirmar"})
+    (closed,) = h.meta()["episodes"]
+    assert closed["closing_tag"] == "CONFIRMADO_SIN_DATOS"
+
+    h.client.post(_url("order"), json=_ORDER)
+    h.client.post(_url("order"), json=_ORDER)
+
+    assert _leads_queued(h) == [(f"lead_{_A}_{closed['episode_id']}", "session_actions:tag")]
+
+
 # ── /operator-tag (botón "Reasignar" del inspector) ──────────────────────────
 
 
