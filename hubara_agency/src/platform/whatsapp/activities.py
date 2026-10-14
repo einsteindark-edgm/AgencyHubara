@@ -530,12 +530,18 @@ async def send_photo_message_to_session(
     return result
 
 
+#: Quién manda un aviso que no escribió el bot (Flow / botón con enlace dentro
+#: de la ventana), si quien llama no lo dice: `kind: notice` en el historial.
+NOTICE_SENDER = "aviso"
+
+
 async def send_flow_to_session(
     session_id: str,
     flow: InteractiveFlowOutbound,
     *,
     history_text: str,
     image_url: str | None = None,
+    sender: str = NOTICE_SENDER,
 ) -> OutboundResult:
     """Abre un WhatsApp Flow como mensaje NORMAL (dentro de la ventana 24h).
 
@@ -547,19 +553,20 @@ async def send_flow_to_session(
     phone_number_id, to = _interactive_destination(session_id)
     result = await whatsapp_client.send_flow(phone_number_id, to, flow)
     if result.ok:
-        _record_interactive(session_id, result, history_text, image_url)
+        _record_interactive(session_id, result, history_text, image_url, sender=sender)
     return result
 
 
 async def send_cta_url_to_session(
-    session_id: str, cta: InteractiveCTAUrlOutbound
+    session_id: str, cta: InteractiveCTAUrlOutbound, *, sender: str = NOTICE_SENDER
 ) -> OutboundResult:
-    """Texto + un botón con enlace como mensaje NORMAL (dentro de la ventana)."""
+    """Texto + un botón con enlace como mensaje NORMAL (dentro de la ventana).
+    `sender`: quién lo manda (el historial lo marca como aviso, no del bot)."""
     phone_number_id, to = _interactive_destination(session_id)
     result = await whatsapp_client.send_cta_url(phone_number_id, to, cta)
     if result.ok:
         _record_interactive(
-            session_id, result, f"{cta.body}\n[{cta.button_text}] {cta.url}", None
+            session_id, result, f"{cta.body}\n[{cta.button_text}] {cta.url}", None, sender=sender
         )
     return result
 
@@ -574,7 +581,12 @@ def _interactive_destination(session_id: str) -> tuple[str, str]:
 
 
 def _record_interactive(
-    session_id: str, result: OutboundResult, history_text: str, image_url: str | None
+    session_id: str,
+    result: OutboundResult,
+    history_text: str,
+    image_url: str | None,
+    *,
+    sender: str = NOTICE_SENDER,
 ) -> None:
     log_entry = OutboundLogEntry(
         sent_at_ms=_now_ms(),
@@ -599,8 +611,13 @@ def _record_interactive(
     history_path = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
     try:
         history_path.parent.mkdir(parents=True, exist_ok=True)
+        # Aviso, no del bot (premortem C5): con `kind`/`sender` el turno
+        # siguiente sabe que el LLM no lo tiene en su historial y lo cita
+        # (`episode_memory.unseen_notices`); el chat lo muestra igual.
         event: dict[str, Any] = {
             "role": "assistant",
+            "kind": "notice",
+            "sender": sender or NOTICE_SENDER,
             "content": history_text,
             "timestamp": _now_iso_utc(),
         }

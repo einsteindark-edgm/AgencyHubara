@@ -89,8 +89,10 @@ from src.plugins.chats.agent.sales.use_cases.closing_ack import (
 )
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     quote_team_exchange_in_turn,
+    quote_notices_in_turn,
     quote_template_in_turn,
     request_clean_llm_history,
+    unseen_notices,
     unseen_team_exchange,
     unseen_template_text,
     with_previous_episode,
@@ -1361,13 +1363,18 @@ class IngestInboundMessage:
         # a su propia oferta anterior): si un colega escribió después del
         # último mensaje del bot, el turno lleva ese tramo (con la plantilla
         # adentro, si el colega mandó una).
+        # Ni los avisos que salen por fuera del bot (premortem C5: la
+        # invitación a calificar, el gracias con el cupón).
         unseen_template: str | None = None
         team_exchange: list[tuple[str, str]] | None = None
+        notices: list[str] | None = None
         if campaign_reply_touch is None:
             events_now = self._session_events(session_id)
             team_exchange = unseen_team_exchange(events_now)
             if team_exchange is None:
                 unseen_template = unseen_template_text(events_now)
+            if team_exchange is None and unseen_template is None:
+                notices = unseen_notices(events_now)
 
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
@@ -1545,6 +1552,8 @@ class IngestInboundMessage:
         )
         if unseen_template is not None:
             turn_message = quote_template_in_turn(unseen_template, turn_message)
+        if notices is not None:
+            turn_message = quote_notices_in_turn(notices, turn_message)
         if team_exchange is not None:
             turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
         if previous_episode is not None:

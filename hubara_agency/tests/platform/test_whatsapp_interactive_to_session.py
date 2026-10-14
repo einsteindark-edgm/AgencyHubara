@@ -124,3 +124,33 @@ async def test_send_cta_url_to_session_sends_and_records(isolated_vault, monkeyp
     [event] = _history(isolated_vault)
     assert event["content"] == "¡Gracias!\n[Opinar en Google] https://hubara.com.co/opinar/"
     assert event["wamid"] == "wamid.C1"
+
+
+# --- Premortem C5: lo que el bot no escribió queda marcado como aviso ---------
+
+
+@pytest.mark.asyncio
+async def test_flow_and_cta_history_events_are_notices_the_bot_did_not_write(isolated_vault, monkeypatch):
+    """Sin `kind`/`sender` el evento parecía del bot y el turno siguiente
+    creía que el LLM ya lo tenía en su historial (nunca supo que lo invitamos
+    a calificar ni del cupón)."""
+    from src.platform.whatsapp.activities import send_cta_url_to_session, send_flow_to_session
+
+    monkeypatch.setattr(
+        "src.platform.whatsapp.activities.whatsapp_client.send_flow",
+        AsyncMock(return_value=OutboundResult(wa_message_id="wamid.F2", ok=True)),
+    )
+    monkeypatch.setattr(
+        "src.platform.whatsapp.activities.whatsapp_client.send_cta_url",
+        AsyncMock(return_value=OutboundResult(wa_message_id="wamid.C2", ok=True)),
+    )
+    flow = InteractiveFlowOutbound(flow_id="FLOW1", flow_token="review:o:1", flow_cta="Calificar",
+                                   flow_action_screen="RATING", body="¿Qué tal tu pedido?")
+
+    await send_flow_to_session(SESSION, flow, history_text="¿Qué tal tu pedido?", sender="reviews")
+    await send_cta_url_to_session(SESSION, InteractiveCTAUrlOutbound(
+        body="¡Gracias!", button_text="Opinar en Google", url="https://hubara.com.co/opinar/"))
+
+    invitation, thanks = _history(isolated_vault)
+    assert (invitation["kind"], invitation["sender"]) == ("notice", "reviews")
+    assert (thanks["kind"], thanks["sender"]) == ("notice", "aviso")

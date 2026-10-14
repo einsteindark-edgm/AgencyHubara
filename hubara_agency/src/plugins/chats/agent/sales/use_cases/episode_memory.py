@@ -128,9 +128,10 @@ def _team_speaker(event: dict[str, Any]) -> str | None:
         return None
     if event.get("sender") == "human":
         return "colega"
-    # Una plantilla (aviso del ETA, gancho de remarketing) sale por fuera del
-    # historial del LLM; cualquier otro mensaje sin `sender` es del bot.
-    return "aviso" if event.get("kind") == "template" else None
+    # Una plantilla (aviso del ETA, gancho de remarketing) o un aviso (la
+    # invitación a calificar, el gracias con el cupón — premortem C5) sale por
+    # fuera del historial del LLM; cualquier otro mensaje sin `sender` es del bot.
+    return "aviso" if event.get("kind") in ("template", NOTICE_KIND) else None
 
 
 def _team_text(event: dict[str, Any]) -> str:
@@ -171,3 +172,48 @@ def unseen_team_exchange(events: list[dict[str, Any]]) -> list[tuple[str, str]] 
         if (speaker := _team_speaker(event)) is not None and (text := _team_text(event))
     ]
     return lines[-TEAM_EXCHANGE_MAX_LINES:] or None
+
+
+#: Avisos que salen por fuera del bot (invitación a calificar, el gracias con
+#: el cupón): `kind: notice` en el JSONL del chat (`whatsapp.activities`).
+NOTICE_KIND = "notice"
+#: Cuántos avisos viajan en el turno, y su largo.
+_NOTICES_MAX = 3
+
+
+def unseen_notices(events: list[dict[str, Any]]) -> list[str] | None:
+    """Los avisos (`kind: notice`) que el cliente recibió después del último
+    mensaje del bot, en orden, o ``None``.
+
+    Premortem C5 (reseñas tras la entrega): la invitación a calificar y el
+    gracias con el cupón no entran al historial del LLM; sin esto el bot no
+    sabía que le dimos un cupón. Hay que llamarla ANTES de persistir el
+    mensaje actual (como `unseen_template_text`). No cuenta para el acuse: un
+    «¡Gracias! 🙏» al gracias no es respuesta a una plantilla."""
+    found: list[str] = []
+    for event in reversed(events):
+        if not isinstance(event, dict):
+            continue
+        if event.get("role") == "assistant" and _team_speaker(event) is None:
+            break  # el último mensaje del bot: de ahí para atrás ya lo vio
+        if event.get("role") == "assistant" and event.get("kind") == NOTICE_KIND:
+            text = _team_text(event)
+            if text:
+                found.append(text)
+    found.reverse()
+    return found[-_NOTICES_MAX:] or None
+
+
+def quote_notices_in_turn(notices: list[str], text: str) -> str:
+    """El mensaje del cliente con los avisos que recibió citados adelante.
+    Sin corchetes adentro (la calificación quita las notas del ingest hasta
+    el primer «]»)."""
+    quoted = "; ".join(
+        f"«{notice.replace('[', '(').replace(']', ')')}»" for notice in notices
+    )
+    return (
+        "[Antes de este mensaje el cliente recibió estos mensajes automáticos "
+        f"de la tienda (no los escribiste tú): {quoted}. Puede estar respondiendo "
+        "a eso; no lo contradigas.]\n"
+        f"{text}"
+    )

@@ -117,9 +117,16 @@ from src.sdk.messagingkit import (
     send_cta_url_to_session, send_flow_to_session,
 )
 await send_flow_to_session(sid, InteractiveFlowOutbound(flow_id=..., flow_token=..., flow_cta="Calificar mi pedido",
-                           flow_action_screen="RATING", header_media_id=media_id), history_text="…")
-await send_cta_url_to_session(sid, InteractiveCTAUrlOutbound(body="…", button_text="Opinar en Google", url="https://…"))
+                           flow_action_screen="RATING", header_media_id=media_id), history_text="…",
+                           sender="reviews")
+await send_cta_url_to_session(sid, InteractiveCTAUrlOutbound(body="…", button_text="Opinar en Google", url="https://…"),
+                              sender="reviews")
 ```
+
+En el historial del chat quedan como **aviso** (`kind: "notice"`, `sender`: quien
+lo manda; por defecto `"aviso"`), no como mensaje del bot: el LLM no los tiene en
+su historial, así que el turno siguiente los cita (`episode_memory.unseen_notices`).
+Un «¡Gracias!» a un aviso sigue siendo un acuse (no abre conversación).
 
 Fuera de la ventana Meta los rechaza (131047): el caller cae a una plantilla. Las
 plantillas pueden declarar `buttons: [{type: flow, text, navigate_screen}]` en
