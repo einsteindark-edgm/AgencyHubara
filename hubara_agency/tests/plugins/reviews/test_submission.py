@@ -116,3 +116,19 @@ def test_thanks_uses_tuteo_not_voseo():
         text = thanks_text(rating=rating, percent=5, expires_label="1 de enero").lower()
         for vos in ("contanos", "escribinos", "tenés", "podés", "querés"):
             assert vos not in text
+
+
+@pytest.mark.parametrize(
+    ("raw", "shown"),
+    [
+        ("ana.gomez@example.com", "Cliente de Hubara"),
+        ("</script><b>", "Cliente de Hubara"),
+        ("Mamá 💕", "Mamá"),
+        ("josé-luis o'neil", "José-luis O."),
+        ("Cliente sin nombre", "Cliente de Hubara"),
+    ],
+)
+def test_the_public_name_keeps_only_a_real_name(raw, shown):
+    """Premortem: el nombre sale en la web (y en el JSON-LD de la ficha). Un
+    correo, etiquetas o un relleno nunca salen; solo letras."""
+    assert author_display(raw) == shown

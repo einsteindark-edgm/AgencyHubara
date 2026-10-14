@@ -53,6 +53,9 @@ class _Facts:
     def __init__(self, *, stage="delivered", is_test=False, unresolved=False) -> None:
         self.stage, self.is_test, self.unresolved = stage, is_test, unresolved
 
+    def invalidate(self, order_id=None) -> None:
+        pass
+
     async def get_facts(self, ids):
         if self.unresolved:
             return SimpleNamespace(facts={}, unresolved=frozenset(ids))
@@ -63,7 +66,7 @@ class _Facts:
 class _Orders:
     async def get(self, order_id):
         return SimpleNamespace(
-            summary=SimpleNamespace(display_id="#31", customer="Ana María Gómez"),
+            summary=SimpleNamespace(display_id="#31", customer="ana.gomez@example.com"),
             shipping_address=SimpleNamespace(first_name="Ana María", last_name="Gómez", city="Bogotá"),
             items_detail=[
                 SimpleNamespace(title="Velón Encanto Silvestre", handle="encanto", product_id="prod_1",
@@ -114,6 +117,7 @@ def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
 
     async def escalate(session_id, summary):
         calls.escalations.append((session_id, summary))
+        return True
 
     async def ready() -> bool:
         return coupons_ready
@@ -123,7 +127,7 @@ def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
     deps = ReviewsDeps(
         settings=ReviewSettings.from_env(env),
         store=ReviewsStore(tmp_path),
-        metadata=_Metadata(metadata if metadata is not None else {"phone_number_id": "PID"}),
+        metadata=_Metadata(metadata if metadata is not None else {"phone_number_id": "PID", "profile": {"name": "Ana María Gómez"}}),
         order_facts=facts or _Facts(),
         order_query=_Orders(),
         grants=FakeCouponGrantsStore(),
@@ -351,7 +355,8 @@ async def test_a_rejected_photo_header_resends_the_flow_without_it(tmp_path):
     """Revisión L4: si Meta no acepta la foto arriba del formulario, va sin foto."""
     deps, calls = _deps(tmp_path)
     results = [
-        OutboundResult(wa_message_id=None, ok=False, error="(#131009) Parameter value is not valid"),
+        OutboundResult(wa_message_id=None, ok=False,
+                       error='http_400: {"error":{"message":"(#131009) Parameter value is not valid","code":131009}}'),
         OutboundResult(wa_message_id="wamid.F2", ok=True),
     ]
 
@@ -365,3 +370,186 @@ async def test_a_rejected_photo_header_resends_the_flow_without_it(tmp_path):
     assert (out.status, out.channel) == ("sent", "flow")
     assert [f.header_media_id for _, f, _ in calls.flows] == ["MEDIA_1", None]
     assert calls.flows[1][1].header_text == "Califica tu pedido"
+
+
+# ---------- premortem 2026-10-14 ----------
+
+
+class _CachedFacts(_Facts):
+    """Como el `OrderFactsStore` real del worker: sirve lo que tenía en caché
+    (el pedido visto en «shipping» por otro despertar) hasta que se invalida."""
+
+    def __init__(self) -> None:
+        super().__init__(stage="shipping")
+        self.invalidated: list = []
+
+    def invalidate(self, order_id=None) -> None:
+        self.invalidated.append(order_id)
+        self.stage = "delivered"
+
+
+@pytest.mark.asyncio
+async def test_plan_reads_the_order_stage_fresh_not_from_a_stale_cache(tmp_path):
+    """P1: el caché de pedidos del worker (TTL, sin invalidaciones del bus)
+    tenía el pedido en «shipping»: el flujo se descartaba para siempre."""
+    facts = _CachedFacts()
+    deps, _ = _deps(tmp_path, facts=facts, metadata={"service_window_expires_at_ms": T0 + 10 * HOUR})
+    step = await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    assert step.action == "send_flow"
+    assert facts.invalidated == [ORDER]
+
+
+@pytest.mark.asyncio
+async def test_test_orders_are_invited_in_test_mode_for_the_test_numbers(tmp_path):
+    """P8: en modo prueba el operador prueba con su número y un pedido «de
+    prueba»; antes se descartaba sin decir por qué."""
+    deps, _ = _deps(tmp_path, facts=_Facts(is_test=True), mode="test",
+                    metadata={"service_window_expires_at_ms": T0 + 10 * HOUR})
+    deps.settings = ReviewSettings.from_env({"REVIEW_REQUESTS_MODE": "test", "REVIEW_TEST_SESSIONS": S,
+                                             "META_FLOW_ID_REVIEW": "FLOW1"})
+    step = await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    assert step.action == "send_flow"
+
+
+@pytest.mark.asyncio
+async def test_a_second_order_waits_while_the_first_invitation_is_unanswered(tmp_path):
+    """P10: dos pedidos entregados juntos no mandan dos invitaciones seguidas."""
+    touches = [{"order_id": "order_OTHER", "kind": "flow", "at_ms": T0 + 2 * HOUR}]
+    metadata = {"service_window_expires_at_ms": T0 + 10 * HOUR, "review_request_touches": touches}
+    deps, _ = _deps(tmp_path, metadata=metadata)
+    step = await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    assert (step.action, step.reason) == ("wait", "another_invitation_pending")
+
+
+@pytest.mark.asyncio
+async def test_a_second_order_is_invited_once_the_first_was_rated(tmp_path):
+    from src.plugins.reviews.agent.store import ReviewRecord
+
+    touches = [{"order_id": "order_OTHER", "kind": "flow", "at_ms": T0 + 2 * HOUR}]
+    metadata = {"service_window_expires_at_ms": T0 + 10 * HOUR, "review_request_touches": touches}
+    deps, _ = _deps(tmp_path, metadata=metadata)
+    deps.store.save_review(ReviewRecord(
+        order_id="order_OTHER", display_id="#30", session_id=S, rating=5, comment=None, publish_consent=False,
+        author_name="Cliente de Hubara", author_city=None, products=(), photo_files=(), submitted_at_ms=T0,
+        wa_message_id="wamid.X"))
+    step = await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    assert step.action == "send_flow"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", ["timeout: ReadTimeout", "http_504: Gateway Timeout", "Server disconnected"])
+async def test_an_ambiguous_flow_send_is_never_sent_twice(tmp_path, error):
+    """P3: un timeout o un 5xx pudo haber llegado a Meta: no se reenvía."""
+    deps, calls = _deps(tmp_path)
+
+    async def send_flow(session_id, flow, *, history_text, image_url=None):
+        calls.flows.append((session_id, flow, history_text))
+        return OutboundResult(wa_message_id=None, ok=False, error=error)
+
+    deps.send_flow = send_flow
+    out = await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_flow", now_ms=T0 + 3 * HOUR))
+    assert out.status == "failed"
+    assert len(calls.flows) == 1 and calls.templates == []
+
+
+@pytest.mark.asyncio
+async def test_a_template_meta_has_not_approved_yet_releases_the_invitation(tmp_path):
+    """I3: encendido antes de que Meta apruebe la plantilla (o pausada): no
+    se gasta la invitación del pedido, se reintenta después."""
+    deps, calls = _deps(tmp_path)
+
+    async def send_template(session_id, name, variables, **kwargs):
+        calls.templates.append((session_id, name, variables, kwargs))
+        return OutboundResult(wa_message_id=None, ok=False, error=(
+            'http_404: {"error":{"message":"(#132001) Template name does not exist in the translation",'
+            '"code":132001}}'))
+
+    deps.send_template = send_template
+    out = await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_template", now_ms=T0 + 20 * HOUR))
+    assert out.status == "retry"
+    assert deps.store.get_request(ORDER) is None
+
+
+@pytest.mark.asyncio
+async def test_a_low_rating_the_team_did_not_receive_is_retried(tmp_path):
+    """P2: «alguien del equipo te escribe hoy» solo vale si chats confirmó que
+    la conversación quedó con el equipo."""
+    deps, calls = _deps(tmp_path)
+
+    async def not_escalated(session_id, summary):
+        calls.escalations.append((session_id, summary))
+        return False
+
+    deps.escalate = not_escalated
+    with pytest.raises(RuntimeError):
+        await process_submission(deps, _submission(rating="2", photo=[]))
+    assert deps.store.get_review(f"rev_{ORDER}").team_alerted is False
+
+    async def escalated(session_id, summary):
+        return True
+
+    deps.escalate = escalated
+    assert await process_submission(deps, _submission(rating="2", photo=[])) == "completed"
+    assert deps.store.get_review(f"rev_{ORDER}").team_alerted is True
+    assert len(deps.grants.list_for(S)) == 1 and len(calls.ctas) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_photo_that_could_not_be_downloaded_is_retried_first(tmp_path):
+    """P7: la foto del cliente no se pierde por un tropiezo de Meta: la
+    actividad se reintenta antes de guardar la reseña."""
+    deps, calls = _deps(tmp_path)
+
+    async def no_media(media_id):
+        return None
+
+    deps.fetch_media = no_media
+    with pytest.raises(RuntimeError):
+        await process_submission(deps, _submission(), attempt=1)
+    assert deps.store.get_review(f"rev_{ORDER}") is None and deps.grants.list_for(S) == []
+
+    # El último intento guarda lo que hay (sin foto) y respeta lo prometido.
+    assert await process_submission(deps, _submission(), attempt=4) == "stored"
+    assert deps.store.get_review(f"rev_{ORDER}").photo_files == ()
+    assert deps.grants.list_for(S)[0].percent == 10
+
+
+@pytest.mark.asyncio
+async def test_a_photo_within_the_flow_limit_is_kept(tmp_path):
+    """P7/I6: el formulario acepta fotos de hasta 10 MB."""
+    deps, _ = _deps(tmp_path)
+
+    async def big(media_id):
+        return (b"\xff\xd8" + b"0" * (9 * 1024 * 1024), "image/jpeg")
+
+    deps.fetch_media = big
+    await process_submission(deps, _submission())
+    assert len(deps.store.get_review(f"rev_{ORDER}").photo_files) == 1
+
+
+@pytest.mark.asyncio
+async def test_photo_files_never_carry_the_order_id(tmp_path):
+    """M1: el nombre de la foto termina en una URL pública; el id del pedido
+    de Medusa abre sus datos personales."""
+    deps, _ = _deps(tmp_path)
+    await process_submission(deps, _submission())
+    [rel] = deps.store.get_review(f"rev_{ORDER}").photo_files
+    assert ORDER not in rel
+
+
+@pytest.mark.asyncio
+async def test_the_public_name_is_who_rated_not_the_gift_recipient(tmp_path):
+    """P6: un regalo trae el nombre y la ciudad de quien lo recibió; publica
+    su nombre quien calificó (su perfil de WhatsApp) y la ciudad solo si es
+    la misma persona. Un correo nunca sale como nombre."""
+    deps, _ = _deps(tmp_path, metadata={"phone_number_id": "PID", "profile": {"name": "Laura Ríos"}})
+    await process_submission(deps, _submission())
+    review = deps.store.get_review(f"rev_{ORDER}")
+    assert (review.author_name, review.author_city) == ("Laura R.", None)
+
+
+@pytest.mark.asyncio
+async def test_without_a_usable_name_the_review_is_anonymous(tmp_path):
+    deps, _ = _deps(tmp_path, metadata={"phone_number_id": "PID", "profile": {"name": "</script><b>"}})
+    await process_submission(deps, _submission())
+    assert deps.store.get_review(f"rev_{ORDER}").author_name == "Cliente de Hubara"

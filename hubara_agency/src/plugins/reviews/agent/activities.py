@@ -17,8 +17,11 @@ Invariantes:
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import os
+import unicodedata
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -56,9 +59,17 @@ _DAY_MS = 86_400_000
 _ORDER_UNKNOWN_RETRY_MS = 30 * 60_000
 #: La respuesta de Meta cuando la ventana de 24 h ya cerró.
 _WINDOW_CLOSED_CODE = "131047"
+#: Plantilla inexistente en el idioma (aún sin aprobar), pausada o
+#: deshabilitada: no salió nada, la invitación se reintenta (premortem I3).
+_TEMPLATE_NOT_READY_CODES = ("132001", "132015", "132016")
 #: El cliente escribió hace menos de esto: está conversando, no se interrumpe.
 _ACTIVE_CONVERSATION_MS = 30 * 60_000
-_MAX_PHOTO_BYTES = 8 * 1024 * 1024
+#: Otra invitación sin contestar más reciente que esto hace esperar a esta.
+_SIBLING_INVITATION_MS = _DAY_MS
+#: El formulario acepta fotos de hasta 10 MB (`max-file-size-kb: 10240`).
+MAX_PHOTO_BYTES = 10 * 1024 * 1024 + 512 * 1024
+#: Intentos de la actividad antes de guardar la reseña sin la foto que no bajó.
+_PHOTO_ATTEMPTS = 4
 _FOOTER = "Hubara · Velas artesanales de Bogotá"
 
 
@@ -118,11 +129,19 @@ async def plan_step(deps: Any, inp: ReviewPlanInput) -> ReviewStepOut:
         # Sin los cupones personales listos no se promete nada; se reintenta
         # (el tope de 48 h sigue mandando).
         return ReviewStepOut(action="wait", wait_ms=settings.timing.poll_ms, reason="coupon_not_configured")
+    # El caché de pedidos del worker no recibe las invalidaciones del bus del
+    # dashboard: la etapa se lee fresca (premortem P1).
+    deps.order_facts.invalidate(inp.order_id)
     snapshot = await deps.order_facts.get_facts([inp.order_id])
     fact = snapshot.facts.get(inp.order_id)
     if fact is None and inp.order_id in snapshot.unresolved:
         return ReviewStepOut(action="wait", wait_ms=_ORDER_UNKNOWN_RETRY_MS, reason="order_unknown")
-    order_ok = fact is not None and fact.stage == "delivered" and not fact.is_test
+    # En modo prueba el operador prueba con pedidos «de prueba» (P8).
+    order_ok = (
+        fact is not None
+        and fact.stage == "delivered"
+        and (not fact.is_test or settings.mode == "test")
+    )
 
     metadata = deps.metadata.read(inp.session_id) or {}
     window = metadata.get("service_window_expires_at_ms")
@@ -137,6 +156,7 @@ async def plan_step(deps: Any, inp: ReviewPlanInput) -> ReviewStepOut:
             already_requested=deps.store.get_request(inp.order_id) is not None,
             already_reviewed=deps.store.get_review(review_id_for(inp.order_id)) is not None,
             conversation_busy=_conversation_busy(metadata, inp.session_id, inp.now_ms),
+            another_invitation_pending=_another_invitation_pending(deps, metadata, inp.order_id, inp.now_ms),
         ),
         settings.timing,
     )
@@ -153,6 +173,26 @@ def _conversation_busy(metadata: dict[str, Any], session_id: str, now_ms: int) -
     if isinstance(last, int) and 0 <= now_ms - last < _ACTIVE_CONVERSATION_MS:
         return True
     return mba_controls_thread(metadata, session_id)
+
+
+def _another_invitation_pending(deps: Any, metadata: dict[str, Any], order_id: str, now_ms: int) -> bool:
+    """¿Salió hace menos de un día la invitación de OTRO pedido de este cliente
+    y no la ha contestado? (dos pedidos entregados juntos)."""
+    for touch in metadata.get("review_request_touches") or []:
+        if not isinstance(touch, dict) or touch.get("order_id") in (None, order_id):
+            continue
+        if touch.get("status") == "failed":
+            continue
+        at_ms = touch.get("at_ms")
+        if not isinstance(at_ms, int) or not 0 <= now_ms - at_ms < _SIBLING_INVITATION_MS:
+            continue
+        try:
+            answered = deps.store.get_review(review_id_for(str(touch["order_id"]))) is not None
+        except ValueError:
+            continue
+        if not answered:
+            return True
+    return False
 
 
 # ── invitar ─────────────────────────────────────────────────────────────────
@@ -235,7 +275,9 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
             return ReviewSendOut(status="skipped", error="order_not_found")
         reference = str(detail.summary.display_id or inp.order_id)[:20]
         titles = [str(i.title) for i in detail.items_detail or [] if getattr(i, "title", None)]
-        card = render_review_card(reference, await _order_photo(deps, inp.session_id, inp.order_id, metadata, detail))
+        photo = await _order_photo(deps, inp.session_id, inp.order_id, metadata, detail)
+        # Pillow fuera del event loop del worker.
+        card = await asyncio.to_thread(render_review_card, reference, photo)
         media_id = await deps.upload_media(_phone_number_id(metadata), card, "image/jpeg")
     except Exception as exc:  # noqa: BLE001 — nada salió: se reintenta
         raise _NotSent(f"{type(exc).__name__}: {exc}") from exc
@@ -256,9 +298,11 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
         )
         history_text = f"{invitation_body(reference)}\n[{FLOW_CTA}]"
         result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
-        if not result.ok and _WINDOW_CLOSED_CODE not in str(result.error or ""):
+        if _rejected_for_sure(result) and _WINDOW_CLOSED_CODE not in str(result.error or ""):
             # Revisión L4: si Meta no acepta la foto arriba del formulario, va
             # con un título de texto (la invitación no se pierde por la foto).
+            # Solo ante un rechazo seguro (4xx): un timeout o un 5xx pudo haber
+            # llegado y se mandaría dos veces (premortem P3).
             flow = replace(flow, header_media_id=None, header_text="Califica tu pedido")
             result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
         if result.ok:
@@ -278,11 +322,25 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
         flow_action_data=action_data,
     )
     if not result.ok:
+        if any(code in str(result.error or "") for code in _TEMPLATE_NOT_READY_CODES):
+            raise _NotSent(f"plantilla no disponible en Meta: {str(result.error)[:200]}")
         return ReviewSendOut(status="failed", channel="template", error=str(result.error)[:300])
     return ReviewSendOut(status="sent", channel="template")
 
 
+def _rejected_for_sure(result: Any) -> bool:
+    """Meta respondió un 4xx: el mensaje NO salió (se puede mandar otro)."""
+    return not result.ok and str(result.error or "").startswith("http_4")
+
+
 # ── recibir la calificación ─────────────────────────────────────────────────
+
+
+def _photo_name(order_id: str, index: int) -> str:
+    """El nombre termina en una URL pública: nunca el id del pedido de Medusa
+    (con él se leen los datos del pedido — premortem M1). Determinista, para
+    que un reintento escriba encima."""
+    return hashlib.sha256(f"review-photo:{order_id}:{index}".encode()).hexdigest()[:24]
 
 
 async def _save_photos(deps: Any, order_id: str, media_ids: tuple[str, ...]) -> tuple[str, ...]:
@@ -293,36 +351,52 @@ async def _save_photos(deps: Any, order_id: str, media_ids: tuple[str, ...]) -> 
         if not fetched:
             continue
         content, mime = fetched
-        if len(content) > _MAX_PHOTO_BYTES:
+        if len(content) > MAX_PHOTO_BYTES:
             continue
         ext = ".png" if "png" in str(mime) else ".jpg"
-        name = f"{order_id}_{index}{ext}"
+        name = f"{_photo_name(order_id, index)}{ext}"
         folder.mkdir(parents=True, exist_ok=True)
         (folder / name).write_bytes(content)
         saved.append(f"photos/{name}")
     return tuple(saved)
 
 
-def _author(detail: Any) -> tuple[str, str | None]:
+def _first_word(name: Any) -> str:
+    words = str(name or "").split()
+    if not words:
+        return ""
+    plain = unicodedata.normalize("NFKD", words[0].casefold())
+    return "".join(c for c in plain if not unicodedata.combining(c))
+
+
+def _author(detail: Any, metadata: dict[str, Any]) -> tuple[str, str | None]:
+    """Quien calificó es quien escribe por WhatsApp: su nombre de perfil, no el
+    de la dirección (en un regalo es quien lo recibió — premortem P6). La
+    ciudad de envío solo si es la misma persona."""
+    profile = metadata.get("profile") if isinstance(metadata.get("profile"), dict) else {}
+    name = str(profile.get("name") or "")
+    author = author_display(name)
     address = getattr(detail, "shipping_address", None)
-    full = " ".join(
-        p for p in (getattr(address, "first_name", None), getattr(address, "last_name", None)) if p
-    ) or getattr(detail.summary, "customer", "")
-    return author_display(full), getattr(address, "city", None) or None
+    same_person = bool(_first_word(name)) and _first_word(name) == _first_word(getattr(address, "first_name", None))
+    city = (getattr(address, "city", None) or None) if same_person else None
+    return author, city
 
 
-async def process_submission(deps: Any, inp: ReviewSubmissionInput) -> str:
-    """Guarda la calificación, concede el cupón, agradece y (1–3★) avisa."""
+async def process_submission(deps: Any, inp: ReviewSubmissionInput, *, attempt: int = _PHOTO_ATTEMPTS) -> str:
+    """Guarda la calificación, concede el cupón, agradece y (1–3★) avisa.
+
+    `attempt` es el intento de la actividad: si la foto no bajó, los primeros
+    intentos fallan para reintentar (premortem P7); el último guarda lo que hay."""
     try:
         response = json.loads(inp.response_json or "{}")
     except ValueError:
-        return "ignored"
+        return _unprocessed(inp, "ignored")
     submission = parse_review_response(response if isinstance(response, dict) else {})
     if submission is None:
-        return "ignored"
+        return _unprocessed(inp, "ignored")
     request = deps.store.get_request(submission.order_id)
     if request is not None and request.get("session_id") not in (None, inp.session_id):
-        return "session_mismatch"
+        return _unprocessed(inp, "session_mismatch")
 
     review_id = review_id_for(submission.order_id)
     existing = deps.store.get_review(review_id)
@@ -331,8 +405,12 @@ async def process_submission(deps: Any, inp: ReviewSubmissionInput) -> str:
     if existing is None:
         detail = await deps.order_query.get(submission.order_id)
         if detail is None:
-            return "order_not_found"
-        author, city = _author(detail)
+            return _unprocessed(inp, "order_not_found")
+        photo_files = await _save_photos(deps, submission.order_id, submission.photo_media_ids)
+        wanted = min(len(submission.photo_media_ids), 3)
+        if len(photo_files) < wanted and attempt < _PHOTO_ATTEMPTS:
+            raise RuntimeError(f"la foto de la reseña de {submission.order_id} no bajó; se reintenta")
+        author, city = _author(detail, deps.metadata.read(inp.session_id) or {})
         record, _ = deps.store.save_review(
             ReviewRecord(
                 order_id=submission.order_id,
@@ -348,7 +426,7 @@ async def process_submission(deps: Any, inp: ReviewSubmissionInput) -> str:
                     for i in detail.items_detail or []
                     if getattr(i, "product_id", None)
                 ),
-                photo_files=await _save_photos(deps, submission.order_id, submission.photo_media_ids),
+                photo_files=photo_files,
                 submitted_at_ms=inp.received_at_ms,
                 wa_message_id=inp.wa_message_id,
             )
@@ -394,9 +472,17 @@ async def process_submission(deps: Any, inp: ReviewSubmissionInput) -> str:
             f"Calificó {record.rating}★ el pedido {record.display_id}{comment}. "
             "Le prometimos que alguien del equipo le escribe hoy."
         )
-        await deps.escalate(inp.session_id, summary)
+        if not await deps.escalate(inp.session_id, summary):
+            # Lo prometido («alguien del equipo te escribe hoy») solo vale si
+            # chats confirmó el paso al equipo (premortem P2): se reintenta.
+            raise RuntimeError(f"chats no confirmó el paso al equipo de {inp.session_id}")
         deps.store.update_review(review_id, team_alerted=True)
     return "stored" if existing is None else "completed"
+
+
+def _unprocessed(inp: ReviewSubmissionInput, outcome: str) -> str:
+    activity_logger().warning("review submission %s not processed: %s", inp.wa_message_id, outcome)
+    return outcome
 
 
 def activity_logger() -> Any:
@@ -429,4 +515,4 @@ async def send_request_activity(inp: ReviewSendInput) -> ReviewSendOut:
 async def process_submission_activity(inp: ReviewSubmissionInput) -> str:
     from src.plugins.reviews.agent.composition import get_reviews_deps
 
-    return await process_submission(get_reviews_deps(), inp)
+    return await process_submission(get_reviews_deps(), inp, attempt=activity.info().attempt)

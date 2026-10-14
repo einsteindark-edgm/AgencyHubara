@@ -40,3 +40,37 @@ def test_the_photo_is_on_the_left_panel():
     img = Image.open(io.BytesIO(render_review_card("#31", _photo_bytes()))).convert("RGB")
     r, g, b = img.getpixel((200, 314))
     assert (abs(r - 200), abs(g - 120), abs(b - 60)) < (25, 25, 25)
+
+
+def test_a_photo_that_breaks_while_processing_still_gives_a_card(monkeypatch):
+    """Premortem P11: una foto que abre pero falla al girarla o convertirla
+    no deja la invitación sin enviar (antes reintentaba hasta vencer)."""
+    from PIL import ImageOps
+
+    def broken(img, *a, **k):
+        raise OSError("EXIF corrupto")
+
+    monkeypatch.setattr(ImageOps, "exif_transpose", broken)
+    img = Image.open(io.BytesIO(render_review_card("#31", _photo_bytes())))
+    assert img.size == CARD_SIZE
+
+
+def test_a_huge_photo_is_decoded_reduced(monkeypatch):
+    """Premortem I7: una foto de 48 MP no se decodifica entera (memoria de la
+    caja de 4 GB): JPEG se lee reducido con `draft`."""
+    buf = io.BytesIO()
+    Image.new("RGB", (6000, 4000), (200, 120, 60)).save(buf, "JPEG")
+    from PIL import ImageFile
+
+    decoded = []
+    original = ImageFile.ImageFile.load
+
+    def spy(self, *a, **k):
+        out = original(self, *a, **k)
+        decoded.append(self.size)
+        return out
+
+    monkeypatch.setattr(ImageFile.ImageFile, "load", spy)
+    data = render_review_card("#31", buf.getvalue())
+    assert Image.open(io.BytesIO(data)).size == CARD_SIZE
+    assert decoded and decoded[0][0] * decoded[0][1] <= 3000 * 2000

@@ -6,6 +6,7 @@ El `flow_token` que pusimos al enviarlo dice de qué pedido es.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,7 +23,9 @@ class ReviewSubmission:
 
 
 #: Nombre de relleno que pone el registro cuando no hay nombre real.
-_PLACEHOLDER_NAMES = {"cliente whatsapp", "cliente"}
+_PLACEHOLDER_NAMES = {"cliente whatsapp", "cliente", "cliente sin nombre"}
+#: Una palabra de un nombre: letras (con tildes), guion y apóstrofo.
+_NAME_WORD = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*")
 _ANONYMOUS = "Cliente de Hubara"
 _MAX_COMMENT = 1000
 
@@ -93,9 +96,15 @@ def reward_percent(submission: ReviewSubmission | None) -> int:
 
 
 def author_display(full_name: str | None) -> str:
-    """«Ana G.»: nombre de pila + inicial del apellido (Ley 1581: lo mínimo)."""
-    parts = [p for p in str(full_name or "").split() if p]
-    if not parts or " ".join(parts).lower() in _PLACEHOLDER_NAMES:
+    """«Ana G.»: nombre de pila + inicial del apellido (Ley 1581: lo mínimo).
+
+    Sale en la web y en el JSON-LD: solo palabras hechas de letras. Un correo,
+    etiquetas o un nombre de relleno quedan anónimos."""
+    text = str(full_name or "").strip()
+    if "@" in text or text.lower() in _PLACEHOLDER_NAMES:
+        return _ANONYMOUS
+    parts = [p for p in text.split() if _NAME_WORD.fullmatch(p)]
+    if not parts:
         return _ANONYMOUS
     first = parts[0].capitalize()
     if len(parts) == 1:

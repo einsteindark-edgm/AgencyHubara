@@ -128,3 +128,12 @@ def test_a_busy_conversation_waits_instead_of_interrupting():
     )
     assert (step.action, step.wait_ms, step.reason) == ("wait", 30 * MIN, "conversation_busy")
     assert plan_review_request(T0 + 48 * HOUR, _facts(conversation_busy=True), TIMING).reason == "expired"
+
+
+def test_another_unanswered_invitation_makes_this_one_wait():
+    """Premortem P10: dos pedidos entregados juntos no mandan dos invitaciones
+    seguidas; la segunda espera a que conteste la primera (o al tope)."""
+    step = plan_review_request(
+        T0 + 3 * HOUR, _facts(window_expires_at_ms=T0 + 10 * HOUR, another_invitation_pending=True), TIMING
+    )
+    assert (step.action, step.wait_ms, step.reason) == ("wait", 30 * MIN, "another_invitation_pending")

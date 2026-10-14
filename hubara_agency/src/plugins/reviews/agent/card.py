@@ -41,15 +41,19 @@ def _font(name: str, size: int, weight: int | None = None) -> ImageFont.FreeType
 
 
 def _photo_panel(photo: bytes | None) -> Image.Image | None:
+    """La foto recortada al panel izquierdo, o None (vela dibujada) si algo
+    falla en cualquier paso: una foto rara nunca deja la invitación sin enviar.
+    Un JPEG enorme se decodifica ya reducido (`draft`): la caja tiene 4 GB."""
     if not photo:
         return None
     try:
         img = Image.open(io.BytesIO(photo))
+        img.draft("RGB", (_PANEL_W * 2, CARD_SIZE[1] * 2))
         img.load()
+        img = ImageOps.exif_transpose(img).convert("RGB")
+        return ImageOps.fit(img, (_PANEL_W, CARD_SIZE[1]), method=Image.Resampling.LANCZOS)
     except Exception:  # noqa: BLE001 — foto ilegible: vela dibujada
         return None
-    img = ImageOps.exif_transpose(img).convert("RGB")
-    return ImageOps.fit(img, (_PANEL_W, CARD_SIZE[1]), method=Image.Resampling.LANCZOS)
 
 
 def _draw_candle(draw: ImageDraw.ImageDraw) -> None:

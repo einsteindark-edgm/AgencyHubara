@@ -36,10 +36,12 @@ def _api_base() -> str:
     return os.environ.get("HUBARA_API_BASE_URL", "http://hubara-api:8000").rstrip("/")
 
 
-async def escalate_low_rating(session_id: str, summary: str) -> None:
-    """La conversación pasa al equipo con el motivo (la calificación)."""
+async def escalate_low_rating(session_id: str, summary: str) -> bool:
+    """La conversación pasa al equipo con el motivo (la calificación). True si
+    chats confirma que quedó con el equipo (la pasó ahora o ya la tenía un
+    humano con tag HUMANO)."""
     path = f"/api/chats/session-actions/{quote(session_id, safe='')}/escalate"
-    await castkit.forward(
+    answer = await castkit.forward(
         None,  # sin request entrante: identidad de servicio
         "POST",
         path,
@@ -49,3 +51,4 @@ async def escalate_low_rating(session_id: str, summary: str) -> None:
         body={"reason_category": REASON_CATEGORY, "summary": summary[:2000]},
         auth="service",
     )
+    return bool(answer.get("escalated") or answer.get("already_human"))

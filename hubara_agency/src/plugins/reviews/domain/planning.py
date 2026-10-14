@@ -48,6 +48,9 @@ class ReviewRequestFacts:
     #: Escalación abierta al equipo, el cliente escribiendo ahora o Meta
     #: Business Agent al frente: la invitación espera (revisión M3).
     conversation_busy: bool = False
+    #: Otra invitación del mismo cliente (otro pedido) salió hace poco y no la
+    #: ha contestado: esta espera (premortem P10, dos pedidos entregados juntos).
+    another_invitation_pending: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,6 +86,8 @@ def plan_review_request(
         )
     if facts.conversation_busy:
         return ReviewStep(action="wait", wait_ms=timing.poll_ms, reason="conversation_busy")
+    if facts.another_invitation_pending:
+        return ReviewStep(action="wait", wait_ms=timing.poll_ms, reason="another_invitation_pending")
 
     window_open = (
         facts.window_expires_at_ms is not None and facts.window_expires_at_ms > now_ms

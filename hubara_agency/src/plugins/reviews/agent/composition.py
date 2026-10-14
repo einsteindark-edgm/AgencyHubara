@@ -35,18 +35,34 @@ class ReviewsDeps:
     coupons_ready: Any = None
 
 
-async def _fetch_url(url: str) -> bytes | None:
-    """La foto del producto (Medusa/R2) para la tarjeta; None si no se puede."""
+#: Tope de la foto del producto para la tarjeta (se lee por partes).
+_MAX_PRODUCT_PHOTO_BYTES = 8 * 1024 * 1024
+
+
+async def _fetch_url(url: str, *, transport: Any = None) -> bytes | None:
+    """La foto del producto (Medusa/R2) para la tarjeta; None si no se puede.
+
+    Solo https, con tope de bytes leído por partes (un archivo enorme no entra
+    entero en memoria — premortem P11) y sin seguir redirecciones."""
     import httpx
 
+    if not str(url).startswith("https://"):
+        return None
+    chunks: list[bytes] = []
+    size = 0
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            resp = await client.get(url)
+        async with httpx.AsyncClient(timeout=10.0, transport=transport) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    return None
+                async for chunk in resp.aiter_bytes():
+                    size += len(chunk)
+                    if size > _MAX_PRODUCT_PHOTO_BYTES:
+                        return None
+                    chunks.append(chunk)
     except httpx.HTTPError:
         return None
-    if resp.status_code != 200 or len(resp.content) > 8 * 1024 * 1024:
-        return None
-    return resp.content
+    return b"".join(chunks)
 
 
 def _quiet_hours_end(session_id: str, now_ms: int) -> int | None:
@@ -70,9 +86,13 @@ def _quiet_hours_end(session_id: str, now_ms: int) -> int | None:
     return probe
 
 
-async def coupons_ready(promotions: Any, codes: tuple[str, ...], now_ms: int) -> bool:
-    """¿Cada código existe, rige hoy y es personal (`granted_only`)? Un cupón
-    público con ese código sería un descuento para cualquiera."""
+async def coupons_ready(
+    promotions: Any, codes: tuple[str, ...], now_ms: int, *, valid_for_ms: int = 0
+) -> bool:
+    """¿Cada código existe, rige hoy, es personal (`granted_only`) y sigue
+    vigente `valid_for_ms` más (lo que se promete: 60 días desde que califique
+    — premortem P9)? Un cupón público con ese código sería un descuento para
+    cualquiera."""
     from src.sdk.connectorkit import coupon_problem
 
     for code in codes:
@@ -84,6 +104,9 @@ async def coupons_ready(promotions: Any, codes: tuple[str, ...], now_ms: int) ->
             return False
         if coupon_problem(promotion, now_ms=now_ms) is not None:
             return False
+        ends_at_ms = getattr(promotion, "ends_at_ms", None)
+        if ends_at_ms is not None and ends_at_ms < now_ms + valid_for_ms:
+            return False
     return True
 
 
@@ -92,6 +115,7 @@ def get_reviews_deps() -> ReviewsDeps:
     activity (R-STATELESS: el vault y los puertos los cachea su composición)."""
     import time
 
+    from src.plugins.reviews.agent.activities import MAX_PHOTO_BYTES
     from src.plugins.reviews.agent.settings import ReviewSettings
     from src.plugins.reviews.agent.store import ReviewsStore
     from src.plugins.reviews.api.chats_cast import escalate_low_rating
@@ -110,7 +134,7 @@ def get_reviews_deps() -> ReviewsDeps:
     from src.sdk.runtime import WORKSPACE_VAULT_DIR, FilesystemMetadataStore
 
     async def _fetch_media(media_id: str):
-        return await fetch_media_bytes(media_id, max_bytes=8 * 1024 * 1024)
+        return await fetch_media_bytes(media_id, max_bytes=MAX_PHOTO_BYTES)
 
     vault = Path(WORKSPACE_VAULT_DIR)
     settings = ReviewSettings.from_env()
@@ -120,6 +144,7 @@ def get_reviews_deps() -> ReviewsDeps:
             get_promotions_port(),
             (settings.coupon_code_5, settings.coupon_code_10),
             int(time.time() * 1000),
+            valid_for_ms=settings.timing.give_up_after_ms + settings.coupon_days * 86_400_000,
         )
 
     return ReviewsDeps(
