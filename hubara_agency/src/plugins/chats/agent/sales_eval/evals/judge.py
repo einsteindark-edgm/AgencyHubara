@@ -25,6 +25,15 @@ from __future__ import annotations
 import os
 from typing import Any
 
+# El interruptor vive en `judge_switch.py` (sin deepeval, para que la API lo lea);
+# se re-exporta acá para los workers que ya lo importan de este módulo.
+from src.plugins.chats.agent.sales_eval.evals.judge_switch import (
+    LLM_JUDGE_DISABLED_MSG as LLM_JUDGE_DISABLED_MSG,
+)
+from src.plugins.chats.agent.sales_eval.evals.judge_switch import (
+    llm_judge_enabled as llm_judge_enabled,
+)
+
 try:  # guard: importable sin el extra `evals`
     from deepeval.models import DeepEvalBaseLLM as _Base
 except Exception:  # noqa: BLE001
@@ -47,20 +56,6 @@ def get_judge_model_name() -> str:
     (`all_sales_metrics`) que el golden del CI — online y GitHub Action juzgan igual.
     """
     return os.getenv("EVAL_JUDGE_MODEL", _DEFAULT_JUDGE_MODEL)
-
-
-# APAGADO por defecto desde 2026-09-28 (decisión del operador: evaluar con IA
-# costaba demasiado). Gemini 3.1 Pro con razonamiento "high" hacía ~18 llamadas
-# de scorecard + ~28 de métricas DeepEval por CADA episodio cerrado, más el
-# barrido diario: ~USD 1 por episodio, ~200x lo que cuesta atenderlo. Todo
-# camino que llama al juez pasa por acá; los checks de código siguen (gratis).
-# Guard: tests/evals/test_llm_judge_switch.py.
-LLM_JUDGE_DISABLED_MSG = "el juez con IA está apagado (EVAL_LLM_JUDGE_ENABLED)"
-
-
-def llm_judge_enabled() -> bool:
-    """Interruptor único del juez LLM del eval. Env `EVAL_LLM_JUDGE_ENABLED`, default apagado."""
-    return os.getenv("EVAL_LLM_JUDGE_ENABLED", "false").strip().lower() in ("1", "true", "yes")
 
 
 class LiteLLMJudge(_Base):  # type: ignore[misc,valid-type]
