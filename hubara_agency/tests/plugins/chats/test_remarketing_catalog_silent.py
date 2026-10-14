@@ -345,3 +345,26 @@ async def test_el_trigger_recibe_el_caso_y_el_tope_real(monkeypatch) -> None:
     )
     assert "lo que la tarjeta del catálogo no le dijo" in text
     assert "toque 1 de 3" in text
+
+
+def test_los_datos_de_la_tienda_de_ventas_7_son_los_de_ventas() -> None:
+    # El 2º toque dice lo que dice Ventas: si cambia una tarifa o el mínimo del
+    # contra entrega en `shipping.py`, el paquete tiene que cambiar con ella.
+    from pathlib import Path
+
+    import yaml
+
+    from src.plugins.chats.agent.sales.config.shipping import (
+        CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
+        SHIPPING_RATE_BOGOTA_COP,
+        SHIPPING_RATE_NATIONAL_COP,
+    )
+    from src.plugins.chats.shared.store_pack import BUNDLES_DIR
+
+    vocab = yaml.safe_load((Path(BUNDLES_DIR) / "ventas-7" / "domain.yaml").read_text(encoding="utf-8"))["vocabulary"]
+    facts = vocab["practical_facts"]
+    for cop in (SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP, CASH_ON_DELIVERY_MIN_PRODUCTS_COP):
+        assert f"${cop:,}".replace(",", ".") in facts
+    assert numbers_in(" ".join(vocab["hook_examples_practical"])) and not invented_numbers(
+        " ".join(vocab["hook_examples_practical"]), numbers_in(facts)
+    ), "los ejemplos no pueden traer cifras que no estén en los datos"
