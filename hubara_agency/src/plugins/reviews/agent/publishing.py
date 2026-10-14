@@ -14,6 +14,7 @@ mucho una vez cada `every_ms`.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -27,6 +28,17 @@ _ANONYMOUS = "Cliente de Hubara"
 _MIMES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
 Rebuild = Callable[[int], Awaitable[None]]
+
+log = logging.getLogger(__name__)
+
+
+async def _rebuild_best_effort(rebuild: Rebuild, now_ms: int) -> None:
+    """La reseña ya está en Medusa: un hook caído no es una publicación fallida
+    (sale en la próxima reconstrucción)."""
+    try:
+        await rebuild(now_ms)
+    except Exception as exc:  # noqa: BLE001 — revisión L5
+        log.warning("storefront rebuild failed: %s", exc)
 
 
 class StorefrontRebuild:
@@ -57,9 +69,10 @@ class StorefrontRebuild:
             last = 0
         if now_ms - last < self._every_ms:
             return
+        await self._post(self._url)
+        # Solo un llamado que salió bien cuenta para el espaciado.
         self._marker.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(self._marker, {"last_at_ms": now_ms})
-        await self._post(self._url)
 
 
 async def _post_hook(url: str) -> None:
@@ -142,7 +155,7 @@ async def publish_review(
         status="approved",
         published={"at_ms": now_ms, "ids": ids, "photo_urls": list(photo_urls), "error": None},
     )
-    await rebuild(now_ms)
+    await _rebuild_best_effort(rebuild, now_ms)
     assert updated is not None
     return updated
 
@@ -154,7 +167,7 @@ async def hide_review(
     record = _get(store, review_id)
     if record.published.get("ids"):
         await _push(store, port, record, "hidden", tuple(record.published.get("photo_urls") or ()))
-        await rebuild(now_ms)
+        await _rebuild_best_effort(rebuild, now_ms)
     updated = store.update_review(review_id, status="hidden")
     assert updated is not None
     return updated
@@ -169,5 +182,5 @@ async def reply_review(
         raise KeyError(review_id)
     if record.status == "approved" and record.published.get("ids"):
         await _push(store, port, record, "approved", tuple(record.published.get("photo_urls") or ()))
-        await rebuild(now_ms)
+        await _rebuild_best_effort(rebuild, now_ms)
     return record

@@ -109,3 +109,35 @@ async def test_submission_workflow_processes_the_answer():
             )
     assert result == "stored"
     assert submissions[0].wa_message_id == "wamid.1"
+
+
+@pytest.mark.asyncio
+async def test_a_released_invitation_is_retried_later():
+    plans, sends, submissions = [], [], []
+    outcomes = ["retry", "sent"]
+
+    @activity.defn(name="reviews_plan_step")
+    async def fake_plan(inp: ReviewPlanInput) -> ReviewStepOut:
+        plans.append(inp)
+        return ReviewStepOut(action="send_flow", reason="window_open")
+
+    @activity.defn(name="reviews_send_request")
+    async def fake_send(inp: ReviewSendInput) -> ReviewSendOut:
+        sends.append(inp)
+        return ReviewSendOut(status=outcomes.pop(0), channel="flow")
+
+    @activity.defn(name="reviews_process_submission")
+    async def fake_submission(inp: ReviewSubmissionInput) -> str:
+        return "stored"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(env.client, task_queue=QUEUE, workflows=[ReviewRequestWorkflow, ReviewSubmissionWorkflow],
+                          activities=[fake_plan, fake_send, fake_submission]):
+            result = await env.client.execute_workflow(
+                ReviewRequestWorkflow.run,
+                ReviewRequestInput(session_id="wa_1", order_id="order_1", occurred_at_ms=1_791_000_000_000),
+                id="review-request-retry", task_queue=QUEUE,
+            )
+    assert result == "sent"
+    assert len(sends) == 2
+    assert plans[1].now_ms - plans[0].now_ms >= 30 * 60_000

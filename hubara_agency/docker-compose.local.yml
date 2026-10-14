@@ -435,7 +435,7 @@ services:
     - META_FLOW_ID_REVIEW=${META_FLOW_ID_REVIEW}
     - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
     - MEDUSA_ADMIN_TOKEN=${MEDUSA_ADMIN_TOKEN}
-    - HUBARA_API_BASE_URL=http://api:8000
+    - HUBARA_API_BASE_URL=http://hubara-api:8000
     - HUBARA_SERVICE_TOKEN=${HUBARA_SERVICE_TOKEN}
     - REVIEW_REQUESTS_MODE=${REVIEW_REQUESTS_MODE:-off}
     - REVIEW_TEST_SESSIONS=${REVIEW_TEST_SESSIONS:-}
@@ -443,5 +443,8 @@ services:
     - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:
     - hubara-vault-local:/app/hubara_vault
+    depends_on:
+      temporal:
+        condition: service_healthy
 volumes:
   hubara-vault-local:

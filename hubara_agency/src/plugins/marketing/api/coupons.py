@@ -19,10 +19,9 @@ convierte la respuesta en 500: el cambio ya está hecho; se registra en el log.
 """
 from __future__ import annotations
 
-from dataclasses import replace
-
 import logging
 import re
+from dataclasses import replace
 from datetime import date, datetime, time, timezone
 from typing import Any
 
@@ -46,7 +45,6 @@ from src.plugins.marketing.domain.coupons import (
 from src.sdk.castkit import current_actor
 from src.sdk.connectorkit import (
     CouponCodeTakenError,
-    CouponConditions,
     CouponConditionsError,
     CouponDeleteRefusedError,
     CouponNotFoundError,

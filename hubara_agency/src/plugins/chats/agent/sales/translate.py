@@ -477,6 +477,14 @@ def _is_review_reply(response_json: Any) -> bool:
     ).startswith(REVIEW_FLOW_TOKEN_PREFIX)
 
 
+def is_review_reply_message(msg: WhatsAppMessage) -> bool:
+    """¿Es la respuesta del formulario de calificación (plugin reviews)?"""
+    interactive = msg.interactive or {}
+    return interactive.get("type") == "nfm_reply" and _is_review_reply(
+        interactive.get("response_json")
+    )
+
+
 def _format_review_response(payload: dict[str, Any]) -> str:
     """`[calificación recibida] ★★★★☆ (4/5) · «comentario» · con foto`."""
     try:

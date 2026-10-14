@@ -27,6 +27,8 @@ with workflow.unsafe.imports_passed_through():
 _MAX_STEPS = 200
 #: Ninguna espera menor a un minuto (un dominio que diga 0 no hace spin).
 _MIN_WAIT = timedelta(minutes=1)
+#: Tras un fallo antes de hablar con Meta, cuánto esperar para reintentar.
+_RETRY_WAIT = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,12 @@ class ReviewRequestWorkflow:
                     retry_policy=RetryPolicy(maximum_attempts=1),
                     result_type=ReviewSendOut,
                 )
-                return out.status
+                if out.status != "retry":
+                    return out.status
+                # Falló antes de hablar con Meta: no salió nada. Se vuelve a
+                # planear más tarde (la invitación quedó libre).
+                await workflow.sleep(_RETRY_WAIT)
+                continue
             if action == "skip":
                 return step.reason
             await workflow.sleep(max(timedelta(milliseconds=step.wait_ms), _MIN_WAIT))

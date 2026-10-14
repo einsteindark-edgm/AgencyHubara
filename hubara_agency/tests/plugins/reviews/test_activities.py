@@ -83,7 +83,8 @@ class _Calls:
 
 
 def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
-          template_error: Exception | None = None, quiet_end=None, calls: _Calls | None = None) -> tuple[ReviewsDeps, _Calls]:
+          template_error: Exception | None = None, quiet_end=None, calls: _Calls | None = None,
+          coupons_ready: bool = True) -> tuple[ReviewsDeps, _Calls]:
     calls = calls or _Calls()
 
     async def upload_media(phone_id, content, mime):
@@ -114,6 +115,9 @@ def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
     async def escalate(session_id, summary):
         calls.escalations.append((session_id, summary))
 
+    async def ready() -> bool:
+        return coupons_ready
+
     env = {"REVIEW_REQUESTS_MODE": mode, "META_FLOW_ID_REVIEW": "FLOW1",
            "GOOGLE_REVIEW_URL": "https://hubara.com.co/opinar/"}
     deps = ReviewsDeps(
@@ -132,6 +136,7 @@ def _deps(tmp_path: Path, *, metadata=None, facts=None, mode="on", flow_ok=True,
         escalate=escalate,
         quiet_hours_end=lambda session_id, now_ms: quiet_end,
         vault_dir=tmp_path,
+        coupons_ready=ready,
     )
     return deps, calls
 
@@ -299,3 +304,64 @@ async def test_a_non_review_answer_is_ignored(tmp_path):
     deps, calls = _deps(tmp_path)
     assert await process_submission(deps, _submission(rating="9")) == "ignored"
     assert calls.ctas == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"tag": "HUMANO", "service_window_expires_at_ms": T0 + 10 * HOUR},
+        {"last_inbound_at_ms": T0 + 3 * HOUR - 5 * 60_000, "service_window_expires_at_ms": T0 + 27 * HOUR},
+    ],
+)
+async def test_plan_waits_while_the_conversation_is_busy(tmp_path, metadata):
+    deps, _ = _deps(tmp_path, metadata=metadata)
+    step = await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    assert (step.action, step.reason) == ("wait", "conversation_busy")
+
+
+@pytest.mark.asyncio
+async def test_plan_waits_until_the_thanks_coupons_exist_and_are_personal(tmp_path):
+    """Revisión M5: sin GRACIAS5/GRACIAS10 vigentes y «solo quien lo recibió»
+    no se invita (se prometería un cupón que no se aplica, o uno público)."""
+    deps, _ = _deps(tmp_path, coupons_ready=False, metadata={"service_window_expires_at_ms": T0 + 10 * HOUR})
+    step = await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    assert (step.action, step.reason) == ("wait", "coupon_not_configured")
+
+
+@pytest.mark.asyncio
+async def test_a_failure_before_meta_releases_the_invitation_to_retry(tmp_path):
+    """Revisión L2: si falla algo ANTES de hablar con Meta (Medusa, la foto),
+    no salió nada: la invitación se libera y el flujo la reintenta."""
+    deps, calls = _deps(tmp_path)
+
+    async def broken_upload(phone_id, content, mime):
+        raise RuntimeError("meta media down")
+
+    deps.upload_media = broken_upload
+    out = await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_flow", now_ms=T0 + 3 * HOUR))
+
+    assert out.status == "retry"
+    assert deps.store.get_request(ORDER) is None
+    assert calls.flows == [] and calls.templates == []
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_photo_header_resends_the_flow_without_it(tmp_path):
+    """Revisión L4: si Meta no acepta la foto arriba del formulario, va sin foto."""
+    deps, calls = _deps(tmp_path)
+    results = [
+        OutboundResult(wa_message_id=None, ok=False, error="(#131009) Parameter value is not valid"),
+        OutboundResult(wa_message_id="wamid.F2", ok=True),
+    ]
+
+    async def send_flow(session_id, flow, *, history_text, image_url=None):
+        calls.flows.append((session_id, flow, history_text))
+        return results.pop(0)
+
+    deps.send_flow = send_flow
+    out = await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_flow", now_ms=T0 + 3 * HOUR))
+
+    assert (out.status, out.channel) == ("sent", "flow")
+    assert [f.header_media_id for _, f, _ in calls.flows] == ["MEDIA_1", None]
+    assert calls.flows[1][1].header_text == "Califica tu pedido"

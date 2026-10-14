@@ -150,6 +150,10 @@ services:
     # entregado) + ReviewSubmissionWorkflow (respuesta del formulario). Nace
     # apagado por config (REVIEW_REQUESTS_MODE=off, Terraform review-config).
     # Vault completo: _reviews/ + _promotions/grants/ + wa_*/.
+    environment:
+      # 1–3★: pasa la conversación al equipo por session-actions@v1 (HTTP a
+      # la API) — el service en ESTE compose se llama `api` (PM-003).
+      HUBARA_API_BASE_URL: http://api:8000
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 

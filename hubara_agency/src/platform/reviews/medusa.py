@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+import httpx
+
 from src.platform.medusa.client import MedusaAPIError
 from src.platform.reviews.port import ProductReviewInput, ProductReviewsUnavailableError
 
@@ -55,3 +57,5 @@ class MedusaProductReviews:
             return await self._client.upload_file(filename, content, mime)
         except MedusaAPIError as exc:
             raise _unavailable(exc) from exc
+        except httpx.HTTPError as exc:
+            raise ProductReviewsUnavailableError(f"Medusa no respondió al subir la foto: {exc}") from exc

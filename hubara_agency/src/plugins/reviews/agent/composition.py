@@ -30,6 +30,9 @@ class ReviewsDeps:
     escalate: Any
     quiet_hours_end: Any
     vault_dir: Path
+    #: `() → bool`: GRACIAS5/GRACIAS10 existen, rigen y son «solo quien lo
+    #: recibió» (revisión M5: sin eso no se invita).
+    coupons_ready: Any = None
 
 
 async def _fetch_url(url: str) -> bytes | None:
@@ -67,9 +70,28 @@ def _quiet_hours_end(session_id: str, now_ms: int) -> int | None:
     return probe
 
 
+async def coupons_ready(promotions: Any, codes: tuple[str, ...], now_ms: int) -> bool:
+    """¿Cada código existe, rige hoy y es personal (`granted_only`)? Un cupón
+    público con ese código sería un descuento para cualquiera."""
+    from src.sdk.connectorkit import coupon_problem
+
+    for code in codes:
+        try:
+            promotion = await promotions.get_by_code(code)
+        except Exception:  # noqa: BLE001 — Medusa caído: aún no
+            return False
+        if promotion is None or not getattr(promotion, "granted_only", False):
+            return False
+        if coupon_problem(promotion, now_ms=now_ms) is not None:
+            return False
+    return True
+
+
 def get_reviews_deps() -> ReviewsDeps:
     """Las dependencias reales (worker). Se resuelven en cada llamada a la
     activity (R-STATELESS: el vault y los puertos los cachea su composición)."""
+    import time
+
     from src.plugins.reviews.agent.settings import ReviewSettings
     from src.plugins.reviews.agent.store import ReviewsStore
     from src.plugins.reviews.api.chats_cast import escalate_low_rating
@@ -77,6 +99,7 @@ def get_reviews_deps() -> ReviewsDeps:
         get_coupon_grants_store,
         get_order_facts_port,
         get_order_query_port,
+        get_promotions_port,
     )
     from src.sdk.mediakit import fetch_media_bytes, upload_media
     from src.sdk.messagingkit import (
@@ -90,8 +113,17 @@ def get_reviews_deps() -> ReviewsDeps:
         return await fetch_media_bytes(media_id, max_bytes=8 * 1024 * 1024)
 
     vault = Path(WORKSPACE_VAULT_DIR)
+    settings = ReviewSettings.from_env()
+
+    async def _coupons_ready() -> bool:
+        return await coupons_ready(
+            get_promotions_port(),
+            (settings.coupon_code_5, settings.coupon_code_10),
+            int(time.time() * 1000),
+        )
+
     return ReviewsDeps(
-        settings=ReviewSettings.from_env(),
+        settings=settings,
         store=ReviewsStore(vault),
         metadata=FilesystemMetadataStore(vault),
         order_facts=get_order_facts_port(),
@@ -106,4 +138,5 @@ def get_reviews_deps() -> ReviewsDeps:
         escalate=escalate_low_rating,
         quiet_hours_end=_quiet_hours_end,
         vault_dir=vault,
+        coupons_ready=_coupons_ready,
     )

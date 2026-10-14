@@ -117,3 +117,14 @@ def test_test_or_not_delivered_order_is_skipped():
 def test_already_requested_or_reviewed_is_skipped():
     assert plan_review_request(T0 + 3 * HOUR, _facts(already_requested=True), TIMING).reason == "already_requested"
     assert plan_review_request(T0 + 3 * HOUR, _facts(already_reviewed=True), TIMING).reason == "already_reviewed"
+
+
+def test_a_busy_conversation_waits_instead_of_interrupting():
+    """Revisión M3: con una escalación abierta al equipo, el cliente escribiendo
+    ahora o Meta Business Agent al frente, la invitación espera (el tope de 48 h
+    sigue mandando)."""
+    step = plan_review_request(
+        T0 + 3 * HOUR, _facts(window_expires_at_ms=T0 + 10 * HOUR, conversation_busy=True), TIMING
+    )
+    assert (step.action, step.wait_ms, step.reason) == ("wait", 30 * MIN, "conversation_busy")
+    assert plan_review_request(T0 + 48 * HOUR, _facts(conversation_busy=True), TIMING).reason == "expired"

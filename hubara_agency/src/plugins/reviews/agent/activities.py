@@ -49,12 +49,15 @@ from src.sdk.messagingkit import (
     InteractiveFlowOutbound,
     marketing_opt_out_info,
 )
+from src.sdk.runtime import mba_controls_thread
 
 _DAY_MS = 86_400_000
 #: Con Medusa sin responder, el flujo vuelve a mirar en este tiempo.
 _ORDER_UNKNOWN_RETRY_MS = 30 * 60_000
 #: La respuesta de Meta cuando la ventana de 24 h ya cerró.
 _WINDOW_CLOSED_CODE = "131047"
+#: El cliente escribió hace menos de esto: está conversando, no se interrumpe.
+_ACTIVE_CONVERSATION_MS = 30 * 60_000
 _MAX_PHOTO_BYTES = 8 * 1024 * 1024
 _FOOTER = "Hubara · Velas artesanales de Bogotá"
 
@@ -111,6 +114,10 @@ async def plan_step(deps: Any, inp: ReviewPlanInput) -> ReviewStepOut:
     if not settings.flow_id:
         return ReviewStepOut(action="skip", reason="flow_not_configured")
 
+    if deps.coupons_ready is not None and not await deps.coupons_ready():
+        # Sin los cupones personales listos no se promete nada; se reintenta
+        # (el tope de 48 h sigue mandando).
+        return ReviewStepOut(action="wait", wait_ms=settings.timing.poll_ms, reason="coupon_not_configured")
     snapshot = await deps.order_facts.get_facts([inp.order_id])
     fact = snapshot.facts.get(inp.order_id)
     if fact is None and inp.order_id in snapshot.unresolved:
@@ -129,10 +136,23 @@ async def plan_step(deps: Any, inp: ReviewPlanInput) -> ReviewStepOut:
             order_ok=order_ok,
             already_requested=deps.store.get_request(inp.order_id) is not None,
             already_reviewed=deps.store.get_review(review_id_for(inp.order_id)) is not None,
+            conversation_busy=_conversation_busy(metadata, inp.session_id, inp.now_ms),
         ),
         settings.timing,
     )
     return ReviewStepOut(action=step.action, wait_ms=step.wait_ms, reason=step.reason)
+
+
+def _conversation_busy(metadata: dict[str, Any], session_id: str, now_ms: int) -> bool:
+    """Escalación abierta al equipo (tag HUMANO: p. ej. llegó roto), el cliente
+    escribiendo en los últimos 30 min, o Meta Business Agent al frente del
+    hilo. La post-venta normal (ruta humano con tag COMPRA_EXITOSA) NO cuenta."""
+    if metadata.get("tag") == "HUMANO":
+        return True
+    last = metadata.get("last_inbound_at_ms")
+    if isinstance(last, int) and 0 <= now_ms - last < _ACTIVE_CONVERSATION_MS:
+        return True
+    return mba_controls_thread(metadata, session_id)
 
 
 # ── invitar ─────────────────────────────────────────────────────────────────
@@ -175,12 +195,24 @@ def _record_touch(deps: Any, session_id: str, order_id: str, kind: str, now_ms: 
     deps.metadata.update(session_id, _append)
 
 
+class _NotSent(Exception):
+    """Falló algo ANTES de hablar con Meta: no salió nada al cliente."""
+
+
 async def send_request(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
-    """Envía la invitación del pedido (una sola vez)."""
+    """Envía la invitación del pedido (una sola vez).
+
+    Si falla antes de llamar a Meta (Medusa, la foto, subirla), la invitación
+    se LIBERA y vuelve `retry`: el flujo la reintenta (revisión L2). Si falla
+    al enviar, queda `failed` y no se reintenta (dos invitaciones son peores
+    que ninguna)."""
     if not deps.store.claim_request(inp.order_id, session_id=inp.session_id, now_ms=inp.now_ms):
         return ReviewSendOut(status="already_requested")
     try:
         out = await _send(deps, inp)
+    except _NotSent as exc:
+        deps.store.release_request(inp.order_id)
+        return ReviewSendOut(status="retry", error=str(exc)[:300])
     except Exception as exc:  # noqa: BLE001 — se registra; no se reintenta
         out = ReviewSendOut(status="failed", error=f"{type(exc).__name__}: {exc}"[:300])
     deps.store.update_request(
@@ -197,13 +229,16 @@ async def send_request(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
 
 async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
     metadata = deps.metadata.read(inp.session_id) or {}
-    detail = await deps.order_query.get(inp.order_id)
-    if detail is None:
-        return ReviewSendOut(status="skipped", error="order_not_found")
-    reference = str(detail.summary.display_id or inp.order_id)[:20]
-    titles = [str(i.title) for i in detail.items_detail or [] if getattr(i, "title", None)]
-    card = render_review_card(reference, await _order_photo(deps, inp.session_id, inp.order_id, metadata, detail))
-    media_id = await deps.upload_media(_phone_number_id(metadata), card, "image/jpeg")
+    try:
+        detail = await deps.order_query.get(inp.order_id)
+        if detail is None:
+            return ReviewSendOut(status="skipped", error="order_not_found")
+        reference = str(detail.summary.display_id or inp.order_id)[:20]
+        titles = [str(i.title) for i in detail.items_detail or [] if getattr(i, "title", None)]
+        card = render_review_card(reference, await _order_photo(deps, inp.session_id, inp.order_id, metadata, detail))
+        media_id = await deps.upload_media(_phone_number_id(metadata), card, "image/jpeg")
+    except Exception as exc:  # noqa: BLE001 — nada salió: se reintenta
+        raise _NotSent(f"{type(exc).__name__}: {exc}") from exc
     token = review_flow_token(inp.order_id, str(inp.now_ms))
     action_data = flow_action_data(reference, titles)
 
@@ -219,9 +254,13 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
             footer=_FOOTER,
             header_media_id=media_id,
         )
-        result = await deps.send_flow(
-            inp.session_id, flow, history_text=f"{invitation_body(reference)}\n[{FLOW_CTA}]"
-        )
+        history_text = f"{invitation_body(reference)}\n[{FLOW_CTA}]"
+        result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
+        if not result.ok and _WINDOW_CLOSED_CODE not in str(result.error or ""):
+            # Revisión L4: si Meta no acepta la foto arriba del formulario, va
+            # con un título de texto (la invitación no se pierde por la foto).
+            flow = replace(flow, header_media_id=None, header_text="Califica tu pedido")
+            result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
         if result.ok:
             return ReviewSendOut(status="sent", channel="flow")
         if _WINDOW_CLOSED_CODE not in str(result.error or ""):

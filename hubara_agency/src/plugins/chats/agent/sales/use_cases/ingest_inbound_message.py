@@ -51,6 +51,7 @@ from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.cart_lines import CartLine, build_cart_note, lines_from_products
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from src.plugins.chats.agent.sales.translate import (
+    is_review_reply_message,
     EffectiveText,
     translate_to_effective_text,
 )
@@ -223,6 +224,10 @@ _PHOTO_NOTICE_TIMEOUT_S = 2.0
 #: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
 #: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
 _CAMPAIGN_COUPON_TIMEOUT_S = 5.0
+
+#: Reintentos del despacho de una calificación (revisión M1): Temporal puede
+#: fallar un instante y la calificación trae el cupón prometido.
+_REVIEW_DISPATCH_BACKOFF_S: tuple[float, ...] = (0.5, 1.0, 2.0)
 
 #: Lo que el cliente pide y no existe: el catálogo es el snapshot local (~30
 #: productos); el tope evita leer de más si crece, el timeout es por si no
@@ -549,6 +554,20 @@ class IngestInboundMessage:
         # después de uno más nuevo no la cierra hacia atrás.
         window_from_ms = _latest_inbound_ms(metadata, sent_ms, now_ms)
         arrived_after_window = compute_service_window_expiry(window_from_ms) <= now_ms
+        # --- 2-bis. Calificación del pedido (reseñas, 2026-10-13) ---
+        # La respuesta del formulario de calificación la procesa el plugin
+        # `reviews` (reseña, cupón, gracias). Va ANTES del ciclo de episodios
+        # (revisión H2): quien ya compró y califica no abre un episodio
+        # NO_ETIQUETADO (la reactivación lo vería como lead frío) ni se le
+        # programa el watchdog; sí reabre la ventana (el gracias la usa) y el
+        # mensaje queda en el chat. Una calificación vale aunque llegue tarde.
+        if is_review_reply_message(parsed):
+            await self._ingest_review_reply(
+                session_id, parsed, metadata, base,
+                now_ms=now_ms, sent_ms=sent_ms, window_from_ms=window_from_ms,
+                arrived_after_window=arrived_after_window,
+            )
+            return
         # Re-engagement (bug run 3b3fbaee): si el último episodio ya estaba
         # CERRADO, este inbound abre uno nuevo. Capturamos el episodio cerrado
         # ANTES de que `ensure_active_episode` mute `episodes[]`, para inyectar
@@ -1350,20 +1369,6 @@ class IngestInboundMessage:
             # el pop para que no quede zombie en metadata.
             self._safe_write_metadata(session_id, metadata, base)
 
-        # --- 7.5. Calificación del pedido (reseñas, 2026-10-13) ---
-        # La respuesta del formulario de calificación la procesa el plugin
-        # `reviews` (reseña, cupón, gracias): ya quedó en el chat; el bot de
-        # ventas no toma el turno. Va antes del corte por re-entrega tardía:
-        # una calificación vale aunque llegue con la ventana cerrada.
-        if (effective.structured_payload or {}).get("kind") == "review_reply":
-            await self._emit_review_submitted(
-                session_id,
-                parsed.message_id or "",
-                effective.structured_payload.get("response_json") or {},
-                sent_ms,
-            )
-            return
-
         # Re-entrega tardía (ver 2): el mensaje ya quedó en el chat con la
         # ventana cerrada; el bot no puede escribirle texto libre (Meta lo
         # rechaza, 131047). No es un traspaso al humano (una falla técnica no
@@ -1661,6 +1666,39 @@ class IngestInboundMessage:
         except Exception:  # noqa: BLE001
             return []
 
+    async def _ingest_review_reply(
+        self,
+        session_id: str,
+        parsed: WhatsAppMessage,
+        metadata: dict[str, Any],
+        base: dict[str, Any],
+        *,
+        now_ms: int,
+        sent_ms: int,
+        window_from_ms: int,
+        arrived_after_window: bool,
+    ) -> None:
+        """La calificación: ventana + chat + `ReviewSubmittedEvent`, nada más."""
+        metadata["last_inbound_at_ms"] = window_from_ms
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(window_from_ms)
+        if parsed.message_id:
+            metadata["last_inbound_message_id"] = parsed.message_id
+        self._safe_write_metadata(session_id, metadata, base)
+        effective = await translate_to_effective_text(parsed)
+        self._history_store.append_user_event(
+            session_id,
+            effective.text,
+            **_build_reply_kwargs(parsed, metadata, None),
+            **_late_delivery_kwargs(sent_ms, now_ms, arrived_after_window),
+        )
+        await self._emit_review_submitted(
+            session_id,
+            # Sin wamid (raro), un id propio: el workflow es por mensaje.
+            parsed.message_id or f"{session_id}-{sent_ms}",
+            (effective.structured_payload or {}).get("response_json") or {},
+            sent_ms,
+        )
+
     async def _emit_review_submitted(
         self,
         session_id: str,
@@ -1670,36 +1708,53 @@ class IngestInboundMessage:
     ) -> None:
         """`ReviewSubmittedEvent` al plugin de reseñas por el dispatcher.
 
-        Se espera (no fire-and-forget): perder la calificación es perder el
-        cupón prometido. Si Temporal falla queda en el log con el wamid para
-        re-despacharla; el mensaje ya está en el chat."""
+        Se espera y se reintenta (perder la calificación es perder el cupón
+        prometido; el webhook ya respondió 200 y Meta no la reentrega). Si
+        Temporal sigue caído, queda en `pending_review_submissions` del
+        metadata (recuperable: se re-despacha a mano con el mismo evento) y
+        un error en el log."""
+        import asyncio
         import json as _json
 
-        if self._temporal_client_factory is None:
-            logger.warning("review_submitted_without_dispatcher", session_id=session_id)
-            return
-        try:
-            client = await self._temporal_client_factory()
-            await dispatch_envelope_with_client(
-                envelope_for(
-                    ReviewSubmittedEvent(
-                        session_id=session_id,
-                        wa_message_id=wa_message_id,
-                        response_json=_json.dumps(response_json, ensure_ascii=False),
-                        received_at_ms=received_at_ms,
-                    ),
-                    source_plugin="chats",
-                    source_worker="sales",
-                ),
-                client,
+        payload = _json.dumps(response_json, ensure_ascii=False)
+        event = ReviewSubmittedEvent(
+            session_id=session_id,
+            wa_message_id=wa_message_id,
+            response_json=payload,
+            received_at_ms=received_at_ms,
+        )
+        last_error = "sin dispatcher"
+        if self._temporal_client_factory is not None:
+            for delay in (0.0, *_REVIEW_DISPATCH_BACKOFF_S[:-1]):
+                if delay:
+                    await asyncio.sleep(delay)
+                try:
+                    client = await self._temporal_client_factory()
+                    await dispatch_envelope_with_client(
+                        envelope_for(event, source_plugin="chats", source_worker="sales"),
+                        client,
+                    )
+                    return
+                except Exception as exc:  # noqa: BLE001 — se reintenta y se guarda
+                    last_error = type(exc).__name__
+        logger.error(
+            "review_submitted_dispatch_failed",
+            session_id=session_id,
+            wa_message_id=wa_message_id,
+            reason=last_error,
+        )
+
+        def _keep(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            pending = list(fresh.get("pending_review_submissions") or [])
+            if any(p.get("wa_message_id") == wa_message_id for p in pending):
+                return None
+            pending.append(
+                {"wa_message_id": wa_message_id, "response_json": payload, "received_at_ms": received_at_ms}
             )
-        except Exception as exc:  # noqa: BLE001 — el webhook no se cae
-            logger.error(
-                "review_submitted_dispatch_failed",
-                session_id=session_id,
-                wa_message_id=wa_message_id,
-                reason=type(exc).__name__,
-            )
+            fresh["pending_review_submissions"] = pending[-20:]
+            return fresh
+
+        self._update_best_effort(session_id, _keep, what="calificacion_pendiente")
 
     async def _check_thanks_coupon(
         self, session_id: str, now_ms: int

@@ -55,3 +55,21 @@ def test_quiet_hours_end_is_none_by_day_and_the_morning_by_night():
     eleven_pm = noon_bogota + 11 * 3_600_000  # 23:00 COT
     end = _quiet_hours_end("wa_573001234567", eleven_pm)
     assert end is not None and end - eleven_pm == 9 * 3_600_000  # 08:00
+
+
+@pytest.mark.asyncio
+async def test_coupons_are_ready_only_when_both_are_active_and_personal(monkeypatch):
+    from dataclasses import replace
+
+    from src.platform.promotions.port import FakePromotionsPort
+    from src.plugins.reviews.agent.composition import coupons_ready
+    from tests.plugins.chats.sales.test_coupon_tools import _promo
+
+    g5 = _promo(id="p5", code="GRACIAS5", value=5, granted_only=True)
+    g10 = _promo(id="p10", code="GRACIAS10", value=10, granted_only=True)
+    now = 1_791_000_000_000
+
+    assert await coupons_ready(FakePromotionsPort([g5, g10]), ("GRACIAS5", "GRACIAS10"), now) is True
+    assert await coupons_ready(FakePromotionsPort([g5]), ("GRACIAS5", "GRACIAS10"), now) is False
+    public = replace(g10, granted_only=False)
+    assert await coupons_ready(FakePromotionsPort([g5, public]), ("GRACIAS5", "GRACIAS10"), now) is False

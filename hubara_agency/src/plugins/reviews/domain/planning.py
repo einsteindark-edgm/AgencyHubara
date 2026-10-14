@@ -45,6 +45,9 @@ class ReviewRequestFacts:
     order_ok: bool
     already_requested: bool
     already_reviewed: bool
+    #: Escalación abierta al equipo, el cliente escribiendo ahora o Meta
+    #: Business Agent al frente: la invitación espera (revisión M3).
+    conversation_busy: bool = False
 
 
 @dataclass(frozen=True)
@@ -78,6 +81,8 @@ def plan_review_request(
         return ReviewStep(
             action="wait", wait_ms=facts.quiet_hours_end_ms - now_ms, reason="quiet_hours"
         )
+    if facts.conversation_busy:
+        return ReviewStep(action="wait", wait_ms=timing.poll_ms, reason="conversation_busy")
 
     window_open = (
         facts.window_expires_at_ms is not None and facts.window_expires_at_ms > now_ms

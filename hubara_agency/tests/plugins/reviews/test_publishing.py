@@ -131,3 +131,32 @@ async def test_storefront_rebuild_is_debounced_and_skipped_without_a_hook(tmp_pa
     silent = StorefrontRebuild(tmp_path, url="PLACEHOLDER_set_out_of_band", post=post)
     await silent(NOW + 10_000_000)
     assert len(posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failing_deploy_hook_does_not_fail_the_publication(tmp_path):
+    """Revisión L5: la reseña ya está en Medusa; el hook se reintenta después."""
+    store, port = ReviewsStore(tmp_path), FakeProductReviews()
+    review_id = _seed(store)
+
+    async def broken(now_ms):
+        raise RuntimeError("cloudflare 500")
+
+    record = await publish_review(store, port, review_id, now_ms=NOW, rebuild=broken)
+    assert record.status == "approved"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_hook_call_is_not_counted_as_done(tmp_path):
+    calls = []
+
+    async def post(url):
+        calls.append(url)
+        if len(calls) == 1:
+            raise RuntimeError("cloudflare 500")
+
+    rebuild = StorefrontRebuild(tmp_path, url="https://hooks.test/deploy", post=post, every_ms=600_000)
+    with pytest.raises(RuntimeError):
+        await rebuild(NOW)
+    await rebuild(NOW + 1000)
+    assert len(calls) == 2

@@ -109,6 +109,11 @@ class ReviewsStore:
             json.dump(record, fh, ensure_ascii=False)
         return True
 
+    def release_request(self, order_id: str) -> None:
+        """Suelta una invitación que NO llegó a Meta (falló antes): el flujo
+        puede reclamarla otra vez."""
+        self._request_path(order_id).unlink(missing_ok=True)
+
     def get_request(self, order_id: str) -> dict[str, Any] | None:
         try:
             data = json.loads(self._request_path(order_id).read_text(encoding="utf-8"))
