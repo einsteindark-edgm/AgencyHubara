@@ -1,6 +1,7 @@
-"""Workflows del agente sales_eval (evaluación de calidad)."""
-from __future__ import annotations
+"""Workflows del agente sales_eval (evaluación de calidad).
 
-from src.plugins.chats.agent.sales_eval.workflows.sales_eval import SalesEvalWorkflow
-
-__all__ = ["SalesEvalWorkflow"]
+Sin re-exports: cada consumidor importa su submódulo. Re-exportar
+`SalesEvalWorkflow` acá hacía que tomar un id liviano (`lab_launch`) desde la API
+arrastrara las activities del eval y con ellas deepeval (memoria de la caja de
+app, 2026-10-14). Guard: tests/plugins/chats/test_api_boot_without_deepeval.py.
+"""
