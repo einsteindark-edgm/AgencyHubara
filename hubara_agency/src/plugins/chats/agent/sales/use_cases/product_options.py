@@ -93,6 +93,17 @@ def _real_options(product: Any) -> dict[str, list[str]]:
     return {name: values for name, values in real.items() if len(values) >= 2}
 
 
+def options_to_choose(product: Any) -> dict[str, list[str]]:
+    """Las opciones de Medusa que el cliente escoge antes de cerrar: {eje:
+    valores}, con «color» para la opción de color y el nombre de las demás
+    («signo»). Las velas de deseos: {"color": ["Rojo y verde", "Multicolor"]}
+    (2026-10-14, ···0686: sin esto el pedido se registró sin color)."""
+    return {
+        ("color" if product_key(name) in _COLOR_OPTIONS else product_key(name)): values
+        for name, values in _real_options(product).items()
+    }
+
+
 def colors_of(product: Any) -> list[str]:
     """Los colores del producto. Con el mapeo variante→color de la metadata
     (Duo Zodiacal), su paleta: las etiquetas pueden estar viejas. Si no, sus
@@ -233,6 +244,7 @@ __all__ = [
     "focus_products",
     "option_problem",
     "option_sheets",
+    "options_to_choose",
     "presentations_of",
     "single_sheets",
 ]

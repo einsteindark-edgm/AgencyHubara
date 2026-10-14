@@ -74,11 +74,16 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     set_product_lines,
     update_order_draft,
 )
+from src.plugins.chats.agent.sales.use_cases.product_options import options_to_choose
 from src.plugins.chats.shared.draft_items import (
+    CHOICE_FIELDS,
     ITEM_FIELDS,
     NOT_OFFERED_KEY,
+    TO_CHOOSE_KEY,
+    chooses,
     draft_items,
     product_key,
+    to_choose,
 )
 from src.plugins.chats.shared.store_pack import vocabulary
 
@@ -348,7 +353,9 @@ class SetOrderSlotTool(ToolBase):
         ]
         valid_by_kind = {
             "aroma": attrs.aromas,
-            "color": attrs.colors,
+            # Sin etiquetas «Color:», los valores de la opción «Color» de
+            # Medusa (las velas de deseos, 2026-10-14).
+            "color": attrs.colors or options_to_choose(product).get("color", []),
             "diseno": design_values,
         }
         canonical_values: dict[str, str] = {}
@@ -583,8 +590,8 @@ class SetOrderSlotTool(ToolBase):
         if rejected:
             return producto, None, rejected
         set_product_lines(data, producto=producto, lines=lines, now_ms=now_ms)
-        if not_offered and product is not None:
-            _mark_not_offered(data, product, sorted(not_offered), producto)
+        if product is not None:
+            _mark_options(data, product, sorted(not_offered), producto)
         if tones:
             # El tono pedido queda para el operador (empaque), como en un ítem.
             note = f"{producto}: tono de color pedido por el cliente, " + "; ".join(tones)
@@ -994,7 +1001,8 @@ class SetOrderSlotTool(ToolBase):
         # y nunca sobre lo que el modelo dio, borró o le rechazaron.
         auto_filled: dict[str, str] = {}
         not_offered: list[str] = []
-        if product is not None and len(own) <= 1 and any(k in provided for k in ITEM_FIELDS):
+        options_read = product is not None and len(own) <= 1 and any(k in provided for k in ITEM_FIELDS)
+        if options_read:
             auto_filled, not_offered = _only_options(product, provided, target_item or {}, rejected)
             provided.update(auto_filled)
 
@@ -1012,8 +1020,8 @@ class SetOrderSlotTool(ToolBase):
         wrote = bool(provided) and not (injected and set(provided) == {"producto"})
         if wrote:
             update_order_draft(data, slots=provided, now_ms=now_ms)
-            if not_offered and product is not None:
-                _mark_not_offered(data, product, not_offered, provided.get("producto"))
+            if options_read:
+                _mark_options(data, product, not_offered, provided.get("producto"))
         if wrote or lines_written is not None:
             self._store.write_merged(ctx.session_key, base=base, ours=data)
         wrote = wrote or lines_written is not None
@@ -1100,6 +1108,14 @@ class SetOrderSlotTool(ToolBase):
             envelope["summary"] += (
                 f" El producto tiene una sola opción de {only}: quedó anotada y NO se le pregunta al cliente."
             )
+        pending = _pending_choices(data, touched)
+        if pending:
+            # 2026-10-14 (···0686): la opción de Medusa sin escoger no frenaba nada.
+            envelope["to_choose"] = pending
+            envelope["summary"] += (
+                f" Falta que el cliente escoja {_choices_text(pending)} de {touched}: pregúntaselo (con "
+                "present_variant_picker) antes del resumen del pedido; el resumen y el registro no salen sin eso."
+            )
         if rejected:
             envelope["rejected"] = rejected
             parts = []
@@ -1169,12 +1185,14 @@ class SetOrderSlotTool(ToolBase):
 
 def offered_options(product: Any) -> dict[str, list[str]]:
     """Las opciones que el catálogo le ofrece al cliente: aroma por tags;
-    color por la paleta real (`metadata.colores`) si existe, si no por tags
-    (la misma lista con que `_check_values` valida)."""
+    color por la paleta real (`metadata.colores`) si existe, si no por tags y,
+    sin ellos, por la opción «Color» de Medusa (la misma lista con que
+    `_check_values` valida; 2026-10-14: las velas de deseos quedaban «sin
+    color»)."""
     attrs = parse_variant_tags(product.tags)
     variant_colors = parse_variant_colors(product.metadata)
     colors = primary_colors(variant_colors) if variant_colors else list(attrs.colors)
-    return {"aroma": list(attrs.aromas), "color": colors}
+    return {"aroma": list(attrs.aromas), "color": colors or options_to_choose(product).get("color", [])}
 
 
 def _only_options(
@@ -1200,19 +1218,51 @@ def _only_options(
     return filled, not_offered
 
 
-def _mark_not_offered(data: dict[str, Any], product: Any, kinds: list[str], name: Any) -> None:
-    """`order_draft[NOT_OFFERED_KEY][producto] = atributos sin opciones`, con
-    el nombre que quedó en el ítem (la etapa lo busca así: con el handle, la
-    marca por título no se encontraba — revisión del premortem 2026-10-09),
-    el título y el handle."""
+def _mark_options(data: dict[str, Any], product: Any, kinds: list[str], name: Any) -> None:
+    """Lo que el catálogo dice del producto, leído en esta llamada:
+    `order_draft[NOT_OFFERED_KEY][producto]` = atributos sin opciones y
+    `order_draft[TO_CHOOSE_KEY][producto]` = las opciones de Medusa que se
+    escogen. Se reescriben (una marca vieja se corrige: 2026-10-14, el color de
+    las velas de deseos quedaba «sin opciones»), con el nombre que quedó en el
+    ítem (la etapa lo busca así: con el handle, la marca por título no se
+    encontraba — revisión del premortem 2026-10-09), el título y el handle."""
     draft = get_active_draft(data)
     if not isinstance(draft, dict):
         return
-    marks = draft.get(NOT_OFFERED_KEY)
-    marks = dict(marks) if isinstance(marks, dict) else {}
-    for key in {product_key(name), product_key(product.title), product_key(product.handle)} - {""}:
-        marks[key] = sorted(set(marks.get(key) or []) | set(kinds))
-    draft[NOT_OFFERED_KEY] = marks
+    choose = options_to_choose(product)
+    keys = {product_key(name), product_key(product.title), product_key(product.handle)} - {""}
+    for mark, value in ((NOT_OFFERED_KEY, sorted(set(kinds))), (TO_CHOOSE_KEY, choose)):
+        marks = draft.get(mark)
+        marks = dict(marks) if isinstance(marks, dict) else {}
+        for key in keys:
+            if value:
+                marks[key] = value
+            else:
+                marks.pop(key, None)
+        if marks:
+            draft[mark] = marks
+        else:
+            draft.pop(mark, None)
+
+
+def _pending_choices(data: dict[str, Any], producto: Any) -> dict[str, list[str]]:
+    """Las opciones de Medusa que el producto pide escoger y alguna línea suya
+    (o el producto, sin líneas) todavía no tiene: lo que se le dice al modelo
+    en el sobre."""
+    if not producto:
+        return {}
+    draft = get_active_draft(data)
+    options = to_choose(draft, producto)
+    lines = [i for i in draft_items(draft) if product_key(i.get("producto")) == product_key(producto)]
+    return {
+        axis: values for axis, values in options.items()
+        if not lines or any(not chooses([line.get(k) for k in CHOICE_FIELDS], values) for line in lines)
+    }
+
+
+def _choices_text(pending: dict[str, list[str]]) -> str:
+    """«el color (Rojo y verde o Multicolor)»."""
+    return " y ".join(f"el {axis} ({' o '.join(values)})" for axis, values in pending.items())
 
 
 def _find_product(products: list[Any], name: Any) -> Any | None:

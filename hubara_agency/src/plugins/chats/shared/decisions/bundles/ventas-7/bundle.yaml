@@ -28,6 +28,13 @@
 #     (12 conversaciones, Jev real): antes, dos respuestas le daban la razón
 #     («Sí, $25.000 + $22.500 son $47.500», «las dos velas suman $45.000»);
 #     después, ninguna, con tres retenciones y las tres corregidas.
+# Y en el contrato del turno (···0686, 2026-10-14): el bot preguntó «¿rojo y
+# verde o multicolor?», la clienta contestó por el envío y el pago y el color no
+# volvió. En `etapa_variantes`, querer cerrar (cómo pagar, sus datos, confirmar)
+# pide `present_variant_picker` en ese turno (una prueba lo exige:
+# test_decisions_ventas_7_variante_al_cerrar.py). La etapa ya sabe de la opción
+# «Color» de Medusa y el resumen y el registro no salen sin ella: eso es del
+# catálogo, en código (test_order_real_options.py, test_closing_variant_choice.py).
 # `send_reply` y las tarjetas con texto del modelo (`tools/fact_check.py`)
 # juntan todas en una retención con lo que es cierto: lo ya dicho sale al
 # segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).

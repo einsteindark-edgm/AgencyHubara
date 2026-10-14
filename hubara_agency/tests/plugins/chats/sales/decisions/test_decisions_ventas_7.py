@@ -131,15 +131,28 @@ def test_ventas_7_is_certified() -> None:
     assert load_bundle(V7, CATALOG_PATH).ref == "ventas-7@7"
 
 
+#: Las filas del contrato que piden el selector al querer cerrar sin la variante
+#: (test_decisions_ventas_7_variante_al_cerrar.py) y sus ejemplos.
+CLOSING_WITHOUT_VARIANT = ("pagos", "datos_envio", "confirma_compra")
+
+
 def _without_catalog_verification(turn: dict[str, Any]) -> dict[str, Any]:
     """El turno sin ③ del catálogo (test_decisions_ventas_7_verifica.py): la
     pregunta y el complemento del asunto `catalogo` y lo que ve ③
-    (`reply_state.contents`, `with_context`). Lo demás tiene que ser ventas-6."""
+    (`reply_state.contents`, `with_context`), y sin las filas del contrato que
+    piden el selector al querer cerrar sin la variante. Lo demás tiene que ser
+    ventas-6."""
     q = turn["questionnaire"]
     topics = [{k: v for k, v in t.items() if not (t["id"] == "catalogo" and k in {"verify", "complement"})}
               for t in q["topics"]]
     reply_state = {k: v for k, v in q["reply_state"].items() if k not in {"contents", "with_context"}}
-    return {**turn, "questionnaire": {**q, "topics": topics, "reply_state": reply_state}}
+    contract = [r for r in turn["contract"] if r["topic"] not in CLOSING_WITHOUT_VARIANT]
+    examples = {
+        **turn["examples"],
+        "contract": [e for e in turn["examples"]["contract"] if not set(e["topics"]) & set(CLOSING_WITHOUT_VARIANT)],
+    }
+    return {**turn, "questionnaire": {**q, "topics": topics, "reply_state": reply_state}, "contract": contract,
+            "examples": examples}
 
 
 #: El dominio de ventas-7 trae además los datos de envío/pago del 2º toque del

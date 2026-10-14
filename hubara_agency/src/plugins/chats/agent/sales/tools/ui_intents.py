@@ -1851,6 +1851,25 @@ class PresentOrderConfirmationTool(ToolBase):
                     "set_order_slot(lineas=...)."
                 ),
             }, ensure_ascii=False)
+        # La opción de Medusa sin escoger (2026-10-14, ···0686: «2× Velas de
+        # deseos cuadradas» salió sin color y Medusa cayó a la primera variante).
+        from src.plugins.chats.agent.sales.use_cases.option_choice import unchosen_options
+
+        unchosen = await unchosen_options(self._catalog, items, metadata_now)
+        if unchosen:
+            logger.warning(
+                "🧾 [TOOL present_order_confirmation] rechazada session={}: variant_not_chosen {}",
+                ctx.session_key, unchosen,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "variant_not_chosen",
+                "message": (
+                    f"Falta que el cliente escoja {'; '.join(unchosen)}. NO se encoló la confirmación: "
+                    "pregúntaselo con present_variant_picker, anota lo que escoja con set_order_slot y "
+                    "vuelve a llamar present_order_confirmation con el `color` de cada producto."
+                ),
+            }, ensure_ascii=False)
         # Un producto que va en varias líneas: la tarjeta dice la variante de
         # cada una (si no, el cliente ve dos renglones iguales).
         handles = [str(it["handle"]) for it in items]

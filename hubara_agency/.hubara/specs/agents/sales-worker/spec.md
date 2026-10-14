@@ -159,6 +159,16 @@ Medusa live durante la conversación (latency + cuota).
 - AND una elección doble se reparte por la opción más larga que exista («Multicolor y Rojo y verde» → `Multicolor, Rojo y verde`); «Drakar y Café» se sigue partiendo en dos
 - AND si el valor es de otro producto del catálogo, el rechazo trae `belongs_to` con ese producto
 
+#### Scenario: la opción de Medusa se escoge antes de cerrar (···0686, 2026-10-14)
+
+- GIVEN un producto con una opción de Medusa de dos valores o más y sin etiquetas que la nombren (Velas de deseos: `Color` = «Rojo y verde» / «Multicolor», etiqueta solo `Aroma: Navidad`; Duo Zodiacal: `Signo`)
+- WHEN el LLM invoca `set_order_slot(producto=…, cantidad=…)` sin la opción
+- THEN el borrador la anota en `order_draft.por_elegir` (no en `sin_opciones`), la etapa se queda en `etapa_variantes` hasta que el color, el diseño o el aroma del ítem tenga uno de sus valores, y el sobre trae `to_choose` y le pide preguntarla con `present_variant_picker` antes del resumen
+- AND el color se valida contra esa opción si el producto no tiene etiquetas `Color:` ni `metadata.colores`
+- AND una marca vieja (`sin_opciones: color` de antes del arreglo) se corrige en la siguiente llamada; un borrador sin `por_elegir` se lee como antes
+- AND `present_order_confirmation` y `register_order` (este, solo con `closing_guard`: el operador del panel no se frena) MUST NOT salir sin uno de sus valores en la línea (color, diseño, aroma o `variant_label`) o en el borrador: vuelven con `variant_not_chosen` y lo que falta escoger. Sin catálogo o sin el producto, no frenan
+- AND en `ventas-7`, en `etapa_variantes`, preguntar cómo pagar, dar los datos de envío o confirmar pide `present_variant_picker` en ese turno (fila del contrato); el envío sigue pidiendo sus tarifas
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`

@@ -373,6 +373,23 @@ contract:
   - topic: aroma
     any_of: [present_variant_picker, present_product_detail, get_product_by_handle]
     nudge: "Los colores y aromas salen del catálogo: para que escoja uno usa present_variant_picker con el handle del producto; para mostrarle el producto, present_product_detail."
+  # ventas-7 (2026-10-14, ···0686): el bot preguntó «¿rojo y verde o
+  # multicolor?» y la clienta contestó por el envío y el pago; el color no
+  # volvió y el pedido salió sin él. Con la variante sin escoger, querer
+  # cerrar (cómo pagar, sus datos, confirmar) pide el selector en ese turno.
+  # El envío sigue pidiendo sus tarifas (su fila va antes).
+  - topic: pagos
+    when: "inp.stage == 'etapa_variantes'"
+    any_of: [present_variant_picker]
+    nudge: "Antes de cerrar falta que escoja la variante (por ejemplo, el color): pregúntasela con present_variant_picker en este mismo turno, junto con lo que preguntó; el resumen y el registro no salen sin ella."
+  - topic: datos_envio
+    when: "inp.stage == 'etapa_variantes'"
+    any_of: [present_variant_picker]
+    nudge: "Antes de cerrar falta que escoja la variante (por ejemplo, el color): pregúntasela con present_variant_picker en este mismo turno, junto con lo que preguntó; el resumen y el registro no salen sin ella."
+  - topic: confirma_compra
+    when: "inp.stage == 'etapa_variantes'"
+    any_of: [present_variant_picker]
+    nudge: "Antes de cerrar falta que escoja la variante (por ejemplo, el color): pregúntasela con present_variant_picker en este mismo turno, junto con lo que preguntó; el resumen y el registro no salen sin ella."
   - topic: disponibilidad
     any_of: [search_products, get_product_by_handle]
     nudge: "La disponibilidad sale del catálogo: consúltala con search_products o get_product_by_handle."
@@ -444,6 +461,9 @@ examples:
     - {topics: [aroma], answers: {aroma.notas: 0.85}, input: {stage: etapa_variantes}, expect: []}
     - {topics: [aroma], answers: {aroma.notas: 0.85}, input: {stage: etapa_descubrimiento}, expect: []}
     - {topics: [aroma], answers: {aroma.notas: 0.84}, input: {stage: etapa_variantes}, expect: [{topic: aroma, any_of: [present_variant_picker]}]}
+    # ventas-7 (···0686): querer cerrar con la variante sin escoger pide el selector; el envío, sus tarifas.
+    - {topics: [envio, pagos], input: {stage: etapa_variantes}, expect: [{topic: envio, any_of: [send_shipping_rates]}, {topic: pagos, any_of: [present_variant_picker]}]}
+    - {topics: [pagos, datos_envio, confirma_compra], input: {stage: etapa_datos_envio}, expect: []}
   verify:
     - {topics: [precio, envio], answers: {cover.precio: 0.70, cover.envio: 0.95}, expect: {decision: send}}
     - {topics: [precio, envio], answers: {cover.precio: 0.30000000000000004, cover.envio: 0.5}, expect: {decision: complement, missing: [precio]}}
