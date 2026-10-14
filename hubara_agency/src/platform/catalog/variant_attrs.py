@@ -23,6 +23,8 @@ _COLOR_PREFIX = "color:"
 # Separadores aceptados cuando un slot trae varias elecciones en un string
 # ("Drakar, Café" / "Drakar y Café" / "Drakar / Café").
 _MULTI_SPLIT_RE = re.compile(r"\s*(?:,|;|/| y | e )\s*", re.IGNORECASE)
+# El mismo, guardando los separadores para volver a unir una opción partida.
+_MULTI_SPLIT_KEEP_RE = re.compile(r"(\s*(?:,|;|/| y | e )\s*)", re.IGNORECASE)
 
 
 def normalize_label(raw: str) -> str:
@@ -91,6 +93,30 @@ def parse_variant_tags(tags: list[str] | None) -> VariantAttrs:
 def split_multi_label(raw: str) -> list[str]:
     """Divide una eleccion multiple en tokens: "Drakar, Café" -> [Drakar, Café]."""
     return [part for part in (_MULTI_SPLIT_RE.split(str(raw))) if part.strip()]
+
+
+def split_choices(raw: str, valid: list[str]) -> list[str]:
+    """Como `split_multi_label`, sin partir una opción del catálogo que trae un
+    separador en el nombre (pedido #78: "Rojo y verde" salía como "Rojo" +
+    "verde" y se rechazaba). En cada punto se toma la opción más larga de
+    `valid` que empiece ahí: "Multicolor y Rojo y verde" → [Multicolor,
+    Rojo y verde]."""
+    pieces = _MULTI_SPLIT_KEEP_RE.split(str(raw))
+    words, seps = pieces[0::2], pieces[1::2]
+    tokens: list[str] = []
+    i = 0
+    while i < len(words):
+        for j in range(len(words) - 1, i, -1):
+            joined = words[i] + "".join(seps[k] + words[k + 1] for k in range(i, j))
+            if match_option(joined, valid) is not None:
+                tokens.append(joined)
+                i = j + 1
+                break
+        else:
+            if words[i].strip():
+                tokens.append(words[i])
+            i += 1
+    return tokens
 
 
 def match_option(raw: str, valid: list[str]) -> str | None:

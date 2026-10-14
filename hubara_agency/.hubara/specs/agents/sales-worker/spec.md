@@ -151,6 +151,14 @@ Medusa live durante la conversación (latency + cuota).
 - AND una palabra sin familia conocida ("chartreuse") conserva el rechazo legacy; sin archivo de familias el matcheo vuelve a ser exacto (degrada abierto)
 - AND los guiones de etapa (descubrimiento, variantes, FAQ del sales_script) MUST NOT responder "ese tono no lo manejo" cuando la familia existe
 
+#### Scenario: opción del catálogo con « y » en el nombre (pedido #78, 2026-10-13)
+
+- GIVEN un producto cuya opción o etiqueta real trae un separador en el nombre (Velas de deseos: `Color` = «Multicolor» / «Rojo y verde»)
+- WHEN el LLM invoca `set_order_slot(diseno="Rojo y verde")` (o `color=` con una etiqueta `Color: Rojo y verde`)
+- THEN el valor se guarda entero — el separador de elecciones múltiples («, », « y », « e », «/», «;») MUST NOT partir una opción que existe en la lista del producto
+- AND una elección doble se reparte por la opción más larga que exista («Multicolor y Rojo y verde» → `Multicolor, Rojo y verde`); «Drakar y Café» se sigue partiendo en dos
+- AND si el valor es de otro producto del catálogo, el rechazo trae `belongs_to` con ese producto
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`
