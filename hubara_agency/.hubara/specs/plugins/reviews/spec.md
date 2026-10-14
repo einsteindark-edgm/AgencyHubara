@@ -56,3 +56,46 @@ vuelve a escribir.
 
 El sistema SHALL publicar en Medusa solo lo que el equipo aprueba; sin permiso
 del cliente la reseña cuenta solo con sus estrellas, anónima y sin foto.
+
+#### Scenario: hide de una reseña ya publicada
+- GIVEN una reseña publicada (aunque haya quedado a medias)
+- WHEN el equipo la oculta
+- THEN todas sus filas quedan `hidden` en Medusa y la tienda se reconstruye de
+  una (no espera la ventana de 10 min)
+
+### Requirement: Lo público no abre datos del pedido
+
+Nada que llegue a la tienda (clave de la reseña en Medusa, nombre de la foto)
+MUST contener el id del pedido de Medusa (con él se leen sus datos personales).
+El nombre público MUST ser el de quien calificó (perfil de WhatsApp), solo
+letras; sin un nombre usable la reseña sale como «Cliente de Hubara». La ciudad
+de envío solo sale si quien recibió es quien calificó (regalos).
+
+### Requirement: La invitación sobrevive fallas y sigue su entrega (premortem 2026-10-14)
+
+El flujo SHALL leer fresca la etapa del pedido; una falla al decidir MUST
+esperar y reintentar (no terminar); un envío que se cae a mitad MUST NOT
+reintentarse (queda «sin confirmar»). Tras enviar, el flujo SHALL esperar el
+aviso de entrega de Meta: un formulario no entregado por la ventana cerrada
+(131047) reabre la invitación y sale la plantilla; otro fallo queda `failed`.
+Una plantilla aún sin aprobar (132001/132015/132016) libera la invitación.
+
+#### Scenario: dos pedidos entregados juntos
+- GIVEN la invitación de otro pedido del mismo cliente enviada hace < 24 h y
+  sin contestar
+- WHEN despierta el flujo del segundo pedido
+- THEN espera (`another_invitation_pending`)
+
+#### Scenario: calificación baja en la posventa
+- GIVEN la conversación en ruta humano con tag COMPRA_EXITOSA
+- WHEN llega una calificación de 2★
+- THEN `/escalate` la pone en HUMANO con `LOW_RATING`; si chats no lo confirma,
+  la actividad se reintenta
+
+### Requirement: Por qué no salió (observabilidad)
+
+Cada decisión del flujo SHALL quedar registrada con su motivo
+(`_reviews/plans/`) y el resumen del panel SHALL contar las invitaciones sin
+enviar y en espera por motivo, los envíos sin confirmar, si falta el formulario
+o los cupones (que duren lo prometido) y el estado de la reconstrucción de la
+tienda.
