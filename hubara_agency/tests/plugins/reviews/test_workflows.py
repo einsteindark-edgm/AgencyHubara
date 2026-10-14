@@ -13,6 +13,7 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
 from src.plugins.reviews.agent.activities import (
+    ReviewDeliveryInput,
     ReviewPlanInput,
     ReviewSendInput,
     ReviewSendOut,
@@ -45,7 +46,17 @@ def _fakes(steps: list[ReviewStepOut], plans: list, sends: list, submissions: li
         submissions.append(inp)
         return "stored"
 
-    return [fake_plan, fake_send, fake_submission]
+    return [fake_plan, fake_send, fake_submission, _fake_check(["sent"])]
+
+
+def _fake_check(outcomes: list[str], seen: list | None = None):
+    @activity.defn(name="reviews_check_delivery")
+    async def fake_check(inp: ReviewDeliveryInput) -> str:
+        if seen is not None:
+            seen.append(inp)
+        return outcomes.pop(0) if len(outcomes) > 1 else outcomes[0]
+
+    return fake_check
 
 
 async def _run_request(steps: list[ReviewStepOut]):
@@ -132,7 +143,7 @@ async def test_a_released_invitation_is_retried_later():
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(env.client, task_queue=QUEUE, workflows=[ReviewRequestWorkflow, ReviewSubmissionWorkflow],
-                          activities=[fake_plan, fake_send, fake_submission]):
+                          activities=[fake_plan, fake_send, fake_submission, _fake_check(["sent"])]):
             result = await env.client.execute_workflow(
                 ReviewRequestWorkflow.run,
                 ReviewRequestInput(session_id="wa_1", order_id="order_1", occurred_at_ms=1_791_000_000_000),
@@ -141,3 +152,86 @@ async def test_a_released_invitation_is_retried_later():
     assert result == "sent"
     assert len(sends) == 2
     assert plans[1].now_ms - plans[0].now_ms >= 30 * 60_000
+
+
+async def _run_with(activities) -> str:
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(env.client, task_queue=QUEUE, workflows=[ReviewRequestWorkflow, ReviewSubmissionWorkflow],
+                          activities=activities):
+            return await env.client.execute_workflow(
+                ReviewRequestWorkflow.run,
+                ReviewRequestInput(session_id="wa_1", order_id="order_1", occurred_at_ms=1_791_000_000_000),
+                id="review-request-x", task_queue=QUEUE,
+            )
+
+
+@activity.defn(name="reviews_process_submission")
+async def _no_submission(inp: ReviewSubmissionInput) -> str:
+    return "stored"
+
+
+@pytest.mark.asyncio
+async def test_an_undelivered_flow_goes_back_to_planning_and_the_template_follows():
+    """Premortem I10: Meta avisa por el webhook que el formulario no llegó
+    (131047, la ventana ya había cerrado): el flujo vuelve a planear."""
+    plans, sends, checks = [], [], []
+    steps = [ReviewStepOut(action="send_flow", reason="window_open"),
+             ReviewStepOut(action="send_template", reason="window_closed")]
+
+    @activity.defn(name="reviews_plan_step")
+    async def fake_plan(inp: ReviewPlanInput) -> ReviewStepOut:
+        plans.append(inp)
+        return steps[min(len(plans) - 1, 1)]
+
+    @activity.defn(name="reviews_send_request")
+    async def fake_send(inp: ReviewSendInput) -> ReviewSendOut:
+        sends.append(inp)
+        return ReviewSendOut(status="sent", channel="flow" if inp.action == "send_flow" else "template")
+
+    result = await _run_with([fake_plan, fake_send, _no_submission, _fake_check(["retry", "sent"], checks)])
+    assert result == "sent"
+    assert [s.action for s in sends] == ["send_flow", "send_template"]
+    assert len(checks) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failing_plan_does_not_end_the_invitation():
+    """Premortem P5: el vault o Medusa fallando un rato no matan el flujo."""
+    from temporalio.exceptions import ApplicationError
+
+    calls = []
+
+    @activity.defn(name="reviews_plan_step")
+    async def fake_plan(inp: ReviewPlanInput) -> ReviewStepOut:
+        calls.append(inp)
+        if len(calls) == 1:
+            raise ApplicationError("disco lleno", non_retryable=True)
+        return ReviewStepOut(action="send_template", reason="window_closed")
+
+    @activity.defn(name="reviews_send_request")
+    async def fake_send(inp: ReviewSendInput) -> ReviewSendOut:
+        return ReviewSendOut(status="sent", channel="template")
+
+    assert await _run_with([fake_plan, fake_send, _no_submission, _fake_check(["sent"])]) == "sent"
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_send_that_crashed_is_never_resent():
+    """Premortem P5: si el envío se cae a la mitad no se sabe si salió: no se
+    reintenta y el flujo termina «sin confirmar» (no `Failed`)."""
+    from temporalio.exceptions import ApplicationError
+
+    sends = []
+
+    @activity.defn(name="reviews_plan_step")
+    async def fake_plan(inp: ReviewPlanInput) -> ReviewStepOut:
+        return ReviewStepOut(action="send_flow", reason="window_open")
+
+    @activity.defn(name="reviews_send_request")
+    async def fake_send(inp: ReviewSendInput) -> ReviewSendOut:
+        sends.append(inp)
+        raise ApplicationError("worker reiniciado", non_retryable=True)
+
+    assert await _run_with([fake_plan, fake_send, _no_submission, _fake_check(["sent"])]) == "send_unconfirmed"
+    assert len(sends) == 1

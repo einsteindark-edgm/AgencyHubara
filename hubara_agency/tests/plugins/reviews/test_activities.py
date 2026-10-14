@@ -553,3 +553,73 @@ async def test_without_a_usable_name_the_review_is_anonymous(tmp_path):
     deps, _ = _deps(tmp_path, metadata={"phone_number_id": "PID", "profile": {"name": "</script><b>"}})
     await process_submission(deps, _submission())
     assert deps.store.get_review(f"rev_{ORDER}").author_name == "Cliente de Hubara"
+
+
+# ---------- que se vea por qué no salió (premortem P4/I5) ----------
+
+
+@pytest.mark.asyncio
+async def test_every_decision_is_recorded_with_its_reason(tmp_path):
+    deps, _ = _deps(tmp_path, coupons_ready=False)
+    await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 3 * HOUR))
+    plan = deps.store.get_plan(ORDER)
+    assert (plan["action"], plan["reason"], plan["session_id"], plan["at_ms"]) == (
+        "wait", "coupon_not_configured", S, T0 + 3 * HOUR)
+
+    deps, _ = _deps(tmp_path, mode="off")
+    await plan_step(deps, ReviewPlanInput(session_id=S, order_id=ORDER, delivered_at_ms=T0, now_ms=T0 + 4 * HOUR))
+    assert (deps.store.get_plan(ORDER)["action"], deps.store.get_plan(ORDER)["reason"]) == ("skip", "disabled")
+
+
+# ---------- ¿llegó? (Meta avisa por el webhook de estados — premortem I10/C7) ----------
+
+
+@pytest.mark.asyncio
+async def test_the_sent_message_id_is_kept_to_follow_its_delivery(tmp_path):
+    deps, _ = _deps(tmp_path)
+    await send_request(deps, ReviewSendInput(session_id=S, order_id=ORDER, action="send_flow", now_ms=T0 + 3 * HOUR))
+    assert deps.store.get_request(ORDER)["wa_message_id"] == "wamid.F"
+    assert deps.metadata.read(S)["review_request_touches"][-1]["wa_message_id"] == "wamid.F"
+
+
+def _sent_with_status(tmp_path, *, channel: str, status: str | None, error_code: str | None = None):
+    touch = {"order_id": ORDER, "kind": channel, "at_ms": T0 + 3 * HOUR, "wa_message_id": "wamid.F"}
+    if status:
+        touch["status"] = status
+    if error_code:
+        touch["error_code"] = error_code
+    deps, _ = _deps(tmp_path, metadata={"phone_number_id": "PID", "review_request_touches": [touch]})
+    deps.store.claim_request(ORDER, session_id=S, now_ms=T0 + 3 * HOUR)
+    deps.store.update_request(ORDER, status="sent", channel=channel, wa_message_id="wamid.F")
+    return deps
+
+
+@pytest.mark.asyncio
+async def test_a_flow_meta_did_not_deliver_because_the_window_closed_is_reopened(tmp_path):
+    """Meta suele aceptar el envío y avisar después (131047): la invitación se
+    reabre para que salga la plantilla."""
+    from src.plugins.reviews.agent.activities import ReviewDeliveryInput, check_delivery
+
+    deps = _sent_with_status(tmp_path, channel="flow", status="failed", error_code="131047")
+    assert await check_delivery(deps, ReviewDeliveryInput(session_id=S, order_id=ORDER)) == "retry"
+    assert deps.store.get_request(ORDER) is None
+
+
+@pytest.mark.asyncio
+async def test_a_template_meta_refused_to_deliver_is_recorded_as_failed(tmp_path):
+    from src.plugins.reviews.agent.activities import ReviewDeliveryInput, check_delivery
+
+    deps = _sent_with_status(tmp_path, channel="template", status="failed", error_code="131049")
+    assert await check_delivery(deps, ReviewDeliveryInput(session_id=S, order_id=ORDER)) == "failed"
+    request = deps.store.get_request(ORDER)
+    assert request["status"] == "failed" and "131049" in request["error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [None, "sent", "delivered", "read"])
+async def test_a_delivered_or_unknown_invitation_stays_sent(tmp_path, status):
+    from src.plugins.reviews.agent.activities import ReviewDeliveryInput, check_delivery
+
+    deps = _sent_with_status(tmp_path, channel="flow", status=status)
+    assert await check_delivery(deps, ReviewDeliveryInput(session_id=S, order_id=ORDER)) == "sent"
+    assert deps.store.get_request(ORDER)["status"] == "sent"

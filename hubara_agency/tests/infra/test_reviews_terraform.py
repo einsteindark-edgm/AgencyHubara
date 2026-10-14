@@ -38,3 +38,15 @@ def test_reviews_are_born_off_and_the_mode_is_validated() -> None:
     main = _hcl(_TERRAFORM / "main.tf")
     assert 'source   = "./modules/review-config"' in main
 
+
+
+def test_terraform_defaults_match_the_code_and_test_mode_needs_numbers() -> None:
+    """Premortem P12/I4: el botón a Google por defecto es el mismo que el del
+    código (directo a Google), y `test` sin números de prueba (o mal
+    escritos) no pasa el plan — antes callaba invitando a nadie."""
+    from src.plugins.reviews.agent.settings import DEFAULT_GOOGLE_REVIEW_URL
+
+    text = _hcl(_TERRAFORM / "variables.tf")
+    assert re.search(rf'google_review_url\s*=\s*optional\(string,\s*"{re.escape(DEFAULT_GOOGLE_REVIEW_URL)}"\)', text)
+    assert "t.reviews.test_sessions" in text, "falta validar las sesiones de prueba"
+    assert 't.reviews.mode != "test" || length(t.reviews.test_sessions) > 0' in text

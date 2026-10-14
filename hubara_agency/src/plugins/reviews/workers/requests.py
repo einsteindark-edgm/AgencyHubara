@@ -22,10 +22,12 @@ from loguru import logger
 from temporalio.worker import Worker
 
 from src.plugins.reviews.agent.activities import (
+    check_delivery_activity,
     plan_step_activity,
     process_submission_activity,
     send_request_activity,
 )
+from src.plugins.reviews.agent.settings import ReviewSettings
 from src.plugins.reviews.agent.requests.workflows import (
     ReviewRequestWorkflow,
     ReviewSubmissionWorkflow,
@@ -45,9 +47,14 @@ async def main() -> None:
         client,
         task_queue=task_queue,
         workflows=[ReviewRequestWorkflow, ReviewSubmissionWorkflow],
-        activities=[plan_step_activity, send_request_activity, process_submission_activity],
+        activities=[
+            plan_step_activity,
+            send_request_activity,
+            check_delivery_activity,
+            process_submission_activity,
+        ],
     )
-    logger.info("⭐ reviews worker arriba. Cola: '{}'", task_queue)
+    logger.info("⭐ reviews worker arriba. Cola: '{}' · {}", task_queue, ReviewSettings.from_env().describe())
     await worker.run()
 
 

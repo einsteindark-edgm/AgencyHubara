@@ -5,6 +5,8 @@
   reintento o un pedido re-entregado no mandan dos invitaciones.
 - `reviews/<pedido>.json`: la reseña (una por pedido; la primera respuesta
   manda — Meta reintenta webhooks). La modera el equipo desde el dashboard.
+- `plans/<pedido>.json`: la última decisión del flujo y su motivo (por qué
+  aún no salió o no saldrá la invitación).
 
 API y worker comparten el disco del vault; cada escritura es atómica.
 """
@@ -193,3 +195,39 @@ class ReviewsStore:
                 if status is None or record.status == status:
                     out.append(record)
         return sorted(out, key=lambda r: r.submitted_at_ms, reverse=True)
+
+    # ── decisiones del flujo (por qué no salió) ─────────────────────────────
+
+    def _plan_path(self, order_id: str) -> Path:
+        return self._dir / "plans" / f"{_key(order_id)}.json"
+
+    def record_plan(self, order_id: str, *, session_id: str, action: str, reason: str, at_ms: int) -> None:
+        """La última decisión del flujo del pedido (el panel cuenta por qué no
+        salió una invitación — premortem P4)."""
+        path = self._plan_path(order_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(
+            path,
+            {"order_id": order_id, "session_id": session_id, "action": action, "reason": reason, "at_ms": at_ms},
+        )
+
+    def get_plan(self, order_id: str) -> dict[str, Any] | None:
+        try:
+            data = json.loads(self._plan_path(order_id).read_text(encoding="utf-8"))
+        except (FileNotFoundError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def list_plans(self) -> list[dict[str, Any]]:
+        folder = self._dir / "plans"
+        if not folder.is_dir():
+            return []
+        out = []
+        for path in folder.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict):
+                out.append(data)
+        return out

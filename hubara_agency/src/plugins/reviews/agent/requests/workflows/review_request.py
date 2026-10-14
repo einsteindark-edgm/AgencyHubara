@@ -14,9 +14,11 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 with workflow.unsafe.imports_passed_through():
     from src.plugins.reviews.agent.activities import (
+        ReviewDeliveryInput,
         ReviewPlanInput,
         ReviewSendInput,
         ReviewSendOut,
@@ -27,8 +29,10 @@ with workflow.unsafe.imports_passed_through():
 _MAX_STEPS = 200
 #: Ninguna espera menor a un minuto (un dominio que diga 0 no hace spin).
 _MIN_WAIT = timedelta(minutes=1)
-#: Tras un fallo antes de hablar con Meta, cuánto esperar para reintentar.
+#: Tras un fallo antes de hablar con Meta (o al decidir), cuánto esperar.
 _RETRY_WAIT = timedelta(minutes=30)
+#: Cuánto esperar el aviso de entrega de Meta (webhook de estados).
+_DELIVERY_CHECK_WAIT = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -48,44 +52,72 @@ class ReviewRequestWorkflow:
     async def run(self, inp: ReviewRequestInput) -> str:
         delivered_at_ms = inp.occurred_at_ms or self._now_ms()
         for _ in range(_MAX_STEPS):
-            step = await workflow.execute_activity(
-                "reviews_plan_step",
-                ReviewPlanInput(
-                    session_id=inp.session_id,
-                    order_id=inp.order_id,
-                    delivered_at_ms=delivered_at_ms,
-                    now_ms=self._now_ms(),
-                ),
-                start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=RetryPolicy(maximum_attempts=5),
-                result_type=ReviewStepOut,
-            )
-            action = step.action
-            if action in ("send_flow", "send_template"):
-                out = await workflow.execute_activity(
-                    "reviews_send_request",
-                    ReviewSendInput(
+            try:
+                step = await workflow.execute_activity(
+                    "reviews_plan_step",
+                    ReviewPlanInput(
                         session_id=inp.session_id,
                         order_id=inp.order_id,
-                        action=action,
+                        delivered_at_ms=delivered_at_ms,
                         now_ms=self._now_ms(),
                     ),
-                    start_to_close_timeout=timedelta(seconds=120),
-                    # Un envío no se reintenta: dos invitaciones son peores
-                    # que ninguna (la activity registra el fallo).
-                    retry_policy=RetryPolicy(maximum_attempts=1),
-                    result_type=ReviewSendOut,
+                    start_to_close_timeout=timedelta(seconds=60),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                    result_type=ReviewStepOut,
                 )
-                if out.status != "retry":
-                    return out.status
-                # Falló antes de hablar con Meta: no salió nada. Se vuelve a
-                # planear más tarde (la invitación quedó libre).
+            except ActivityError:
+                # Decidir solo lee: un vault o un Medusa caídos un rato no
+                # terminan la invitación (premortem P5); el tope de 48 h manda.
                 await workflow.sleep(_RETRY_WAIT)
                 continue
+            action = step.action
+            if action in ("send_flow", "send_template"):
+                outcome = await self._send(inp, action)
+                if outcome == "retry":
+                    # No salió (falló antes de Meta) o Meta avisó que el
+                    # formulario no llegó: se vuelve a planear.
+                    await workflow.sleep(_RETRY_WAIT)
+                    continue
+                return outcome
             if action == "skip":
                 return step.reason
             await workflow.sleep(max(timedelta(milliseconds=step.wait_ms), _MIN_WAIT))
         return "max_steps"
+
+    async def _send(self, inp: ReviewRequestInput, action: str) -> str:
+        try:
+            out = await workflow.execute_activity(
+                "reviews_send_request",
+                ReviewSendInput(
+                    session_id=inp.session_id,
+                    order_id=inp.order_id,
+                    action=action,
+                    now_ms=self._now_ms(),
+                ),
+                start_to_close_timeout=timedelta(seconds=120),
+                # Un envío no se reintenta: dos invitaciones son peores que
+                # ninguna (la activity registra el fallo).
+                retry_policy=RetryPolicy(maximum_attempts=1),
+                result_type=ReviewSendOut,
+            )
+        except ActivityError:
+            # Se cayó a mitad: no se sabe si salió. No se reintenta; queda
+            # «sin confirmar» en el registro (premortem P5).
+            return "send_unconfirmed"
+        if out.status != "sent":
+            return out.status
+        # Meta suele aceptar y avisar después si no entregó (webhook de estados).
+        await workflow.sleep(_DELIVERY_CHECK_WAIT)
+        try:
+            return await workflow.execute_activity(
+                "reviews_check_delivery",
+                ReviewDeliveryInput(session_id=inp.session_id, order_id=inp.order_id),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=5),
+                result_type=str,
+            )
+        except ActivityError:
+            return "sent"
 
     @staticmethod
     def _now_ms() -> int:

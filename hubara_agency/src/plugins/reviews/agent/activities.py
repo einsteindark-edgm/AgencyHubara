@@ -99,10 +99,18 @@ class ReviewSendInput:
 
 @dataclass(frozen=True)
 class ReviewSendOut:
-    #: sent | already_requested | skipped | failed
+    #: sent | already_requested | skipped | failed | retry
     status: str = ""
     channel: str | None = None
     error: str | None = None
+    #: El id de Meta del mensaje (para seguir su entrega por el webhook).
+    wa_message_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ReviewDeliveryInput:
+    session_id: str = ""
+    order_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -116,8 +124,26 @@ class ReviewSubmissionInput:
 # ── decidir ─────────────────────────────────────────────────────────────────
 
 
+#: Motivos que el operador tiene que ver en los logs (algo falta configurar).
+_CONFIG_REASONS = ("flow_not_configured", "coupon_not_configured")
+
+
 async def plan_step(deps: Any, inp: ReviewPlanInput) -> ReviewStepOut:
-    """Lee los hechos del pedido y la conversación y pregunta al dominio."""
+    """Lee los hechos, pregunta al dominio y deja la decisión registrada (el
+    panel muestra por qué no salió una invitación — premortem P4)."""
+    step = await _plan(deps, inp)
+    deps.store.record_plan(
+        inp.order_id, session_id=inp.session_id, action=step.action, reason=step.reason, at_ms=inp.now_ms
+    )
+    log = activity_logger()
+    if step.reason in _CONFIG_REASONS:
+        log.warning("review request %s waits: %s", inp.order_id, step.reason)
+    else:
+        log.info("review request %s: %s %s", inp.order_id, step.action, step.reason)
+    return step
+
+
+async def _plan(deps: Any, inp: ReviewPlanInput) -> ReviewStepOut:
     settings = deps.settings
     if not settings.allows(inp.session_id):
         reason = "disabled" if settings.mode == "off" else "not_in_test_list"
@@ -221,14 +247,20 @@ async def _order_photo(deps: Any, session_id: str, order_id: str, metadata: dict
     return None
 
 
-def _record_touch(deps: Any, session_id: str, order_id: str, kind: str, now_ms: int) -> None:
-    """`review_request_touches`: la plantilla da contexto a «NO MÁS» (baja)."""
+def _record_touch(
+    deps: Any, session_id: str, order_id: str, kind: str, now_ms: int, wa_message_id: str | None
+) -> None:
+    """`review_request_touches`: la plantilla da contexto a «NO MÁS» (baja) y
+    el webhook de estados anota en el toque si llegó (`status`, `error_code`)."""
 
     def _append(fresh: dict[str, Any]) -> dict[str, Any] | None:
         if not fresh:
             return None
         touches = list(fresh.get("review_request_touches") or [])
-        touches.append({"order_id": order_id, "kind": kind, "at_ms": now_ms})
+        touch: dict[str, Any] = {"order_id": order_id, "kind": kind, "at_ms": now_ms}
+        if wa_message_id:
+            touch["wa_message_id"] = wa_message_id
+        touches.append(touch)
         fresh["review_request_touches"] = touches[-20:]
         return fresh
 
@@ -261,9 +293,10 @@ async def send_request(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
         channel=out.channel,
         error=out.error,
         sent_at_ms=inp.now_ms if out.status == "sent" else None,
+        wa_message_id=out.wa_message_id,
     )
     if out.status == "sent" and out.channel:
-        _record_touch(deps, inp.session_id, inp.order_id, out.channel, inp.now_ms)
+        _record_touch(deps, inp.session_id, inp.order_id, out.channel, inp.now_ms, out.wa_message_id)
     return out
 
 
@@ -306,7 +339,7 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
             flow = replace(flow, header_media_id=None, header_text="Califica tu pedido")
             result = await deps.send_flow(inp.session_id, flow, history_text=history_text)
         if result.ok:
-            return ReviewSendOut(status="sent", channel="flow")
+            return ReviewSendOut(status="sent", channel="flow", wa_message_id=result.wa_message_id)
         if _WINDOW_CLOSED_CODE not in str(result.error or ""):
             return ReviewSendOut(status="failed", channel="flow", error=str(result.error)[:300])
         # La ventana cerró entre la decisión y el envío: va la plantilla.
@@ -325,12 +358,44 @@ async def _send(deps: Any, inp: ReviewSendInput) -> ReviewSendOut:
         if any(code in str(result.error or "") for code in _TEMPLATE_NOT_READY_CODES):
             raise _NotSent(f"plantilla no disponible en Meta: {str(result.error)[:200]}")
         return ReviewSendOut(status="failed", channel="template", error=str(result.error)[:300])
-    return ReviewSendOut(status="sent", channel="template")
+    return ReviewSendOut(status="sent", channel="template", wa_message_id=result.wa_message_id)
 
 
 def _rejected_for_sure(result: Any) -> bool:
     """Meta respondió un 4xx: el mensaje NO salió (se puede mandar otro)."""
     return not result.ok and str(result.error or "").startswith("http_4")
+
+
+async def check_delivery(deps: Any, inp: ReviewDeliveryInput) -> str:
+    """¿Llegó la invitación? Meta suele aceptar el envío y avisar después por
+    el webhook de estados (chats lo anota en el toque). Un formulario que no
+    llegó porque la ventana ya había cerrado (131047) reabre la invitación:
+    el flujo vuelve a planear y sale la plantilla. Otro fallo queda `failed`.
+    Devuelve `sent` | `failed` | `retry`."""
+    request = deps.store.get_request(inp.order_id)
+    if request is None or request.get("status") != "sent":
+        return str((request or {}).get("status") or "missing")
+    touch = _touch_of(deps.metadata.read(inp.session_id) or {}, inp.order_id, request.get("wa_message_id"))
+    if touch is None or touch.get("status") != "failed":
+        return "sent"
+    code = str(touch.get("error_code") or "")
+    if code == _WINDOW_CLOSED_CODE and request.get("channel") == "flow":
+        deps.store.release_request(inp.order_id)
+        activity_logger().info("review flow %s not delivered (131047): back to planning", inp.order_id)
+        return "retry"
+    deps.store.update_request(inp.order_id, status="failed", error=f"meta no lo entregó: {code or 'sin código'}")
+    activity_logger().warning("review request %s not delivered by Meta: %s", inp.order_id, code)
+    return "failed"
+
+
+def _touch_of(metadata: dict[str, Any], order_id: str, wa_message_id: Any) -> dict[str, Any] | None:
+    for touch in reversed(metadata.get("review_request_touches") or []):
+        if not isinstance(touch, dict) or touch.get("order_id") != order_id:
+            continue
+        if wa_message_id and touch.get("wa_message_id") not in (None, wa_message_id):
+            continue
+        return touch
+    return None
 
 
 # ── recibir la calificación ─────────────────────────────────────────────────
@@ -509,6 +574,13 @@ async def send_request_activity(inp: ReviewSendInput) -> ReviewSendOut:
     from src.plugins.reviews.agent.composition import get_reviews_deps
 
     return await send_request(get_reviews_deps(), inp)
+
+
+@activity.defn(name="reviews_check_delivery")
+async def check_delivery_activity(inp: ReviewDeliveryInput) -> str:
+    from src.plugins.reviews.agent.composition import get_reviews_deps
+
+    return await check_delivery(get_reviews_deps(), inp)
 
 
 @activity.defn(name="reviews_process_submission")

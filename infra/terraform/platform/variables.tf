@@ -100,13 +100,23 @@ variable "tenants" {
       coupon_code            = optional(string, "GRACIAS5")  # cupón personal por calificar (5 %)
       coupon_photo_code      = optional(string, "GRACIAS10") # con foto y permiso para publicarla (10 %)
       coupon_days            = optional(number, 60)          # vigencia del cupón
-      google_review_url      = optional(string, "https://hubara.com.co/opinar/")
+      # Directo a la ficha de Google: no depende de que la web esté publicada.
+      google_review_url = optional(string, "https://g.page/r/CdsqIGl0gWaWECE/review")
     }), {})
   }))
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "test", "on"], t.reviews.mode)])
     error_message = "tenants.*.reviews.mode: off | test | on."
+  }
+
+  validation {
+    # Modo prueba sin números (o mal escritos) invitaba a nadie sin avisar.
+    condition = alltrue([for t in values(var.tenants) :
+      (t.reviews.mode != "test" || length(t.reviews.test_sessions) > 0)
+      && alltrue([for s in t.reviews.test_sessions : can(regex("^wa_[A-Za-z0-9]{6,40}$", s))])
+    ])
+    error_message = "tenants.*.reviews.test_sessions: sesiones wa_<número> (p. ej. wa_57300…); obligatorias con mode = \"test\"."
   }
 
   validation {

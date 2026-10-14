@@ -16,8 +16,8 @@
 #   REVIEW_COUPON_CODE / _PHOTO_CODE / _DAYS  el cupón personal de 5 % y de 10 %
 #     (con foto y permiso para publicarla) y su vigencia en días. Los cupones
 #     se crean en la central (Marketing → Cupones) con «solo quien lo recibió».
-#   GOOGLE_REVIEW_URL      destino del botón «Opinar en Google» (la web
-#     redirige a g.page y cuenta visitas).
+#   GOOGLE_REVIEW_URL      destino del botón «Opinar en Google» (directo a la
+#     ficha de Google: no depende de que la web esté publicada).
 
 variable "tenant" { type = string }
 variable "config" {
