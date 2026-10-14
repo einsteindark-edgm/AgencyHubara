@@ -703,6 +703,63 @@ describe("useChatMessages — eventos del hilo", () => {
     ]);
     expect(data?.find((m) => m.kind === "in")?.event).toBeUndefined();
   });
+
+  // Caso 2026-10-13 (run 2395ffd6): el bot saludó dentro del texto del
+  // catálogo y el panel solo decía «El bot envió el catálogo con 2 productos».
+  const catalogCard: ChatEvent = {
+    kind: "bot_card",
+    component: "products_list",
+    title: null,
+    text: "Buenas tardes, bienvenido a *Hubara*.\n\nPara la Noche de Velitas tenemos:",
+    items: [{ title: "Velas de deseos onduladas", detail: "$22.500 COP" }],
+    link: null,
+    images: [],
+  };
+
+  it("el catálogo con su mensaje es una burbuja del bot, no una nota", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "🛍️ El bot envió el catálogo con 1 productos — con el mensaje: «Buenas tardes…»",
+        timestamp: "2026-10-13T20:41:08+00:00",
+        event: catalogCard,
+      },
+    ]);
+    const msg = data?.[data.length - 1];
+    expect(msg?.kind).toBe("out");
+    expect(msg?.author).toBe("bot");
+    expect(msg?.event).toEqual(catalogCard);
+  });
+
+  it("lo que el operador mandó desde la app sale como suyo", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        sender: "human",
+        content: "🛍️ El operador envió el catálogo con 1 productos",
+        event: catalogCard,
+      },
+    ]);
+    expect(data?.[data.length - 1]?.author).toBe("human");
+  });
+
+  it("un evento que el panel no conoce no tumba la conversación: queda la nota", async () => {
+    const data = await runMessages([
+      { ui_type: "user_message", role: "user", content: "Hola" },
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "📤 El bot envió un mensaje interactivo (holograma)",
+        event: { kind: "holograma" } as unknown as ChatEvent,
+      },
+    ]);
+    expect(data?.some((m) => m.kind === "in")).toBe(true);
+    const note = data?.find((m) => m.kind === "system");
+    expect(note?.text).toBe("📤 El bot envió un mensaje interactivo (holograma)");
+    expect(note?.event).toBeUndefined();
+  });
 });
 
 describe("pospuesto (filtro 'Pospuestos' de la bandeja)", () => {

@@ -566,3 +566,201 @@ async def test_sent_component_event_carries_its_wamid(vault):
 
     (ev,) = _read_history(vault)
     assert ev["wamid"] == "wamid.test.1"
+
+
+# ── El panel muestra el mensaje entero que leyó el cliente ──────────────
+#
+# Caso 2026-10-13 (run 2395ffd6, anuncio del Kit de Velitas): el bot saludó
+# DENTRO del texto del catálogo («Buenas tardes, bienvenido a *Hubara*…») y el
+# panel solo decía «El bot envió el catálogo con 2 productos». El operador no
+# podía saber si el bot había saludado. Cada envío guarda ahora, aparte de la
+# línea corta para Jev, su tarjeta (`card`): el texto completo que leyó el
+# cliente y lo que traía (productos, enlace, fotos).
+
+_GREETING = (
+    "Buenas tardes, bienvenido a *Hubara*, velas artesanales hechas a mano.\n\n"
+    "Para la Noche de Velitas tenemos estas velas de deseos:"
+)
+_CANDLES = [
+    {"title": "Religiosas", "rows": [
+        {"id": "velas-onduladas", "title": "Velas de deseos onduladas",
+         "description": "$22.500 COP", "product_retailer_id": "r-1"},
+        {"id": "velas-cuadradas", "title": "Velas de deseos cuadradas",
+         "description": "$25.000 COP", "product_retailer_id": "r-2"},
+    ]},
+]
+
+
+def test_the_catalog_keeps_the_greeting_the_customer_read():
+    ev = _build_history_event(
+        "products_list", {"intro_text": _GREETING, "sections": _CANDLES}
+    )
+    # La línea corta (Jev, Calidad LLM, la app) ya dice que el bot saludó.
+    assert "🛍️ El bot envió el catálogo con 2 productos" in ev["content"]
+    assert "Buenas tardes, bienvenido a *Hubara*" in ev["content"]
+    # El panel: el texto entero, con sus saltos de línea, y los productos.
+    assert ev["card"] == {
+        "text": _GREETING,
+        "items": [
+            {"title": "Velas de deseos onduladas", "detail": "$22.500 COP"},
+            {"title": "Velas de deseos cuadradas", "detail": "$25.000 COP"},
+        ],
+    }
+
+
+def test_a_category_catalog_names_its_category_in_the_card():
+    ev = _build_history_event(
+        "products_list",
+        {"intro_text": "Estas son las religiosas:", "sections": _CANDLES, "category": "Religiosas"},
+    )
+    assert ev["card"]["title"] == "Religiosas"
+
+
+@pytest.mark.asyncio
+async def test_the_catalog_card_is_the_message_that_went_out(vault, monkeypatch):
+    """Por el catálogo de WhatsApp, el texto lleva además la guía de los
+    botones de la ficha: el panel muestra exactamente lo que salió."""
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    monkeypatch.setenv("META_CATALOG_ID", "CAT_TEST")
+    _seed_metadata(vault, [{
+        "id": "i-cat", "kind": "products_list",
+        "params": {"intro_text": _GREETING, "sections": _CANDLES, "page": 1},
+        "fallback": {"prefer_native_product_list": True},
+    }])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    went_out = wa_client.send_product_list.call_args.args[2].body
+    [event] = _read_history(vault)
+    assert went_out.startswith(_GREETING) and went_out != _GREETING
+    assert event["card"]["text"] == went_out
+
+
+@pytest.mark.asyncio
+async def test_without_the_whatsapp_catalog_the_card_is_the_list_that_went_out(vault, monkeypatch):
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("DECISIONS_BOT", raising=False)
+    monkeypatch.delenv("META_CATALOG_ID", raising=False)
+    _seed_metadata(vault, [{
+        "id": "i-list", "kind": "products_list",
+        "params": {"intro_text": _GREETING, "sections": _CANDLES, "page": 1},
+    }])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    [event] = _read_history(vault)
+    assert event["card"]["text"] == wa_client.send_interactive_list.call_args.args[2].body
+
+
+def test_the_category_menu_card_lists_the_categories_and_its_message():
+    ev = _build_history_event("categories", {
+        "intro_text": "Buenos días, bienvenido a *Hubara*. Elige una categoría:",
+        "sections": [{"title": "Categorías", "rows": [
+            {"id": "categoria:religiosas", "title": "Religiosas", "description": "12 productos"},
+            {"id": "categoria:aromaticas", "title": "Aromáticas", "description": "9 productos"},
+        ]}],
+        "more_categories": [],
+    })
+    assert ev["card"]["text"].startswith("Buenos días, bienvenido a *Hubara*.")
+    assert ev["card"]["items"] == [
+        {"title": "Religiosas", "detail": "12 productos"},
+        {"title": "Aromáticas", "detail": "9 productos"},
+    ]
+
+
+def test_long_buttons_message_is_whole_in_the_card():
+    """La línea de Jev recorta a 160; el panel muestra el mensaje entero."""
+    body = "Buenas tardes, bienvenido a Hubara. " + "Te cuento de nuestras velas. " * 12
+    ev = _build_history_event(
+        "quick_replies", {"body": body, "buttons": [{"id": "b", "title": "Ver catálogo"}]}
+    )
+    assert len(ev["content"]) < 400
+    assert ev["card"] == {"text": body.strip()}
+
+
+def test_link_button_card_has_its_message_and_link():
+    ev = _build_history_event("cta_url", {
+        "url": "https://pago.hubara.co/x", "button_text": "Pagar ahora",
+        "body_text": "Aquí puedes pagar tu pedido",
+    })
+    assert ev["card"] == {
+        "text": "Aquí puedes pagar tu pedido",
+        "link": {"label": "Pagar ahora", "url": "https://pago.hubara.co/x"},
+    }
+
+
+def test_product_photo_card_has_the_photo_and_its_whole_caption():
+    caption = "Vela Cruz de Vida, " + "hecha a mano en cera de palma. " * 8
+    ev = _build_history_event(
+        "product_detail", {"image_url": "https://cdn/x.jpg", "caption": caption}
+    )
+    assert ev["card"] == {"images": [{"url": "https://cdn/x.jpg", "caption": caption.strip()}]}
+
+
+def test_gallery_card_has_each_photo_with_the_caption_it_carried():
+    ev = _build_history_event("product_gallery", {
+        "lead_caption": "Vela Cruz de Vida",
+        "images": [
+            {"url": "https://cdn/1.jpg", "label": "Diseño dorado"},
+            {"url": "https://cdn/2.jpg", "label": "Diseño plateado"},
+        ],
+    })
+    assert ev["card"] == {"images": [
+        {"url": "https://cdn/1.jpg", "caption": "Vela Cruz de Vida · Diseño dorado"},
+        {"url": "https://cdn/2.jpg", "caption": "Diseño plateado"},
+    ]}
+
+
+def test_the_category_menu_card_names_the_button_that_opens_it():
+    ev = _build_history_event("categories", {
+        "intro_text": "Elige una categoría:", "button_label": "Ver categorías",
+        "sections": [{"title": "Categorías", "rows": [{"id": "c", "title": "Religiosas"}]}],
+    })
+    assert ev["card"]["action"] == "Ver categorías"
+
+
+def test_the_form_card_has_its_message_and_the_button_that_opens_it():
+    ev = _build_history_event("shipping_flow", {"body": _FORM_MESSAGE, "flow_cta": "Completar datos"})
+    assert ev["card"] == {"text": _FORM_MESSAGE, "action": "Completar datos"}
+
+
+@pytest.mark.asyncio
+async def test_without_the_flow_the_form_card_is_the_list_sent_by_text(vault, monkeypatch):
+    """El Flow no salió: la tarjeta es la lista de campos que leyó el cliente,
+    sin botón, y lo dice."""
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("META_FLOW_ID_SHIPPING", raising=False)
+    _seed_metadata(vault, [_shipping_intent()])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    [event] = _read_history(vault)
+    assert event["card"] == {"text": wa_client.send_text.call_args.args[2].strip(), "title": "por texto"}
+
+
+def test_the_order_summary_card_has_the_summary_and_its_three_buttons():
+    """El resumen como lo leyó el cliente, SIN su dirección (la misma regla
+    del registro: lo leen modelos), y los tres botones."""
+    params = {
+        "items": [{"title": "Velón Koala", "quantity": 2, "unit_price_cop": 35000}],
+        "subtotal_cop": 70000, "shipping_cop": 12000, "total_cop": 82000,
+        "payment_method": "transfer", "reference_id": "HUB-1",
+        "shipping_address_summary": "Calle 1 # 2-3, Barrio Prueba",
+    }
+    ev = _build_history_event("order_confirmation", params)
+    card = ev["card"]
+    assert card["text"].startswith("*Resumen de tu pedido*")
+    assert "2× Velón Koala" in card["text"] and "Total: $82.000 COP" in card["text"]
+    assert "Calle 1" not in card["text"]
+    assert card["buttons"] == [{"title": "✅ Confirmar"}, {"title": "✏️ Modificar"}, {"title": "❌ Cancelar"}]
+
+
+def test_the_contact_card_names_who_the_customer_received(monkeypatch):
+    monkeypatch.setenv("HUBARA_ADVISOR_NAME", "Asesora Prueba")
+    monkeypatch.setenv("HUBARA_ADVISOR_PHONE", "+57 300 000 0000")
+    ev = _build_history_event("contact_card", {})
+    assert ev["card"] == {"items": [{"title": "Asesora Prueba", "detail": "+57 300 000 0000"}]}

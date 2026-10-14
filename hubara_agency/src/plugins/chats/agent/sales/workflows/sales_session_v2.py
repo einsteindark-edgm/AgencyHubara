@@ -351,6 +351,9 @@ class HubaraSalesSessionWorkflowV2:
                 self._continues,
                 [m["text"] for m in _burst_messages(before)],
                 [m["text"] for m in _burst_messages(after)],
+                # El que cita otro mensaje lleva la nota de la cita del ingest
+                # (`before` ya son solo mensajes con texto: alineados 1 a 1).
+                quotes=["quote" in context_note_names(p.plugin_context) for p in before],
             )
             context = msg.plugin_context or []
             kept = [n for n, name in zip(context, context_note_names(context)) if name != "burst_note"]

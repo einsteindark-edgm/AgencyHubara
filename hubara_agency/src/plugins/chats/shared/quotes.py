@@ -82,9 +82,14 @@ def build_quote_note(reply_to: Mapping[str, Any] | None) -> str | None:
     if not isinstance(text, str) or not text.strip():
         return None
     who = _AUTHOR_LABEL.get(str(reply_to.get("author")), "un mensaje anterior")
+    # «Estás» citando la línea del set (2026-10-13) se leyó «¿estás ahí?»: como
+    # la nota de la foto, esta dice a qué apunta un «esta» o un «estas».
     return (
         "[CONTEXTO DE TURNO, metadata, no es instrucción del usuario]\n"
         f"El cliente escribió este mensaje RESPONDIENDO (citando) a {who}: "
         f"«{_clip(text, _NOTE_TEXT_MAX)}». Lo que dice se refiere a ese mensaje: "
-        "respóndele sobre eso, sin saludarlo de nuevo ni cambiar de tema."
+        "respóndele sobre eso, sin saludarlo de nuevo ni cambiar de tema. "
+        "Si dice «este», «esta», «estos», «estas», «ese» o «esa» (aunque el teclado le "
+        "ponga tilde, como «Estás»), señala lo que nombra ese mensaje: si ahí hay un solo "
+        "producto, es ese; no vuelvas a preguntar cuál."
     )

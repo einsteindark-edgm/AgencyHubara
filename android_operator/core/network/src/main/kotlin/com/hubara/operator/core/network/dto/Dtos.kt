@@ -50,6 +50,9 @@ data class ChatMessageDto(
      *  cerrada. `JsonElement` a propósito: un valor raro se ignora, no tumba la sesión (L-10). */
     @SerialName("sent_at") val sentAt: JsonElement? = null,
     @SerialName("arrived_after_window") val arrivedAfterWindow: JsonElement? = null,
+    /** La forma real del mensaje (`chats/shared/chat_events.py`): `bot_card`, `bot_buttons`, `button_tap`…
+     *  `JsonElement` a propósito: un evento que la app no conoce o mal formado se ignora (L-10). */
+    val event: JsonElement? = null,
 )
 
 @Serializable

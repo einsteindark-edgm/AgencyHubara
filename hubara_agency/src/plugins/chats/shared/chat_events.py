@@ -17,6 +17,13 @@ escrito (todas las conversaciones del vault) se ve con la forma nueva sin
 migración ni reprocesamiento. Lo único irrecuperable es el emoji de las
 reacciones VIEJAS — se perdía al traducir, y no se inventa.
 
+**La excepción, `card`** (2026-10-13, run 2395ffd6): la línea del historial
+recorta los textos largos (Jev la lee) y no lista los productos, así que el
+saludo que el bot escribió en el texto del catálogo no se veía en el panel.
+El flush guarda aparte el mensaje entero que leyó el cliente y lo que traía
+(`card`); acá se valida y sale como `bot_card` (o completa el cuerpo de
+`bot_buttons`). El historial anterior no la tiene y sigue como nota.
+
 Productores de estos markers (si cambian su formato, los round-trip tests de
 `tests/plugins/chats/test_chat_events.py` truenan):
   * inbound  — `sales/translate.py::translate_to_effective_text`
@@ -84,9 +91,14 @@ def _bot_event(message: dict[str, Any], content: str) -> dict[str, Any] | None:
     if message.get("kind") != "ui_component":
         return None
     component_kind = message.get("component_kind")
+    card = _card(message.get("card"))
 
     if component_kind == "quick_replies":
-        return _bot_buttons(content)
+        buttons = _bot_buttons(content)
+        if buttons is not None and card and card["text"]:
+            # La línea recorta el cuerpo; la tarjeta lo trae entero.
+            buttons["body"] = card["text"]
+        return buttons
 
     if component_kind == "reaction":
         match = _BOT_REACTION_RE.search(content)
@@ -96,9 +108,77 @@ def _bot_event(message: dict[str, Any], content: str) -> dict[str, Any] | None:
             "author": "bot",
         }
 
-    # El resto de componentes (catálogo, flow, galería…) sigue como nota de
-    # sistema: su marker ya es una frase legible y no hay forma que recuperar.
+    if card:
+        label, icon = _CARD_LOOK.get(str(component_kind), _CARD_LOOK_DEFAULT)
+        return {
+            "kind": "bot_card",
+            "component": str(component_kind or ""),
+            "label": label,
+            "icon": icon,
+            **card,
+        }
+
+    # Sin tarjeta (historial viejo, flow, pedido…) sigue como nota de sistema:
+    # su marker ya es una frase legible y no hay forma que recuperar.
     return None
+
+
+#: Qué fue cada envío (en palabras del operador) y su ícono: los decide el
+#: servidor para que la app y el panel pinten la tarjeta sin conocer el
+#: componente — uno nuevo se ve bien sin publicar otra versión de la app. El
+#: ícono es una llave de una lista cerrada que la app y el panel traducen.
+_CARD_LOOK: dict[str, tuple[str, str]] = {
+    "products_list": ("Catálogo", "catalog"),
+    "categories": ("Menú de categorías", "list"),
+    "cta_url": ("Botón con enlace", "link"),
+    "product_detail": ("Foto del producto", "photo"),
+    "product_gallery": ("Fotos del producto", "photo"),
+    "shipping_flow": ("Formulario de envío", "form"),
+    "order_confirmation": ("Resumen para confirmar", "order"),
+    "contact_card": ("Tarjeta de contacto", "contact"),
+}
+_CARD_LOOK_DEFAULT = ("Mensaje interactivo", "message")
+
+
+def _str(value: Any) -> str | None:
+    return (value.strip() or None) if isinstance(value, str) else None
+
+
+def _card(raw: Any) -> dict[str, Any] | None:
+    """La tarjeta que el flush guardó con el mensaje (`card`), validada: lo
+    mal formado se descarta y, si no queda nada que mostrar, None."""
+    if not isinstance(raw, dict):
+        return None
+    items = [
+        {"title": title, "detail": _str(item.get("detail"))}
+        for item in raw.get("items") or []
+        if isinstance(item, dict) and (title := _str(item.get("title")))
+    ] if isinstance(raw.get("items"), list) else []
+    images = [
+        {"url": url, "caption": _str(image.get("caption"))}
+        for image in raw.get("images") or []
+        if isinstance(image, dict) and (url := _str(image.get("url")))
+    ] if isinstance(raw.get("images"), list) else []
+    buttons = [
+        {"title": title}
+        for button in raw.get("buttons") or []
+        if isinstance(button, dict) and (title := _str(button.get("title")))
+    ] if isinstance(raw.get("buttons"), list) else []
+    link_raw = raw.get("link")
+    link_url = _str(link_raw.get("url")) if isinstance(link_raw, dict) else None
+    link = {"label": _str(link_raw.get("label")) or link_url, "url": link_url} if link_url else None
+    text = _str(raw.get("text"))
+    if not (text or items or images or link or buttons):
+        return None
+    return {
+        "title": _str(raw.get("title")),
+        "text": text,
+        "items": items,
+        "buttons": buttons,
+        "action": _str(raw.get("action")),
+        "link": link,
+        "images": images,
+    }
 
 
 def _bot_buttons(content: str) -> dict[str, Any] | None:
@@ -208,7 +288,10 @@ def annotate_touched_buttons(messages: list[dict[str, Any]]) -> None:
         event = message.get("event")
         if not isinstance(event, dict):
             continue
-        if event.get("kind") == "bot_buttons":
+        if event.get("kind") == "bot_buttons" or (
+            event.get("kind") == "bot_card" and event.get("buttons")
+        ):
+            # Los botones de respuesta y los del resumen del pedido.
             pending = event.get("buttons")
         elif event.get("kind") == "button_tap" and pending:
             title = event.get("title")
