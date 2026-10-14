@@ -712,3 +712,55 @@ def test_gallery_card_has_each_photo_with_the_caption_it_carried():
         {"url": "https://cdn/1.jpg", "caption": "Vela Cruz de Vida · Diseño dorado"},
         {"url": "https://cdn/2.jpg", "caption": "Diseño plateado"},
     ]}
+
+
+def test_the_category_menu_card_names_the_button_that_opens_it():
+    ev = _build_history_event("categories", {
+        "intro_text": "Elige una categoría:", "button_label": "Ver categorías",
+        "sections": [{"title": "Categorías", "rows": [{"id": "c", "title": "Religiosas"}]}],
+    })
+    assert ev["card"]["action"] == "Ver categorías"
+
+
+def test_the_form_card_has_its_message_and_the_button_that_opens_it():
+    ev = _build_history_event("shipping_flow", {"body": _FORM_MESSAGE, "flow_cta": "Completar datos"})
+    assert ev["card"] == {"text": _FORM_MESSAGE, "action": "Completar datos"}
+
+
+@pytest.mark.asyncio
+async def test_without_the_flow_the_form_card_is_the_list_sent_by_text(vault, monkeypatch):
+    """El Flow no salió: la tarjeta es la lista de campos que leyó el cliente,
+    sin botón, y lo dice."""
+    import src.platform.whatsapp.client as wa_client
+
+    monkeypatch.delenv("META_FLOW_ID_SHIPPING", raising=False)
+    _seed_metadata(vault, [_shipping_intent()])
+
+    await ActivityEnvironment().run(flush_pending_ui_intents_activity, _SESSION_ID)
+
+    [event] = _read_history(vault)
+    assert event["card"] == {"text": wa_client.send_text.call_args.args[2].strip(), "title": "por texto"}
+
+
+def test_the_order_summary_card_has_the_summary_and_its_three_buttons():
+    """El resumen como lo leyó el cliente, SIN su dirección (la misma regla
+    del registro: lo leen modelos), y los tres botones."""
+    params = {
+        "items": [{"title": "Velón Koala", "quantity": 2, "unit_price_cop": 35000}],
+        "subtotal_cop": 70000, "shipping_cop": 12000, "total_cop": 82000,
+        "payment_method": "transfer", "reference_id": "HUB-1",
+        "shipping_address_summary": "Calle 1 # 2-3, Barrio Prueba",
+    }
+    ev = _build_history_event("order_confirmation", params)
+    card = ev["card"]
+    assert card["text"].startswith("*Resumen de tu pedido*")
+    assert "2× Velón Koala" in card["text"] and "Total: $82.000 COP" in card["text"]
+    assert "Calle 1" not in card["text"]
+    assert card["buttons"] == [{"title": "✅ Confirmar"}, {"title": "✏️ Modificar"}, {"title": "❌ Cancelar"}]
+
+
+def test_the_contact_card_names_who_the_customer_received(monkeypatch):
+    monkeypatch.setenv("HUBARA_ADVISOR_NAME", "Asesora Prueba")
+    monkeypatch.setenv("HUBARA_ADVISOR_PHONE", "+57 300 000 0000")
+    ev = _build_history_event("contact_card", {})
+    assert ev["card"] == {"items": [{"title": "Asesora Prueba", "detail": "+57 300 000 0000"}]}

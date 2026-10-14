@@ -36,6 +36,9 @@ data class MessageEntity(
     /** v4: cuándo escribió el cliente un mensaje que Meta entregó tarde, y si llegó con la ventana cerrada. */
     val sentAtMs: Long? = null,
     @ColumnInfo(defaultValue = "0") val arrivedAfterWindow: Boolean = false,
+    /** v5: la tarjeta de un envío del bot (`MessageCard` en JSON) y el botón que tocó el cliente (2026-10-13). */
+    val cardJson: String? = null,
+    val tap: String? = null,
 )
 
 /** Envíos del operador que todavía no confirmó el servidor. */

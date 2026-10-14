@@ -200,6 +200,38 @@ def reply(session_id: str, text: str) -> None:
     print(f"reply: {session_id} ← {text!r} (window open until +24 h)")
 
 
+# ── bot-card ─────────────────────────────────────────────────────────────────
+
+#: Envíos del bot con su tarjeta, como los deja el flush (`flush_ui_intents._history_card`). `catalogo` es el caso
+#: 2026-10-13: el saludo iba DENTRO del texto del catálogo.
+BOT_CARDS: dict[str, tuple[str, str, dict[str, Any]]] = {
+    "catalogo": ("products_list", "🛍️ El bot envió el catálogo con 2 productos — con el mensaje: «Buenas tardes…»", {
+        "text": "Buenas tardes, bienvenida a *Hubara*, velas artesanales hechas a mano en Colombia.\n\n"
+                "Para la Noche de Velitas tenemos estas velas de deseos:",
+        "items": [{"title": "Velas de deseos onduladas", "detail": "$22.500 COP"},
+                  {"title": "Velas de deseos cuadradas", "detail": "$25.000 COP"}],
+    }),
+    "resumen": ("order_confirmation", "🧾 El bot envió el resumen del pedido con botones para confirmar", {
+        "text": "*Resumen de tu pedido*\n• 2× Velas de deseos onduladas — $22.500\n\nTotal: $57.000 COP",
+        "buttons": [{"title": "✅ Confirmar"}, {"title": "✏️ Modificar"}, {"title": "❌ Cancelar"}],
+    }),
+}
+
+
+def bot_card(session_id: str, which: str, tap: str | None) -> None:
+    """Agrega al chat un envío del bot con su tarjeta y, si `tap`, el toque del cliente a uno de sus botones."""
+    _require_session(session_id)
+    _meta, jsonl, _media = session_paths(session_id)
+    component, note, card = BOT_CARDS[which]
+    t = now_ms()
+    append_jsonl(jsonl, {"role": "assistant", "kind": "ui_component", "component_kind": component,
+                         "content": note, "card": card, "timestamp": iso_utc(t), "wamid": _wamid()})
+    if tap:
+        append_jsonl(jsonl, {"role": "user", "content": f"[el cliente tocó el botón: {tap}]",
+                             "timestamp": iso_utc(t + 1_000), "wamid": _wamid()})
+    print(f"bot-card: {session_id} ← {which}" + (f" (tocó «{tap}»)" if tap else ""))
+
+
 # ── reset ────────────────────────────────────────────────────────────────────
 
 
@@ -288,6 +320,10 @@ def main() -> None:
     p_reply = sub.add_parser("reply", help="append a customer message")
     p_reply.add_argument("session")
     p_reply.add_argument("text")
+    p_card = sub.add_parser("bot-card", help="append a bot message with its card (catalog, order summary)")
+    p_card.add_argument("session")
+    p_card.add_argument("which", choices=sorted(BOT_CARDS))
+    p_card.add_argument("--tap", help="the customer then taps this button")
     p_config = sub.add_parser("config", help="change the App Operador server config (mobile/config.json)")
     p_config.add_argument("--min-version", type=int, required=True)
     p_screen = sub.add_parser("screen", help="serve an App Operador screen instead of the repo's one")
@@ -312,6 +348,8 @@ def main() -> None:
             fire_new(args.session, args.name, args.waiting_min, just_handed_off=args.just_handed_off)
     elif args.cmd == "reply":
         reply(args.session, args.text)
+    elif args.cmd == "bot-card":
+        bot_card(args.session, args.which, args.tap)
     elif args.cmd == "config":
         mobile_config(args.min_version)
     elif args.cmd == "screen":

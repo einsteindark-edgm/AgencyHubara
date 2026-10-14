@@ -1268,15 +1268,8 @@ async def _dispatch_intent(
             wa_dtos.InteractiveButtonsOutbound(
                 body=body,
                 buttons=[
-                    wa_dtos.ReplyButton(
-                        id=f"order.confirm.{ref}", title="✅ Confirmar"
-                    ),
-                    wa_dtos.ReplyButton(
-                        id=f"order.modify.{ref}", title="✏️ Modificar"
-                    ),
-                    wa_dtos.ReplyButton(
-                        id=f"order.cancel.{ref}", title="❌ Cancelar"
-                    ),
+                    wa_dtos.ReplyButton(id=f"order.{action}.{ref}", title=title)
+                    for action, title in ORDER_CONFIRMATION_BUTTONS
                 ],
             ),
         )
@@ -1446,6 +1439,15 @@ async def _dispatch_intent(
 CATALOG_CARD_GUIDE = (
     "Toca una vela para ver sus fotos y el precio. Para pedirla, «Añadir a la solicitud de pedido» "
     "y envía la solicitud; si tienes una duda sobre ella, «Enviar mensaje a la empresa»."
+)
+
+
+#: Los botones del resumen del pedido (`order.<acción>.<referencia>`): los
+#: comparten el envío y la tarjeta del panel.
+ORDER_CONFIRMATION_BUTTONS = (
+    ("confirm", "✅ Confirmar"),
+    ("modify", "✏️ Modificar"),
+    ("cancel", "❌ Cancelar"),
 )
 
 
@@ -1784,12 +1786,33 @@ def _build_history_event(
 def _history_card(
     kind: str | None, params: dict[str, Any], *, sent_text: str | None
 ) -> dict[str, Any] | None:
-    """El mensaje que leyó el cliente, entero, para el panel del chat:
-    `text`, `items` (filas de una lista), `link` (botón con enlace), `images`
-    (fotos con su texto) y `title` (la categoría). None = el componente no
-    tiene más que mostrar que su línea."""
+    """El mensaje que leyó el cliente, entero, para el panel y la app:
+    `text`, `items` (filas de una lista), `buttons` (los que pudo tocar),
+    `action` (el botón que abre la lista o el formulario), `link` (botón con
+    enlace), `images` (fotos con su texto) y `title` (la categoría, o «por
+    texto» si el formulario no salió). None = no hay más que su línea."""
     card: dict[str, Any] = {}
-    if kind == "products_list":
+    if kind == "shipping_flow":
+        if sent_text:
+            # El Flow no salió: el cliente leyó la lista de campos por texto.
+            text, items = sent_text, []
+            card["title"] = "por texto"
+        else:
+            text, items = str(params.get("body") or ""), []
+            card["action"] = str(params.get("flow_cta") or "Completar")
+    elif kind == "order_confirmation":
+        from src.plugins.chats.agent.sales.card_messages import order_card_record
+
+        # Sin la dirección: la misma regla del registro (lo leen modelos).
+        text, items = order_card_record(params), []
+        card["buttons"] = [{"title": title} for _, title in ORDER_CONFIRMATION_BUTTONS]
+    elif kind == "contact_card":
+        text = ""
+        item = {"title": os.getenv("HUBARA_ADVISOR_NAME", "Hubara Atención")}
+        if os.getenv("HUBARA_ADVISOR_PHONE"):
+            item["detail"] = os.environ["HUBARA_ADVISOR_PHONE"]
+        items = [item]
+    elif kind == "products_list":
         text = sent_text or str(params.get("intro_text") or "")
         items = _list_items(params)
         category = str(params.get("category") or "").strip()
@@ -1805,6 +1828,7 @@ def _history_card(
             max_len=wa_limits.MAX_LIST_BODY,
         )
         items = _list_items(params)
+        card["action"] = str(params.get("button_label") or "Ver categorías")
     elif kind == "quick_replies":
         text, items = str(params.get("body") or ""), []
     elif kind == "cta_url":

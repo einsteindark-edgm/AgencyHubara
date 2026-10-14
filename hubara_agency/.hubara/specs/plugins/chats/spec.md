@@ -444,7 +444,10 @@ el panel solo decía «El bot envió el catálogo con 2 productos».
 - THEN el `content` del marker incluye ese texto (`— con el mensaje: «…»`, recortado para la ventana de Jev)
 - AND el marker lleva `card` con el texto ENTERO que salió (con la guía de la ficha si fue por el catálogo de WhatsApp) y los productos con su precio
 - AND `GET /api/dashboard/sessions/{id}` lo proyecta como `event: {kind: bot_card, …}` y el panel lo pinta como burbuja del bot («Bot · Catálogo») con el texto y los productos
-- AND lo mismo vale para el menú de categorías, el botón con enlace (`cta_url`), la foto y la galería del producto; los botones (`quick_replies`) muestran su cuerpo entero
+- AND lo mismo vale para el menú de categorías (con el botón que lo abre), el botón con enlace (`cta_url`), la foto y la galería del producto, el formulario de envío (con su botón, o «por texto» si el Flow no salió), el resumen del pedido (sin la dirección del cliente, con sus tres botones) y la tarjeta de contacto; los botones (`quick_replies`) muestran su cuerpo entero
+- AND qué fue (`label`, p. ej. «Resumen para confirmar») y su ícono (`icon`, llave de una lista cerrada) los decide el servidor, así un componente nuevo se ve bien en el panel y en la app sin publicar otra versión
+- AND el botón que el cliente tocó queda marcado dentro de su mensaje (botones de respuesta y resumen del pedido)
+- AND la App Operador pinta la misma tarjeta como mensaje del bot (o del operador, si la envió desde la app), la guarda en Room y lee el toque del cliente como «Tocó «…»», no como el marcador
 - AND el historial anterior, sin `card`, sigue como nota de sistema
 
 #### Scenario: Variant picker persiste el texto real

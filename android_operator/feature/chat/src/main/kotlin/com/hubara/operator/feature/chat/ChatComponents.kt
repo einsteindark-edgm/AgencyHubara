@@ -120,6 +120,10 @@ fun MessageBubble(
         SystemNote(message.text.orEmpty(), modifier)
         return
     }
+    message.tap?.let { title ->
+        TapChip(title, message.timestampMs?.let { clockLabel(it, zone) }, modifier)
+        return
+    }
     val mine = message.author != Author.CUSTOMER
     val colors = OperatorTheme.colors
     val (bg, fg) = when (message.author) {
@@ -149,7 +153,13 @@ fun MessageBubble(
                 )
             }
         }
-        Column(
+        val card = message.card
+        if (card != null) {
+            // Catálogo, botones, formulario, resumen…: el mensaje que vio el cliente, no una nota gris.
+            Box(Modifier.clip(bubbleShape(position, mine)).background(bg)) {
+                CardContent(card, fg, time = message.timestampMs?.let { clockLabel(it, zone) })
+            }
+        } else Column(
             Modifier.widthIn(max = 300.dp).clip(bubbleShape(position, mine)).background(bg)
                 .padding(horizontal = if (message.imageUrl != null) 4.dp else 14.dp, vertical = if (message.imageUrl != null) 4.dp else 9.dp),
         ) {

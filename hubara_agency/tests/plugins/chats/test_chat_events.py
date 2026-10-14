@@ -199,12 +199,18 @@ def test_round_trip_a_catalog_is_a_card_with_its_message_and_products():
     assert detect_chat_event(produced) == {
         "kind": "bot_card",
         "component": "products_list",
+        # Qué fue y su ícono los decide el servidor: la app y el panel los
+        # pintan sin conocer el componente (uno nuevo no pide otra app).
+        "label": "Catálogo",
+        "icon": "catalog",
         "title": None,
         "text": greeting,
         "items": [
             {"title": "Velas de deseos onduladas", "detail": "$22.500 COP"},
             {"title": "Velas de deseos cuadradas", "detail": None},
         ],
+        "buttons": [],
+        "action": None,
         "link": None,
         "images": [],
     }
@@ -235,6 +241,38 @@ def test_round_trip_long_buttons_message_is_whole():
     assert event["kind"] == "bot_buttons"
     assert event["body"] == body.strip()
     assert [b["title"] for b in event["buttons"]] == ["Ver catálogo"]
+
+
+def test_round_trip_form_order_summary_and_contact_say_what_they_are():
+    form = detect_chat_event(_build_history_event(
+        "shipping_flow", {"body": "Necesito unos datos", "flow_cta": "Completar datos"}
+    ))
+    assert (form["label"], form["icon"], form["action"]) == ("Formulario de envío", "form", "Completar datos")
+
+    summary = detect_chat_event(_build_history_event("order_confirmation", {
+        "items": [{"title": "Velón Koala", "quantity": 1, "unit_price_cop": 35000}],
+        "subtotal_cop": 35000, "total_cop": 35000, "payment_method": "transfer",
+    }))
+    assert (summary["label"], summary["icon"]) == ("Resumen para confirmar", "order")
+    assert [b["title"] for b in summary["buttons"]] == ["✅ Confirmar", "✏️ Modificar", "❌ Cancelar"]
+
+
+def test_a_component_the_server_does_not_name_still_shows_as_a_message():
+    event = detect_chat_event({**_bot_ui("holograma", "📤 …"), "card": {"text": "Hola"}})
+    assert (event["label"], event["icon"]) == ("Mensaje interactivo", "message")
+
+
+def test_the_tapped_order_button_is_marked_inside_the_summary():
+    """El cliente tocó «✅ Confirmar» del resumen: queda marcado ahí, como en
+    los botones de respuesta."""
+    messages = [
+        detect_chat_event(_build_history_event("order_confirmation", {"items": [], "total_cop": 0})),
+        detect_chat_event(_user("[el cliente tocó el botón: ✅ Confirmar]")),
+    ]
+    wrapped = [{"event": e} for e in messages]
+    annotate_touched_buttons(wrapped)
+    assert wrapped[0]["event"]["buttons"][0] == {"title": "✅ Confirmar", "touched": True}
+    assert "touched" not in wrapped[0]["event"]["buttons"][1]
 
 
 def test_a_broken_card_falls_back_to_the_note():

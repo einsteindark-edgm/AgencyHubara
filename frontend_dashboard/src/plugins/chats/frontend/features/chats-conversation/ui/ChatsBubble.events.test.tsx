@@ -254,7 +254,10 @@ describe("tarjetas del bot", () => {
   it("el catálogo muestra el saludo que leyó el cliente", () => {
     render(<ChatsBubble message={catalog} />);
     expect(screen.getByText("Bot · Catálogo")).toBeTruthy();
-    expect(screen.getByText(/Buenas tardes, bienvenido a \*Hubara\*/)).toBeTruthy();
+    expect(screen.getByText(/Buenas tardes, bienvenido a/)).toBeTruthy();
+    // Como lo vio el cliente en WhatsApp: «*Hubara*» en negrita, sin asteriscos.
+    expect(screen.getByText("Hubara").tagName).toBe("STRONG");
+    expect(screen.queryByText(/\*Hubara\*/)).toBeNull();
     expect(screen.getByText(/Para la Noche de Velitas/)).toBeTruthy();
     expect(screen.queryByText(/El bot envió el catálogo/)).toBeNull();
   });
@@ -326,5 +329,92 @@ describe("tarjetas del bot", () => {
       "https://cdn.hubara.co/cruz.jpg",
     );
     expect(screen.getByText("Vela Cruz de Vida")).toBeTruthy();
+  });
+});
+
+describe("tarjetas del bot — formulario, resumen y lo que el servidor nombra", () => {
+  const summary: ChatMessageItem = {
+    kind: "out",
+    author: "bot",
+    event: {
+      kind: "bot_card",
+      component: "order_confirmation",
+      label: "Resumen para confirmar",
+      icon: "order",
+      title: null,
+      text: "*Resumen de tu pedido*\n• 2× Velón Koala — $35.000\nTotal: $82.000 COP",
+      items: [],
+      buttons: [{ title: "✅ Confirmar", touched: true }, { title: "✏️ Modificar" }, { title: "❌ Cancelar" }],
+      action: null,
+      link: null,
+      images: [],
+    },
+  };
+
+  it("el resumen muestra lo que leyó el cliente y sus tres botones", () => {
+    render(<ChatsBubble message={summary} />);
+    expect(screen.getByText("Bot · Resumen para confirmar")).toBeTruthy();
+    expect(screen.getByText(/2× Velón Koala/)).toBeTruthy();
+    const titles = screen
+      .getAllByTestId("wa-button")
+      .map((b) => b.textContent?.replace("Tocado", "").trim());
+    expect(titles).toEqual(["✅ Confirmar", "✏️ Modificar", "❌ Cancelar"]);
+  });
+
+  it("el botón que tocó el cliente queda marcado en el resumen", () => {
+    render(<ChatsBubble message={summary} />);
+    expect(screen.getByLabelText("✅ Confirmar, el cliente tocó este botón")).toBeTruthy();
+  });
+
+  it("el formulario muestra su mensaje y el botón que lo abre, sin ser un enlace", () => {
+    render(
+      <ChatsBubble
+        message={{
+          kind: "out",
+          author: "bot",
+          event: {
+            kind: "bot_card",
+            component: "shipping_flow",
+            label: "Formulario de envío",
+            icon: "form",
+            title: null,
+            text: "Para enviarte tu pedido necesito unos datos",
+            items: [],
+            buttons: [],
+            action: "Completar datos",
+            link: null,
+            images: [],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Bot · Formulario de envío")).toBeTruthy();
+    expect(screen.getByText("Completar datos")).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("un envío que el panel no conoce se ve con el nombre que le da el servidor", () => {
+    render(
+      <ChatsBubble
+        message={{
+          kind: "out",
+          author: "bot",
+          event: {
+            kind: "bot_card",
+            component: "holograma",
+            label: "Holograma del producto",
+            icon: "message",
+            title: null,
+            text: "Mira la vela en 3D",
+            items: [],
+            buttons: [],
+            action: null,
+            link: null,
+            images: [],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByText("Bot · Holograma del producto")).toBeTruthy();
   });
 });

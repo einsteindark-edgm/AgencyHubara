@@ -39,10 +39,19 @@ export type ChatEvent =
 export interface BotCardEvent {
   kind: "bot_card";
   component: string;
-  /** La categoría de un catálogo por categoría, o null. */
+  /** Qué fue («Catálogo», «Resumen para confirmar»…) y su ícono (llave de
+   *  una lista cerrada): los decide el servidor. Ausentes en un backend
+   *  anterior: el panel usa los suyos. */
+  label?: string;
+  icon?: string;
+  /** La categoría de un catálogo por categoría, «por texto»…, o null. */
   title: string | null;
   text: string | null;
   items: { title: string; detail: string | null }[];
+  /** Los botones que pudo tocar el cliente (el que tocó, marcado). */
+  buttons?: { title: string; touched?: boolean }[];
+  /** El botón que abre la lista o el formulario en su WhatsApp. */
+  action?: string | null;
   link: { label: string; url: string } | null;
   images: { url: string; caption: string | null }[];
 }

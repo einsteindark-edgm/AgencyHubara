@@ -71,9 +71,15 @@ export const chatEventSchema = z.discriminatedUnion("kind", [
      *  catálogo y el panel solo mostraba «envió el catálogo con 2 productos». */
     kind: z.literal("bot_card"),
     component: z.string(),
+    label: z.string().optional(),
+    icon: z.string().optional(),
     title: z.string().nullable(),
     text: z.string().nullable(),
     items: z.array(z.object({ title: z.string(), detail: z.string().nullable() })),
+    buttons: z
+      .array(z.object({ title: z.string(), touched: z.boolean().optional() }))
+      .optional(),
+    action: z.string().nullable().optional(),
     link: z.object({ label: z.string(), url: z.string() }).nullable(),
     images: z.array(z.object({ url: z.string(), caption: z.string().nullable() })),
   }),

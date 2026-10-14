@@ -736,6 +736,15 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
   color: #fff; text-decoration: none; border-top: 0.5px solid rgba(255,255,255,0.22);
 }
 .wa-card-link svg { width: 13px; height: 13px; }
+.wa-card .wa-buttons-list { margin-top: 8px; }
+/* El botón que abre la lista o el formulario en el WhatsApp del cliente: se
+   lee como botón de WhatsApp, pero apagado — desde el panel no se abre. */
+.wa-card-action {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  margin: 8px -12px 0; padding: 7px 12px; font-size: 13px; font-weight: 600;
+  color: rgba(255,255,255,0.82); border-top: 0.5px solid rgba(255,255,255,0.22);
+}
+.wa-card-action svg { width: 13px; height: 13px; }
 a.wa-card-link:hover { background: rgba(255,255,255,0.12); }
 
 /* Un clic o una reacción no son un mensaje escrito: no merecen una burbuja. */

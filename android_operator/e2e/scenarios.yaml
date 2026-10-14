@@ -720,3 +720,29 @@ scenarios:
     checks:
       - screen_has: "2× Plegaria de Luz"
       - sent_nothing_matching: ['"to": "000000000103"']
+
+  - id: S30_lo_que_envio_el_bot_se_ve_como_lo_vio_el_cliente
+    title: El catálogo y el resumen del pedido se ven como los vio el cliente, no como notas grises
+    resumen: "Caso 2026-10-13: el bot saludó DENTRO del texto del catálogo y la app solo decía, en gris, «El bot envió el catálogo con 2 productos». Ahora cada envío del bot es su tarjeta: qué fue («Catálogo»), el texto entero que leyó el cliente con la negrita de WhatsApp y los productos con su precio. En el resumen del pedido se ven sus tres botones y el toque del cliente se lee «Tocó «✅ Confirmar»», no como código."
+    setup: *fresh
+    script:
+      - {tap: "000000000101"}
+      - {expect: "Dúo Zodiacal"}
+      - {inject: "bot-card wa_000000000101 catalogo"}
+      - {expect: {text: "Buenas tardes, bienvenida a Hubara", timeout: 30}}
+      - {expect_all: ["Catálogo", "Velas de deseos onduladas", "$22.500 COP"]}
+      - {shot: catalogo-con-saludo}
+      - {inject: "bot-card wa_000000000101 resumen --tap '✅ Confirmar'"}
+      - {expect: {text: "Resumen para confirmar", timeout: 30}}
+      - {expect_all: ["Modificar", "Cancelar", "Tocó «"]}
+      - {shot: resumen-con-toque}
+    goal: |
+      Abre el chat 000000000101 (Laura). Espera unos segundos: el bot le manda un catálogo y después el resumen de un pedido.
+      1. Di qué dice la tarjeta del catálogo arriba, qué texto le llegó a la clienta y qué productos y precios muestra.
+      2. Di si en algún lado aparece «El bot envió…» en gris o un texto entre corchetes como «[el cliente tocó…]».
+      3. En el resumen del pedido, di qué botones tiene, cuál tocó la clienta y cómo lo sabes.
+    checks:
+      - screen_has: "Resumen para confirmar"
+      - screen_has: "Tocó «"
+      - screen_lacks: "El bot envió el resumen"
+      - screen_lacks: "[el cliente tocó el botón"

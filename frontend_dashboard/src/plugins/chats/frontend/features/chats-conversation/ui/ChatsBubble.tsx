@@ -5,6 +5,7 @@ import type {
 } from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
 import { fmtMoney, formatDayLabelEs } from "@/shared/lib";
+import { WaText } from "./waText";
 
 interface Props {
   message: ChatMessageItem;
@@ -89,6 +90,27 @@ function Labeled({
   );
 }
 
+/** Los botones que pudo tocar el cliente, como los vio: cada uno en su fila.
+ *  No se pueden tocar desde acá (no son botones del operador); el que tocó el
+ *  cliente queda marcado DENTRO del mensaje original. */
+function ButtonRows({ buttons }: { buttons: { title: string; touched?: boolean }[] }) {
+  return (
+    <div className="wa-buttons-list">
+      {buttons.map((b) => (
+        <span
+          key={b.title}
+          data-testid="wa-button"
+          className={"wa-button" + (b.touched ? " on" : "")}
+          aria-label={b.touched ? `${b.title}, el cliente tocó este botón` : undefined}
+        >
+          {b.title}
+          {b.touched && <span className="wa-button-badge">Tocado</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Quién mandó el envío: el bot, o el operador desde la app. */
 function senderLabel(author: ChatMessageItem["author"]): string {
   return author === "human" ? "Humano" : "Bot";
@@ -109,36 +131,25 @@ function ButtonsMessage({
   return (
     <Labeled side="out" label={`${senderLabel(author)} · Botones de respuesta`}>
       <div className={"bubble b-out wa-buttons" + (author === "human" ? " b-human" : "")}>
-        {event.body && <div className="wa-buttons-body">{event.body}</div>}
-        <div className="wa-buttons-list">
-          {event.buttons.map((b) => (
-            <span
-              key={b.title}
-              data-testid="wa-button"
-              className={"wa-button" + (b.touched ? " on" : "")}
-              aria-label={
-                b.touched ? `${b.title}, el cliente tocó este botón` : undefined
-              }
-            >
-              {b.title}
-              {b.touched && <span className="wa-button-badge">Tocado</span>}
-            </span>
-          ))}
-        </div>
+        {event.body && <div className="wa-buttons-body wa-card-text"><WaText text={event.body} /></div>}
+        <ButtonRows buttons={event.buttons} />
         <div className="meta">{time}</div>
       </div>
     </Labeled>
   );
 }
 
-/** Qué fue cada envío, en palabras del operador. Uno nuevo cae a «Mensaje
- *  interactivo» y se ve igual, con su texto. */
+/** Qué fue cada envío, si el servidor no lo dice (backend anterior). Lo
+ *  normal es `event.label`: el servidor nombra hasta los envíos nuevos. */
 const CARD_LABEL: Record<string, string> = {
   products_list: "Catálogo",
   categories: "Menú de categorías",
   cta_url: "Botón con enlace",
   product_detail: "Foto del producto",
   product_gallery: "Fotos del producto",
+  shipping_flow: "Formulario de envío",
+  order_confirmation: "Resumen para confirmar",
+  contact_card: "Tarjeta de contacto",
 };
 
 /** Solo enlaces web: el destino viene del historial, no se ejecuta otra cosa. */
@@ -159,7 +170,8 @@ function CardMessage({
   time?: string;
   author?: ChatMessageItem["author"];
 }) {
-  const what = CARD_LABEL[event.component] ?? "Mensaje interactivo";
+  const what = event.label ?? CARD_LABEL[event.component] ?? "Mensaje interactivo";
+  const buttons = event.buttons ?? [];
   const label = `${senderLabel(author)} · ${what}${event.title ? ` · ${event.title}` : ""}`;
   return (
     <Labeled side="out" label={label}>
@@ -175,10 +187,10 @@ function CardMessage({
             >
               <img src={img.url} alt={img.caption ?? "Foto enviada al cliente"} loading="lazy" />
             </a>
-            {img.caption && <figcaption className="wa-card-text">{img.caption}</figcaption>}
+            {img.caption && <figcaption className="wa-card-text"><WaText text={img.caption} /></figcaption>}
           </figure>
         ))}
-        {event.text && <div className="wa-card-text">{event.text}</div>}
+        {event.text && <div className="wa-card-text"><WaText text={event.text} /></div>}
         {event.items.length > 0 && (
           <ul className="wa-card-items">
             {event.items.map((item, i) => (
@@ -188,6 +200,15 @@ function CardMessage({
               </li>
             ))}
           </ul>
+        )}
+        {buttons.length > 0 && <ButtonRows buttons={buttons} />}
+        {event.action && (
+          // El botón que abre la lista o el formulario en el WhatsApp del
+          // cliente: se muestra cuál fue, pero desde acá no se abre nada.
+          <span className="wa-card-action">
+            <Icon.expand />
+            {event.action}
+          </span>
         )}
         {event.link &&
           (isWebUrl(event.link.url) ? (
