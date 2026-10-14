@@ -19,6 +19,8 @@ convierte la respuesta en 500: el cambio ya está hecho; se registra en el log.
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import logging
 import re
 from datetime import date, datetime, time, timezone
@@ -203,13 +205,29 @@ def _first_purchase_of(code: str) -> bool | None:
 
 
 def _save_first_purchase(code: str, value: bool, request: Request) -> None:
-    """Guarda la condición; 503 si el vault falla (no cambió nada)."""
+    """Guarda la condición; 503 si el vault falla (no cambió nada). Conserva
+    las demás condiciones del código («solo quien lo recibió»)."""
+    _save_conditions(code, request, first_purchase_only=value)
+
+
+def _save_conditions(code: str, request: Request, **changes: bool) -> None:
+    """Cambia solo las condiciones pedidas; 503 si el vault falla."""
     try:
-        conditions_store().put(
-            CouponConditions(code, first_purchase_only=value, updated_at=_stamp(), updated_by=current_actor(request))
+        store = conditions_store()
+        current = store.get(code)
+        store.put(
+            replace(current, **changes, updated_at=_stamp(), updated_by=current_actor(request))
         )
     except (CouponConditionsError, OSError, ValueError) as e:
         raise _fail(503, _CONDITIONS_UNSAVED) from e
+
+
+def _granted_only_of(code: str) -> bool | None:
+    """«Solo quien lo recibió» (cupón personal de reseñas); None = ilegible."""
+    try:
+        return conditions_store().get(code).granted_only
+    except (CouponConditionsError, OSError, ValueError):
+        return None
 
 
 def _forget_conditions(code: str) -> None:
@@ -223,7 +241,10 @@ def _forget_conditions(code: str) -> None:
 
 def _json(view: CouponView, *, units: dict[str, int | None] | None = None) -> dict[str, Any]:
     """`coupon_json` con la condición de Hubara (None = no se pudo leer)."""
-    return coupon_json(view, units=units) | {"first_purchase_only": _first_purchase_of(view.code)}
+    return coupon_json(view, units=units) | {
+        "first_purchase_only": _first_purchase_of(view.code),
+        "granted_only": _granted_only_of(view.code),
+    }
 
 
 async def _view(promotion_id: str) -> CouponView:
@@ -358,12 +379,15 @@ class CouponBody(BaseModel):
     status: str = "active"
     #: Solo para la primera compra del cliente (el descuento de bienvenida).
     first_purchase_only: bool = False
+    #: Solo para quien lo recibió (cupón personal: el agradecimiento por
+    #: calificar, GRACIAS5/GRACIAS10 — lo concede el plugin de reseñas).
+    granted_only: bool = False
 
 
 @router.post("/coupons", status_code=201)
 async def create_coupon(body: CouponBody, request: Request) -> dict[str, Any]:
     try:
-        spec = parse_coupon_spec(body.model_dump(exclude={"first_purchase_only"}))
+        spec = parse_coupon_spec(body.model_dump(exclude={"first_purchase_only", "granted_only"}))
     except CouponSpecError as e:
         raise _spec_error(e) from e
     await _check_products(spec.products)
@@ -371,13 +395,18 @@ async def create_coupon(body: CouponBody, request: Request) -> dict[str, Any]:
     # bienvenida que le sirva a cualquiera. Si Medusa no lo crea, se devuelve
     # la que había (el código puede ser de otro cupón).
     previous = _first_purchase_of(spec.code)
-    if body.first_purchase_only:
-        if previous is None:
+    previous_granted = _granted_only_of(spec.code)
+    conditioned = body.first_purchase_only or body.granted_only
+    if conditioned:
+        if previous is None or previous_granted is None:
             raise _fail(503, _CONDITIONS_UNREADABLE)
-        _save_first_purchase(spec.code, True, request)
+        _save_conditions(
+            spec.code, request,
+            first_purchase_only=body.first_purchase_only, granted_only=body.granted_only,
+        )
 
     def _undo_condition() -> None:
-        if body.first_purchase_only and not previous:
+        if conditioned and not (previous or previous_granted):
             _forget_conditions(spec.code)
 
     try:
@@ -400,11 +429,12 @@ async def create_coupon(body: CouponBody, request: Request) -> dict[str, Any]:
         if not getattr(e, "outcome_unknown", False):
             _undo_condition()
         raise _unavailable(e, unknown=_CREATE_UNKNOWN) from e
-    if previous and not body.first_purchase_only:
+    if (previous or previous_granted) and not conditioned:
         _forget_conditions(spec.code)  # la de un cupón borrado con el mismo código
     _audit(
         request, "create", view,
-        {"percentage": view.percentage, "status": view.status, "first_purchase_only": body.first_purchase_only},
+        {"percentage": view.percentage, "status": view.status,
+         "first_purchase_only": body.first_purchase_only, "granted_only": body.granted_only},
     )
     return _json(view)
 
