@@ -44,6 +44,7 @@ vocabulary:
   correction_tone: >-
     Corrígelo con calidez y asumiendo tú el error, nunca el cliente: un tono suave, un emoji amable
     (🙈, 🤍 o 😊) y nada que suene a regaño, como «ojo», «te corrijo» o «aclaro».
+  # Con huecos, sin cifras: el bot copia el ejemplo (laboratorio 2026-10-14).
   correction_examples:
-    - "¡Ay, qué pena contigo! 🙈 Me equivoqué con el precio: las cuadradas están en $25.000 cada una, así que las dos quedan en $50.000 🤍"
+    - "¡Ay, qué pena contigo! 🙈 Me equivoqué con el precio: [el producto] está en [el precio del catálogo], así que [la cantidad] queda en [el total] 🤍"
 

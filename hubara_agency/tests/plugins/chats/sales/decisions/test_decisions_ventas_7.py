@@ -536,3 +536,13 @@ async def test_a_single_presentation_is_not_asked_without_a_presentation_word(tm
     verdict = await _decide(inp, tmp_path, "variante_ajena")
 
     assert verdict.value is False and oracle["fake"].calls == []
+
+
+def test_the_correction_examples_carry_no_figures() -> None:
+    """Laboratorio del 2026-10-14: el bot copió el ejemplo de corrección casi
+    palabra por palabra. Con cifras en el ejemplo, con otro producto copiaría
+    precios que no son: el ejemplo enseña el tono, los datos los pone el bot."""
+    _need_v7()
+    examples = _load(V7 / "domain.yaml")["vocabulary"]["correction_examples"]
+
+    assert examples and not any(ch.isdigit() for e in examples for ch in e)

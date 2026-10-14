@@ -418,7 +418,7 @@ async def test_a_price_correction_is_warm_and_owns_the_mistake(tmp_path: Path, c
 
     message = held["message"]
     assert "asumiendo tú el error" in message and "«te corrijo»" in message
-    assert "¡Ay, qué pena contigo! 🙈" in message
+    assert "¡Ay, qué pena contigo! 🙈" in message and "[el precio del catálogo]" in message
 
 
 async def test_the_catalog_price_by_the_quantity_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
