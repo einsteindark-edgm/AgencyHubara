@@ -276,7 +276,8 @@ Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/
 `/events`, `/api/orders/orders[/{id}]`, `PATCH /api/orders/orders/{id}/stage`.
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
 `GET /api/chats/mobile/hot`, `GET /api/chats/mobile/human` (página «Humano» del widget), `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,
-`DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`,
+`DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`
+(`?category=&q=` filtra con la misma regla que «Enviar productos» al mandar: `chats/api/catalog_picker.py`),
 `POST /api/chats/session-actions/{id}/tools/{tool}`, `GET /api/chats/order-intake/{id}/form` y
 `POST /api/chats/session-actions/{id}/order/app` («Crear pedido»).
 Pantallas del servidor (las de `screens/`): `/api/orders/orders`, `PATCH /api/orders/orders/{id}/confirm-payment`,
