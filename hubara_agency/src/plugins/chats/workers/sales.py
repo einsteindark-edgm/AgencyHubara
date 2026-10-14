@@ -181,6 +181,7 @@ _catalog = get_catalog_client()
 # vendidas se derivan de los pedidos de Medusa — un cupón con cupo aplica
 # SOLO a esas combinaciones producto + color + aroma.
 from src.sdk.connectorkit import (  # noqa: E402
+    get_coupon_grants_store,
     get_coupon_sales_reader,
     get_customer_orders_port,
     get_order_facts_port,
@@ -228,6 +229,7 @@ register_tool_extension(
         metadata_store=build_session_metadata_store(),
         order_facts=_order_facts_port(),
         customer_orders=_customer_orders_port(),
+        coupon_grants=get_coupon_grants_store(),
     ),
 )
 register_tool_extension(
@@ -241,6 +243,7 @@ register_tool_extension(
         sales=_coupon_sales,
         order_facts=_order_facts_port(),
         customer_orders=_customer_orders_port(),
+        coupon_grants=get_coupon_grants_store(),
     ),
 )
 
@@ -346,6 +349,8 @@ register_tool_extension(
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
         quota_lock=get_quota_lock(),
+        # Cupón personal (agradecimiento por calificar): se gasta al registrar.
+        coupon_grants=get_coupon_grants_store(),
     ),
 )
 

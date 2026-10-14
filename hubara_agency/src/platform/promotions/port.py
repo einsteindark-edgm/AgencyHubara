@@ -53,6 +53,8 @@ class PromotionDTO:
     #: Solo para la PRIMERA compra del cliente (condición de Hubara, no de
     #: Medusa: la pega `ConditionedPromotionsPort` desde el vault).
     first_purchase_only: bool = False
+    #: Solo para quien lo recibió (cupón personal, `promotions/grants.py`).
+    granted_only: bool = False
 
 
 @dataclass(frozen=True)

@@ -410,8 +410,11 @@ class RegisterOrderTool(ToolBase):
         quota_lock: Any = None,
         split_lines_guard: bool = True,
         closing_guard: bool = True,
+        coupon_grants: Any = None,
     ) -> None:
-        """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
+        """`coupon_grants`: cupones personales (agradecimiento por calificar) —
+        registrar el pedido con uno gasta la concesión (un solo uso).
+        `quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
         Con cupo, el reparto se relee BAJO el candado del código antes de
         crear el draft (nunca se vende dos veces la última unidad).
         `split_lines_guard`: un producto repartido en variantes en el borrador
@@ -444,6 +447,31 @@ class RegisterOrderTool(ToolBase):
         self._quota_lock = quota_lock
         self._split_lines_guard = split_lines_guard
         self._closing_guard = closing_guard
+        self._coupon_grants = coupon_grants
+
+    def _spend_personal_coupon(
+        self, session_key: str, code: str, order_id: str | None
+    ) -> None:
+        """Un cupón personal se usa una vez: el pedido registrado gasta la
+        concesión (no-op si el cupón no es personal). El pedido ya existe: si
+        el vault falla, se avisa en el log y no se tumba el registro."""
+        if self._coupon_grants is None or not order_id:
+            return
+        try:
+            used = self._coupon_grants.mark_used(
+                session_key, code, order_id, int(time.time() * 1000)
+            )
+        except Exception as exc:  # noqa: BLE001 — el pedido ya quedó registrado
+            logger.warning(
+                "🎟️ [TOOL register_order] no pude gastar el cupón personal {} de {}: {}",
+                code, session_key, exc,
+            )
+            return
+        if used is not None:
+            logger.info(
+                "🎟️ [TOOL register_order] cupón personal {} usado en {} ({})",
+                code, order_id, session_key,
+            )
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -1229,6 +1257,8 @@ class RegisterOrderTool(ToolBase):
         from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 
         FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _record)
+        if result.success and coupon_code:
+            self._spend_personal_coupon(ctx.session_key, coupon_code, result.order_id)
 
         # ------------------------------------------------------------
         # Envelope para el LLM.

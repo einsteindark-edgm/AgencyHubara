@@ -77,6 +77,8 @@ def promotion_from_snapshot(raw: dict[str, Any]) -> PromotionDTO:
     data["scope_unresolved"] = bool(data.get("scope_unresolved"))
     # …ni condición de primera compra (2026-10-09).
     data["first_purchase_only"] = bool(data.get("first_purchase_only"))
+    # …ni de cupón personal (reseñas, 2026-10-13).
+    data["granted_only"] = bool(data.get("granted_only"))
     fields = PromotionDTO.__dataclass_fields__
     return PromotionDTO(**{k: data.get(k) for k in fields})
 

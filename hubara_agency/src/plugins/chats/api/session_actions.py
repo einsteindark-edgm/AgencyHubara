@@ -92,6 +92,7 @@ from src.sdk.connectorkit import (
     schedule_capi_flush,
     ProductNotFoundError,
     get_catalog_client,
+    get_coupon_grants_store,
     get_coupon_sales_reader,
     get_order_registration_port,
     get_promo_quota_store,
@@ -136,6 +137,8 @@ class SessionActionsDeps:
     quotas: Any | None = None
     sales: Any | None = None
     quota_lock: Any | None = None
+    # Cupón personal (agradecimiento por calificar): se gasta al registrar.
+    coupon_grants: Any | None = None
 
 
 async def _notify_episode_closed(session_key: str, episode_id: str, closing_tag: str) -> None:
@@ -171,6 +174,7 @@ def get_session_actions_deps() -> SessionActionsDeps:
         quotas=_try("promo_quota_store", get_promo_quota_store),
         sales=_try("coupon_sales_reader", get_coupon_sales_reader),
         quota_lock=_try("quota_lock", get_quota_lock),
+        coupon_grants=_try("coupon_grants", get_coupon_grants_store),
     )
 
 
@@ -587,7 +591,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     tool = RegisterOrderTool(
         str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog,
         quotas=deps.quotas, sales=deps.sales, quota_lock=deps.quota_lock, split_lines_guard=False,
-        closing_guard=False,
+        closing_guard=False, coupon_grants=deps.coupon_grants,
     )
     # Color/aroma de cada ítem (cupo por unidad): un valor que el producto no
     # tiene NO registra nada — mismo contrato que `present_order_confirmation`.
