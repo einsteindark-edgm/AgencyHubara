@@ -706,6 +706,26 @@ def test_a_purchase_confirmed_without_shipping_data_also_offers_create_order() -
     assert _ids(out)[0] == "create_order"
 
 
+def test_send_products_opens_the_products_panel_in_an_app_that_can() -> None:
+    """La burbuja «Enviar productos» mandaba el catálogo entero de una vez
+    (2026-10-14): ahora abre el mismo panel de «+ Más» (categoría, búsqueda o
+    un producto). No le manda nada al cliente hasta que el operador elige.
+    Sin el color de «Crear pedido»: es una burbuja de venta normal."""
+    out = suggest_actions(_facts(stage="etapa_descubrimiento", app_features=_OPENS))
+
+    assert out["suggestions"][0] == {
+        "id": "present_products",
+        "label": "Enviar productos",
+        "prominence": "primary",
+        "editable": True,
+        "opens": "enviar_productos",
+        "action": {"name": "present_products", "args": {}},
+    }
+    # Una app vieja no sabe abrir pantallas: la burbuja manda la acción como siempre.
+    old = suggest_actions(_facts(stage="etapa_descubrimiento"))["suggestions"][0]
+    assert old["id"] == "present_products" and "opens" not in old and "tone" not in old
+
+
 def test_create_order_needs_an_app_that_opens_the_form_a_human_and_no_order_yet() -> None:
     ready = _facts(stage="etapa_cierre", items=(_READY,), shipping_ready=True, customer_confirmed=True)
 

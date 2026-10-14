@@ -803,3 +803,28 @@ scenarios:
       - sent_contains: ['"to": "000000000101"', "Plegaria de Luz"]
       - sent_nothing_matching: ['"to": "000000000101"', "Luz Serena"]
       - screen_has: "Tú atiendes"
+
+  - id: S33_burbuja_enviar_productos_abre_el_panel
+    title: La burbuja «Enviar productos» abre el panel y manda solo lo que se elige
+    resumen: "La burbuja «Enviar productos» del chat mandaba el catálogo entero de una vez (2026-10-14). Sofía está con el equipo y no ha elegido nada: la burbuja abre el mismo panel de «+ Más»; el operador elige «Velas Religiosas» y a Sofía le llega solo la Plegaria de Luz; la hoja se cierra sola."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "000000000102"}, {expect: "Tú atiendes"}]
+    script:
+      - {tap: {text: "=Enviar productos", above: "Escribe un mensaje…"}}
+      - {expect: "Enviar todo el catálogo"}
+      - {tap: "Velas Religiosas · 1"}
+      - {expect: "Enviar 1 producto"}
+      - {shot: panel-desde-la-burbuja}
+      - {tap: "Enviar 1 producto"}
+      - {expect: "Enviando «Enviar productos · Velas Religiosas»"}
+      - {expect_gone: {text: "Enviando", timeout: 30}}
+    goal: |
+      Estás en el chat 000000000102 (Sofía), que atiende el equipo.
+      1. Toca la burbuja «Enviar productos» (encima del campo «Escribe un mensaje…»). Di qué se abre.
+      2. Elige la categoría «Velas Religiosas». Di qué productos quedan y qué dice el botón de enviar.
+      3. Toca ese botón. Di qué barra aparece abajo y espera unos 8 segundos.
+      Reporta lo que viste en cada paso.
+    checks:
+      - sent_contains: ['"to": "000000000102"', "Plegaria de Luz"]
+      - sent_nothing_matching: ['"to": "000000000102"', "Zodiacal"]
+      - screen_has: "Tú atiendes"

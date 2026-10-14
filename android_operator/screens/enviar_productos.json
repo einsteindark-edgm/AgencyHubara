@@ -1,0 +1,57 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Lo que abre la burbuja «Enviar productos» del chat (`opens: enviar_productos`, mobile_rules): el MISMO panel que «+ Más» → «Enviar productos» en acciones.json. Las dos copias tienen que ser iguales (RealScreensTest.el_panel_de_la_burbuja_es_el_mismo_de_mas): cambia las dos juntas. Caso 2026-10-14: la burbuja mandaba el catálogo entero de una vez.",
+  "schema": 1,
+  "id": "enviar_productos",
+  "title": "Enviar productos",
+  "subtitle": "Elige una categoría o busca por nombre: al cliente le llega solo eso.",
+  "params": ["session"],
+  "state": { "categoria": "", "buscar": "" },
+  "data": {
+    "catalogo": { "get": "/api/chats/catalog", "query": { "category": "{{state.categoria}}", "q": "{{state.buscar}}" }, "optional": true }
+  },
+  "computed": {
+    "filtrado": "{{state.categoria | or:state.buscar}}"
+  },
+  "body": [
+    { "type": "chips", "bind": "state.categoria", "options": "{{catalogo.categories}}" },
+    { "type": "text_field", "bind": "state.buscar", "label": "Buscar producto", "placeholder": "Ej.: San Miguel" },
+    { "type": "progress", "label": "Cargando el catálogo…", "visible": "{{status.catalogo.loading}}" },
+    {
+      "type": "button", "icon": "send", "full_width": true, "text": "Enviar todo el catálogo",
+      "visible": "{{filtrado | not}}", "enabled": "{{status.catalogo.loading | not}}",
+      "action": [
+        { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos" } },
+        { "type": "back" }
+      ]
+    },
+    {
+      "type": "button", "icon": "send", "full_width": true, "text": "Enviar {{catalogo.count | plural:'producto':'productos'}}",
+      "visible": "{{filtrado | and:catalogo.count}}", "enabled": "{{status.catalogo.loading | not}}",
+      "action": [
+        { "type": "native", "name": "send_tool", "args": {
+          "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos · {{catalogo.filter_label}}",
+          "args": { "category": "{{state.categoria}}", "q": "{{state.buscar}}" } } },
+        { "type": "back" }
+      ]
+    },
+    {
+      "type": "notice", "tone": "info", "icon": "info", "visible": "{{catalogo.count | gt:30}}",
+      "text": "Un mensaje de WhatsApp lleva hasta 30 productos: salen los primeros 30. Elige una categoría o busca para mandar justo lo que necesitas."
+    },
+    { "type": "text", "style": "label", "emphasis": true, "text": "O toca uno para enviarlo solo, con su foto y su precio" },
+    {
+      "type": "list", "items": "{{catalogo.products}}", "as": "p", "key": "{{p.handle}}",
+      "item": {
+        "type": "list_item", "title": "{{p.title}}", "subtitle": "{{p.categories | join}}", "trailing": "{{p.price_cop | money}}",
+        "action": [
+          { "type": "native", "name": "send_tool", "args": {
+            "session": "{{params.session}}", "tool": "present_product_detail", "label": "Enviar producto · {{p.title}}",
+            "args": { "handle": "{{p.handle}}" } } },
+          { "type": "back" }
+        ]
+      },
+      "empty": { "type": "empty", "icon": "search", "title": "Ningún producto coincide", "body": "Prueba con otra categoría u otro nombre." }
+    }
+  ]
+}
