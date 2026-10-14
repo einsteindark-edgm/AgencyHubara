@@ -865,17 +865,29 @@ def record_outbound_in_active_episode(
 # §10). Un turno tarda segundos; dos minutos cubren reintentos del envío.
 _FAREWELL_GRACE_MS = 2 * 60 * 1000
 
+#: Lo que sale por fuera del bot después del cierre (plantillas: ETA,
+#: invitación a calificar; Flow / botón con enlace): va al último episodio
+#: aunque esté cerrado (premortem C7). Un texto libre, solo en la gracia.
+_COSTED_AFTER_CLOSE_KINDS = frozenset({"template", "interactive"})
+
 
 def _append_outbound_to_active_episode(
     metadata: dict[str, Any],
     log_entry: OutboundLogEntry,
 ) -> None:
     """Mutates: agrega `log_entry` al `outbound_messages[]` del episodio
-    activo y actualiza su `cost_summary`. Si NO hay episodio activo (caso
-    raro: outbound sin haber recibido inbound), retorna sin tocar — el
-    OutboundLogEntry se persiste en `metadata.last_outbound` solamente. Un
-    episodio que cerró hace menos de `_FAREWELL_GRACE_MS` cuenta como activo:
-    es la despedida del turno que lo cerró.
+    activo y actualiza su `cost_summary`. Sin ningún episodio (outbound sin
+    haber recibido inbound), retorna sin tocar — el OutboundLogEntry se
+    persiste en `metadata.last_outbound` solamente.
+
+    Con el último episodio CERRADO (premortem C7: la invitación a calificar
+    sale tras la entrega, los avisos del ETA, lo que manda el equipo) el envío
+    va a ESE episodio marcado `after_close`, como los demás costos de la
+    conversación (`record_episode_usage`: el abierto o, si no hay, el último):
+    sin esto el costo de una plantilla de marketing no aparecía en ninguna
+    parte. `IngestDeliveryStatus` materializa su costo; lo que el episodio
+    tenía al cerrar sigue congelado. Un texto libre solo si es la despedida
+    del turno que lo cerró (`_FAREWELL_GRACE_MS`), también `after_close`.
 
     Detalle de cost: el `log_entry` viene con `cost_usd_micros=None` y
     `pricing=None` porque el send activity NO conoce el pricing todavía
@@ -883,15 +895,20 @@ def _append_outbound_to_active_episode(
     materializa después usando `materialize_pending_in_summary`.
     """
     episodes = metadata.get("episodes", [])
-    if not episodes:
+    if not episodes or not isinstance(episodes[-1], dict):
         return
     last = episodes[-1]
     closed_at = last.get("closed_at_ms")
-    if closed_at is not None and not (
-        isinstance(closed_at, (int, float))
-        and log_entry.sent_at_ms - closed_at <= _FAREWELL_GRACE_MS
+    after_close = closed_at is not None
+    if (
+        after_close
+        and log_entry.kind not in _COSTED_AFTER_CLOSE_KINDS
+        and not (
+            isinstance(closed_at, (int, float))
+            and log_entry.sent_at_ms - closed_at <= _FAREWELL_GRACE_MS
+        )
     ):
-        return  # episodio cerrado hace rato — no contaminar
+        return  # un texto libre mucho después del cierre: no contaminar
 
     # Asegurar list + summary inicial
     outbound_list = last.setdefault("outbound_messages", [])
@@ -943,7 +960,7 @@ def _append_outbound_to_active_episode(
             summary = empty_episode_cost_summary()
 
     new_summary = add_outbound_to_summary(summary, log_entry)
-    outbound_list.append(asdict(log_entry))
+    outbound_list.append({**asdict(log_entry), **({"after_close": True} if after_close else {})})
     last["cost_summary"] = asdict(new_summary)
 
 

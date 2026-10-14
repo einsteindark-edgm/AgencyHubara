@@ -200,7 +200,11 @@ class IngestDeliveryStatus:
                 error_code=error_code,
                 outcome=outcome,
             )
-            return metadata if _mutate_episode(metadata) or touch_changed else None
+            review_changed = _record_review_delivery(
+                metadata, wa_message_id, status=status, error_code=error_code, outcome=outcome
+            )
+            episode_changed = _mutate_episode(metadata)
+            return metadata if episode_changed or touch_changed or review_changed else None
 
         def _mutate_episode(metadata: dict[str, Any]) -> bool:
             episodes = metadata.get("episodes") or []
@@ -218,8 +222,11 @@ class IngestDeliveryStatus:
             episode = episodes[found[0]]
             # Episodio cerrado → dead-letter, NO mutar summary: el summary
             # quedó congelado al close_episode; los webhooks tardíos NO deben
-            # recalcular el agregado histórico.
-            if episode.get("closed_at_ms") is not None:
+            # recalcular el agregado histórico. Salvo un envío POSTERIOR al
+            # cierre (`after_close`, premortem C7: la invitación a calificar,
+            # un aviso del ETA): ese es costo nuevo de la conversación.
+            after_close = bool(episode["outbound_messages"][found[1]].get("after_close"))
+            if episode.get("closed_at_ms") is not None and not after_close:
                 outcome["reason"] = "episode_closed"
                 outcome["episode_id"] = episode.get("episode_id")
                 return False
@@ -269,7 +276,10 @@ class IngestDeliveryStatus:
                 cost_usd_micros=cost,
                 rate_card_version=rate_card.version,
             )
-            outbound_messages[found[1]] = _outbound_log_entry_to_dict(new_entry)
+            # Lo que el dataclass no tiene (`after_close`) se conserva.
+            outbound_messages[found[1]] = {
+                **outbound_messages[found[1]], **_outbound_log_entry_to_dict(new_entry)
+            }
             episode["outbound_messages"] = outbound_messages
             if not already_materialized:
                 current_summary = _summary_from_episode(episode)
@@ -294,9 +304,11 @@ class IngestDeliveryStatus:
             return
 
         reason = outcome.get("reason")
-        if outcome.get("campaign_touch") and reason in ("entry_disappeared", "episode_closed"):
-            # Mensaje de campaña sin conversación abierta (o ya cerrada): el
-            # touch lo anotó — no es un huérfano.
+        if (outcome.get("campaign_touch") or outcome.get("review_touch")) and reason in (
+            "entry_disappeared", "episode_closed"
+        ):
+            # Mensaje de campaña (o invitación a calificar) sin conversación
+            # abierta (o ya cerrada): el touch lo anotó — no es un huérfano.
             await self._emit_event(
                 session_id=session_id,
                 wa_message_id=wa_message_id,
@@ -380,6 +392,8 @@ class IngestDeliveryStatus:
                     ):
                         return session_id
             if campaign_touch_for_message(metadata.get("campaign_touches"), wa_message_id):
+                return session_id
+            if _review_touch_for_message(metadata.get("review_request_touches"), wa_message_id):
                 return session_id
         return None
 
@@ -493,6 +507,53 @@ class IngestDeliveryStatus:
                 "ingest_delivery_status_event_emit_failed",
                 extra={"wa_message_id": wa_message_id, "error": str(e)},
             )
+
+
+# =============================================================================
+# Invitación a calificar (premortem C7)
+# =============================================================================
+
+#: Orden de los estados de Meta: uno tardío no deshace uno posterior.
+_STATUS_RANK = {"sent": 1, "delivered": 2, "read": 3}
+
+
+def _review_touch_for_message(touches: Any, wa_message_id: str) -> dict[str, Any] | None:
+    """El `review_request_touches[]` (lo escribe el plugin de reseñas) cuyo
+    mensaje es este, o None."""
+    for touch in touches or []:
+        if isinstance(touch, dict) and wa_message_id and touch.get("wa_message_id") == wa_message_id:
+            return touch
+    return None
+
+
+def _record_review_delivery(
+    metadata: dict[str, Any],
+    wa_message_id: str,
+    *,
+    status: str,
+    error_code: int | None,
+    outcome: dict[str, Any],
+) -> bool:
+    """Mutates: anota en el touch de la invitación a calificar el estado de
+    Meta (`status`; `error_code` como texto si falló). El plugin de reseñas lo
+    lee: una invitación que falló cae a la plantilla. Un «fallido» queda; un
+    estado tardío («entregado» después de «leído») no deshace el posterior."""
+    touch = _review_touch_for_message(metadata.get("review_request_touches"), wa_message_id)
+    if touch is None:
+        return False
+    outcome["review_touch"] = True
+    current = touch.get("status")
+    if current == "failed":
+        return False
+    if status == "failed":
+        touch["status"] = "failed"
+        if error_code is not None:
+            touch["error_code"] = str(error_code)
+        return True
+    if _STATUS_RANK.get(status, 0) <= _STATUS_RANK.get(str(current), 0):
+        return False
+    touch["status"] = status
+    return True
 
 
 # =============================================================================
