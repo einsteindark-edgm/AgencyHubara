@@ -177,6 +177,8 @@ class PreciosDelTexto:
     products: tuple[str, ...]
     prices: tuple[int, ...]
     policy: tuple[int, ...]
+    #: Los recargos del link de pago (porcentajes): el total con recargo también vale.
+    surcharges: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)

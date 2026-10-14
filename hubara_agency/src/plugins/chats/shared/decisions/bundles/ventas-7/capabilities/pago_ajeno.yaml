@@ -18,7 +18,7 @@ items:
   builtin: payment_claim_items
   with:
     ofrece_contra_entrega: >-
-      contra entrega, contraentrega, pag* al/cuando recib*, pag* al/cuando te llegu*, pag* al/cuando llegu*
+      contra entrega, contraentrega, pag* … al/cuando recib*, pag* … al/cuando te llegu*, pag* … al/cuando llegu*
     # Lo que enuncia la regla o una condición sobre el pedido no le ofrece nada
     # a su pedido: la cláusula con una de estas no se propone.
     regla_general: >-
@@ -29,7 +29,8 @@ items:
     habla_del_link: link, enlace*
     sin_recargo: >-
       sin recargo/comisión, sin ningún recargo/comisión, sin costo adicional,
-      no tiene recargo/comisión, no tiene ningún recargo/comisión
+      no tiene recargo/comisión, no tiene ningún recargo/comisión, no hay recargo/comisión,
+      no hay ningún recargo/comisión
 # La regla es de palabras: solo PROPONE (los ítems). Sin Jev no se retiene nada
 # —en `reglas` y en sombra decide `no_items`; en sombra Jev contesta al lado y se
 # mide—: frases ciertas como «te he enviado el link» o «una vez despachado…»

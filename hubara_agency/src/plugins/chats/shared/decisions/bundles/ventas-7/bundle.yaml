@@ -6,9 +6,10 @@
 # armó un carrito con 2 Velas de deseos cuadradas y el bot escribió «vienen en
 # Chanel, Drakar y Ylang Ylang»; Drakar e Ylang Ylang eran de la Plegaria de
 # Luz (salió en la misma búsqueda) y el producto tiene un solo aroma.
-#   - `aroma_ajeno` y `color_ajeno`: la regla encuentra los aromas (o colores)
+#   - `aroma_ajeno` y `color_ajeno`: el código encuentra los aromas (o colores)
 #     del catálogo que el texto le da al producto y no son suyos; Jev solo
-#     quita avisos falsos (otro producto, una fecha).
+#     quita avisos falsos (otro producto, una fecha). Sin Jev, la regla juzga
+#     solo las oraciones que ofrecen algo (frases del paquete).
 #   - `variante_ajena`: lo inventado (un signo, un tamaño, «también viene en
 #     vaso») no está en ningún catálogo; Jev lee la ficha del producto. Sin
 #     Jev no revisa.
@@ -19,7 +20,9 @@
 #     OrderFacts), `cupon_ajeno` (cupones vigentes para el cliente) y
 #     `negacion_falsa` (negar lo que el catálogo tiene).
 # `send_reply` y las tarjetas con texto del modelo (`tools/fact_check.py`)
-# juntan todas en UNA retención por mensaje del cliente con lo que es cierto.
+# juntan todas en una retención con lo que es cierto: lo ya dicho sale al
+# segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
+# Las frases que buscan las reglas viven en el `with:` de cada capacidad.
 # El catálogo las pide desde esta versión (`capabilities_since`).
 #
 # ventas-6:

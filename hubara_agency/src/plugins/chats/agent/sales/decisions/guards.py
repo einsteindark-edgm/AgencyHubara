@@ -220,6 +220,9 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
     )
     from src.plugins.chats.agent.sales.use_cases.reply_facts import Findings
 
+    async def _nothing() -> tuple[()]:
+        return ()
+
     async def ask(name: str, inp: Any, default: Any) -> Any:
         cap = capability_if_present(name)
         if cap is None:
@@ -227,13 +230,19 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         verdict = await decide_for_session(cap, inp, session_id=session_id, vault_dir=vault_dir)
         return verdict.value if verdict.value is not None else default
 
+    from src.plugins.chats.shared.product_truth import without_names
+
+    # El nombre del cliente no es un aroma ni un color («¡Hola Rosa!»).
+    label_text = without_names(text, facts.names)
+
     def labels(own: Sequence[str], found: Sequence[str], others: Sequence[str]) -> OpcionesDelTexto:
         return OpcionesDelTexto(
-            text=text, products=tuple(facts.titles), own=tuple(own), labels=tuple(found), others=tuple(others)
+            text=label_text, products=tuple(facts.titles), own=tuple(own), labels=tuple(found), others=tuple(others)
         )
 
     prices = PreciosDelTexto(
-        text=text, products=tuple(facts.price_lines), prices=tuple(facts.prices), policy=tuple(facts.policy)
+        text=text, products=tuple(facts.price_lines), prices=tuple(facts.prices), policy=tuple(facts.policy),
+        surcharges=tuple(facts.surcharge_rates),
     )
     payment = PagoDelTexto(text=text, subtotal=facts.subtotal, cod_min=facts.cod_min, surcharges=tuple(facts.surcharges))
     status = EstadoDelTexto(text=text, order=facts.order, stage=facts.stage, pay_status=facts.pay_status)
@@ -251,7 +260,8 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         ask("precio_ajeno", prices, ()),
         ask("pago_ajeno", payment, ()),
         ask("estado_ajeno", status, ()),
-        ask("cupon_ajeno", coupon, ()),
+        # Sin los cupones leídos no se juzga ninguno (no saber no es «no hay»).
+        ask("cupon_ajeno", coupon, ()) if facts.coupons_checked else _nothing(),
         ask("negacion_falsa", denial, ()),
     )
 

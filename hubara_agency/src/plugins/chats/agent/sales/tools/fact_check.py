@@ -13,6 +13,8 @@ no aplica). Sin catálogo, sin vault o si algo falla: el texto sale.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -23,7 +25,6 @@ from loguru import logger
 from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
 from src.plugins.chats.agent.sales.decisions.guards import check_facts, fact_words, facts_in_bundle
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.tools.retention import held_before, hold_once
 from src.plugins.chats.agent.sales.use_cases.order_draft import get_active_draft
 from src.plugins.chats.agent.sales.use_cases.product_options import (
     aromas_of,
@@ -43,6 +44,7 @@ from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA,
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
 )
+from src.plugins.chats.agent.sales.price_quotes import extract_cop_amounts
 from src.plugins.chats.agent.sales.pricing import accepted_prices, catalog_prices, catalog_unit_price
 from src.plugins.chats.agent.sales.use_cases.coupons import applied_coupon, describe_promotion
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
@@ -56,9 +58,12 @@ from src.plugins.chats.shared.draft_items import draft_items, find_product
 from src.sdk.connectorkit import coupon_problem
 from src.plugins.chats.agent.sales.use_cases.reply_facts import ReplyFacts, discounted, fact_message
 
-#: La marca de la retención: una por mensaje del cliente para `send_reply` y
-#: las tarjetas juntas (el modelo corrige una vez, nunca un bucle).
+#: La marca de la retención, por mensaje del cliente, para `send_reply` y las
+#: tarjetas juntas: lo que ya se le dijo al modelo (`terms`) no se retiene otra
+#: vez y, como mucho, se retiene `MAX_HOLDS_PER_MESSAGE` veces (nunca un bucle).
 FACT_CHECK_KEY = "fact_check_checked"
+FACT_CHECK_REPORTED_KEY = "fact_check_reported"
+MAX_HOLDS_PER_MESSAGE = 2
 FACT_CHECK_ERROR = "fact_check"
 #: Los montos de política que un texto puede decir con su contexto («contra
 #: entrega desde $45.000», «el envío nacional cuesta $16.940»): los mismos
@@ -127,13 +132,17 @@ class FactCheck:
         self._order_facts = order_facts
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
 
-    async def _order(self, metadata: dict[str, Any], text: str) -> tuple[str | None, str | None, str | None]:
-        """(número, etapa, pago) del pedido del episodio según OrderFacts; solo
-        si el texto habla del pago o del envío con las frases de `estado_ajeno`
-        (sin eso no se consulta)."""
+    async def _order(self, metadata: dict[str, Any], text: str) -> tuple[str | None, str | None, str | None, int | None]:
+        """(número, etapa, pago, total) del pedido del episodio según
+        OrderFacts; solo si el texto habla del pago o del envío con las frases
+        de `estado_ajeno`, o dice un monto (el total real del pedido, con el
+        envío que cobró la tienda, también es un precio que vale). Sin eso no
+        se consulta."""
         order_id = (get_active_episode(metadata) or {}).get("order_id")
-        if self._order_facts is None or not order_id or not _talks("estado_ajeno", StatusWords, talks_about_order, text):
-            return None, None, None
+        if self._order_facts is None or not order_id or not (
+            extract_cop_amounts(text) or _talks("estado_ajeno", StatusWords, talks_about_order, text)
+        ):
+            return None, None, None, None
         try:
             # Fresco: el caché del worker vive 60 s y solo lo invalida el bus de
             # la API (tras «Confirmar pago» seguía «pendiente», revisión 2026-10-13).
@@ -142,34 +151,41 @@ class FactCheck:
                 invalidate(order_id)
             snapshot = await asyncio.wait_for(self._order_facts.get_facts([order_id]), timeout=SOURCE_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — Medusa lento o caído: el estado no se revisa
-            logger.warning("💬 [fact_check] OrderFacts no respondió ({})", exc)
-            return None, None, None
+            logger.warning("💬 [fact_check] OrderFacts no respondió ({!r})", exc)
+            return None, None, None, None
         fact = snapshot.facts.get(order_id)
         # Un valor viejo (Medusa no respondió) o sin confirmar no se juzga.
         if fact is None or getattr(snapshot, "stale", False) or order_id in getattr(snapshot, "unresolved", ()):
-            return None, None, None
-        return f"#{fact.display_id}" if fact.display_id else None, fact.stage, fact.pay_status
+            return None, None, None, None
+        total = getattr(fact, "total_cop", None)
+        return (
+            f"#{fact.display_id}" if fact.display_id else None, fact.stage, fact.pay_status,
+            int(total) if isinstance(total, int | float) and total > 0 else None,
+        )
 
-    async def _coupons(self, metadata: dict[str, Any], text: str) -> dict[str, tuple[Any, ...]]:
-        """Los cupones que Medusa conoce y los vigentes; solo si el texto habla
-        de cupones o descuentos con las frases de `cupon_ajeno`, o escribe algo
-        como un código (sin eso no se consulta Medusa)."""
+    async def _coupons(self, metadata: dict[str, Any], text: str) -> tuple[dict[str, Any], list[Any]]:
+        """Los cupones que Medusa conoce y los vigentes (los campos de
+        `ReplyFacts` y las promociones vigentes); solo si el texto habla de
+        cupones o descuentos con las frases de `cupon_ajeno`, o escribe algo
+        como un código (sin eso no se consulta Medusa). Sin respuesta, no se
+        sabe: `coupons_checked` queda en falso y no se juzga ningún cupón."""
         if self._promotions is None or not _talks("cupon_ajeno", CouponWords, talks_about_coupons, text):
-            return {}
+            return {}, []
         try:
             promotions = await asyncio.wait_for(self._promotions.list_active(), timeout=SOURCE_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — Medusa lento o caído: los cupones no se revisan
-            logger.warning("💬 [fact_check] cupones no disponibles ({})", exc)
-            return {}
+            logger.warning("💬 [fact_check] cupones no disponibles ({!r})", exc)
+            return {}, []
         now_ms = self._now_ms()
         valid = [p for p in promotions if coupon_problem(p, now_ms=now_ms) is None]
         applied = (applied_coupon(metadata) or {}).get("code")
         return {
+            "coupons_checked": True,
             "coupons_known": tuple(p.code for p in promotions),
             "coupons_valid": tuple(dict.fromkeys([*(p.code for p in valid), *([applied] if applied else [])])),
             "coupons_lines": tuple(f"{p.code}: {describe_promotion(p)}" for p in valid),
             "coupons_percents": tuple(p.value for p in valid if p.discount_type == "percentage"),
-        }
+        }, valid
 
     async def facts(
         self, session_key: str, text: str, *, handles: Sequence[str] | None = None, catalog: CatalogRead | None = None
@@ -187,15 +203,22 @@ class FactCheck:
         else:
             focus = focus_products(products, draft=get_active_draft(metadata), text=text)
         aromas, colors = catalog_labels(products)
-        prices: set[int] = set()
-        for product in focus:
-            prices |= set(catalog_prices(product))
-            prices |= accepted_prices(self._vault_dir, session_key, product.handle, snapshot_price_cop=None)
-        coupon = applied_coupon(metadata)
-        prices |= discounted(prices, (coupon or {}).get("promotion"))
-        (order, stage, pay_status), coupons = await asyncio.gather(
+        (order, stage, pay_status, total), (coupons, valid_promotions) = await asyncio.gather(
             self._order(metadata, text), self._coupons(metadata, text)
         )
+        base: set[int] = set()
+        for product in focus:
+            base |= set(catalog_prices(product))
+            base |= accepted_prices(self._vault_dir, session_key, product.handle, snapshot_price_cop=None)
+        prices = set(base)
+        # Con el cupón aplicado y con cualquier cupón vigente que el texto le
+        # ofrezca («con BIENVENIDA te quedan en $23.750»).
+        prices |= discounted(base, ((applied_coupon(metadata) or {}).get("promotion")))
+        for promotion in valid_promotions:
+            prices |= discounted(base, {"discount_type": promotion.discount_type, "value": promotion.value})
+        # El total real del pedido (OrderFacts): el envío que cobró la tienda.
+        if total is not None:
+            prices.add(total)
         own = [*(a for p in focus for a in aromas_of(p)), *(c for p in focus for c in colors_of(p)),
                *(v for p in focus for v in presentations_of(p))]
         return ReplyFacts(
@@ -207,6 +230,7 @@ class FactCheck:
             order=order, stage=stage, pay_status=pay_status,
             titles_all=tuple(p.title for p in products if getattr(p, "title", None)),
             own_labels=tuple(dict.fromkeys(own)),
+            names=_customer_names(metadata),
             **coupons,
         )
 
@@ -215,23 +239,62 @@ class FactCheck:
         catalog: CatalogRead | None = None,
     ) -> str | None:
         """El envelope que devuelve `text` al modelo, o None (sale). `catalog`:
-        la lectura del catálogo que comparte quien llama (si no, una propia)."""
-        if self._catalog is None or self._vault_dir is None or not (text or "").strip() or not facts_in_bundle():
-            return None
-        if held_before(self._vault_dir, session_key, FACT_CHECK_KEY):
+        la lectura del catálogo que comparte quien llama (si no, una propia).
+
+        Por mensaje del cliente: lo que ya se le dijo al modelo no se retiene
+        otra vez (insiste con lo mismo: sale); algo NUEVO sí (premortem del PR
+        #426: una retención en una tarjeta apagaba la revisión del error real
+        que venía después), y como mucho `MAX_HOLDS_PER_MESSAGE` veces."""
+        if self._catalog is None or self._vault_dir is None or not (text or "").strip():
             return None
         try:
+            if not facts_in_bundle():
+                return None
+            holds, reported = _reported(FilesystemMetadataStore(self._vault_dir).read(session_key) or {})
+            if holds >= MAX_HOLDS_PER_MESSAGE:
+                return None
             facts = await self.facts(session_key, text, handles=handles, catalog=catalog)
             findings = await check_facts(text, facts, session_id=session_key, vault_dir=self._vault_dir)
+            if not findings or (holds and set(findings.terms) <= reported):
+                return None
+            message = fact_message(findings, facts, tool=tool)
         except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
-            logger.warning("💬 [TOOL {}] sin revisar los hechos ({}) session={}", tool, exc, session_key)
+            logger.warning("💬 [TOOL {}] sin revisar los hechos ({!r}) session={}", tool, exc, session_key)
             return None
-        if not findings:
+        return self._hold(session_key, findings, message, tool=tool)
+
+    def _hold(self, session_key: str, findings: Any, message: str, *, tool: str) -> str | None:
+        """Anota la retención (con lo que se le dijo) y devuelve el envelope;
+        None si otra tool ya retuvo lo mismo o no se puede anotar (sale)."""
+        store = FilesystemMetadataStore(self._vault_dir)
+        terms = set(findings.terms)
+        wrote: list[bool] = []
+
+        def _mark(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            inbound = fresh.get("last_inbound_message_id") if fresh else None
+            if not inbound:
+                return None
+            holds, reported = _reported(fresh)
+            if holds >= MAX_HOLDS_PER_MESSAGE or (holds and terms <= reported):
+                return None
+            fresh[FACT_CHECK_KEY] = inbound
+            fresh[FACT_CHECK_REPORTED_KEY] = {
+                "inbound": inbound, "holds": holds + 1, "terms": sorted(reported | terms),
+            }
+            wrote.append(True)
+            return fresh
+
+        try:
+            store.update(session_key, _mark)
+        except Exception:  # noqa: BLE001 — sin la marca podría repetirse: el texto sale
             return None
-        return hold_once(
-            self._vault_dir, session_key, FACT_CHECK_KEY, tool=tool, error=FACT_CHECK_ERROR,
-            message=fact_message(findings, facts, tool=tool),
-            status_key="sent" if tool == "send_reply" else "queued",
+        if not wrote:
+            return None
+        checks = list(findings.checks)
+        logger.info("💬 [TOOL {}] retenido ({}: {}) session={}", tool, FACT_CHECK_ERROR, ", ".join(checks), session_key)
+        status_key = "sent" if tool == "send_reply" else "queued"
+        return json.dumps(
+            {status_key: False, "error": FACT_CHECK_ERROR, "checks": checks, "message": message}, ensure_ascii=False
         )
 
 
@@ -244,6 +307,27 @@ async def held_text(
     if fact_check is None or not (text or "").strip():
         return None
     return await fact_check.held(ctx.session_key, str(text), tool=tool, handles=handles)
+
+
+def _reported(metadata: dict[str, Any]) -> tuple[int, set[str]]:
+    """(retenciones, lo que ya se le dijo al modelo) en ESTE mensaje del cliente."""
+    inbound = metadata.get("last_inbound_message_id")
+    mark = metadata.get(FACT_CHECK_REPORTED_KEY)
+    if not inbound or not isinstance(mark, dict) or mark.get("inbound") != inbound:
+        return 0, set()
+    holds = mark.get("holds")
+    return (holds if isinstance(holds, int) else 0), {str(t) for t in mark.get("terms") or ()}
+
+
+def _customer_names(metadata: dict[str, Any]) -> tuple[str, ...]:
+    """Las palabras del nombre del cliente: su perfil de WhatsApp y quien
+    recibe el pedido (premortem del PR #426: «Gracias Lila» se retenía por el
+    color Lila)."""
+    profile = metadata.get("profile") if isinstance(metadata.get("profile"), dict) else {}
+    draft = get_active_draft(metadata) or {}
+    slots = draft.get("slots") if isinstance(draft.get("slots"), dict) else {}
+    raw = [profile.get("name"), slots.get("nombre_recibe")]
+    return tuple(dict.fromkeys(w for r in raw if isinstance(r, str) for w in re.findall(r"[^\W\d_]{3,}", r)))
 
 
 def _subtotal(products: list[Any], metadata: dict[str, Any]) -> int | None:

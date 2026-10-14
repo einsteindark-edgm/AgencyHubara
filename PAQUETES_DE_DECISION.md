@@ -378,7 +378,13 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   hasta tres palabras en medio; nunca un regex (una frase con otra cosa falla
   en `test_fact_vocabulary_in_bundle`). Un falso positivo = otra frase en una
   versión nueva; el código solo sabe qué es una cláusula, qué la niega y cómo
-  se escribe un porcentaje o un código.
+  se escribe un porcentaje o un código. Lo mismo para las reglas que deciden
+  solas (premortem del PR #426): `aroma_ajeno`/`color_ajeno` juzgan sin Jev
+  solo las oraciones con una frase de `ofrece` y ninguna de `no_ofrece`
+  (Jev, cuando decide, lee todo: los ítems no pasan por esas frases y el piso
+  es `jev`); `precio_ajeno` trae sus frases de política (`politica`, con un
+  ancla YAML para que la regla y los ítems lean las mismas); `variante_ajena`,
+  las de `ofrece` para no gastar una llamada en «Quedo atenta».
 
 **Promover un paquete (procedimiento, premortem del 2026-10-02):**
 

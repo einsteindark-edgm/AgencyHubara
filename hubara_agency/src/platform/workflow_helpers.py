@@ -1390,6 +1390,10 @@ async def _run_agent_turn_impl(
             # Canal único al cliente (run 28a8e407): textos que `send_reply`
             # validó en este batch (`reply.text` del resultado grabado).
             batch_reply_texts: list[str] = []
+            # Un `send_reply` de este batch devolvió el texto al modelo
+            # (`sent: false` + `error`: no coincidía con el catálogo, era nota
+            # interna…): el modelo tiene que leer por qué y reenviarlo.
+            batch_reply_held = False
             # Lo que esos textos prometen y el estado no cumplía al validarlos
             # (`promises` del resultado grabado de `send_reply`).
             batch_promises: list[dict[str, Any]] = []
@@ -1489,6 +1493,8 @@ async def _run_agent_turn_impl(
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
+                        if tc.name == "send_reply" and payload.get("sent") is False:
+                            batch_reply_held = True
                     reply = payload.get("reply")
                     if isinstance(reply, dict) and isinstance(reply.get("text"), str):
                         reply_text = reply["text"].strip()
@@ -1763,6 +1769,24 @@ async def _run_agent_turn_impl(
             # con el corte viejo; tras el drain (idle 5min en Sales), eliminar
             # la rama vieja + `deprecate_patch("turn-cut-on-delivery-v1")`.
             if turn_cut_v1 and _ends_turn(batch_tool_names, version=ends_turn_version):
+                # Premortem del PR #426 (2026-10-13): `send_reply` devolvió su
+                # texto al modelo y una tarjeta del MISMO paso salió y cortaba
+                # el turno: el cliente recibía solo la tarjeta y el modelo nunca
+                # leía por qué. UNA ronda más (la tarjeta ya salió; la
+                # retención es una por mensaje del cliente, así que el segundo
+                # `send_reply` sale). `patched()` va ÚLTIMO: solo se consulta
+                # cuando la regla nueva difiere de la vieja.
+                if (
+                    batch_awaits_customer
+                    and batch_reply_held
+                    and not batch_reply_texts
+                    and workflow.patched("held-reply-round-v1")
+                ):
+                    steps.append(
+                        {"kind": "guard", "at_ms": _now_ms(), "name": "held_reply_round",
+                         "before": None, "after": None, "tools": batch_tool_names}
+                    )
+                    continue
                 if batch_awaits_customer or not workflow.patched(
                     "turn-cut-on-delivery-v1"
                 ):

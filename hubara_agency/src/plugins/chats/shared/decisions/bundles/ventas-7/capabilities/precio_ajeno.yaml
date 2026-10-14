@@ -13,8 +13,19 @@
 capability: precio_ajeno
 value: "list<string>"
 input: PreciosDelTexto
-items: {builtin: unexplained_price_items}
-rule: {builtin: unexplained_prices_rule}
+# Un monto de política (mínimo de contra entrega, tarifa de envío, el total
+# con envío) solo vale en una oración que dice una de estas frases; la misma
+# cifra en «te quedan en $45.000» es una cotización equivocada. Son de la
+# tienda: un falso positivo se corrige aquí, en una versión nueva.
+items:
+  builtin: unexplained_price_items
+  with: &politica
+    politica: >-
+      contra entrega, contraentrega, envío*, domicilio*, flete*, transportadora*, mínimo*, desde,
+      recargo*, tarifa*, umbral*, aplica*, falta*, alcanza*, total*, subtotal*
+rule:
+  builtin: unexplained_prices_rule
+  with: *politica
 state: {builtin: text_and_product_prices}
 each:
   id: "precio_ajeno.termino_{n}"

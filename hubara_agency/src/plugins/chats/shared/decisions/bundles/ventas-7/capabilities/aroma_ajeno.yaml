@@ -8,14 +8,29 @@
 # propia de él), menos los que su cláusula niega; por cada uno,
 # Jev dice si el texto de verdad se lo ofrece a ese producto. Jev solo QUITA
 # candidatos (habla de otro producto, dice que no lo tiene), y solo con
-# certeza; nunca agrega uno (piso: lo de la regla, en su orden). Lo pide
+# certeza; nunca nombra una etiqueta que el código no encontró. Sin Jev, la
+# regla juzga solo las oraciones que ofrecen algo (`ofrece`). Lo pide
 # `send_reply` antes de enviar: lo que quede vuelve UNA vez al modelo con los
 # aromas reales del producto.
 capability: aroma_ajeno
 value: "list<string>"
 input: OpcionesDelTexto
 items: {builtin: foreign_label_items}
-rule: {builtin: foreign_labels_rule}
+rule:
+  builtin: foreign_labels_rule
+  with:
+    # La regla sola (sin Jev: `reglas` y sombra) juzga solo las oraciones que
+    # OFRECEN algo (premortem del PR #426: «¡Hola Rosa!», «notas de vainilla»,
+    # «caja blanca con moño rojo» o «¿agregas una de lavanda?» se retenían).
+    # Jev, cuando decide, lee TODO lo que el texto nombra (los ítems no pasan
+    # por estas frases). Un falso positivo se corrige aquí, en una versión nueva.
+    ofrece: >-
+      viene*, vienen, tenemos, manejamos, te la/lo/las/los dejo, te la/lo/las/los mando/envío/enviamos,
+      disponible*, prefieres, prefiere, quieres, quiere, elige*, elegir, escoge*, escoger, opción*, opciones,
+      puede ser, pueden ser, la/lo/las/los tienes, la/lo/las/los tenemos, quedan en, queda en
+    no_ofrece: >-
+      nota*, caja*, moño*, cinta*, empaque*, bolsa*, papel*, lazo*, tarjeta*, agregar*, añadir*, sumar*,
+      otra/otras vela*, otro/otros producto*, también tenemos, te muestro, luz verde, viernes negro, black friday
 state: {builtin: text_and_product_labels, with: {noun: aromas}}
 each:
   id: "aroma_ajeno.termino_{n}"
@@ -29,7 +44,8 @@ decide:
   - when: "!items.exists(i, has(i.p))"
     then: doubt
   - otherwise: {expr: "items.filter(i, !has(i.p) || i.p > th['no']).map(i, i.term)"}
-floor: {builtin: rule_order_subset}
+# Jev decide sobre lo que el código encontró (solo quita: nunca nombra otra etiqueta).
+floor: {builtin: jev}
 same: {builtin: tuple_eq}
 examples:
   # El incidente: los tres se le ofrecen a las Velas de deseos.

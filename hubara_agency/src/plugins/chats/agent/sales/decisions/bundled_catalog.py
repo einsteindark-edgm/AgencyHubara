@@ -32,7 +32,9 @@ from src.plugins.chats.agent.sales.use_cases.fact_rules import (
     StatusWords,
     coupon_claims,
     denial_claims,
+    offering_sentences,
     payment_claims,
+    says_any,
     status_claims,
 )
 from src.plugins.chats.shared.product_truth import foreign_labels
@@ -88,12 +90,17 @@ def enumerated_variants(inp: Any) -> tuple:
     return () if hit is None else (hit[0], tuple(hit[1]))
 
 
-def unexplained_prices_rule(inp: Any) -> list[str]:
+def unexplained_prices_rule(inp: Any, *, politica: str) -> list[str]:
     """Los montos del texto que no explica el precio del catálogo de los
-    productos de los que habla ni la política (sin precios, no se juzga)."""
+    productos de los que habla (con el recargo del link) ni la política en una
+    oración que dice una frase de `politica` (del paquete). Sin precios, no se
+    juzga."""
     if not inp.prices:
         return []
-    found = find_unexplained_amounts(inp.text, catalog_prices=inp.prices, policy_amounts=inp.policy)
+    found = find_unexplained_amounts(
+        inp.text, catalog_prices=inp.prices, policy_amounts=inp.policy,
+        surcharge_rates=getattr(inp, "surcharges", ()), policy_context=lambda s: says_any(s, politica),
+    )
     return list(dict.fromkeys(format_cop(u.amount) for u in found))
 
 
@@ -121,16 +128,19 @@ def _denial(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
     return denial_claims(inp.text, titles=inp.titles, own=inp.own, products=inp.products, words=DenialWords(**words))
 
 
-def foreign_labels_rule(inp: Any) -> list[str]:
-    """Las etiquetas del catálogo (aromas o colores) que el texto nombra y no son del producto del que habla."""
-    return list(foreign_labels(inp.text, own=inp.own, labels=inp.labels, others=inp.others))
+def foreign_labels_rule(inp: Any, *, ofrece: str, no_ofrece: str) -> list[str]:
+    """La regla sola: las etiquetas del catálogo (aromas o colores) que una
+    oración que ofrece (`ofrece`, y no `no_ofrece`) nombra y no son del
+    producto del que habla. Las frases son del paquete."""
+    text = offering_sentences(inp.text, offers=ofrece, not_offers=no_ofrece)
+    return list(foreign_labels(text, own=inp.own, labels=inp.labels, others=inp.others))
 
 
 # ── ítems ──
 
 
-def unexplained_price_items(inp: Any) -> list[dict[str, Any]]:
-    return [{"term": term} for term in unexplained_prices_rule(inp)]
+def unexplained_price_items(inp: Any, *, politica: str) -> list[dict[str, Any]]:
+    return [{"term": term} for term in unexplained_prices_rule(inp, politica=politica)]
 
 
 def _claim_items(claims: list[tuple[str, str]]) -> list[dict[str, Any]]:
@@ -154,7 +164,9 @@ def denial_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
 
 
 def foreign_label_items(inp: Any) -> list[dict[str, Any]]:
-    return [{"term": term} for term in foreign_labels_rule(inp)]
+    """Lo que Jev juzga: TODO lo ajeno que el texto nombra (sin las frases de
+    la regla sola: Jev lee si se ofrece)."""
+    return [{"term": term} for term in foreign_labels(inp.text, own=inp.own, labels=inp.labels, others=inp.others)]
 
 
 # ── vistas ──
@@ -248,14 +260,18 @@ def text_and_claim_facts(inp: Any, *, items: list[dict[str, Any]] | None = None)
     )
 
 
-def text_and_option_sheets(inp: Any, *, words: str) -> str | None:
+def text_and_option_sheets(inp: Any, *, words: str, ofrece: str) -> str | None:
     """El texto y la ficha de cada producto con presentaciones para escoger
-    (`variante_ajena`), más la de los de una sola presentación si el texto
-    nombra una de `words` («vaso, tamaño, caja…»: de la tienda, en el
-    paquete). Sin ninguna ficha, no se le pregunta a Jev."""
+    (`variante_ajena`) si el texto ofrece algo (una frase de `ofrece`) o
+    nombra una presentación (`words`: «vaso, tamaño, caja…»); la de los de una
+    sola presentación, solo con una de `words`. Las dos listas son de la
+    tienda, en el paquete. Sin ninguna ficha, no se le pregunta a Jev
+    (premortem del PR #426: «Quedo atenta» era una llamada por texto)."""
     triggers = {stem_word(w) for w in normalize_label(words.replace(",", " ")).split()}
     said = {stem_word(w) for w in normalize_label(inp.text).split()}
-    sheets = [*inp.sheets, *(inp.single if triggers & said else ())]
+    names = bool(triggers & said)
+    offers = names or says_any(inp.text, ofrece)
+    sheets = [*(inp.sheets if offers else ()), *(inp.single if names else ())]
     if not sheets:
         return None
     return f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n" + "\n\n".join(sheets)

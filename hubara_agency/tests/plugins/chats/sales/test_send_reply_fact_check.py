@@ -80,13 +80,16 @@ def ctx() -> ToolContext:
 
 
 def _tool(vault: Path, *, products: list[str] = ("Velas de deseos cuadradas",), catalog: _Catalog | None = None,
-          inbound: str = "wamid.T6", quantity: str = "2", order_id: str | None = None,
+          inbound: str = "wamid.T6", quantity: str = "2", order_id: str | None = None, profile: str | None = None,
           **sources: Any) -> SendReplyTool:
     items = [{"producto": name, "cantidad": quantity} for name in products]
     episode = {"episode_id": "ep_001", "closed_at_ms": None, "order_draft": {"items": items}}
     if order_id:
         episode["order_id"] = order_id
-    FilesystemMetadataStore(vault).write(KEY, {"last_inbound_message_id": inbound, "episodes": [episode]})
+    metadata: dict[str, Any] = {"last_inbound_message_id": inbound, "episodes": [episode]}
+    if profile:
+        metadata["profile"] = {"name": profile}
+    FilesystemMetadataStore(vault).write(KEY, metadata)
     catalog = catalog or _Catalog()
     fact_check = FactCheck(vault, catalog, **sources) if sources else None
     return SendReplyTool(workspace=str(vault), vault_dir=vault, catalog=catalog, fact_check=fact_check)
@@ -103,6 +106,7 @@ async def test_the_incident_goes_back_once_with_the_real_aroma(tmp_path: Path, c
     again = await _send(tool, ctx, INCIDENT)
 
     assert first.get("reply") is None and first["error"] == "fact_check"
+    assert first["checks"] == ["aroma_ajeno"]  # la traza dice qué revisión lo retuvo
     message = first["message"]
     assert "Velas de deseos cuadradas" in message
     assert "«Chanel», «Drakar» y «Ylan ylang»" in message
@@ -162,6 +166,21 @@ async def test_with_a_bundle_older_than_the_decision_nothing_is_checked(tmp_path
     assert (await _send(_tool(tmp_path), ctx, INCIDENT)).get("reply") == {"text": INCIDENT}
 
 
+async def test_a_broken_bundle_never_breaks_the_text(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    """Premortem del PR #426: `facts_in_bundle()` iba fuera del `try`; un
+    paquete roto tumbaba las tarjetas."""
+    from src.plugins.chats.agent.sales.tools import fact_check
+
+    def _broken() -> bool:
+        raise RuntimeError("paquete roto")
+
+    monkeypatch.setattr(fact_check, "facts_in_bundle", _broken)
+    facts = FactCheck(tmp_path, _Catalog())
+    FilesystemMetadataStore(tmp_path).write(KEY, {"last_inbound_message_id": "wamid.T6"})
+
+    assert await facts.held(KEY, INCIDENT, tool="present_products") is None
+
+
 async def test_without_catalog_the_text_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
     tool = _tool(tmp_path, catalog=_Catalog(down=True))
 
@@ -211,9 +230,10 @@ async def test_with_the_rule_alone_a_denial_or_another_product_goes_as_is(tmp_pa
 
 async def test_with_the_rule_alone_a_false_alarm_costs_one_resend(tmp_path: Path, ctx: ToolContext) -> None:
     """«la noche de Navidad» es también el aroma de las velas de deseos: con
-    un pedido de Plegaria, la regla lo marca (Jev lo quitaría). El mensaje le
-    dice al modelo que, si no se lo ofrecía, reenvíe el mismo texto."""
-    text = "Tu Plegaria de Luz te llega antes de la noche de Navidad 🎄"
+    un pedido de Plegaria y una oración que ofrece, la regla lo marca (Jev lo
+    quitaría). El mensaje le dice al modelo que, si no se lo ofrecía, reenvíe
+    el mismo texto."""
+    text = "Te las dejo listas para la noche de Navidad 🎄"
     tool = _tool(tmp_path, products=("Plegaria de Luz",), catalog=_Catalog(DESEOS, PLEGARIA))
 
     first = await _send(tool, ctx, text)
@@ -222,6 +242,46 @@ async def test_with_the_rule_alone_a_false_alarm_costs_one_resend(tmp_path: Path
     assert first["error"] == "fact_check" and "con el mismo texto" in first["message"]
     assert again.get("reply") == {"text": text}
 
+
+@pytest.mark.parametrize(
+    ("text", "products"),
+    [
+        # Premortem del PR #426: la regla sola marcaba lo que el texto nombra
+        # sin ofrecerlo. Ahora solo juzga las oraciones que ofrecen algo.
+        ("Tu Plegaria de Luz te llega antes de la noche de Navidad 🎄", ("Plegaria de Luz",)),
+        ("El Chanel tiene notas de sándalo, ylang ylang y lavanda 🤍", ("Velas de deseos cuadradas",)),
+        ("Te las mandamos en una caja azul con moño amarillo 🎁", ("Velas de deseos cuadradas",)),
+        ("¿Te gustaría agregar una vela de lavanda? 🤍", ("Velas de deseos cuadradas",)),
+    ],
+)
+async def test_with_the_rule_alone_what_is_named_but_not_offered_goes_as_is(
+    tmp_path: Path, ctx: ToolContext, text: str, products: tuple
+) -> None:
+    tool = _tool(tmp_path, products=products, catalog=_Catalog(DESEOS, PLEGARIA))
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}
+
+
+async def test_the_customer_name_is_not_a_color(tmp_path: Path, ctx: ToolContext) -> None:
+    """«Gracias Lila, te las dejo en Noche de Navidad»: Lila es la clienta."""
+    text = "Gracias Lila, te las dejo en Noche de Navidad 🎄"
+
+    named = await _send(_tool(tmp_path, profile="Lila Gómez"), ctx, text)
+    unknown = await _send(_tool(tmp_path / "otra", inbound="wamid.T9"), ctx, text)
+
+    assert named.get("reply") == {"text": text}
+    assert unknown.get("error") == "fact_check" and "«Lila»" in unknown["message"]
+
+
+async def test_with_jev_everything_the_text_names_is_judged(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    """La regla sola es prudente; Jev ve también lo que no viene con una frase
+    de oferta y decide (aquí: sí se la ofrece a ese producto)."""
+    _jev(monkeypatch, {"aroma_ajeno.termino_1": 0.9})
+    text = "Puedes agregar lavanda a tus velas de deseos 🤍"
+
+    held = await _send(_tool(tmp_path), ctx, text)
+
+    assert held.get("error") == "fact_check" and "«Lavanda»" in held["message"]
 
 
 # ── Colores y presentaciones (color_ajeno, variante_ajena) ─────────────────
@@ -308,6 +368,21 @@ async def test_a_single_presentation_is_asked_only_when_the_text_names_a_present
 
 
 
+async def test_a_text_that_offers_nothing_does_not_ask_about_presentations(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Premortem del PR #426: con un producto de presentaciones en foco, cada
+    texto («Quedo atenta») era una llamada a Jev (y en sombra, espera)."""
+    fake = _jev(monkeypatch, {"variante.ajena": 0.05})
+    tool = _tool(tmp_path, products=("Duo Zodiacal",), catalog=_Catalog(DUO, PLEGARIA))
+
+    await _send(tool, ctx, "Con gusto, quedo atenta a lo que necesites 😊")
+    assert all("variante.ajena" not in questions for _state, questions in fake.calls)
+
+    await _send(tool, ctx, "Lo tenemos en Ofiuco ✨")
+    assert any("variante.ajena" in questions for _state, questions in fake.calls)
+
+
 # ── precio_ajeno ───────────────────────────────────────────────────────────
 
 
@@ -336,11 +411,14 @@ NOW_MS = 1_791_900_000_000  # 2026-10-13
 class _OrderFacts:
     """OrderFacts falso: el pedido #67 en preparación y sin pago."""
 
-    def __init__(self, stage: str = "preparing", pay_status: str = "pending", stale: bool = False) -> None:
+    def __init__(self, stage: str = "preparing", pay_status: str = "pending", stale: bool = False,
+                 total_cop: int = 66_940) -> None:
         self.calls: list[list[str]] = []
         self.invalidated: list[str | None] = []
         self._stale = stale
-        self._fact = SimpleNamespace(order_id="order_67", display_id="67", stage=stage, pay_status=pay_status)
+        self._fact = SimpleNamespace(
+            order_id="order_67", display_id="67", stage=stage, pay_status=pay_status, total_cop=total_cop
+        )
 
     def invalidate(self, order_id: str | None = None) -> None:
         self.invalidated.append(order_id)
@@ -351,13 +429,16 @@ class _OrderFacts:
 
 
 class _Promotions:
-    def __init__(self) -> None:
+    def __init__(self, down: bool = False) -> None:
         self.calls = 0
+        self._down = down
 
     async def list_active(self):
         from src.sdk.connectorkit import PromotionDTO
 
         self.calls += 1
+        if self._down:
+            raise RuntimeError("Medusa no respondió")
         base = dict(
             id="p", discount_type="percentage", currency_code=None, target_type="items", allocation="across",
             max_quantity=None, product_ids=(), variant_ids=(), collection_ids=(), min_subtotal_cop=None,
@@ -446,6 +527,19 @@ async def test_a_code_written_as_a_code_is_checked_without_the_word_coupon(
     assert held["error"] == "fact_check" and "«AMOR2026»" in held["message"]
 
 
+async def test_when_the_coupons_cannot_be_read_no_coupon_is_judged(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Premortem del PR #426: sin respuesta de Medusa, los cupones quedaban
+    vacíos y «10 % de descuento» volvía con «no hay cupones vigentes»: el
+    modelo retiraba un cupón válido. No saber no es «no hay»."""
+    _jev(monkeypatch, {"cupon_ajeno.termino_1": 0.95})
+    text = "Con tu cupón de bienvenida tienes 10 % de descuento 🤍"
+    tool = _tool(tmp_path, promotions=_Promotions(down=True), now_ms=lambda: NOW_MS)
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}
+
+
 async def test_denying_a_product_the_catalog_has_goes_back(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
     _jev(monkeypatch, {"negacion_falsa.termino_1": 0.95})
 
@@ -498,6 +592,36 @@ async def test_send_reply_reads_the_catalog_once_per_text(tmp_path: Path, ctx: T
 
     assert out.get("reply") == {"text": text}
     assert catalog.searches == 1
+
+
+# ── Precios que el sistema sí explica (premortem del PR #426) ─────────────
+
+
+async def test_a_price_with_a_valid_coupon_not_applied_yet_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    text = "Con el cupón BIENVENIDA te quedan en $23.750 cada una 🤍"  # 5 % sobre $25.000
+    tool = _tool(tmp_path, promotions=_Promotions(), now_ms=lambda: NOW_MS)
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}
+
+
+async def test_a_total_with_shipping_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    text = "Total: $66.940 🤍"  # 2 × $25.000 + envío nacional $16.940
+
+    assert (await _send(_tool(tmp_path), ctx, text)).get("reply") == {"text": text}
+
+
+async def test_a_total_with_the_link_surcharge_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    text = "Con el link te queda en $50.750 🤍"  # $50.000 + 1,5 %
+
+    assert (await _send(_tool(tmp_path), ctx, text)).get("reply") == {"text": text}
+
+
+async def test_the_total_of_the_registered_order_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    """El envío real (o un ajuste en Medusa) da otro total: el de OrderFacts manda."""
+    text = "El total de tu pedido es $61.300 🤍"
+    tool = _tool(tmp_path, order_id="order_67", order_facts=_OrderFacts(total_cop=61_300))
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}
 
 
 async def test_with_a_bundle_without_the_decisions_no_source_is_read(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:

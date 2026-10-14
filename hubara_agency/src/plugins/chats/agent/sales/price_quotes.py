@@ -20,9 +20,10 @@ Determinista: misma entrada → misma salida. Sin catálogo ni reloj.
 """
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
 PRICE_MASK = "[precio omitido: usa el del catálogo]"
@@ -97,8 +98,22 @@ def _explained_by_catalog(catalog_prices: set[int]) -> set[int]:
     return lines | pairs
 
 
-def _explanations(catalog_prices: Iterable[int], policy_amounts: Iterable[int]) -> tuple[set[int], set[int]]:
-    """(explicados por el catálogo, explicados por la política)."""
+def _with_surcharge(amounts: set[int], rates: Iterable[float]) -> set[int]:
+    """Los montos con el recargo del link (redondeado, hacia abajo o hacia
+    arriba: «$50.750 con el 1,5 %»)."""
+    out: set[int] = set()
+    for rate in rates:
+        for amount in amounts:
+            exact = amount * (1 + rate / 100)
+            out |= {round(exact), math.floor(exact), math.ceil(exact)}
+    return out
+
+
+def _explanations(
+    catalog_prices: Iterable[int], policy_amounts: Iterable[int], surcharge_rates: Iterable[float] = ()
+) -> tuple[set[int], set[int]]:
+    """(explicados por el catálogo, explicados por la política), con y sin el
+    recargo del link."""
     catalog = {int(p) for p in catalog_prices if int(p) > 0}
     policy = {int(p) for p in policy_amounts if int(p) > 0}
     explained = _explained_by_catalog(catalog)
@@ -107,7 +122,8 @@ def _explanations(catalog_prices: Iterable[int], policy_amounts: Iterable[int]) 
         for p in policy:
             policy_explained.add(base + p)
             policy_explained.add(abs(p - base))
-    return explained, policy_explained
+    rates = [float(r) for r in surcharge_rates if float(r) > 0]
+    return explained | _with_surcharge(explained, rates), policy_explained | _with_surcharge(policy_explained, rates)
 
 
 def _key(sentence: str) -> str:
@@ -139,6 +155,8 @@ def find_unexplained_amounts(
     catalog_prices: Iterable[int],
     policy_amounts: Iterable[int],
     product_quotes: frozenset[str] | set[str] = frozenset(),
+    surcharge_rates: Iterable[float] = (),
+    policy_context: Callable[[str], bool] | None = None,
 ) -> list[UnexplainedAmount]:
     """Montos del texto que NO se explican por el catálogo ni por la política.
 
@@ -149,15 +167,19 @@ def find_unexplained_amounts(
 
     `product_quotes` (oraciones normalizadas): las que el motor de decisiones
     leyó como cotización de un producto; pierden el contexto de política.
-    Vacío = la regla de palabras de hoy.
+    Vacío = la regla de palabras de hoy. `surcharge_rates` (porcentajes): el
+    total con el recargo del link también se explica. `policy_context`: qué
+    oración es de política (por defecto, `_POLICY_KEYWORDS`; `precio_ajeno`
+    trae sus frases en el paquete).
     """
-    explained, policy_explained = _explanations(catalog_prices, policy_amounts)
+    explained, policy_explained = _explanations(catalog_prices, policy_amounts, surcharge_rates)
+    in_policy = policy_context or has_policy_context
     hits: list[UnexplainedAmount] = []
     for sentence in split_sentences(text):
         amounts = extract_cop_amounts(sentence)
         if not amounts:
             continue
-        policy_ctx = has_policy_context(sentence) and _key(sentence) not in product_quotes
+        policy_ctx = in_policy(sentence) and _key(sentence) not in product_quotes
         for amount in amounts:
             if amount in explained:
                 continue

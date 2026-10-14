@@ -53,6 +53,18 @@ def _status(text: str) -> list[str]:
         "Tu pedido ya va en camino 🚚",
         "Tu pedido ya fue despachado.",
         "Tu pedido ya fue entregado.",
+        # Premortem del PR #426: las formas naturales que se escapaban.
+        "¡Listo! El pago quedó confirmado ✅",
+        "Pago confirmado ✅",
+        "Ya confirmamos el pago de tu pedido.",
+        "Ya recibimos el pago, ¡gracias!",
+        "Ya despachamos tu pedido 🚚",
+        "Ya enviamos tu pedido.",
+        "Tu pedido salió hoy.",
+        "Ya entregamos tu pedido.",
+        # Lo que viene DESPUÉS («y te avisamos cuando…») no lo vuelve futuro.
+        "Tu pago quedó confirmado ✅ y te avisamos cuando despachemos",
+        "Tu pedido ya va en camino 🚚 y te comparto la guía cuando la tenga",
     ],
 )
 def test_a_status_given_as_a_fact_is_proposed(text: str) -> None:
@@ -69,6 +81,8 @@ def test_a_status_given_as_a_fact_is_proposed(text: str) -> None:
         "Te he enviado el link de pago.",
         "¿Ya te llegó el formulario?",
         "Te avisamos apenas esté en camino 🤍",
+        "Tu pago no está confirmado todavía.",           # el «…» de una frase no se salta un «no»
+        "Te confirmo el pago apenas lo vea en la cuenta.",
     ],
 )
 def test_what_is_promised_listed_or_about_something_else_is_not_proposed(text: str) -> None:
@@ -83,7 +97,13 @@ def _payment(text: str, subtotal: int | None = 25_000) -> list[str]:
 
 @pytest.mark.parametrize(
     "text",
-    ["Claro, puedes pagar contra entrega 🤍", "Con el link hay un recargo del 3 %.", "El link de pago no tiene recargo."],
+    [
+        "Claro, puedes pagar contra entrega 🤍",
+        "Con el link hay un recargo del 3 %.",
+        "El link de pago no tiene recargo.",
+        "Con el link no hay recargo 🤍",
+        "Puedes pagar en efectivo al recibir.",
+    ],
 )
 def test_a_payment_offer_the_order_does_not_have_is_proposed(text: str) -> None:
     assert _payment(text)
@@ -98,6 +118,8 @@ def test_a_payment_offer_the_order_does_not_have_is_proposed(text: str) -> None:
         "Por Nequi es transferencia directa, sin recargo.",
         "Puedes pagar con tarjeta en 3 cuotas al 0 %.",
         "Con el link el recargo es de 1,5 % con Nequi y 2,69 % con otros bancos.",
+        # La condición entre paréntesis es de su cláusula (premortem del PR #426).
+        "Contra entrega (compras desde $45.000) o link de pago 🤍",
     ],
 )
 def test_the_general_rule_a_condition_or_another_method_is_not_proposed(text: str) -> None:

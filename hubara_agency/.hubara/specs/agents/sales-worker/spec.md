@@ -1355,13 +1355,21 @@ foco algo que no es suyo:
   de género y número del catálogo (`catalogkit.stem_word`): «Drakkar», «Ylang
   Ylang» frente al «Ylan ylang» del catálogo, «moradas» por «Morado»,
   «azules» por «Azul»; ningún error en nombres cortos, uno en medianos y dos
-  en largos. Deja fuera los nombres que
+  en largos (según la más corta de las dos palabras: «canela» no es un
+  «Chanel» mal escrito), y un nombre tal cual gana el lugar a uno parecido de
+  las mismas palabras. Deja fuera los nombres que
   están en las dos dimensiones («Café») y lo que su cláusula niega («no vienen
   en Chanel ni en Drakar»). Gana el nombre más largo: «Rojo y verde» no es
   también «verde». Los colores del producto son la paleta de sus variantes si
   la tiene (Duo Zodiacal); si no, sus etiquetas «Color: …» y su opción
-  «Color» (Multicolor, Rojo y verde). Con Jev (sombra o canary del control),
-  por cada candidato Jev solo QUITA los avisos falsos (otro producto, una
+  «Color» (Multicolor, Rojo y verde). El nombre del cliente (su perfil de
+  WhatsApp y quien recibe) no es un aroma ni un color: «Gracias Lila». Sin
+  Jev (`reglas`, sombra), la regla SHALL juzgar solo las oraciones que ofrecen
+  algo (frases del paquete: «viene en», «te las dejo», «¿cuál prefieres?») y
+  no hablan del empaque, de las notas de un aroma ni de otro producto
+  («caja azul con moño amarillo», «notas de sándalo», «¿agregas una de
+  lavanda?»). Con Jev, por cada etiqueta ajena que el texto nombra (en
+  cualquier oración) Jev solo QUITA los avisos falsos (otro producto, una
   fecha, el color de la caja), y solo con certeza (umbral 0,15).
 - **Una presentación, signo, diseño o tamaño que no tiene** (`variante_ajena`).
   Lo inventado no está en ningún catálogo, así que no hay qué buscar: Jev lee
@@ -1370,14 +1378,21 @@ foco algo que no es suyo:
   0,40 y 0,60). La regla no marca nada: sin Jev no revisa. La ficha de un
   producto de una sola presentación («el Cubo Love también viene en vaso»)
   solo se pregunta si el texto nombra una presentación (las palabras van en el
-  paquete: vaso, tamaño, caja, set…).
+  paquete: vaso, tamaño, caja, set…); la de uno con presentaciones, si además
+  el texto ofrece algo («Quedo atenta» no gasta la llamada).
 
 El foco son los productos del pedido, los que el texto nombra por su título y
 los que nombra con una palabra que solo tienen uno o dos títulos («la
-plegaria»). Lo encontrado MUST volver en UNA retención por mensaje del cliente
-(`fact_check`), con lo que el producto sí tiene y la salida: si hablaba de
-otro producto o le decía que no lo tiene, reenvía el mismo texto. El segundo
-intento MUST salir: un aviso falso cuesta un reenvío.
+plegaria»; si la palabra es también del producto del pedido, habla de ese y
+no de su hermano). Lo encontrado MUST volver al modelo (`fact_check`, con las
+decisiones que lo encontraron en `checks`), con lo que el producto sí tiene y
+la salida: si hablaba de otro producto o le decía que no lo tiene, reenvía el
+mismo texto. Lo que ya se le dijo en ese mensaje del cliente MUST salir al
+segundo intento (un aviso falso cuesta un reenvío); algo NUEVO se retiene otra
+vez, y como mucho dos veces por mensaje del cliente (`send_reply` y las
+tarjetas juntas). Si en el mismo paso una tarjeta que deja al cliente
+esperando salió y `send_reply` volvió al modelo, el turno MUST seguir una
+ronda más (`held-reply-round-v1`): el cliente nunca recibe solo la tarjeta.
 
 Sin catálogo, sin vault, sin producto en foco o con un paquete anterior a las
 decisiones (`ventas-6` y antes), el texto sale como siempre. El catálogo las
@@ -1389,6 +1404,9 @@ Límites conocidos:
   el pedido, «las de deseos vienen en Drakar» sale (Drakar es de la Plegaria).
 - Un color inventado que no tiene ningún producto («dorado» en la Plegaria)
   solo lo ve `variante_ajena`, y solo en productos con presentaciones.
+- La regla sola de precios todavía marca el precio de un producto que el
+  texto nombra solo por su aroma («las de lavanda cuestan…») o un rango del
+  catálogo («desde $18.000 hasta $49.500»); con Jev, lo quita.
 
 ### Requirement: Los hechos que el bot afirma coinciden con el sistema (`ventas-7`, 2026-10-13)
 
@@ -1409,16 +1427,22 @@ en el código, y las mismas frases deciden si se consulta el pedido o los
 cupones. Una frase del paquete son palabras (`*`, `a/b`, `…`), nunca un regex.
 
 - `precio_ajeno`: los montos que no son el precio del catálogo del producto en
-  foco (por unidad o por la cantidad, en vivo o con el cupón aplicado, y sus
-  sumas) ni un monto de política en su contexto (`price_quotes`).
+  foco (por unidad o por la cantidad, en vivo, con el cupón aplicado o con un
+  cupón vigente que el texto le ofrece, con el recargo del link, y sus sumas),
+  ni el total del pedido en OrderFacts, ni un monto de política en una
+  oración que lo dice (frases del paquete: «envío», «desde», «total»…).
 - `pago_ajeno`: contra entrega ofrecida a un pedido cuyo subtotal de productos
   no llega al mínimo (no la regla general: «contra entrega es desde $45.000»),
   y un recargo del link distinto del vigente o «sin recargo».
 - `estado_ajeno`: el pago dado por confirmado o el pedido dado por despachado o
-  entregado cuando OrderFacts dice otra cosa. Solo se consulta el pedido si,
-  con un pedido sin pagar ni despachar, el texto diría algo.
+  entregado cuando OrderFacts dice otra cosa. Lo que todavía no pasó cuenta
+  solo dicho antes de la frase («apenas recibamos tu pago»), no después («tu
+  pago quedó confirmado y te avisamos cuando…»). Solo se consulta el pedido
+  si, con un pedido sin pagar ni despachar, el texto diría algo, o si dice un
+  monto (el total real del pedido).
 - `cupon_ajeno`: un código que Medusa conoce y no rige para el cliente, o un
-  porcentaje de descuento que ningún cupón vigente da. Solo se consulta Medusa
+  porcentaje de descuento que ningún cupón vigente da. Si los cupones no se
+  pudieron leer, no se juzga ninguno (no saber no es «no hay»). Solo se consulta Medusa
   si el texto habla de cupones o descuentos, o escribe algo como un código
   («Usa AMOR2026 al pagar», en mayúsculas, sin la palabra «cupón»).
 - `negacion_falsa`: lo que el texto niega tener (con un verbo de tenerlo; para
@@ -1450,9 +1474,16 @@ UNA vez por texto: lo comparten esta revisión y la de la lista de opciones.
 
 #### Scenario: Un falso positivo de una regla de palabras se corrige en el paquete
 
-- GIVEN `estado_ajeno` propone «su pedido ya salió o va en camino» para «Tu pedido va en camino mañana a primera hora»
+- GIVEN `estado_ajeno` propone «su pedido ya salió o va en camino» para «Mañana a primera hora tu pedido va en camino»
 - WHEN el operador agrega «mañana» a `todavia_no` en una versión nueva del paquete
 - THEN la regla ya no lo propone, sin un cambio de código
+
+#### Scenario: Una tarjeta y una respuesta que volvió en el mismo paso
+
+- GIVEN el modelo llama en un paso `send_reply` (retenido por los hechos) y el selector de aromas
+- WHEN el selector sale
+- THEN el turno sigue una ronda más y el modelo reenvía su texto corregido
+- AND el cliente recibe el selector y el texto
 
 #### Scenario: «Tu pago quedó confirmado» con el pago pendiente
 

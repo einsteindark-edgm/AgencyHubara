@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from src.plugins.chats.agent.sales.pricing import format_cop
-from src.plugins.chats.shared.product_truth import affirms, clauses, denied_labels
+from src.plugins.chats.shared.product_truth import affirms, clauses, denied_labels, sentences
 from src.sdk.catalogkit import normalize_label
 
 Claim = tuple[str, str]
@@ -31,8 +31,9 @@ Claim = tuple[str, str]
 # ── Las frases del paquete ──────────────────────────────────────────────────
 
 #: «…» entre dos palabras: hasta tres palabras en medio («tu pago … confirmad*»
-#: = «tu pago quedó confirmado», «tu pago ya fue confirmado»).
-_GAP = r"(?:\w+\s+){0,3}"
+#: = «tu pago quedó confirmado», «tu pago ya fue confirmado»), nunca una
+#: negación («tu pago no está confirmado» no lo dice).
+_GAP = r"(?:(?!(?:no|ni|tampoco|nunca)\b)\w+\s+){0,3}"
 _NEVER = r"(?!)"
 
 
@@ -81,6 +82,20 @@ def says_any(text: str | None, spec: str) -> bool:
     return any(regex.search(c) for c in clauses(text))
 
 
+def offering_sentences(text: str | None, *, offers: str, not_offers: str) -> str:
+    """Las oraciones del texto que ofrecen algo (una frase de `offers`: «viene
+    en», «te las dejo») y no hablan de otra cosa (`not_offers`: el empaque,
+    las notas de un aroma, otro producto), una por línea. Lo que juzga una
+    regla que decide sola (premortem del PR #426: nombres, notas y empaques)."""
+    says, other = re.compile(phrases(offers)), re.compile(phrases(not_offers))
+    kept = []
+    for sentence in sentences(text):
+        norm = normalize_label(sentence)
+        if says.search(norm) and not other.search(norm):
+            kept.append(sentence)
+    return "\n".join(kept)
+
+
 # ── Pago ────────────────────────────────────────────────────────────────────
 
 
@@ -118,9 +133,12 @@ def surcharge_fact(surcharges: Sequence[str]) -> str:
     return f"el recargo del link de pago es {first} con Nequi o Bancolombia{others}"
 
 
-def _percent(raw: str) -> float:
-    """«1,5», «1.5» y «1,50» son el mismo porcentaje."""
+def percent(raw: str) -> float:
+    """«1,5», «1.5», «1,50» y «1,5 %» son el mismo porcentaje."""
     return float(raw.replace("%", "").strip().replace(",", "."))
+
+
+_percent = percent
 
 
 def payment_claims(
@@ -132,7 +150,7 @@ def payment_claims(
     general = re.compile(phrases(words.regla_general))
     surcharge, not_surcharge = re.compile(phrases(words.habla_de_recargo)), re.compile(phrases(words.no_es_recargo))
     link = re.compile(phrases(words.habla_del_link))
-    offers = [c for c in clauses(text) if not general.search(c)]
+    offers = [c for c in clauses(text, keep_parens=True) if not general.search(c)]
     if subtotal is not None and subtotal < cod_min and any(affirms(c, phrases(words.ofrece_contra_entrega)) for c in offers):
         out.append((COD_TERM, cod_fact(subtotal, cod_min)))
     allowed = {_percent(s) for s in surcharges}
@@ -188,11 +206,12 @@ def status_claims(
     """El pago dado por confirmado, el pedido dado por despachado o por
     entregado, cuando el sistema dice otra cosa (sin pedido, nada)."""
     out: list[Claim] = []
-    not_yet = re.compile(phrases(words.todavia_no))
-    now = [c for c in clauses(text) if not not_yet.search(c)]
+    not_yet = phrases(words.todavia_no)
 
     def says(spec: str) -> bool:
-        return any(affirms(c, phrases(spec)) for c in now)
+        # «apenas recibamos tu pago» no lo dice; «tu pago quedó confirmado y te
+        # avisamos cuando…» sí (lo que viene después no lo vuelve futuro).
+        return affirms(text, phrases(spec), unless=not_yet)
 
     if pay_status is not None and pay_status != "paid" and says(words.pago_confirmado):
         out.append((PAID_TERM, status_fact(order, pay_status=pay_status)))
@@ -319,8 +338,11 @@ __all__ = [
     "StatusWords",
     "coupon_claims",
     "denial_claims",
+    "offering_sentences",
     "payment_claims",
+    "percent",
     "phrases",
+    "says_any",
     "status_claims",
     "talks_about_coupons",
     "talks_about_order",

@@ -166,6 +166,9 @@ _EDITS_BY_LENGTH = ((12, 2), (6, 1), (0, 0))
 #: dejo en Drakar»).
 #: (El punto y la coma de un número —«$45.000», «1,5 %»— no cortan.)
 _CLAUSE = re.compile(r"(?:(?<!\d)[.,]|[.,](?!\d)|[;:!?¿¡()\n])+")
+#: Lo mismo sin los paréntesis: lo que va entre paréntesis es de su cláusula
+#: («Contra entrega (compras desde $45.000)» enuncia la regla general).
+_CLAUSE_WITH_PARENS = re.compile(r"(?:(?<!\d)[.,]|[.,](?!\d)|[;:!?¿¡\n])+")
 #: Antes del aroma en su cláusula, lo niega; justo después, «no» también
 #: («Lavanda no la manejamos»).
 _DENIES_BEFORE = frozenset({"no", "ni", "tampoco"})
@@ -182,29 +185,41 @@ def _squash(words: list[str]) -> str:
     return re.sub(r"(.)\1+", r"\1", "".join(stem_word(w) for w in words))
 
 
-def _same_name(said: str, label: str) -> bool:
-    """¿Lo escrito es el nombre del catálogo, con los errores que admite su largo?"""
-    allowed = next(edits for length, edits in _EDITS_BY_LENGTH if len(label) >= length)
+def _same_name(said: str, label: str, *, exact: bool = False) -> bool:
+    """¿Lo escrito es el nombre del catálogo, con los errores que admite la
+    MÁS CORTA de las dos palabras? (premortem del PR #426: «canela», sin
+    género «canel», no es un «Chanel» mal escrito)."""
+    if exact:
+        return said == label
+    shorter = min(len(said), len(label))
+    allowed = next(edits for length, edits in _EDITS_BY_LENGTH if shorter >= length)
     return OSA.distance(said, label, score_cutoff=allowed) <= allowed
 
 
 def _spans(tokens: list[str], labels: tuple[str, ...] | list[str]) -> list[tuple[int, int, str]]:
     """`(inicio, fin, etiqueta)` de cada etiqueta que nombran las palabras,
-    en orden (cada una una vez; la más larga gana el lugar)."""
+    en orden (cada una una vez; la de más palabras gana el lugar). Entre las de
+    las mismas palabras, primero los nombres tal cual y después los parecidos:
+    «canela» es Canela aunque Chanel esté antes en el catálogo."""
     taken: set[int] = set()
     hits: list[tuple[int, int, str]] = []
-    for label in sorted(labels, key=lambda lb: (len(_words(lb)), len(lb)), reverse=True):
-        words = _words(label)
-        if not words:
-            continue
-        key, size = _squash(words), len(words)
-        for start in range(len(tokens) - size + 1):
-            span = range(start, start + size)
-            if taken.intersection(span) or not _same_name(_squash(tokens[start:start + size]), key):
+    ordered = sorted(labels, key=lambda lb: (len(_words(lb)), len(lb)), reverse=True)
+    found: set[str] = set()
+    passes = [(size, exact) for size in sorted({len(_words(lb)) for lb in ordered}, reverse=True) for exact in (True, False)]
+    for size_now, exact in passes:
+        for label in ordered:
+            words = _words(label)
+            if not words or label in found or len(words) != size_now:
                 continue
-            taken.update(span)
-            hits.append((start, start + size, label))
-            break
+            key, size = _squash(words), len(words)
+            for start in range(len(tokens) - size + 1):
+                span = range(start, start + size)
+                if taken.intersection(span) or not _same_name(_squash(tokens[start:start + size]), key, exact=exact):
+                    continue
+                taken.update(span)
+                hits.append((start, start + size, label))
+                found.add(label)
+                break
     return sorted(hits)
 
 
@@ -259,19 +274,44 @@ def foreign_labels(
 DENIAL_HEAD = r"\b(?:no|ya no|tampoco|ni)\s+(?:(?:lo|la|los|las|le|les|nos|te)\s+)?"
 
 
-def clauses(text: str | None) -> list[str]:
-    """Las cláusulas del texto, sin tildes ni mayúsculas (`_CLAUSE`)."""
-    return [normalize_label(c) for c in _CLAUSE.split(text or "") if c.strip()]
+#: Lo que corta una oración (no el punto de un número: «$45.000»).
+_SENTENCE = re.compile(r"(?:(?<!\d)\.|\.(?!\d)|[!?¡¿…\n])+")
 
 
-def affirms(text: str | None, pattern: str) -> bool:
+def sentences(text: str | None) -> list[str]:
+    """Las oraciones del texto, tal cual (sin tocar tildes ni mayúsculas)."""
+    return [s.strip() for s in _SENTENCE.split(text or "") if s.strip()]
+
+
+def without_names(text: str | None, names: tuple[str, ...] | list[str], *, placeholder: str = "cliente") -> str:
+    """El texto con las palabras de `names` (el nombre del cliente) cambiadas
+    por `placeholder`: «¡Hola Rosa!» no nombra el color Rosa."""
+    keys = {normalize_label(n) for n in names if n and n.strip()}
+    if not keys:
+        return text or ""
+    return re.sub(r"[^\W_]+", lambda m: placeholder if normalize_label(m.group(0)) in keys else m.group(0), text or "")
+
+
+def clauses(text: str | None, *, keep_parens: bool = False) -> list[str]:
+    """Las cláusulas del texto, sin tildes ni mayúsculas (`_CLAUSE`; con
+    `keep_parens`, lo que va entre paréntesis queda en su cláusula)."""
+    splitter = _CLAUSE_WITH_PARENS if keep_parens else _CLAUSE
+    return [normalize_label(c) for c in splitter.split(text or "") if c.strip()]
+
+
+def affirms(text: str | None, pattern: str, *, unless: str | None = None) -> bool:
     """¿El texto dice `pattern` (regex sobre el texto sin tildes ni
     mayúsculas) en una cláusula que no lo niega antes ni justo después?
     «puedes pagar contra entrega» sí; «este pedido no aplica para contra
-    entrega» y «contra entrega no aplica» no."""
+    entrega» y «contra entrega no aplica» no. `unless`: lo que, dicho en la
+    cláusula ANTES o DENTRO de lo que coincide, lo vuelve otra cosa («apenas
+    recibamos tu pago»; no «tu pago quedó confirmado y te avisamos cuando…»)."""
     regex = re.compile(pattern)
+    not_now = re.compile(unless) if unless else None
     for clause in clauses(text):
         for match in regex.finditer(clause):
+            if not_now is not None and not_now.search(clause[: match.end()]):
+                continue
             before, after = _words(clause[: match.start()]), _words(clause[match.end():])[:3]
             if not _DENIES_BEFORE.intersection(before) and not _DENIES_AFTER.intersection(after):
                 return True

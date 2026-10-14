@@ -55,6 +55,26 @@ def test_a_short_name_admits_gender_and_number_but_no_typo() -> None:
     assert mentioned_labels("la lela", ("Lila",)) == ()
 
 
+@pytest.mark.parametrize("catalog", [("Chanel", "Canela"), ("Canela", "Chanel")])
+def test_an_exact_name_wins_over_a_similar_one_whatever_the_catalog_order(catalog: tuple) -> None:
+    """Premortem del PR #426: «canela» (sin género: «canel», 5 letras) quedaba a
+    una letra de «Chanel» (6) y, con Chanel antes en el catálogo, le ganaba el
+    lugar a Canela: «el Velón Gorrión viene en canela» se retenía por «Chanel»."""
+    assert mentioned_labels("El Velón Gorrión viene en canela, vainilla y coco.", catalog) == ("Canela",)
+
+
+def test_a_longer_name_with_typos_still_wins_over_a_short_exact_one() -> None:
+    labels = ("Noche", "Caballero de la noche")
+    assert mentioned_labels("Te la dejo en Kaballero de la noche.", labels) == ("Caballero de la noche",)
+
+
+def test_the_errors_allowed_are_those_of_the_shorter_word() -> None:
+    """«canela» no es un «Chanel» mal escrito aunque Canela no esté en el catálogo."""
+    assert mentioned_labels("Viene en canela.", ("Chanel",)) == ()
+    own = ("Canela", "Vainilla", "Coco")
+    assert foreign_labels("Viene en canela, vainilla y coco.", own=own, labels=("Chanel", *own)) == ()
+
+
 @pytest.mark.parametrize(
     ("said", "label"),
     [

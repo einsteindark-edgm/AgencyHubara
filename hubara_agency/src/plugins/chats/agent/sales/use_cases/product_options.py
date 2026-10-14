@@ -36,17 +36,28 @@ def _words(text: str) -> list[str]:
     return re.findall(r"[^\W_]+", product_key(text))
 
 
-def _named_by_a_word(products: Sequence[Any], text: str) -> list[Any]:
+def _named_by_a_word(products: Sequence[Any], text: str, *, known: Sequence[Any] = ()) -> list[Any]:
     """Los productos que el texto nombra con una palabra de su título que casi
     ningún otro título tiene («la plegaria» = Plegaria de Luz, «los corazones»
-    = Cubo de corazón: sin género ni número)."""
+    = Cubo de corazón: sin género ni número). Si la palabra también es de uno
+    que ya está en foco (`known`: el del pedido), habla de ese y no de su
+    hermano (premortem del PR #426: «las de deseos» con las cuadradas en el
+    pedido sumaba las onduladas)."""
     by_word: dict[str, list[Any]] = {}
     for product in products:
         for word in dict.fromkeys(_words(getattr(product, "title", "") or "")):
             if len(word) >= _NAMING_FROM and word not in _GENERIC_WORDS:
                 by_word.setdefault(stem_word(word), []).append(product)
     said = {stem_word(word) for word in _words(text)}
-    return [p for word, named in by_word.items() if word in said and len(named) <= _NAMING_UP_TO for p in named]
+    known_handles = {getattr(p, "handle", None) for p in known if p is not None}
+    out: list[Any] = []
+    for word, named in by_word.items():
+        if word not in said or len(named) > _NAMING_UP_TO:
+            continue
+        if any(p.handle in known_handles for p in named):
+            continue
+        out += named
+    return out
 
 
 def focus_products(products: Sequence[Any], *, draft: dict[str, Any] | None, text: str) -> list[Any]:
@@ -58,7 +69,7 @@ def focus_products(products: Sequence[Any], *, draft: dict[str, Any] | None, tex
     focus = [find_product(products, item.get("producto")) for item in draft_items(draft)]
     by_title = {product_key(p.title): p for p in products if getattr(p, "title", None)}
     focus += [by_title[product_key(t)] for t in mentioned_labels(text, [p.title for p in by_title.values()])]
-    focus += _named_by_a_word(products, text)
+    focus += _named_by_a_word(products, text, known=focus)
     seen: set[str] = set()
     out: list[Any] = []
     for product in focus:

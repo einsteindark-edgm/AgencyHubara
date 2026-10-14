@@ -112,6 +112,24 @@ async def test_send_reply_and_the_cards_share_one_hold_per_customer_message(tmp_
     assert again.get("error") != "fact_check"  # el modelo ya corrigió una vez en este mensaje
 
 
+async def test_a_new_mismatch_later_in_the_same_message_is_held_again(tmp_path: Path) -> None:
+    """Premortem del PR #426: una retención (aunque fuera falsa) en una
+    tarjeta apagaba la revisión del error real que venía después en el mismo
+    mensaje del cliente. Lo NUEVO se retiene otra vez; lo mismo, no (el modelo
+    insiste: sale); y como mucho dos veces por mensaje."""
+    facts = _facts(tmp_path)
+
+    first = await facts.held(KEY, "Te las dejo en Drakar 🤍", tool="present_products")
+    same = await facts.held(KEY, "Te las dejo en Drakar 🤍", tool="send_reply")
+    new = await facts.held(KEY, "Vienen en Chanel 🤍", tool="send_reply")
+    third = await facts.held(KEY, "Vienen en Lavanda 🤍", tool="send_reply")
+
+    assert first is not None and "«Drakar»" in first
+    assert same is None
+    assert new is not None and "«Chanel»" in new
+    assert third is None
+
+
 @pytest.mark.parametrize(
     "name",
     ["send_reply", "present_products", "present_variant_picker", "present_product_detail", "send_quick_replies",

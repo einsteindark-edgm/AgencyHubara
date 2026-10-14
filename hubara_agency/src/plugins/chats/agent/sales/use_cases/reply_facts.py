@@ -50,7 +50,9 @@ class ReplyFacts:
     order: str | None = None
     stage: str | None = None
     pay_status: str | None = None
-    #: Los cupones (vacío = no se miró): los que Medusa conoce y los vigentes.
+    #: Los cupones: si se pudieron leer (sin eso no se juzga ninguno: no saber
+    #: no es «no hay»), los que Medusa conoce y los vigentes.
+    coupons_checked: bool = False
     coupons_known: tuple[str, ...] = ()
     coupons_valid: tuple[str, ...] = ()
     coupons_lines: tuple[str, ...] = ()
@@ -58,6 +60,8 @@ class ReplyFacts:
     #: Los títulos del catálogo y lo que tiene el foco (para lo que niega).
     titles_all: tuple[str, ...] = ()
     own_labels: tuple[str, ...] = ()
+    #: Las palabras del nombre del cliente: «¡Hola Rosa!» no nombra el color Rosa.
+    names: tuple[str, ...] = ()
 
     @property
     def price_lines(self) -> tuple[str, ...]:
@@ -66,6 +70,19 @@ class ReplyFacts:
             f"{p.title}: {' o '.join(format_cop(x) for x in sorted(catalog_prices(p)))}"
             for p in self.focus if catalog_prices(p)
         )
+
+    @property
+    def surcharge_rates(self) -> tuple[float, ...]:
+        """Los recargos del link como porcentajes («1,5 %» → 1.5)."""
+        from src.plugins.chats.agent.sales.use_cases.fact_rules import percent
+
+        out: list[float] = []
+        for raw in self.surcharges:
+            try:
+                out.append(percent(raw))
+            except ValueError:
+                continue
+        return tuple(out)
 
     @property
     def titles(self) -> tuple[str, ...]:
@@ -96,6 +113,23 @@ class Findings:
 
     def __bool__(self) -> bool:
         return any(getattr(self, f.name) for f in fields(self))
+
+    @property
+    def terms(self) -> tuple[str, ...]:
+        """Todo lo que no coincide, como texto (lo que se le dijo al modelo)."""
+        pairs = (*self.payments, *self.states, *self.coupons, *self.denials)
+        return (*self.aromas, *self.colors, *(("presentación",) if self.variant else ()), *self.prices,
+                *(term for term, _fact in pairs))
+
+    @property
+    def checks(self) -> tuple[str, ...]:
+        """Las decisiones del paquete que encontraron algo (la traza y el log)."""
+        found = {
+            "aroma_ajeno": self.aromas, "color_ajeno": self.colors, "variante_ajena": self.variant,
+            "precio_ajeno": self.prices, "pago_ajeno": self.payments, "estado_ajeno": self.states,
+            "cupon_ajeno": self.coupons, "negacion_falsa": self.denials,
+        }
+        return tuple(name for name, value in found.items() if value)
 
 
 def discounted(prices: set[int], promotion: dict[str, Any] | None) -> set[int]:

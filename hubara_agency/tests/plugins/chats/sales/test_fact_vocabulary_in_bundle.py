@@ -63,8 +63,8 @@ def test_each_word_rule_takes_its_vocabulary_from_the_bundle(bundles: Path) -> N
 
 
 def test_a_false_positive_is_fixed_with_a_phrase_in_the_bundle(bundles: Path) -> None:
-    """«…va en camino mañana» es algo por venir: hoy se le propone a Jev."""
-    inp = EstadoDelTexto(**{**PENDING.__dict__, "text": "Tu pedido va en camino mañana a primera hora 🤍"})
+    """«Mañana… va en camino» es algo por venir: hoy se le propone a Jev."""
+    inp = EstadoDelTexto(**{**PENDING.__dict__, "text": "Mañana a primera hora tu pedido va en camino 🤍"})
     assert _terms("estado_ajeno", inp)
 
     _add_phrase(bundles, "estado_ajeno", "todavia_no", "mañana")

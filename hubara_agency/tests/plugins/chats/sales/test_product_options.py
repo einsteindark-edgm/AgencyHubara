@@ -58,6 +58,14 @@ def test_a_word_two_titles_share_names_both() -> None:
     assert focus_products(CATALOG, draft=None, text="Las de deseos vienen en Drakar") == [CUADRADAS, ONDULADAS]
 
 
+def test_a_shared_word_names_the_product_of_the_order_not_its_sibling() -> None:
+    """Premortem del PR #426: con las cuadradas en el pedido, «las de deseos»
+    sumaba las onduladas y sus aromas pasaban por propios."""
+    draft = _draft("Velas de deseos cuadradas")
+
+    assert focus_products(CATALOG, draft=draft, text="Las de deseos vienen en Drakar") == [CUADRADAS]
+
+
 def test_a_product_of_the_order_missing_from_the_catalog_is_not_judged() -> None:
     assert focus_products(CATALOG, draft=_draft("Vela que ya no existe"), text="Viene en Drakar") == []
 

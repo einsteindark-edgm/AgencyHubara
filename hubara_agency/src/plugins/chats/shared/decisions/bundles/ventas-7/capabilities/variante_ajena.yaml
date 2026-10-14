@@ -22,6 +22,14 @@ state:
     words: >-
       vaso, frasco, envase, recipiente, tamaño, grande, pequeña, pequeño, mini, mediana, mediano,
       set, kit, combo, presentación, versión
+    # Un producto CON presentaciones se le pregunta a Jev solo si el texto
+    # ofrece algo o nombra una presentación (premortem del PR #426: «Quedo
+    # atenta» era una llamada a Jev por texto, y en sombra una espera).
+    ofrece: >-
+      viene*, vienen, tenemos, manejamos, te la/lo/las/los dejo, te la/lo/las/los mando/envío/enviamos,
+      disponible*, prefieres, prefiere, quieres, quiere, elige*, elegir, escoge*, escoger, opción*, opciones,
+      puede ser, pueden ser, la/lo/las/los tienes, la/lo/las/los tenemos, signo*, diseño*, modelo*, color*,
+      aroma*
 questions:
   - id: variante.ajena
     kind: noul

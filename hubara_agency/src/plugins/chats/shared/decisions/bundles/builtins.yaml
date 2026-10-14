@@ -41,7 +41,7 @@ inputs:
   TextoCatalogo: {text: string, aromas: "tuple<string>", colors: "tuple<string>"}
   OpcionesDelTexto: {text: string, products: "tuple<string>", own: "tuple<string>", labels: "tuple<string>", others: "tuple<string>"}
   VariantesDelTexto: {text: string, sheets: "tuple<string>", single: "tuple<string>"}
-  PreciosDelTexto: {text: string, products: "tuple<string>", prices: "tuple<int>", policy: "tuple<int>"}
+  PreciosDelTexto: {text: string, products: "tuple<string>", prices: "tuple<int>", policy: "tuple<int>", surcharges: "tuple<double>"}
   PagoDelTexto: {text: string, subtotal: "int?", cod_min: int, surcharges: "tuple<string>"}
   EstadoDelTexto: {text: string, order: "string?", stage: "string?", pay_status: "string?"}
   CuponDelTexto: {text: string, known: "tuple<string>", valid: "tuple<string>", valid_lines: "tuple<string>", valid_percents: "tuple<int>"}
@@ -190,12 +190,14 @@ builtins:
     kind: rule
     value: "list<string>"
     input: PreciosDelTexto
-    doc: "Los montos del texto que no explica el precio del catálogo de los productos de los que habla (por cantidad, sumas, en vivo o con descuento) ni la política (price_quotes.find_unexplained_amounts)."
+    params: {politica: str}
+    doc: "Los montos del texto que no explica el precio del catálogo de los productos de los que habla (por cantidad, sumas, en vivo, con descuento o con el recargo del link) ni la política en una oración con una frase de `politica` (price_quotes.find_unexplained_amounts). Frases del paquete (fact_rules.phrases)."
   foreign_labels_rule:
     kind: rule
     value: "list<string>"
     input: OpcionesDelTexto
-    doc: "Las etiquetas del catálogo (aromas o colores) que el texto nombra y no son del producto del que habla (product_truth.foreign_labels)."
+    params: {ofrece: str, no_ofrece: str}
+    doc: "La regla sola: las etiquetas del catálogo (aromas o colores) que nombra una oración que ofrece (una frase de `ofrece`, ninguna de `no_ofrece`) y no son del producto del que habla (product_truth.foreign_labels). Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio."
   model_preamble:
     kind: rule
     value: string
@@ -324,8 +326,8 @@ builtins:
   text_and_option_sheets:
     kind: state
     input: VariantesDelTexto
-    params: {words: str}
-    doc: "El texto para el cliente con la ficha de cada producto con presentaciones para escoger, y la de los de una sola presentación si el texto nombra una de `words` (palabras de presentación de la tienda, separadas por comas); sin ninguna ficha, no se pregunta."
+    params: {words: str, ofrece: str}
+    doc: "El texto para el cliente con la ficha de cada producto con presentaciones para escoger si el texto ofrece algo (una frase de `ofrece`, fact_rules.phrases) o nombra una de `words` (palabras de presentación de la tienda, separadas por comas), y la de los de una sola presentación solo con una de `words`; sin ninguna ficha, no se pregunta."
   # ── ítems ──
   items_of:
     kind: items
@@ -361,6 +363,7 @@ builtins:
   unexplained_price_items:
     kind: items
     input: PreciosDelTexto
+    params: {politica: str}
     fields: {term: string}
     doc: "Un ítem por monto que la regla propone («$23.000»)."
   payment_claim_items:
@@ -391,7 +394,7 @@ builtins:
     kind: items
     input: OpcionesDelTexto
     fields: {term: string}
-    doc: "Un ítem por etiqueta ajena que la regla propone (la del catálogo)."
+    doc: "Un ítem por etiqueta ajena que el texto nombra (la del catálogo), en cualquier oración: lo que juzga Jev."
   # ── opciones de la entrada ──
   catalog_categories:
     kind: options

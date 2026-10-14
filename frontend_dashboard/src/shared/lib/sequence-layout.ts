@@ -124,6 +124,7 @@ export const GUARD_LABELS: Record<string, string> = {
   send_reply_retry: "no mandó la respuesta: otra herramienta del mismo paso falló",
   promised_action_round: "retuvo la respuesta: prometía algo que todavía no hizo",
   promised_action_text_kept: "mandó la respuesta retenida: lo prometido ya salió",
+  held_reply_round: "otra ronda: la respuesta volvió al modelo y la tarjeta del mismo paso ya había salido",
 };
 
 /** Lo que decidió Jev al revisar si la respuesta cubre cada asunto. */
