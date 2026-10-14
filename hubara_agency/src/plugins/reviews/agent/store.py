@@ -116,6 +116,20 @@ class ReviewsStore:
             return None
         return data if isinstance(data, dict) else None
 
+    def list_requests(self) -> list[dict[str, Any]]:
+        folder = self._dir / "requests"
+        if not folder.is_dir():
+            return []
+        out = []
+        for path in folder.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict):
+                out.append(data)
+        return out
+
     def update_request(self, order_id: str, **fields: Any) -> dict[str, Any] | None:
         current = self.get_request(order_id)
         if current is None:

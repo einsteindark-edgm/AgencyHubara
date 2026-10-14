@@ -167,6 +167,15 @@ from src.platform.promotions.conditions import (
     CouponConditionsError as CouponConditionsError,
     FakeCouponConditionsStore as FakeCouponConditionsStore,
 )
+from src.platform.reviews.composition import (
+    get_product_reviews_port as get_product_reviews_port,
+)
+from src.platform.reviews.port import (
+    FakeProductReviews as FakeProductReviews,
+    ProductReviewInput as ProductReviewInput,
+    ProductReviewsPort as ProductReviewsPort,
+    ProductReviewsUnavailableError as ProductReviewsUnavailableError,
+)
 from src.platform.promotions.grants import (
     CouponGrant as CouponGrant,
     CouponGrantsStore as CouponGrantsStore,

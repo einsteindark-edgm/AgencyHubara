@@ -170,6 +170,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "FakeCouponConditionsStore": "src.platform.promotions.conditions",
     # Cupones personales (agradecimiento por calificar, reseñas 2026-10-13):
     # el plugin de reseñas concede; ventas valida y marca el uso.
+    # Reseñas de producto en Medusa (plugin reviews publica las aprobadas).
+    "ProductReviewInput": "src.platform.reviews.port",
+    "ProductReviewsPort": "src.platform.reviews.port",
+    "ProductReviewsUnavailableError": "src.platform.reviews.port",
+    "FakeProductReviews": "src.platform.reviews.port",
     "CouponGrant": "src.platform.promotions.grants",
     "CouponGrantsStore": "src.platform.promotions.grants",
     "FakeCouponGrantsStore": "src.platform.promotions.grants",
@@ -206,6 +211,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "get_promo_quota_store": "src.platform.promotions.composition",
     "get_coupon_conditions_store": "src.platform.promotions.composition",
     "get_coupon_grants_store": "src.platform.promotions.composition",
+    "get_product_reviews_port": "src.platform.reviews.composition",
     "get_coupon_audit_log": "src.platform.promotions.composition",
     "get_coupon_sales_reader": "src.platform.promotions.composition",
     "get_quota_lock": "src.platform.promotions.composition",
