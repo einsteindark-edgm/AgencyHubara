@@ -1,0 +1,110 @@
+{
+  "version": "7.2",
+  "routing_model": {
+    "RATING": []
+  },
+  "screens": [
+    {
+      "id": "RATING",
+      "title": "Califica tu pedido",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "order_label": {
+          "type": "string",
+          "__example__": "Pedido #31"
+        },
+        "items_summary": {
+          "type": "string",
+          "__example__": "Velón Encanto Silvestre y 1 más"
+        },
+        "reward_note": {
+          "type": "string",
+          "__example__": "Al enviar te guardamos 5 % para tu próxima compra (10 % si compartes una foto y nos dejas publicarla)."
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "${data.order_label}"
+          },
+          {
+            "type": "TextBody",
+            "text": "${data.items_summary}"
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "rating",
+            "label": "¿Cómo te fue con tu pedido?",
+            "required": true,
+            "data-source": [
+              {
+                "id": "5",
+                "title": "★★★★★  Me encantó"
+              },
+              {
+                "id": "4",
+                "title": "★★★★☆  Me gustó"
+              },
+              {
+                "id": "3",
+                "title": "★★★☆☆  Estuvo bien"
+              },
+              {
+                "id": "2",
+                "title": "★★☆☆☆  Esperaba más"
+              },
+              {
+                "id": "1",
+                "title": "★☆☆☆☆  No me gustó"
+              }
+            ]
+          },
+          {
+            "type": "TextArea",
+            "name": "comment",
+            "label": "Tu opinión",
+            "required": false,
+            "max-length": 600,
+            "helper-text": "Opcional: aroma, duración, empaque…"
+          },
+          {
+            "type": "PhotoPicker",
+            "name": "photo",
+            "label": "Foto de tu vela (opcional)",
+            "description": "Con foto y permiso para publicarla, tu descuento sube a 10 %.",
+            "photo-source": "camera_gallery",
+            "min-uploaded-photos": 0,
+            "max-uploaded-photos": 1,
+            "max-file-size-kb": 10240
+          },
+          {
+            "type": "OptIn",
+            "name": "publish_consent",
+            "label": "Pueden mostrar mi opinión en hubara.com.co con mi nombre de pila.",
+            "required": false
+          },
+          {
+            "type": "TextCaption",
+            "text": "${data.reward_note}"
+          },
+          {
+            "type": "Footer",
+            "label": "Enviar calificación",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "rating": "${form.rating}",
+                "comment": "${form.comment}",
+                "photo": "${form.photo}",
+                "publish_consent": "${form.publish_consent}"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
