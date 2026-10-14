@@ -552,6 +552,10 @@ def _check_domain(bundle_dir: Path, catalog: Catalog, out: list[Diagnostic]) -> 
             out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", "campo que el catálogo no declara"))
         for name, kind in declared.items():
             if name not in values:
+                # Un campo anulable (`string?`) puede faltar: lo trae el
+                # paquete que lo usa y los anteriores siguen certificando.
+                if not isinstance(kind, dict) and parse_type(kind).nullable:
+                    continue
                 out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", "falta"))
             elif isinstance(kind, dict):
                 check(kind, values[name], f"{prefix}{name}.")

@@ -26,17 +26,24 @@ from src.plugins.chats.agent.remarketing.use_cases.context import (
     contact_transcript,
     context_from_metadata,
     customer_text_for,
+    episode_shown_titles,
     named_products,
 )
 from src.plugins.chats.shared.agent_decisions import decide_catalog_context, decide_contact
 from src.plugins.chats.shared.product_truth import (
+    numbers_in,
     unavailable_terms,
 )
+from src.plugins.chats.shared.store_pack import vocabulary
 from src.sdk.catalogkit import CatalogError, get_catalog_client
+from src.sdk.messagingkit import effective_max_touches
 
 #: el snapshot publicado son ~30 productos; el tope solo evita un prompt
 #: desbordado si el catálogo crece.
 _CATALOG_LIMIT = 200
+#: la descripción del producto que vio, para el toque que se lo EXPLICA
+#: (análisis 2026-10-13); la ficha de siempre se corta a 280.
+_EXPLAIN_DESCRIPTION_CHARS = 900
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -90,10 +97,16 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     # Ya compró y su cortesía quedó sin respuesta: el cierre se le debe
     # (operador, 2026-10-01: un NO_MESSAGE ahí queda frío). Jev decide el
     # resto; esto solo le quita el corte a ese caso.
-    context = replace(context, skip_touch=skip and context.post_purchase != "closing", contact=trace)
+    context = replace(
+        context,
+        skip_touch=skip and context.post_purchase != "closing",
+        contact=trace,
+        # El tope real de Frecuencia: con 3 toques, el 3º es el último.
+        total_touches=effective_max_touches(Path(WORKSPACE_VAULT_DIR)),
+    )
     products = await _catalog_products()
     if not products:
-        return context
+        return _with_allowed_numbers(context)
     mentioned = f"{context.tag_motivo}\n{context.transcript}"
     customer_text = customer_text_for(metadata, events)
     # Motor de decisiones (F3): qué ficha ve el gancho («producto nombrado») y
@@ -108,11 +121,37 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
         terms=unavailable_terms(customer_text, products),
         vault_dir=Path(WORKSPACE_VAULT_DIR),
     )
-    return replace(
-        context,
-        catalog_facts=catalog_facts_for(products, mentioned=mentioned, named=named),
-        unavailable_terms=terms,
+    description_chars = None
+    if context.silent_after_catalog:
+        # Se calló tras el catálogo (análisis 2026-10-13): la ficha ENTERA de
+        # lo que vio en la tarjeta, para explicárselo.
+        titles = {p.title for p in products}
+        seen = [t for t in episode_shown_titles(metadata or {}, events) if t in titles]
+        named = list(dict.fromkeys([*named, *seen]))
+        description_chars = _EXPLAIN_DESCRIPTION_CHARS
+    facts_kwargs = {"description_chars": description_chars} if description_chars else {}
+    described = context.silent_after_catalog and any(
+        (p.description or "").strip() for p in products if p.title in set(named)
     )
+    return _with_allowed_numbers(replace(
+        context,
+        catalog_facts=catalog_facts_for(products, mentioned=mentioned, named=named, **facts_kwargs),
+        unavailable_terms=terms,
+        catalog_described=described,
+    ))
+
+
+def _with_allowed_numbers(context: RemarketingContext) -> RemarketingContext:
+    """Los números que el gancho puede escribir: los de la ficha, la charla,
+    la campaña, el motivo y los datos de la tienda."""
+    sources = "\n".join((
+        context.catalog_facts,
+        context.transcript,
+        context.campaign_context,
+        context.tag_motivo,
+        str(vocabulary().get("practical_facts") or ""),
+    ))
+    return replace(context, allowed_numbers=numbers_in(sources))
 
 
 async def _catalog_products() -> list[Any]:
@@ -143,4 +182,8 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         catalog_facts=input.catalog_facts,
         unavailable_terms=input.unavailable_terms,
         post_purchase=input.post_purchase,
+        silent_after_catalog=input.silent_after_catalog,
+        catalog_described=input.catalog_described,
+        # Contexto legacy sin el tope: el de siempre (5).
+        **({"total_touches": input.total_touches} if input.total_touches else {}),
     )

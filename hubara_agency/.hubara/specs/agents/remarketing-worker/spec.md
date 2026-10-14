@@ -159,6 +159,61 @@ la escalera el sistema MUST NOT enviar más.
 - THEN no se envía nada, el peldaño se consume como `abstained`
 - AND el turno NO se graba en el historial del agente (no es precedente)
 
+### Requirement: Al cliente que se calló tras el catálogo se le explica lo que vio
+
+Análisis del operador 2026-10-13 (15-sep → 13-oct, 218 leads de anuncio): el
+51 % no volvió a escribir tras nuestra primera respuesta; 82 habían visto la
+tarjeta del catálogo (76 de Halloween). El 1er toque les decía «Hola de nuevo
+🌿 quedó pendiente lo de la colección… ¿alguna te llamó la atención?» y
+respondía el 25 %; el 2º, a +2 h del 1º, el 4 %; el 4º y el 5º, nadie.
+
+El contexto del gancho MUST reconocer el caso con un hecho, no con el LLM:
+en el episodio activo el cliente solo escribió ANTES de nuestra primera
+respuesta, esa respuesta traía una tarjeta de productos (`products_list` /
+`product_detail`) y no hay pedido a medias. La nota de la tarjeta en el
+historial MUST nombrar los productos que vio (`products`), y la ficha de esos
+productos MUST ir con la descripción entera.
+
+- 1er toque: si la ficha de lo que vio tiene descripción, el trigger MUST pedir
+  que le explique qué es y para qué sirve (con la ficha real, sin repetir
+  precios ni listar nombres), en 2 a 4 líneas, sin «Hola de nuevo» ni «quedó
+  pendiente», y cerrar con una pregunta fácil. Sin descripción, el gancho de
+  siempre. El toque enviado MUST agendar el 2º para la mañana siguiente del
+  cliente (9:00 hora local; si no cabe en su ventana de 24 h con 2 h de margen
+  y la ventana cierra después de las 8:15, en ese momento; si la mañana no
+  existe dentro de la ventana, a las 19:00 del mismo día).
+- 2º toque: si la tienda declara `vocabulary.practical_facts`, el trigger MUST
+  resolverle envío, tiempos y pago con SOLO esos datos (tiempos como los de
+  siempre, nunca una promesa de fecha; tarifas como mínimas; la condición del
+  contra entrega). Sin esos datos, el seguimiento de siempre.
+- El último toque de la escalera MUST saberse el último con el tope real de
+  Frecuencia (no 5 fijo).
+- Un número del gancho (horas, tamaños, días, valores) que no esté en la ficha,
+  la charla, la campaña, el motivo ni los datos de la tienda MUST NOT llegar al
+  cliente: el workflow redacta UNA vez más con el gancho corto de siempre, y si
+  también inventa, el toque es una abstención. El gancho bloqueado MUST NOT
+  entrar al historial del LLM.
+
+Todo detrás de `workflow.patched("remarketing-catalog-silent-v1")`.
+
+#### Scenario: Pidió la colección de Halloween, vio el catálogo y se calló
+- GIVEN «¡Hola! Quiero más información sobre la colección de Halloween», nuestro saludo y la tarjeta con Calabaza, Momia, Fantasma y Trilogía del Terror
+- AND el cliente no volvió a escribir
+- WHEN sale el 1er toque
+- THEN el trigger trae la ficha entera de las 4 piezas y pide explicar qué son
+- AND el toque enviado agenda el 2º para las 9:00 del día siguiente del cliente
+
+#### Scenario: El gancho que explica inventa un dato
+- GIVEN la ficha de la Calabaza no dice cuántas horas dura
+- WHEN el gancho responde «La Calabaza dura 60 horas 🎃»
+- THEN ese texto no se envía ni entra al historial del LLM
+- AND se redacta el gancho corto de siempre y se envía ese
+
+#### Scenario: Quien conversó sigue como siempre
+- GIVEN el cliente respondió después de la tarjeta del catálogo
+- WHEN sale el 1er toque
+- THEN el gancho es el de siempre y el 2º toque respeta el hueco normal
+
 ### Requirement: Con la ventana de 24h cerrada el toque va por plantilla
 
 Fuera de la CSW Meta solo acepta plantillas. Cuando la central devuelve

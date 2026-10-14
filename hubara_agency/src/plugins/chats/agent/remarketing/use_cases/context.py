@@ -165,6 +165,52 @@ def post_purchase_state(meta: dict[str, Any], events: list[dict[str, Any]]) -> s
     return "closing" if last is not None and last.get("role") == "user" else "answered"
 
 
+#: Las tarjetas con productos (las notas `ui_component` del transcript).
+_CATALOG_COMPONENTS = frozenset({"products_list", "product_detail"})
+
+
+def _is_catalog_card(event: dict[str, Any]) -> bool:
+    return event.get("kind") == "ui_component" and event.get("component_kind") in _CATALOG_COMPONENTS
+
+
+def silent_after_catalog(events: list[dict[str, Any]]) -> bool:
+    """El cliente pidió, le mandamos el catálogo y no volvió a escribir
+    (análisis 2026-10-13): todo lo que escribió en el episodio fue ANTES de
+    nuestra primera respuesta, y esa respuesta traía una tarjeta de productos.
+    `events` = los del episodio activo."""
+    users = [i for i, e in enumerate(events) if e.get("role") == "user"]
+    if not users:
+        return False
+    first_reply = next(
+        (i for i, e in enumerate(events) if i > users[0] and e.get("role") == "assistant"), None
+    )
+    if first_reply is None or users[-1] > first_reply:
+        return False
+    return any(_is_catalog_card(e) for e in events[first_reply:])
+
+
+def shown_product_titles(events: list[dict[str, Any]]) -> list[str]:
+    """Los productos que el cliente vio en las listas del catálogo, en orden y
+    sin repetir: las filas (`card.items`) que la nota del historial guarda con
+    lo que leyó el cliente. Las notas viejas, sin tarjeta, solo dicen cuántos
+    fueron."""
+    titles: list[str] = []
+    for event in events:
+        if not _is_catalog_card(event):
+            continue
+        card = event.get("card") if isinstance(event.get("card"), dict) else {}
+        for item in card.get("items") or []:
+            title = item.get("title") if isinstance(item, dict) else None
+            if isinstance(title, str) and title.strip() and title not in titles:
+                titles.append(title)
+    return titles
+
+
+def episode_shown_titles(meta: dict[str, Any], events: list[dict[str, Any]]) -> list[str]:
+    """`shown_product_titles` del episodio activo."""
+    return shown_product_titles(episode_events(events, _active_episode(meta)))
+
+
 def campaign_context_for(episode: dict[str, Any] | None) -> str:
     """La campaña que abrió el episodio, redactada para el trigger ("" si no)."""
     campaign = (episode or {}).get("opened_by_campaign")
@@ -217,15 +263,15 @@ def _real_options(product: Any) -> dict[str, list[str]]:
     return real
 
 
-def _short(description: str | None) -> str:
+def _short(description: str | None, limit: int = _FICHA_DESCRIPTION_CHARS) -> str:
     text = " ".join((description or "").split())
-    if len(text) <= _FICHA_DESCRIPTION_CHARS:
+    if len(text) <= limit:
         return text
-    return text[:_FICHA_DESCRIPTION_CHARS].rsplit(" ", 1)[0] + "…"
+    return text[:limit].rsplit(" ", 1)[0] + "…"
 
 
-def _ficha(product: Any) -> str:
-    parts = [f"- {product.title}: {_short(product.description)}".rstrip(": ")]
+def _ficha(product: Any, description_chars: int = _FICHA_DESCRIPTION_CHARS) -> str:
+    parts = [f"- {product.title}: {_short(product.description, description_chars)}".rstrip(": ")]
     options = _real_options(product)
     if options:
         parts.append(
@@ -251,7 +297,13 @@ def named_products(products: list[Any], *, mentioned: str) -> list[Any]:
     return [p for p in products if _fold(p.title) and _fold(p.title) in text]
 
 
-def catalog_facts_for(products: list[Any], *, mentioned: str, named: Sequence[str] | None = None) -> str:
+def catalog_facts_for(
+    products: list[Any],
+    *,
+    mentioned: str,
+    named: Sequence[str] | None = None,
+    description_chars: int = _FICHA_DESCRIPTION_CHARS,
+) -> str:
     """(productos del snapshot, texto de la charla) → ficha para el gancho.
 
     Incidente 2026-09-25: el cliente preguntó por velas «en vaso» y mandó la
@@ -260,6 +312,9 @@ def catalog_facts_for(products: list[Any], *, mentioned: str, named: Sequence[st
     existe: todos los nombres del catálogo (para que lo que no esté ahí no se
     ofrezca) y la ficha real de los que se nombraron en la charla (motivo +
     transcript), con su presentación, colores y aromas.
+
+    `description_chars`: el toque que le EXPLICA al cliente lo que vio en el
+    catálogo (análisis 2026-10-13) necesita la descripción entera.
     """
     if not products:
         return ""
@@ -277,7 +332,7 @@ def catalog_facts_for(products: list[Any], *, mentioned: str, named: Sequence[st
     ]
     if shown:
         lines.append("Ficha de los productos de esta charla:")
-        lines.extend(_ficha(p) for p in shown)
+        lines.extend(_ficha(p, description_chars) for p in shown)
     return "\n".join(lines)
 
 
@@ -324,13 +379,15 @@ def context_from_metadata(
         if isinstance(last_inbound, int):
             silence_minutes = max(0, (now_ms - last_inbound) // 60_000)
     episode = _active_episode(meta)
+    current = episode_events(events, episode)
     return RemarketingContext(
         tag_motivo=motivo.strip() if isinstance(motivo, str) else "",
         has_order_draft=lead.has_order_draft,
-        transcript=render_transcript(episode_events(events, episode)),
+        transcript=render_transcript(current),
         touch_number=touch_number,
         silence_minutes=silence_minutes,
         campaign_context=campaign_context_for(episode),
         # Un pedido nuevo en curso manda: es una venta, no una posventa.
         post_purchase="" if lead.has_order_draft else post_purchase_state(meta, events),
+        silent_after_catalog=not lead.has_order_draft and silent_after_catalog(current),
     )

@@ -128,6 +128,30 @@ def unavailable_terms(customer_text: str, products: list[Any]) -> list[str]:
     return out
 
 
+#: Un número con separadores de miles/decimales («$16.940», «2,5»).
+_NUMBER = re.compile(r"\d(?:[\d.,]*\d)?")
+
+
+def numbers_in(text: str) -> list[str]:
+    """Los números de `text`, sin separadores (`$16.940` → `16940`), sin
+    repetir. Son las fuentes contra las que se mira un mensaje."""
+    out: list[str] = []
+    for raw in _NUMBER.findall(text or ""):
+        number = re.sub(r"[.,]", "", raw)
+        if number not in out:
+            out.append(number)
+    return out
+
+
+def invented_numbers(text: str, sources: list[str]) -> list[str]:
+    """Los números del mensaje que no están en ninguna fuente (ficha, charla,
+    datos de la tienda), ordenados. Análisis 2026-10-13: el toque que explica
+    el producto es justo el que puede inventar «dura 60 horas» o «mide 12 cm»
+    (como inventó «viene en vaso», 2026-09-25)."""
+    allowed = set(sources)
+    return sorted(n for n in numbers_in(text) if n not in allowed)
+
+
 def invented_product_claim(text: str, terms: list[str]) -> str | None:
     """El dato inventado que trae el gancho, o None si es veraz.
 

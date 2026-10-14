@@ -90,6 +90,11 @@ domain:
     picker_intro_examples: string             # present_variant_picker.intro_text
     hook_topic_examples: string               # gancho de remarketing: el anclaje al motivo
     hook_examples: "list<string>"             # gancho de remarketing: ejemplos de buen gancho
+    # Remarketing del cliente que pidió, vio el catálogo y se calló (2026-10-13).
+    # Opcionales: sin ellos, el gancho de siempre.
+    hook_examples_explain: "list<string>?"    # 1er toque: le explica lo que vio
+    practical_facts: "string?"                # 2º toque: envío, tiempos y pago (la única fuente)
+    hook_examples_practical: "list<string>?"  # 2º toque: ejemplos
 
 builtins:
   # ── reglas ──

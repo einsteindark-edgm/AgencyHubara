@@ -10,10 +10,14 @@ remarketing nunca volvió a tocar al cliente y el ciclo re-despachaba cada
 """
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from src.platform.whatsapp.reengagement_ladder import (
     HOT_FIRST_GAP_MS,
     MAX_TEMPLATES_PER_24H,
     ladder_state,
+    next_morning_at_ms,
     record_touch,
 )
 
@@ -150,3 +154,59 @@ def test_max_steps_aplica_desde_ya_a_quien_ya_recibio_mas_toques():
     # Bajar de 5 a 2: quien ya recibió 3 toques queda agotado en el acto.
     sent = [(T0 + h * H, "free_form") for h in (2, 4, 8)]
     assert ladder_state(T0 + 9 * H, _meta(sent), max_steps=2).exhausted is True
+
+
+# ── El toque que agenda el siguiente (análisis 2026-10-13) ─────────────────────
+# Al cliente que se calló tras el catálogo, el 2º toque a +2h del 1º respondía
+# el 4 % (2 de 56); el 3º, a +8h, el doble. El 1º toque agenda el 2º para la
+# mañana siguiente: la escalera respeta esa hora en vez del hueco fijo.
+
+
+def test_un_toque_que_agenda_el_siguiente_manda_sobre_el_hueco():
+    meta = _meta()
+    meta["remarketing_touches"] = [
+        {"at_ms": T0 + 2 * H, "kind": "free_form", "next_at_ms": T0 + 15 * H}
+    ]
+    assert ladder_state(T0 + 4 * H, meta).due is False, "el hueco de 2h ya no manda"
+    state = ladder_state(T0 + 15 * H, meta)
+    assert state.due is True
+    assert state.next_due_at_ms == T0 + 15 * H
+
+
+def test_record_touch_guarda_la_hora_del_siguiente():
+    meta = _meta()
+    record_touch(meta, T0 + 2 * H, "free_form", next_at_ms=T0 + 15 * H)
+    assert meta["remarketing_touches"][-1] == {
+        "at_ms": T0 + 2 * H, "kind": "free_form", "next_at_ms": T0 + 15 * H
+    }
+    assert ladder_state(T0 + 15 * H, meta).due is True
+
+
+# «La mañana siguiente» sin salir de la ventana de 24 h (después el texto
+# libre ya no se puede: Meta solo acepta plantilla). Horas de Bogotá.
+BOG = ZoneInfo("America/Bogota")
+
+
+def _bog(day: int, hour: int, minute: int = 0) -> int:
+    return int(datetime(2026, 10, day, hour, minute, tzinfo=BOG).timestamp() * 1000)
+
+
+def test_manana_siguiente_a_las_9():
+    # Escribió a las 18:00, el 1er toque salió a las 20:00: el 2º, a las 9:00.
+    assert next_morning_at_ms(_bog(13, 20), _bog(14, 18), BOG) == _bog(14, 9)
+
+
+def test_manana_siguiente_se_adelanta_para_no_salir_de_la_ventana():
+    # Escribió a las 10:30: la ventana cierra a las 10:30 del otro día; con 2 h
+    # de margen el 2º toque sale a las 8:30, todavía de mañana.
+    assert next_morning_at_ms(_bog(13, 12, 30), _bog(14, 10, 30), BOG) == _bog(14, 8, 30)
+
+
+def test_sin_manana_dentro_de_la_ventana_va_a_la_tarde_del_mismo_dia():
+    # Escribió a las 7:00: la mañana siguiente ya no cabe → 19:00 del mismo día.
+    assert next_morning_at_ms(_bog(13, 9), _bog(14, 7), BOG) == _bog(13, 19)
+
+
+def test_la_tarde_respeta_el_hueco_minimo_desde_el_primer_toque():
+    # El 1er toque salió a las 18:00 y la mañana no cabe: no antes de las 20:00.
+    assert next_morning_at_ms(_bog(13, 18), _bog(14, 9), BOG) == _bog(13, 20)

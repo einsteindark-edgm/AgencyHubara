@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 
 from temporalio import workflow
@@ -51,8 +52,10 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.whatsapp.activities import send_typing_indicator_activity
     from src.plugins.chats.agent.remarketing.contracts import RemarketingSessionInput
     from src.plugins.chats.shared.product_truth import (
+        invented_numbers,
         invented_product_claim,
     )
+    from src.sdk.messagingkit import NEXT_TOUCH_MORNING
     from src.plugins.chats.shared.contracts.events import (
         CustomerRepliedDuringRemarketingEvent,
     )
@@ -99,6 +102,14 @@ class RemarketingSessionWorkflow:
         # Motor de decisiones (F8, capacidad `contactar`): el contexto grabado
         # del gancho dice que el toque sobra → no se redacta nada.
         self._contact_skip: bool = False
+        # El cliente se calló tras el catálogo (análisis 2026-10-13): el 1er
+        # toque explica lo que vio y agenda el 2º para la mañana siguiente; un
+        # número que no esté en la ficha/charla/tienda no sale al cliente.
+        self._catalog_silent_patch: bool = False
+        self._catalog_silent: bool = False
+        self._touch_number: int | None = None
+        self._allowed_numbers: list[str] = []
+        self._trigger_input: RemarketingTriggerInput | None = None
 
     @workflow.signal
     async def send_message(
@@ -222,31 +233,53 @@ class RemarketingSessionWorkflow:
         # Solo payload del result grabado: historias viejas no traen el campo
         # (False = el LLM decide, como siempre).
         self._contact_skip = bool(getattr(context, "skip_touch", False))
+        # Se calló tras el catálogo: solo con el patch (histories en vuelo
+        # siguen como siempre). Payload del result grabado: replay-safe.
+        self._catalog_silent = self._catalog_silent_patch and bool(
+            getattr(context, "silent_after_catalog", False)
+        )
+        self._touch_number = context.touch_number if ladder else None
+        self._allowed_numbers = list(getattr(context, "allowed_numbers", None) or [])
+        self._trigger_input = RemarketingTriggerInput(
+            motivo=context.tag_motivo or motivo,
+            memory_context=memory_context,
+            has_order_draft=context.has_order_draft,
+            transcript=context.transcript,
+            # Escalera: el trigger le DICE al LLM qué toque es y cuánto
+            # silencio real hay (runs 01a0b0da…: sin esto, NO_MESSAGE 100%).
+            touch_number=context.touch_number if ladder else None,
+            silence_minutes=context.silence_minutes if ladder else None,
+            # Campaña que abrió el episodio (runs edbb0d8b / 8e73b7dc).
+            campaign_context=context.campaign_context,
+            # Ficha real del catálogo (incidente 2026-09-25: «el Cubo
+            # Love también viene en vaso»). Solo cambia el input de la
+            # activity, no los comandos → replay-safe sin patch.
+            catalog_facts=context.catalog_facts,
+            unavailable_terms=list(context.unavailable_terms),
+            # Posventa (caso real ···4148): solo cambia el input de la
+            # activity, no los comandos → replay-safe sin patch.
+            post_purchase=str(getattr(context, "post_purchase", "") or ""),
+            # Se calló tras el catálogo + el tope real de toques (2026-10-13).
+            silent_after_catalog=self._catalog_silent,
+            catalog_described=self._catalog_silent and bool(getattr(context, "catalog_described", False)),
+            total_touches=getattr(context, "total_touches", None) if self._catalog_silent_patch else None,
+        )
+        return await self._render_trigger(self._trigger_input)
+
+    async def _render_trigger(self, trigger_input: RemarketingTriggerInput) -> str:
         return await workflow.execute_activity(
             build_remarketing_trigger_v2_activity,
-            RemarketingTriggerInput(
-                motivo=context.tag_motivo or motivo,
-                memory_context=memory_context,
-                has_order_draft=context.has_order_draft,
-                transcript=context.transcript,
-                # Escalera: el trigger le DICE al LLM qué toque es y cuánto
-                # silencio real hay (runs 01a0b0da…: sin esto, NO_MESSAGE 100%).
-                touch_number=context.touch_number if ladder else None,
-                silence_minutes=context.silence_minutes if ladder else None,
-                # Campaña que abrió el episodio (runs edbb0d8b / 8e73b7dc).
-                campaign_context=context.campaign_context,
-                # Ficha real del catálogo (incidente 2026-09-25: «el Cubo
-                # Love también viene en vaso»). Solo cambia el input de la
-                # activity, no los comandos → replay-safe sin patch.
-                catalog_facts=context.catalog_facts,
-                unavailable_terms=list(context.unavailable_terms),
-                # Posventa (caso real ···4148): solo cambia el input de la
-                # activity, no los comandos → replay-safe sin patch.
-                post_purchase=str(getattr(context, "post_purchase", "") or ""),
-            ),
+            trigger_input,
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
+
+    def _invented_numbers(self, content: str | None) -> list[str]:
+        """Números del gancho que no están en la ficha, la charla ni los datos
+        de la tienda — solo para quien se calló tras el catálogo (2026-10-13)."""
+        if not self._catalog_silent or not content:
+            return []
+        return invented_numbers(content, self._allowed_numbers)
 
     def _skip_record_predicate(self):
         """Qué respuestas del gancho NO entran al historial del LLM.
@@ -258,14 +291,18 @@ class RemarketingSessionWorkflow:
         if not workflow.patched("remarketing-product-truth-guard-v1"):
             return is_no_message_abstention
         terms = self._unavailable_terms
-        return lambda content: is_no_message_abstention(content) or (
-            invented_product_claim(content or "", terms) is not None
+        return lambda content: (
+            is_no_message_abstention(content)
+            or invented_product_claim(content or "", terms) is not None
+            or bool(self._invented_numbers(content))
         )
 
-    async def _record_touch(self, session_id: str, kind: str) -> None:
+    async def _record_touch(self, session_id: str, kind: str, next_touch: str = "") -> None:
         await workflow.execute_activity(
             record_remarketing_touch_activity,
-            args=[session_id, kind],
+            # `next_touch` solo viaja si agenda algo: los comandos de siempre
+            # quedan idénticos (replay de histories viejas).
+            args=[session_id, kind, next_touch] if next_touch else [session_id, kind],
             start_to_close_timeout=timedelta(seconds=15),
             retry_policy=RetryPolicy(maximum_attempts=3),
         )
@@ -437,6 +474,10 @@ class RemarketingSessionWorkflow:
         # Escalera de reactivación (decisión 2026-09-18). workflow.patched:
         # histories en vuelo (duermen hasta 24h, L-9) replayean sin la rama.
         ladder = workflow.patched("remarketing-ladder-v1")
+        # El cliente que se calló tras el catálogo (análisis 2026-10-13): el
+        # toque que explica, la mañana siguiente y la guarda de números.
+        # patched(): histories en vuelo (duermen hasta 24h, L-9) siguen igual.
+        self._catalog_silent_patch = ladder and workflow.patched("remarketing-catalog-silent-v1")
         messages_processed = 0
         if ladder and policy_channel == "template":
             # CSW cerrada: Meta solo acepta plantilla — el LLM free-form
@@ -606,6 +647,34 @@ class RemarketingSessionWorkflow:
                         # / 8e73b7dc: "¿La retomamos?" sobre la Trilogía).
                         align_history_with_episode=True,
                     )
+                    # El gancho que explica el producto trae un número que no
+                    # está en la ficha, la charla ni los datos de la tienda
+                    # («dura 60 horas»): no sale. Se redacta UNA vez más con el
+                    # gancho corto de siempre (2026-10-13; el que explica es
+                    # justo el que puede inventar, como «viene en vaso»).
+                    if (
+                        ladder
+                        and is_proactive
+                        and result.transfer_decision is None
+                        and self._trigger_input is not None
+                        and self._trigger_input.silent_after_catalog
+                        and self._invented_numbers(result.final_content)
+                    ):
+                        workflow.logger.warning(
+                            "number-guard: gancho con números que no están en la ficha "
+                            f"{self._invented_numbers(result.final_content)!r}; se redacta el corto"
+                        )
+                        short = await self._render_trigger(
+                            replace(self._trigger_input, silent_after_catalog=False, catalog_described=False)
+                        )
+                        result = await run_agent_turn(
+                            input_data,
+                            PendingMessage(message=short, plugin_context=None),
+                            fallback_plugin_context=None,
+                            fabricate_fallback_on_empty=False,
+                            skip_record_when=self._skip_record_predicate(),
+                            align_history_with_episode=True,
+                        )
                     self._last_response = result.final_content
 
                     # Abstención explícita (incidente wa_573229041190, run
@@ -669,6 +738,17 @@ class RemarketingSessionWorkflow:
                                 f"{result.final_content[:120]!r}"
                             )
                             abstained = True
+                    # Si la 2ª redacción también inventó un número: no sale.
+                    if (
+                        not abstained
+                        and result.transfer_decision is None
+                        and self._invented_numbers(result.final_content)
+                    ):
+                        workflow.logger.warning(
+                            "number-guard: el gancho corto también trae números inventados "
+                            f"(≈abstención): {result.final_content[:120]!r}"
+                        )
+                        abstained = True
 
                     # ADR-001 + ADR-2026-05-20: si la tool emitio una decision
                     # de transferir a Sales, convertirla a un CompletionEvent y
@@ -758,8 +838,13 @@ class RemarketingSessionWorkflow:
                         # o abstenido. Sin este rastro el ciclo re-despachaba
                         # la sesión cada 45 min (runs 01a0b0da…01a0b586).
                         sent = bool(result.final_content) and not abstained
+                        # Al que se calló tras el catálogo, el 1er toque
+                        # enviado agenda el 2º para la mañana siguiente
+                        # (decisión del operador 2026-10-13).
                         await self._record_touch(
-                            session_id, "free_form" if sent else "abstained"
+                            session_id,
+                            "free_form" if sent else "abstained",
+                            NEXT_TOUCH_MORNING if sent and self._catalog_silent and self._touch_number == 1 else "",
                         )
                         # El signal que llega junto al start (signal_with_start
                         # en frío) ya quedó cubierto por este toque.
