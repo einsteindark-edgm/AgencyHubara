@@ -181,6 +181,22 @@ class RespuestaDeCantidad:
     open_slot: bool = True
 
 
+@dataclass(frozen=True)
+class CajasDelPedido:
+    """La cantidad que el asesor va a anotar de un producto que se cobra por
+    caja (`cantidad`), cuántas trae la caja (`por_caja`), su precio por caja
+    (`precio`, None = no se sabe) y lo último de la charla (`charla`: «[cliente]
+    …» y «[asesor] …»; la pregunta del asesor dice de qué habla un «24»).
+    Capacidad `cajas` (laboratorio de ···0686, 2026-10-14: «Dos cajas de 12»
+    se anotó 24)."""
+
+    producto: str
+    cantidad: int
+    por_caja: int
+    precio: int | None
+    charla: str
+
+
 @en_retiro("clase:cantidad")
 class Cantidad:
     """«¿El asesor preguntó cuántas?» y «¿Qué cantidad dio?» {1…20, otra,

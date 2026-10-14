@@ -97,6 +97,18 @@ describe("aromas de otro producto", () => {
     );
   });
 
+  it("cajas o velas se lee en palabras (···0686, 2026-10-14)", () => {
+    const boxes = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "cajas", rule: "duda" });
+
+    expect(capabilityLabel("cajas")).toBe("Cajas o velas");
+    expect(decisionSentence(boxes("velas")).text).toBe("Eran velas: anota las cajas que son");
+    expect(decisionSentence(boxes("cajas")).text).toBe("Son cajas: la cantidad queda");
+    expect(decisionSentence(boxes("duda")).text).toBe("No se sabe si son cajas o velas: vuelve al modelo con las dos cuentas");
+    expect(jevAnswers({ ...boxes("velas"), answers: [{ q: "cajas.pide_cajas", p: 0.04 }] })[0]).toContain(
+      "¿El cliente pide esa cantidad de cajas?",
+    );
+  });
+
   it("darle la razón al cliente en una cuenta equivocada se lee en palabras (laboratorio 2026-10-14)", () => {
     const figure = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "cifra_del_cliente", rule: value });
 

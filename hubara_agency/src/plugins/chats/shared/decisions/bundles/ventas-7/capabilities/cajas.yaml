@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿La cantidad que va a anotar el asesor son cajas o velas?» (laboratorio de
+# ···0686, 2026-10-14). Las velas de deseos se cobran por caja: la cuadrada
+# trae 12 velas a $25.000 y la ondulada 10 a $22.500. «Dos cajas de 12» se
+# anotó `cantidad: 24` dos de cuatro veces y el resumen salió con 24 cajas
+# ($600.000), aunque el bot había escrito «dos cajas son 24 velas: $50.000».
+# El código arma la comparación: cuántas trae la caja (la metadata de Medusa
+# `unidades_por_caja` o la descripción: `product_options.pack_units`) y las
+# dos cuentas con su precio. Jev lee lo que escribió el cliente y dice si
+# pide esa cantidad de CAJAS. Solo desde una caja entera (24 de 12, no 2).
+# Lo pide `set_order_slot`: «velas» anota las cajas que son; «duda» devuelve
+# el texto al modelo con las dos cuentas.
+capability: cajas
+value: string
+input: CajasDelPedido
+# Sin Jev no se sabe: «duda» (el modelo lo revisa con las dos cuentas).
+rule: {builtin: pack_quantity_rule}
+state: {builtin: pack_quantity_state}
+questions:
+  - id: cajas.pide_cajas
+    kind: noul
+    text: "El asesor va a anotar esa cantidad del producto, que se cobra por caja. ¿El cliente pide esa cantidad de CAJAS?"
+    criteria:
+      "true": "sí: pide esa cantidad de cajas o kits"
+      "false": "no: esa cantidad son las velas que quiere (las que traen las cajas), o pide otro número de cajas"
+# Sonda con Jev real (2026-10-14, frases sintéticas ×2): son velas 0,05–0,13 («Dos cajas de 12»,
+# «quiero 24 velitas», «3 cajitas», «una caja de 12»); son cajas 0,96–0,97 («Necesito 24 cajas…»)
+# y 0,66–0,73 con el número suelto tras «¿Cuántas cajas quieres?» («24», «me mandas 15?»).
+thresholds: {"yes": 0.6, "no": 0.2}
+decide:
+  - when: "!('cajas.pide_cajas' in p)"
+    then: doubt
+  - when: "p['cajas.pide_cajas'] >= th['yes']"
+    then: cajas
+  - when: "p['cajas.pide_cajas'] <= th['no']"
+    then: velas
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  # «Dos cajas de 12» y el asesor iba a anotar 24: son velas.
+  - {answers: {cajas.pide_cajas: 0.04}, expect: velas}
+  # «Necesito 24 cajas para la empresa»: son cajas.
+  - {answers: {cajas.pide_cajas: 0.95}, expect: cajas}
+  # Bordes: 0,6 son cajas; 0,2 son velas; en medio, duda (el modelo lo revisa una vez).
+  - {answers: {cajas.pide_cajas: 0.6}, expect: cajas}
+  - {answers: {cajas.pide_cajas: 0.2}, expect: velas}
+  - {answers: {cajas.pide_cajas: 0.5}, expect: doubt}
+  - {answers: {}, expect: doubt}

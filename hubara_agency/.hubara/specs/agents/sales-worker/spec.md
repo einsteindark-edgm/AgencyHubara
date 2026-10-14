@@ -169,6 +169,15 @@ Medusa live durante la conversación (latency + cuota).
 - AND `present_order_confirmation` y `register_order` (este, solo con `closing_guard`: el operador del panel no se frena) MUST NOT salir sin uno de sus valores en la línea (color, diseño, aroma o `variant_label`) o en el borrador: vuelven con `variant_not_chosen` y lo que falta escoger. Sin catálogo o sin el producto, no frenan
 - AND en `ventas-7`, en `etapa_variantes`, preguntar cómo pagar, dar los datos de envío o confirmar pide `present_variant_picker` en ese turno (fila del contrato); el envío sigue pidiendo sus tarifas
 
+#### Scenario: la cantidad de un producto que se cobra por caja son cajas (···0686, 2026-10-14)
+
+- GIVEN un producto que se cobra por caja (la metadata de Medusa `unidades_por_caja` o la descripción: «Cada caja trae 12 velas»; `product_options.pack_units`), las Velas de deseos cuadradas a $25.000 la caja de 12
+- WHEN el LLM invoca `set_order_slot(cantidad="24")` (o una línea de `lineas`) tras «Dos cajas de 12, ¿cómo sería el envío y el pago?»
+- THEN desde una caja entera (24 de 12, no 2) decide la capacidad `cajas` (ventas-7): Jev lee lo último de la charla y las dos cuentas («24 cajas = 288 velas, $600.000» / «24 velas = 2 cajas, $50.000») y dice si pide esa cantidad de CAJAS
+- AND «velas» anota las cajas que son (`cantidad: "2"`) y el sobre lo dice; «cajas» deja la cantidad
+- AND la duda (sin Jev, la regla siempre duda) no anota la cantidad: vuelve al modelo con las dos cuentas UNA vez por mensaje del cliente (`cajas_revisadas`); el segundo intento con la misma cantidad se anota
+- AND menos de una caja, un producto que no va por caja y `ventas-6` no cambian; el sobre dice siempre que la cantidad es de cajas
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`

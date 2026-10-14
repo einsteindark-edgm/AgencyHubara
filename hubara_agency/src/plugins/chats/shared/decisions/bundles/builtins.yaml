@@ -47,6 +47,7 @@ inputs:
   CuponDelTexto: {text: string, known: "tuple<string>", valid: "tuple<string>", valid_lines: "tuple<string>", valid_percents: "tuple<int>"}
   NegacionDelTexto: {text: string, titles: "tuple<string>", own: "tuple<string>", products: "tuple<string>"}
   CifraDelCliente: {text: string, customer: string, figures: "tuple<int>", order: "string?"}
+  CajasDelPedido: {producto: string, cantidad: int, por_caja: int, precio: "int?", charla: string}
   TextCheck: {text: string, extended: bool}
   GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
   Frases: {parts: "tuple<string>"}
@@ -203,6 +204,11 @@ builtins:
     input: PreciosDelTexto
     params: {politica: str}
     doc: "Los montos del texto que no explica el precio del catálogo de los productos de los que habla (por cantidad, sumas, en vivo, con descuento o con el recargo del link) ni la política en una oración con una frase de `politica` (price_quotes.find_unexplained_amounts). Frases del paquete (fact_rules.phrases)."
+  pack_quantity_rule:
+    kind: rule
+    value: string
+    input: CajasDelPedido
+    doc: "Sin Jev: desde una caja entera (24 de 12) no se sabe si la cantidad es de cajas o de velas → «duda» (el texto vuelve al modelo con las dos cuentas); menos, «cajas» (pack_quantity.needs_reading)."
   foreign_labels_rule:
     kind: rule
     value: "list<string>"
@@ -334,6 +340,10 @@ builtins:
     kind: state
     takes_items: true
     doc: "El texto para el cliente con lo que dice el sistema de cada cosa que la regla propone (pago, estado, cupón, negación)."
+  pack_quantity_state:
+    kind: state
+    input: CajasDelPedido
+    doc: "Lo último de la charla (cliente y asesor) y las dos cuentas de la cantidad («24 cajas = 288 velas, $600.000» / «24 velas = 2 cajas, $50.000»); sin una caja entera o sin lo que escribió el cliente, no se pregunta."
   customer_and_reply_facts:
     kind: state
     takes_items: true
@@ -547,6 +557,9 @@ capabilities_since:
   # Laboratorio del 2026-10-14: el cliente afirma una suma equivocada y el bot
   # le da la razón («Así es»). La pide `send_reply` con las demás.
   cifra_del_cliente: 7
+  # Laboratorio de ···0686 (2026-10-14): «Dos cajas de 12» se anotó 24. La
+  # pide `set_order_slot` al anotar la cantidad de un producto que va por caja.
+  cajas: 7
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -802,6 +815,14 @@ about:
       tenemos un producto, un aroma, un color o una presentación que el
       catálogo sí tiene. Si de verdad está agotado hoy, el bot puede
       dejarlo como está. La regla solo propone: decide Jev.
+  cajas:
+    name: Cajas o velas
+    where: [herramientas]
+    solves: >-
+      Al anotar la cantidad de un producto que se cobra por caja (las velas de
+      deseos traen 12 o 10), si el número llega a una caja entera, Jev lee lo
+      que escribió el cliente y dice si pidió cajas o velas: «Dos cajas de 12»
+      son 2 cajas, no 24. Si no está claro, el bot lo revisa o le pregunta.
   cifra_del_cliente:
     name: Darle la razón en una cuenta equivocada
     where: [herramientas]

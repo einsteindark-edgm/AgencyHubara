@@ -38,8 +38,8 @@ PUBLISHED = {
     # ③ del catálogo en el turno, antes de publicar (2026-10-13, test_decisions_ventas_7_verifica.py),
     # y los datos de envío/pago del remarketing en el dominio (2026-10-13), y
     # `cifra_del_cliente` con su ejemplo de corregir una suma (2026-10-14), y el
-    # selector al querer cerrar sin la variante en el contrato del turno (···0686).
-    "ventas-7@7": "b166566853606eb630147fd043237166b98427864742ffb98a5a33f7b7bd5551",
+    # selector al querer cerrar sin la variante en el contrato del turno y `cajas` (···0686).
+    "ventas-7@7": "c5258067d2761ba56b44aea5c80ff9a90763912af16cd58483c59e58112558ae",
     "centinela@1": "59200ee02051d7867a113259a44b396be8ae448c7cec88c2dd61e0f7767285ef",
     "operador@1": "136c79489136666aa6632bfee8c86329d2f04b5e29929e2cdaace15bd4434f26",
     "operador-2@2": "a48b58350cda620ec8f5db0b8b6676d80174cb429f5f8ed2cebcdd3d164d413b",

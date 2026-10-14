@@ -35,6 +35,11 @@
 # test_decisions_ventas_7_variante_al_cerrar.py). La etapa ya sabe de la opción
 # «Color» de Medusa y el resumen y el registro no salen sin ella: eso es del
 # catálogo, en código (test_order_real_options.py, test_closing_variant_choice.py).
+# Y `cajas` (el mismo laboratorio): «Dos cajas de 12» se anotó `cantidad: 24` y el
+# resumen salió con 24 cajas ($600.000). Las velas de deseos se cobran por caja
+# (12 o 10 velas): desde una caja entera, Jev lee la charla y las dos cuentas y
+# dice si son cajas o velas; `set_order_slot` anota las cajas que son. Sin Jev,
+# el modelo lo revisa una vez por mensaje del cliente.
 # `send_reply` y las tarjetas con texto del modelo (`tools/fact_check.py`)
 # juntan todas en una retención con lo que es cierto: lo ya dicho sale al
 # segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
@@ -112,6 +117,7 @@ capabilities:
   - afirmacion
   - aroma_ajeno
   - baja
+  - cajas
   - cantidad
   - categoria
   - cierre

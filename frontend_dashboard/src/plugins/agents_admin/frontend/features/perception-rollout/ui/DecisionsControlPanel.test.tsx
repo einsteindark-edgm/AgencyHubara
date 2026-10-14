@@ -124,6 +124,14 @@ describe("DecisionsControlPanel", () => {
     expect(screen.getByRole("group", { name: "Negar lo que sí tenemos" })).toBeInTheDocument();
   });
 
+  it("nombra cajas o velas (ventas-7)", async () => {
+    state = payload({ cajas: "off" });
+    renderPanel();
+
+    const boxes = await screen.findByRole("group", { name: "Cajas o velas" });
+    expect(within(boxes).getByText("¿la cantidad que anota el bot son cajas o las velas que traen?")).toBeInTheDocument();
+  });
+
   it("nombra darle la razón al cliente en una cuenta equivocada (ventas-7)", async () => {
     state = payload({ cifra_del_cliente: "off" });
     renderPanel();

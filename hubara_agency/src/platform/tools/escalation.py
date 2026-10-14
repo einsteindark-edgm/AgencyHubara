@@ -158,7 +158,7 @@ class EscalateToHumanTool(ToolBase):
                 "enum": _REASON_CATEGORIES,
                 "description": (
                     "Categoría del trigger de escalación. Una de: "
-                    "BULK_ORDER (>20 unidades), DISCOUNT_REQUEST (cliente "
+                    "BULK_ORDER (>20 unidades de venta: una caja o kit cuenta como 1), DISCOUNT_REQUEST (cliente "
                     "pidió descuento), WHOLESALE_B2B (distribuidor/reventa), "
                     "CORPORATE_EVENT (boda/evento/empresa), CUSTOMIZATION "
                     "(aroma/etiqueta custom), POST_SALE_ISSUE (queja/"

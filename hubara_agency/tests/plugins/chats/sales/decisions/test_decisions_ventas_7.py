@@ -54,7 +54,7 @@ SID = "wa_573001111111"
 #: Las decisiones que trae ventas-7 (todas nacen en esta versión).
 NEW = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
-    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
+    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente", "cajas",
 )
 AROMAS = (
     "Caballero de la noche", "Limoncillo", "Lavanda", "Café", "Sándalo", "Ylan ylang",

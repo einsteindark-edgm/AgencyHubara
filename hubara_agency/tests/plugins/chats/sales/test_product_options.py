@@ -11,6 +11,7 @@ from src.plugins.chats.agent.sales.use_cases.product_options import (
     focus_lines,
     focus_products,
     option_sheets,
+    pack_units,
     presentations_of,
     single_sheets,
 )
@@ -164,3 +165,39 @@ def _message(focus, **found) -> str:
     """El mensaje con que el texto vuelve al modelo (el camino real: `fact_message`)."""
     return fact_message(Findings(**{k: tuple(v) if isinstance(v, list) else v for k, v in found.items()}),
                         ReplyFacts(focus=tuple(focus)))
+
+
+
+# ── Cuántas trae la caja (2026-10-14): se cobra por caja ──────────────────
+#
+# Laboratorio de ···0686: «Dos cajas de 12» se anotó `cantidad: 24` y el
+# resumen salió con 24 cajas ($600.000). El catálogo lo dice en la
+# descripción («Cada caja trae 12 velas», «El kit trae 10 velas en su caja»);
+# un campo de Medusa (`unidades_por_caja`) manda si está.
+
+CUADRADAS_TEXT = (
+    "Kit de Velitas 2026 · Velitas 7 de diciembre. Pequeñas velas con grandes intenciones.\n\n"
+    "El kit trae 12 velas en su caja, puedes escoger entre las multicolor. Cada caja trae 12 velas"
+)
+ONDULADAS_TEXT = "Deseos que toman forma.\nEl kit trae 10 velas en su caja, puedes escoger. Cada caja trae 10 velas"
+
+
+def _with(description: str | None = None, metadata: dict | None = None) -> SimpleNamespace:
+    return SimpleNamespace(title="x", handle="x", tags=[], options={}, metadata=metadata or {},
+                           description=description)
+
+
+def test_the_units_of_a_box_come_from_the_description() -> None:
+    assert pack_units(_with(CUADRADAS_TEXT)) == 12
+    assert pack_units(_with(ONDULADAS_TEXT)) == 10
+    assert pack_units(_with("Una caja de 6 velitas de té para tu mesa.")) == 6
+
+
+def test_the_field_of_medusa_wins() -> None:
+    assert pack_units(_with(CUADRADAS_TEXT, {"unidades_por_caja": "24"})) == 24
+
+
+def test_a_product_sold_by_the_unit_has_no_box() -> None:
+    assert pack_units(_with("Vela artesanal de 40 horas, 12 cm de alto, en caja de regalo.")) is None
+    assert pack_units(_with("Este set incluye tres esculturas únicas.")) is None
+    assert pack_units(_with(None)) is None

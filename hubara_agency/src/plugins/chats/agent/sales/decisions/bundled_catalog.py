@@ -283,6 +283,31 @@ def customer_and_reply_facts(inp: Any, *, items: list[dict[str, Any]] | None = N
     )
 
 
+def pack_quantity_rule(inp: Any) -> str:
+    """Sin Jev: desde una caja entera no se sabe si son cajas o velas
+    («duda»: el texto vuelve al modelo con las dos cuentas); menos, cajas."""
+    from src.plugins.chats.agent.sales.use_cases.pack_quantity import needs_reading
+
+    return "duda" if needs_reading(inp.cantidad, inp.por_caja) else "cajas"
+
+
+def pack_quantity_state(inp: Any) -> str | None:
+    """Lo último de la charla y las dos cuentas de la cantidad que va a anotar
+    el asesor; sin una caja entera o sin la charla, no se le pregunta a Jev."""
+    from src.plugins.chats.agent.sales.use_cases.pack_quantity import as_boxes, as_candles, needs_reading
+
+    if not needs_reading(inp.cantidad, inp.por_caja) or "[cliente]" not in (inp.charla or ""):
+        return None
+    price = f" y cuesta {format_cop(inp.precio)} la caja" if inp.precio else ""
+    return (
+        f"Lo último de la conversación:\n{inp.charla.strip()}\n\n"
+        f"Producto: {inp.producto}. Se cobra por caja: cada caja trae {inp.por_caja} velas{price}.\n"
+        f"El asesor va a anotar la cantidad {inp.cantidad}:\n"
+        f"- si son cajas: {as_boxes(inp.cantidad, inp.por_caja, inp.precio)};\n"
+        f"- si son velas: {as_candles(inp.cantidad, inp.por_caja, inp.precio)}."
+    )
+
+
 def text_and_option_sheets(inp: Any, *, words: str, ofrece: str) -> str | None:
     """El texto y la ficha de cada producto con presentaciones para escoger
     (`variante_ajena`) si el texto ofrece algo (una frase de `ofrece`) o

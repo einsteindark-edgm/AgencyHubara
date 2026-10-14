@@ -57,6 +57,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   cupon_ajeno: "Cupón que no está vigente",
   negacion_falsa: "Negar lo que sí tenemos",
   cifra_del_cliente: "Darle la razón en una cuenta equivocada",
+  cajas: "Cajas o velas",
   cantidad: "Cantidad",
   categoria: "Categoría",
   familia_de_color: "Familia de color",
@@ -246,6 +247,13 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   estado_ajeno: (value) => claimSentence(value, "el sistema dice otra cosa", "Lo que dice del pedido coincide con el sistema"),
   cupon_ajeno: (value) => factSentence(value, "no está vigente", "Los cupones que ofrece están vigentes"),
   negacion_falsa: (value) => factSentence(value, "sí lo tenemos", "No niega nada que tengamos"),
+  // La cantidad de un producto que se cobra por caja: ¿cajas o velas? (···0686, 2026-10-14).
+  cajas: (value) =>
+    value === "velas"
+      ? warn("Eran velas: anota las cajas que son")
+      : value === "duda"
+        ? warn("No se sabe si son cajas o velas: vuelve al modelo con las dos cuentas")
+        : plain("Son cajas: la cantidad queda"),
   // El cliente afirma una suma que no es la de su pedido y el texto le daba la razón (2026-10-14).
   cifra_del_cliente: (value) => {
     const terms = list(value);
@@ -396,6 +404,7 @@ const QUESTIONS: Record<string, string> = {
   // ventas-3: se pregunta cuando la tienda no le escribe hace un día o más (o nunca le escribió).
   "cortesia.saludo_solo": "¿Es solo un saludo, sin agradecer ni contar nada?",
   "relevo.promete": "¿El mensaje promete que un colega lo atiende?",
+  "cajas.pide_cajas": "¿El cliente pide esa cantidad de cajas?",
   "cierre.etiqueta": "¿Con qué etiqueta cierra?",
   "afirmacion.sin_consultar": "¿Afirma algo que requiere consultar, sin haber consultado?",
   // ventas-3 (2026-10-06): Jev dice qué afirma; la tabla lo cruza con las herramientas del turno.

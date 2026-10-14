@@ -61,10 +61,14 @@ from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.decisions.guards import (
     ColorPedido,
     DatoDelItem,
+    boxes_in_bundle,
+    boxes_reading,
     capability,
     decide_for_session,
     unconfirmed_order_data,
 )
+from src.plugins.chats.agent.sales.pricing import catalog_unit_price
+from src.plugins.chats.agent.sales.use_cases.pack_quantity import as_boxes, as_candles, needs_reading
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     current_item,
     get_active_draft,
@@ -74,7 +78,7 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     set_product_lines,
     update_order_draft,
 )
-from src.plugins.chats.agent.sales.use_cases.product_options import options_to_choose
+from src.plugins.chats.agent.sales.use_cases.product_options import options_to_choose, pack_units
 from src.plugins.chats.shared.draft_items import (
     CHOICE_FIELDS,
     ITEM_FIELDS,
@@ -86,6 +90,10 @@ from src.plugins.chats.shared.draft_items import (
     to_choose,
 )
 from src.plugins.chats.shared.store_pack import vocabulary
+
+#: La duda de cajas o velas vuelve al modelo UNA vez por mensaje del cliente:
+#: la marca es el `last_inbound_message_id` en que volvió (···0686, 2026-10-14).
+BOXES_CHECK_KEY = "cajas_revisadas"
 
 #: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
 #: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
@@ -190,7 +198,7 @@ class SetOrderSlotTool(ToolBase):
             },
             "cantidad": {
                 "type": "string",
-                "description": "Cantidad de unidades (ej. '2').",
+                "description": "Cuántas se cobran (ej. '2'): en un producto que va por caja o kit, las CAJAS, no las velas que trae.",
             },
             "ciudad": {"type": "string", "description": "Ciudad de envio."},
             "barrio": {"type": "string", "description": "Barrio de envio."},
@@ -423,6 +431,60 @@ class SetOrderSlotTool(ToolBase):
 
         return resolve
 
+    async def _boxes(
+        self, session_key: str, product: Any, raw: Any, data: dict[str, Any]
+    ) -> tuple[str, str | None, dict[str, Any] | None]:
+        """`(cantidad a anotar, nota para el sobre, rechazo)` de un producto
+        que se cobra por caja (`pack_units`). Desde una caja entera decide la
+        capacidad `cajas`: «velas» anota las cajas que son, «cajas» deja la
+        cantidad y la duda (o velas que no son cajas enteras) no la anota: el
+        texto vuelve al modelo con las dos cuentas, UNA vez por mensaje del
+        cliente (`BOXES_CHECK_KEY` en `data`: el segundo intento es el modelo
+        que ya lo revisó y se anota; sin Jev la regla siempre duda). Sin la
+        decisión en el paquete (ventas-6) o sin caja, como siempre."""
+        units = pack_units(product)
+        text = str(raw).strip()
+        if not units or not text.isdigit():
+            return text, None, None
+        quantity = int(text)
+        unit_note = f"La cantidad es de cajas: cada caja trae {units} velas y se cobra por caja."
+        if not boxes_in_bundle():
+            return text, None, None
+        price = catalog_unit_price(product)
+        if not needs_reading(quantity, units):
+            return text, unit_note, None
+        inbound = data.get("last_inbound_message_id")
+        if inbound and data.get(BOXES_CHECK_KEY) == inbound:
+            return text, f"{unit_note} Quedaron {as_boxes(quantity, units, price)}.", None
+        talk = "\n".join(
+            f"[{'cliente' if e.get('role') == 'user' else 'asesor'}] {str(e.get('content') or '').strip()[:400]}"
+            for e in self._events(session_key)[-6:]
+            if e.get("role") in ("user", "assistant") and str(e.get("content") or "").strip()
+        )
+        reading = await boxes_reading(
+            product.title, quantity, units, price, talk, session_id=session_key, vault_dir=self._vault_dir
+        )
+        if reading is None or reading == "cajas":
+            return text, f"{unit_note} Quedaron {as_boxes(quantity, units, price)}.", None
+        if reading == "velas" and quantity % units == 0:
+            return (
+                str(quantity // units),
+                f"{unit_note} El cliente pidió {as_candles(quantity, units, price)}: quedó la cantidad "
+                f"{quantity // units}. Usa esa cantidad en el resumen y el registro.",
+                None,
+            )
+        if inbound:
+            data[BOXES_CHECK_KEY] = inbound
+        return text, None, {
+            "field": "cantidad", "given": text, "reason": "pack_units", "por_caja": units,
+            "message": (
+                f"la cantidad {quantity} de {product.title} no se anotó: se cobra por caja y cada caja trae "
+                f"{units} velas. Si son cajas: {as_boxes(quantity, units, price)}; si son velas: "
+                f"{as_candles(quantity, units, price)}. Revisa lo que dijo el cliente y vuelve a llamar "
+                "set_order_slot con el número de CAJAS; si no está claro, pregúntaselo"
+            ),
+        }
+
     def _events(self, session_key: str) -> list[dict[str, Any]]:
         """Lo último de la conversación; vacío sin lector o si falla (es
         contexto del motor: nunca bloquea la tool)."""
@@ -586,7 +648,13 @@ class SetOrderSlotTool(ToolBase):
                 filled, lacking = _only_options(product, values, {}, [])
                 values.update(filled)
                 not_offered.update(lacking)
-            lines.append({**values, "cantidad": line["cantidad"]})
+            quantity = line["cantidad"]
+            if product is not None:
+                # Cajas o velas, también en cada línea (···0686, 2026-10-14).
+                quantity, _note, refused = await self._boxes(ctx.session_key, product, quantity, data)
+                if refused is not None:
+                    rejected.append({**refused, "line": n})
+            lines.append({**values, "cantidad": quantity})
         if rejected:
             return producto, None, rejected
         set_product_lines(data, producto=producto, lines=lines, now_ms=now_ms)
@@ -994,6 +1062,18 @@ class SetOrderSlotTool(ToolBase):
         ):
             rejected.append({"field": slot, "given": provided.pop(slot), "reason": "not_given_by_customer"})
 
+        # La cantidad de un producto que se cobra por caja (laboratorio de
+        # ···0686, 2026-10-14: «Dos cajas de 12» se anotó 24 y el resumen salió
+        # con 24 cajas): desde una caja entera, ¿cajas o velas? (`cajas`).
+        boxes_note: str | None = None
+        if product is not None and str(provided.get("cantidad") or "").strip():
+            quantity, boxes_note, refused = await self._boxes(ctx.session_key, product, provided["cantidad"], data)
+            if refused is not None:
+                rejected.append(refused)
+                provided.pop("cantidad")
+            else:
+                provided["cantidad"] = quantity
+
         # Lo que el catálogo no deja elegir (incidente del 2026-10-09): un
         # producto con UNA opción de aroma o de color la trae anotada; uno sin
         # ninguna queda marcado para que la etapa no la espere. Solo si esta
@@ -1022,7 +1102,8 @@ class SetOrderSlotTool(ToolBase):
             update_order_draft(data, slots=provided, now_ms=now_ms)
             if options_read:
                 _mark_options(data, product, not_offered, provided.get("producto"))
-        if wrote or lines_written is not None:
+        # La marca de la duda de cajas se anota aunque no quede otro dato.
+        if wrote or lines_written is not None or data.get(BOXES_CHECK_KEY) != base.get(BOXES_CHECK_KEY):
             self._store.write_merged(ctx.session_key, base=base, ours=data)
         wrote = wrote or lines_written is not None
         current_slots = get_projectable_draft(data) or {}
@@ -1108,6 +1189,8 @@ class SetOrderSlotTool(ToolBase):
             envelope["summary"] += (
                 f" El producto tiene una sola opción de {only}: quedó anotada y NO se le pregunta al cliente."
             )
+        if boxes_note:
+            envelope["summary"] += f" {boxes_note}"
         pending = _pending_choices(data, touched)
         if pending:
             # 2026-10-14 (···0686): la opción de Medusa sin escoger no frenaba nada.
@@ -1151,6 +1234,9 @@ class SetOrderSlotTool(ToolBase):
                         "NO adivines — ofrécele esas opciones (picker si son "
                         "2+) sin negarle el color"
                     )
+                elif r.get("reason") == "pack_units":
+                    if r["message"] not in parts:
+                        parts.append(r["message"])
                 elif r.get("reason") == "color_family_not_offered":
                     parts.append(
                         f"el color {r['given']!r} es de la familia "

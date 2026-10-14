@@ -284,6 +284,34 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
     )
 
 
+def boxes_in_bundle() -> bool:
+    """¿El paquete activo trae `cajas`? Con uno anterior (ventas-6 y antes),
+    `set_order_slot` anota la cantidad como siempre."""
+    return capability_if_present("cajas") is not None
+
+
+async def boxes_reading(
+    producto: str, cantidad: int, por_caja: int, precio: int | None, charla: str,
+    *, session_id: str, vault_dir: Path | None,
+) -> str | None:
+    """¿La cantidad de un producto que se cobra por caja son cajas o velas?
+    (capacidad `cajas`, laboratorio de ···0686, 2026-10-14): «cajas», «velas»
+    o «duda». None si el paquete no trae la decisión (ventas-6 y antes): la
+    cantidad se anota como siempre."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CajasDelPedido
+
+    cap = capability_if_present("cajas")
+    if cap is None:
+        return None
+    verdict = await decide_for_session(
+        cap,
+        CajasDelPedido(producto=producto, cantidad=cantidad, por_caja=por_caja, precio=precio, charla=charla),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return verdict.value
+
+
 async def catalog_choice_buttons(
     body: str,
     titles: Sequence[str],
