@@ -172,3 +172,130 @@ async def test_registering_the_order_spends_the_personal_coupon(ctx, _isolate_va
     assert env["registered"] is True, env
     [grant] = grants.list_for(KEY)
     assert grant.used_order_id == env["order_id"]
+
+
+# ---------- premortem C2: un solo uso también al reintentar ----------
+
+
+_FUTURE = 4_000_000_000_000
+
+
+def _seed_thanks(vault: Path) -> None:
+    thanks = _promo(id="promo_gracias5", code="GRACIAS5", value=5, granted_only=True)
+    _seed(vault, {
+        "episodes": [{
+            "episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None,
+            "applied_coupon": {"code": "GRACIAS5", "applied_at_ms": NOW, "promotion": {**thanks.__dict__}},
+        }]
+    })
+
+
+def _live_grants() -> FakeCouponGrantsStore:
+    grants = FakeCouponGrantsStore()
+    grants.grant(CouponGrant(code="GRACIAS5", session_id=KEY, percent=5, granted_at_ms=NOW,
+                             expires_at_ms=_FUTURE, source="review", reference="order_01A"))
+    return grants
+
+
+async def _register_thanks(ctx, vault: Path, port, grants) -> dict:
+    from src.plugins.chats.agent.sales.tools.order_registration import RegisterOrderTool
+    from tests.plugins.chats.sales.test_coupon_tools import _SHIPPING
+
+    tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=port, catalog=FakeCatalog(),
+                             coupon_grants=grants)
+    return json.loads(await tool.execute_with_context(
+        ctx,
+        items=[{"handle": "vela-buda", "quantity": 1, "unit_price_cop": 40000}],
+        shipping=_SHIPPING, payment_method="transfer",
+        subtotal_cop=40000, shipping_cop=7900, total_cop=45900,
+    ))
+
+
+@pytest.mark.asyncio
+async def test_a_registration_retried_later_spends_the_personal_coupon(ctx, _isolate_vault_dir):
+    """Medusa caído al registrar: el reintento de reconciliación lleva el
+    cupón y, si sale, gasta la concesión (antes quedaba reutilizable)."""
+    from src.platform.orders.reconciliation import reconcile_one
+    from tests.plugins.chats.sales.test_coupon_tools import CapturingPort
+
+    _seed_thanks(_isolate_vault_dir)
+    grants = _live_grants()
+    env = await _register_thanks(ctx, _isolate_vault_dir, CapturingPort(medusa_down=True), grants)
+    assert env["registered"] is False
+    assert grants.list_for(KEY)[0].used_order_id is None
+
+    outcome = await reconcile_one(
+        vault_dir=_isolate_vault_dir, session_key=KEY, audit_id=env["audit_id"], port=CapturingPort(),
+        coupon_grants=grants,
+    )
+
+    assert outcome.is_resolved
+    [grant] = grants.list_for(KEY)
+    assert grant.used_order_id == "draft_c_044"
+
+
+@pytest.mark.asyncio
+async def test_a_retry_whose_personal_coupon_was_used_meanwhile_is_not_registered_with_it(
+    ctx, _isolate_vault_dir
+):
+    from src.platform.orders.reconciliation import OUTCOME_ABANDONED, reconcile_one
+    from tests.plugins.chats.sales.test_coupon_tools import CapturingPort
+
+    _seed_thanks(_isolate_vault_dir)
+    grants = _live_grants()
+    env = await _register_thanks(ctx, _isolate_vault_dir, CapturingPort(medusa_down=True), grants)
+    grants.mark_used(KEY, "GRACIAS5", "draft_otro_pedido", NOW + 1)
+    retry = CapturingPort()
+
+    outcome = await reconcile_one(
+        vault_dir=_isolate_vault_dir, session_key=KEY, audit_id=env["audit_id"], port=retry,
+        coupon_grants=grants,
+    )
+
+    assert outcome.outcome == OUTCOME_ABANDONED
+    assert "coupon_not_granted" in (outcome.error_detail or "")
+    assert retry.calls == []
+
+
+@pytest.mark.asyncio
+async def test_register_order_does_not_apply_a_personal_coupon_already_used(ctx, _isolate_vault_dir):
+    """La concesión se usó (u otra conversación la gastó) después de aplicar el
+    cupón: no se registra con un descuento que ya no tiene, se le dice al bot
+    por qué y el cupón sale del pedido."""
+    from src.plugins.chats.agent.sales.use_cases.coupon_application import COUPON_REASON_TEXT
+    from tests.plugins.chats.sales.test_coupon_tools import CapturingPort
+
+    _seed_thanks(_isolate_vault_dir)
+    grants = _live_grants()
+    grants.mark_used(KEY, "GRACIAS5", "draft_otro_pedido", NOW + 1)
+    port = CapturingPort()
+
+    env = await _register_thanks(ctx, _isolate_vault_dir, port, grants)
+
+    assert env["registered"] is False and env["error"] == "coupon_not_granted"
+    assert COUPON_REASON_TEXT["not_granted"] in env["summary"]
+    assert port.calls == []
+    episode = _md(_isolate_vault_dir / KEY / "metadata.json")["episodes"][-1]
+    assert "applied_coupon" not in episode and "GRACIAS5" in episode["declined_coupons"]
+
+
+@pytest.mark.asyncio
+async def test_a_spend_that_finds_no_grant_is_a_warning(ctx, _isolate_vault_dir, caplog):
+    from src.platform.orders.reconciliation import reconcile_one
+    from tests.plugins.chats.sales.test_coupon_tools import CapturingPort
+
+    class _Vanishing(FakeCouponGrantsStore):
+        def mark_used(self, *a, **k):
+            return None
+
+    _seed_thanks(_isolate_vault_dir)
+    live = _live_grants()
+    env = await _register_thanks(ctx, _isolate_vault_dir, CapturingPort(medusa_down=True), live)
+    vanishing = _Vanishing()
+    vanishing.grant(live.list_for(KEY)[0])
+
+    with caplog.at_level("WARNING"):
+        await reconcile_one(vault_dir=_isolate_vault_dir, session_key=KEY, audit_id=env["audit_id"],
+                            port=CapturingPort(), coupon_grants=vanishing)
+
+    assert any("GRACIAS5" in r.getMessage() and "personal" in r.getMessage() for r in caplog.records)

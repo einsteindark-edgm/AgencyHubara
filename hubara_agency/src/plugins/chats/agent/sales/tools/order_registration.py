@@ -103,8 +103,10 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.shared.purchase_signals import closing_blocker
+from src.plugins.chats.agent.sales.use_cases.coupon_application import COUPON_REASON_TEXT
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
+    clear_applied_coupon,
     coupon_discount_for_items,
     promotion_from_snapshot,
     quota_product_ids,
@@ -262,6 +264,13 @@ _CLOSING_BLOCKED_SUMMARY = {
         "«Confirmar» o te diga que sí; con su sí, vuelve a llamar `register_order`."
     ),
 }
+
+
+def _snapshot_granted_only(metadata: dict[str, Any]) -> bool:
+    """¿El cupón aplicado del episodio es personal (`granted_only`)?"""
+    raw = applied_coupon(metadata)
+    promotion = raw.get("promotion") if isinstance(raw, dict) else None
+    return isinstance(promotion, dict) and bool(promotion.get("granted_only"))
 
 
 class RegisterOrderTool(ToolBase):
@@ -472,6 +481,51 @@ class RegisterOrderTool(ToolBase):
                 "🎟️ [TOOL register_order] cupón personal {} usado en {} ({})",
                 code, order_id, session_key,
             )
+
+    def _personal_coupon_problem(
+        self, session_key: str, metadata: dict[str, Any], discount: Any
+    ) -> str | None:
+        """Premortem C2: el cupón aplicado es personal (`granted_only`) y la
+        concesión ya no está vigente (se usó en otro pedido o venció desde que
+        se aplicó): el motivo de `COUPON_REASON_TEXT`; None = se puede usar.
+        Sin concesiones o ilegibles, no se adivina (falla cerrada, L-32). El
+        reintento del MISMO pedido ya registrado (que gastó la concesión) sí
+        pasa: el adapter lo reusa por fingerprint."""
+        raw = applied_coupon(metadata)
+        promotion = raw.get("promotion") if isinstance(raw, dict) else None
+        if not (isinstance(promotion, dict) and promotion.get("granted_only")):
+            return None
+        if discount is None or discount.discount_cop <= 0:
+            return None
+        if self._coupon_grants is None:
+            return "grant_unknown"
+        code = str(discount.code)
+        try:
+            if self._coupon_grants.active(session_key, code, int(time.time() * 1000)) is not None:
+                return None
+            registered = metadata.get("registered_order")
+            same_order = registered.get("order_id") if isinstance(registered, dict) else None
+            if same_order and any(
+                g.code == code.upper() and g.used_order_id == same_order
+                for g in self._coupon_grants.list_for(session_key)
+            ):
+                return None
+        except Exception:  # noqa: BLE001 — ilegible: no se aplica
+            return "grant_unknown"
+        return "not_granted"
+
+    def _drop_personal_coupon(self, session_key: str) -> None:
+        """El cupón que ya no vale sale del pedido (y no vuelve solo: C8)."""
+        from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+
+        def _clear(data: dict[str, Any]) -> dict[str, Any]:
+            clear_applied_coupon(data)
+            return data
+
+        try:
+            FilesystemMetadataStore(self._vault_dir).update(session_key, _clear)
+        except Exception as exc:  # noqa: BLE001 — el pedido igual no se registra
+            logger.warning("🎟️ [TOOL register_order] no pude quitar el cupón de {}: {}", session_key, exc)
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -848,6 +902,28 @@ class RegisterOrderTool(ToolBase):
             metadata_before, self._catalog, items, shipping_cop=shipping_cop,
             quotas=self._quotas, sales=self._sales, variants=variants,
         )
+        personal_problem = self._personal_coupon_problem(ctx.session_key, metadata_before, discount)
+        if personal_problem is not None and discount is not None:
+            self._drop_personal_coupon(ctx.session_key)
+            logger.info(
+                "🎟️ [TOOL register_order] cupón personal {} sin concesión vigente ({}) session={}",
+                discount.code, personal_problem, ctx.session_key,
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "coupon_not_granted",
+                    "error": "coupon_not_granted",
+                    "summary": (
+                        f"{COUPON_REASON_TEXT[personal_problem]} El pedido NO se registró y el "
+                        f"cupón {discount.code} salió del pedido: explícaselo al cliente con "
+                        "honestidad y vuelve a llamar `present_order_confirmation` (sin el "
+                        "descuento) para que confirme el total."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         if discount is not None and discount.quota:
             # Reintento del MISMO pedido ya registrado en este episodio: su
             # propio draft ya cuenta como vendido, así que el reparto fresco
@@ -1125,6 +1201,13 @@ class RegisterOrderTool(ToolBase):
             "shipping_cop": shipping_cop,
             "discount_cop": discount_cop,
             "coupon_code": coupon_code,
+            # Cupón personal (premortem C2): el reintento relee la concesión y
+            # la gasta si el pedido sale.
+            **(
+                {"coupon_granted_only": True}
+                if coupon_code and _snapshot_granted_only(metadata_before)
+                else {}
+            ),
             # El reparto del cupón: el reintento de reconciliación escribe en
             # Medusa las MISMAS líneas con descuento (pedido #44).
             **(
