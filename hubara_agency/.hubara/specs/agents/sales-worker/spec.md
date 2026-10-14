@@ -2058,3 +2058,25 @@ Sin datos del pedido (Medusa caído o lento), o con el pedido entregado o cancel
 - GIVEN el pedido anterior figura entregado en OrderFacts
 - WHEN el cliente vuelve a escribir
 - THEN la conversación nueva abre como siempre
+
+### Requirement: Al agotar las rondas, el bot responde; nunca una disculpa fabricada (2026-10-14)
+
+Laboratorio del PR #426 (bot V2 + Jev, ventas-6): «¿Tienen velas de cumpleaños
+con números para el pastel?» hizo que el modelo llamara `search_products` 19
+veces, agotara `max_iterations` y el turno le enviara al cliente «¡Perdón! Justo
+se me cortó un segundito. ¿Me repites lo que necesitabas?»: una falla técnica
+contada como si fuera de una persona.
+
+En un turno que el cliente espera (`fabricate_fallback_on_empty`), si se agotan
+las rondas sin nada para el cliente, `run_agent_turn` MUST abrir UNA ronda de
+cierre con solo `send_reply` (sus controles siguen) y una nota de sistema («ya
+buscaste; respóndele con lo que encontraste o dile que no lo tenemos»). Si ni
+así responde, MUST NOT enviar la disculpa fabricada: no sale nada y queda la
+alerta. Los turnos proactivos no cambian. Detrás de
+`workflow.patched("closing-round-no-fabricated-apology-v1")`.
+
+#### Scenario: Pide algo que no existe y el modelo busca sin parar
+- GIVEN el modelo pide `search_products` en cada ronda hasta agotar `max_iterations`
+- WHEN se agotan las rondas
+- THEN hay una ronda más que solo ofrece `send_reply`, con la nota
+- AND el cliente recibe esa respuesta, nunca «se me cortó un segundito»

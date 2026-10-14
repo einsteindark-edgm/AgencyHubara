@@ -168,6 +168,15 @@ describe("layoutSequence", () => {
     ]);
   });
 
+  it("la ronda de cierre al agotar las rondas se nombra en palabras", () => {
+    // Laboratorio del 2026-10-14: «velas con números» agotó las rondas.
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "closing_round", before: null, after: "Ya usaste todas las herramientas…", tools: ["search_products"] },
+    ]);
+
+    expect(rows[0].short).toBe("se acabaron las rondas: una más solo para responderle al cliente");
+  });
+
   it("la ronda de una respuesta que volvió junto a una tarjeta se nombra en palabras", () => {
     // Premortem del PR #426: la tarjeta salió y el texto volvió al modelo.
     const { rows } = layoutSequence([
