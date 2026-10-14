@@ -607,7 +607,10 @@ def test_products_of_one_category_send_only_that_category(h: _Harness) -> None:
     assert r.status_code == 200, r.text
     assert _rows(h) == ["san-miguel", "virgen-guadalupe"]
     [event] = h.history()
-    assert event["content"] == "🛍️ El operador envió los productos de la categoría Velas Religiosas (2)"
+    assert event["content"] == (
+        "🛍️ El operador envió los productos de la categoría Velas Religiosas (2)"
+        " — con el mensaje: «Estos son nuestros productos:»"
+    )
 
 
 def test_products_matching_a_name_send_only_those(h: _Harness) -> None:
