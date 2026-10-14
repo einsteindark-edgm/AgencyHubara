@@ -222,6 +222,21 @@ class CuponDelTexto:
 
 
 @dataclass(frozen=True)
+class CifraDelCliente:
+    """Un texto para el cliente, lo que el cliente acaba de escribir
+    (`customer`), las cifras ciertas de su pedido (`figures`: precios, líneas,
+    subtotal, con envío, el total registrado) y cómo se arma (`order`: «su
+    pedido (1 × $25.000 + 1 × $22.500) suma $47.500 en productos»; None = no
+    se sabe). Capacidad `cifra_del_cliente` (laboratorio del 2026-10-14: «me
+    da $45.000, ¿no?» y el bot contestó «Así es: … $47.500»)."""
+
+    text: str
+    customer: str
+    figures: tuple[int, ...]
+    order: str | None
+
+
+@dataclass(frozen=True)
 class NegacionDelTexto:
     """Un texto para el cliente, los títulos del catálogo (`titles`), lo que
     tienen los productos de los que habla (`own`: aromas, colores y
@@ -530,6 +545,7 @@ __all__ = [
     "Afirmacion",
     "AfirmacionSinConsultar",
     "Botones",
+    "CifraDelCliente",
     "CuponDelTexto",
     "Enumeracion",
     "EstadoDelTexto",

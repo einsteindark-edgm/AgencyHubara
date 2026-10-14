@@ -14,6 +14,9 @@ los ítems de cada capacidad, `PaymentWords` y compañía): un falso positivo se
 corrige con otra frase en una versión nueva del paquete, no aquí. Aquí queda
 lo que no es vocabulario: cómo se lee una frase (`phrases`), qué es una
 cláusula y qué la niega (`product_truth`), los porcentajes y los códigos.
+
+`customer_figures` no lee el texto del bot sino el del cliente: las cifras que
+afirma y no son de su pedido (`cifra_del_cliente`, laboratorio 2026-10-14).
 """
 from __future__ import annotations
 
@@ -23,7 +26,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 from src.plugins.chats.agent.sales.pricing import format_cop
-from src.plugins.chats.shared.product_truth import affirms, clauses, denied_labels, sentences
+from src.plugins.chats.shared.product_truth import affirms, clauses, denied_labels, numbers_in, sentences
 from src.sdk.catalogkit import normalize_label
 
 Claim = tuple[str, str]
@@ -330,6 +333,32 @@ def denial_claims(
     return out
 
 
+# ── La cifra que afirma el cliente ─────────────────────────────────────────
+
+
+#: Lo que puede ser una cifra de dinero en el mensaje del cliente: desde mil
+#: pesos, en decenas (no un año como 2026) y menos que un teléfono.
+_MIN_FIGURE, _MAX_FIGURE = 1_000, 100_000_000
+
+
+def customer_figures(text: str | None, figures: Sequence[int]) -> list[int]:
+    """Las cifras de dinero del mensaje del cliente («$45.000», «45 mil»,
+    «45.000») que no son ninguna de las de su pedido (`figures`: precios,
+    líneas, subtotal, con envío, el total registrado), en orden y sin repetir.
+    Laboratorio del 2026-10-14: «1 cuadrada + 1 ondulada me da $45.000, ¿no?»
+    (es $47.500). No mira la respuesta del bot: si le da la razón lo decide Jev
+    (`cifra_del_cliente`)."""
+    real = set(figures)
+    out: list[int] = []
+    for raw in numbers_in(text or ""):
+        if not raw.isdigit():
+            continue
+        amount = int(raw)
+        if _MIN_FIGURE <= amount < _MAX_FIGURE and amount % 10 == 0 and amount not in real and amount not in out:
+            out.append(amount)
+    return out
+
+
 __all__ = [
     "COD_TERM",
     "CouponWords",
@@ -337,6 +366,7 @@ __all__ = [
     "PaymentWords",
     "StatusWords",
     "coupon_claims",
+    "customer_figures",
     "denial_claims",
     "offering_sentences",
     "payment_claims",

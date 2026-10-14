@@ -31,6 +31,7 @@ from src.plugins.chats.agent.sales.use_cases.fact_rules import (
     PaymentWords,
     StatusWords,
     coupon_claims,
+    customer_figures,
     denial_claims,
     offering_sentences,
     payment_claims,
@@ -147,6 +148,14 @@ def _claim_items(claims: list[tuple[str, str]]) -> list[dict[str, Any]]:
     return [{"term": term, "fact": fact} for term, fact in claims]
 
 
+def customer_figure_items(inp: Any) -> list[dict[str, Any]]:
+    """Las cifras que escribió el cliente y no son de su pedido («$45.000»),
+    con lo que suma su pedido (`inp.order`); sin eso no se juzga ninguna."""
+    if not inp.order:
+        return []
+    return [{"term": format_cop(amount), "fact": inp.order} for amount in customer_figures(inp.customer, inp.figures)]
+
+
 def payment_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
     return _claim_items(_payment(inp, words))
 
@@ -256,6 +265,20 @@ def text_and_claim_facts(inp: Any, *, items: list[dict[str, Any]] | None = None)
     facts = list(dict.fromkeys(item["fact"] for item in items))
     return (
         f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Lo que dice el sistema: {'; '.join(facts)}."
+    )
+
+
+def customer_and_reply_facts(inp: Any, *, items: list[dict[str, Any]] | None = None) -> str | None:
+    """Lo que escribió el cliente, lo que la tienda le va a responder y lo que
+    dice el sistema de su pedido (`cifra_del_cliente`); sin candidatos no se
+    le pregunta a Jev."""
+    if not items:
+        return None
+    facts = list(dict.fromkeys(item["fact"] for item in items))
+    return (
+        f"Mensaje del cliente:\n{inp.customer.strip()}\n\n"
+        f"Texto que la tienda le va a responder por WhatsApp:\n{inp.text.strip()}\n\n"
         f"Lo que dice el sistema: {'; '.join(facts)}."
     )
 

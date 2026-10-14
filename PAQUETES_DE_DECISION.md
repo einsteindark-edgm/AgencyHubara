@@ -359,9 +359,10 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   operar y queda fuera (exigiría pasar el paquete por cada lugar que decide).
 - Recargar: hoy los YAML se cachean; un paquete nuevo entra con el despliegue
   (como los cuestionarios). Recarga en caliente queda para después.
-- **Una decisión nueva nace en una versión** (2026-10-13, las ocho de
+- **Una decisión nueva nace en una versión** (2026-10-13, las de
   `ventas-7`: `aroma_ajeno`, `color_ajeno`, `variante_ajena`, `precio_ajeno`,
-  `pago_ajeno`, `estado_ajeno`, `cupon_ajeno`, `negacion_falsa`): las versiones publicadas no
+  `pago_ajeno`, `estado_ajeno`, `cupon_ajeno`, `negacion_falsa` y, del
+  laboratorio del 2026-10-14, `cifra_del_cliente`): las versiones publicadas no
   la traen y tienen que seguir certificando, así que el catálogo no la pone en
   `capabilities:` (todas la exigirían) sino en `capabilities_since:
   {aroma_ajeno: 7, …}`. Desde esa versión, falta = DB003; antes, el código no

@@ -1525,6 +1525,56 @@ UNA vez por texto: lo comparten esta revisión y la de la lista de opciones.
 - THEN el texto vuelve una vez con la salida «reenvía el mismo texto» y el segundo intento sale
 - AND con Jev el aviso no ocurre (Jev lee que es una fecha: 0,06–0,11 en la sonda)
 
+### Requirement: El bot no le da la razón al cliente en una cuenta equivocada (`ventas-7`, 2026-10-14)
+
+En la misma revisión de los hechos (y la misma retención única), `cifra_del_cliente`
+SHALL comparar las cifras de dinero que el cliente acaba de escribir (su ráfaga:
+lo que escribió desde la última respuesta de la tienda, leído del historial)
+con las cifras ciertas de su pedido: el precio de cada producto del borrador
+(catálogo y en vivo), cada línea por su cantidad, lo que suman, las tarifas de
+envío y la suma con cada una, con el descuento aplicado y el total registrado
+(OrderFacts). El mínimo de contra entrega NO es una cifra cierta: una suma falsa
+puede ser justo esa cifra. Sin pedido anotado (en el laboratorio el bot casi
+nunca lo anotaba antes de la cuenta del cliente), las cifras ciertas son los
+precios del catálogo de los productos de lo último de la charla (textos y
+tarjetas del historial), sus sumas con uno de cada uno y las tarifas; con un
+pedido registrado sin borrador, no se juzga. La regla solo PROPONE las cifras
+que no coinciden; Jev lee el mensaje del cliente, la respuesta y lo cierto, y
+dice si la respuesta le da la razón («sí», «así es», «correcto», o repetir la
+cifra como lo que suma, aunque después ponga otro número). Jev solo QUITA
+(umbral 0,35). Sin Jev, sin historial o sin un precio, no se juzga nada.
+
+Lo que quede MUST volver al modelo con lo cierto y el tono de la tienda
+(`vocabulary.correction_tone`: con cariño, un emoji, sin culpar nunca al
+cliente). Con el pedido anotado su cuenta no da: que no le diga «sí» ni «así
+es» y le muestre cómo da, con el ejemplo de la tienda (`sum_correction_examples`,
+con huecos, sin cifras). Sin pedido anotado no se sabe: PRIMERO la salida (si da
+su cifra o era de otra cosa, el mismo texto) y después cómo corregir; con el
+ejemplo primero, al cliente que sumó bien el bot le contestó «Casi 😊».
+
+El texto final que el modelo escribe sin `send_reply` no pasa por esta revisión
+(ni por ninguna de `send_reply`): en el laboratorio salió así una vez «Sí,
+exacto: $25.000 + $22.500 = $45.000». Ese camino es el pendiente de llevar el
+texto final suelto por `send_reply`.
+
+#### Scenario: «1 cuadrada + 1 ondulada me da $45.000, ¿no?» (laboratorio, 2026-10-14)
+
+- GIVEN 1 Vela de deseos cuadrada ($25.000) y 1 ondulada ($22.500) en el pedido
+- WHEN el cliente escribe «eso me da $45.000 en total, ¿no?» y el bot contesta
+  «Así es: … $47.500» o «Sí, las dos suman $45.000»
+- THEN el texto vuelve una vez con «su pedido (1 × $25.000 + 1 × $22.500) suma
+  $47.500 en productos» (`precio_ajeno` no lo ve: $45.000 es 2 × $22.500)
+- AND «Casi 😊 … serían $47.500» sale
+- AND sin pedido anotado, vuelve con los precios de las dos velas de la charla y
+  «haz la cuenta», y «me da $47.500, ¿cierto?» no se juzga (una de cada una)
+
+#### Scenario: La cifra del cliente era de otra cosa
+
+- GIVEN el mismo pedido
+- WHEN el cliente pregunta «¿el mínimo para contra entrega es de 45 mil?» y el bot contesta «Así es, … desde $45.000»
+- THEN el texto sale (Jev: 0,13–0,18 en la sonda)
+- AND «más el envío de $7.900» no se le pregunta a Jev: la tarifa es una cifra cierta
+
 ### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
 
 Cuando el cliente escribe desde la ficha de un producto del catálogo de

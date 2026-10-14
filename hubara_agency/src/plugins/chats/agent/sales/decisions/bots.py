@@ -66,8 +66,9 @@ CAPABILITIES: tuple[str, ...] = (
     # `send_reply` (ventas-7, incidente 2026-10-13).
     "aroma_ajeno", "color_ajeno", "variante_ajena",
     # Los hechos que el texto afirma: precio, pago, estado del pedido, cupón y
-    # lo que niega teniéndolo (ventas-7, 2026-10-13).
-    "precio_ajeno", "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa",
+    # lo que niega teniéndolo (ventas-7, 2026-10-13), y darle la razón al
+    # cliente en una cuenta equivocada (laboratorio del 2026-10-14).
+    "precio_ajeno", "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
     # Decisiones del agente (F8) y la promesa del relevo a un colega
     # (red de seguridad antes de enviar, 2026-09-30).
     "contactar", "cierre", "relevo",

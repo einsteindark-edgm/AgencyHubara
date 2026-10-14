@@ -56,6 +56,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   estado_ajeno: "Estado del pedido que no es cierto",
   cupon_ajeno: "Cupón que no está vigente",
   negacion_falsa: "Negar lo que sí tenemos",
+  cifra_del_cliente: "Darle la razón en una cuenta equivocada",
   cantidad: "Cantidad",
   categoria: "Categoría",
   familia_de_color: "Familia de color",
@@ -245,6 +246,13 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   estado_ajeno: (value) => claimSentence(value, "el sistema dice otra cosa", "Lo que dice del pedido coincide con el sistema"),
   cupon_ajeno: (value) => factSentence(value, "no está vigente", "Los cupones que ofrece están vigentes"),
   negacion_falsa: (value) => factSentence(value, "sí lo tenemos", "No niega nada que tengamos"),
+  // El cliente afirma una suma que no es la de su pedido y el texto le daba la razón (2026-10-14).
+  cifra_del_cliente: (value) => {
+    const terms = list(value);
+    return terms.length
+      ? warn(`Devuelve el texto al modelo: le daba la razón al cliente en ${quoted(terms)}, y su pedido suma otra cosa`)
+      : plain("No le da la razón en ninguna cuenta equivocada");
+  },
   cantidad: (value) => {
     const n = obj(value).cantidad;
     return plain(typeof n === "number" ? `Cantidad: ${n}` : "No dio cantidad");
@@ -450,6 +458,7 @@ const FACT_QUESTIONS: Record<string, (term: string) => string> = {
   estado_ajeno: (term) => `¿El texto le dice, como algo que ya pasó, que ${term}?`,
   cupon_ajeno: (term) => `¿El texto le ofrece ${term} como cupón vigente?`,
   negacion_falsa: (term) => `¿El texto le dice que no tenemos ${term}?`,
+  cifra_del_cliente: (term) => `El cliente escribió ${term}: ¿el texto le da la razón?`,
 };
 
 function questionText(d: EngineDecisionView, q: string): string {
@@ -470,7 +479,7 @@ function questionText(d: EngineDecisionView, q: string): string {
       ? `¿El texto le ofrece «${String(word)}» como ${foreign[1]} del producto?`
       : `¿El texto le ofrece el ${foreign[1]} ${foreign[2]} como ${foreign[1]} del producto?`;
   }
-  const fact = /^(precio_ajeno|pago_ajeno|estado_ajeno|cupon_ajeno|negacion_falsa)\.termino_(\d+)$/.exec(q);
+  const fact = /^(precio_ajeno|pago_ajeno|estado_ajeno|cupon_ajeno|negacion_falsa|cifra_del_cliente)\.termino_(\d+)$/.exec(q);
   if (fact) {
     // Jev revisa lo que propuso la regla, en su orden.
     const terms = list(d.rule !== undefined ? d.rule : d.value);

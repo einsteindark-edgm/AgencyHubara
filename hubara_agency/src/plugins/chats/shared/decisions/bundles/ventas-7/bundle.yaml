@@ -19,6 +19,15 @@
 #     (contra entrega y recargo del link), `estado_ajeno` (pago y etapa según
 #     OrderFacts), `cupon_ajeno` (cupones vigentes para el cliente) y
 #     `negacion_falsa` (negar lo que el catálogo tiene).
+#   - `cifra_del_cliente` (laboratorio del 2026-10-14): el cliente afirma una
+#     suma equivocada («1 cuadrada + 1 ondulada me da $45.000, ¿no?»; son
+#     $47.500) y el bot le da la razón («Así es» o «Sí, las dos suman
+#     $45.000»). La regla propone las cifras del cliente que no son de su
+#     pedido (sin pedido anotado, de lo que se habló); Jev lee su mensaje y la
+#     respuesta (sin Jev no revisa). Sonda con Jev real: 34 de 34. Laboratorio
+#     (12 conversaciones, Jev real): antes, dos respuestas le daban la razón
+#     («Sí, $25.000 + $22.500 son $47.500», «las dos velas suman $45.000»);
+#     después, ninguna, con tres retenciones y las tres corregidas.
 # `send_reply` y las tarjetas con texto del modelo (`tools/fact_check.py`)
 # juntan todas en una retención con lo que es cierto: lo ya dicho sale al
 # segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
@@ -99,6 +108,7 @@ capabilities:
   - cantidad
   - categoria
   - cierre
+  - cifra_del_cliente
   - color_ajeno
   - compra
   - contactar

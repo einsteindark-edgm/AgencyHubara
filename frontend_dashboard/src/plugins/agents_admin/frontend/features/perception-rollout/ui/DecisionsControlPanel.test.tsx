@@ -124,6 +124,14 @@ describe("DecisionsControlPanel", () => {
     expect(screen.getByRole("group", { name: "Negar lo que sí tenemos" })).toBeInTheDocument();
   });
 
+  it("nombra darle la razón al cliente en una cuenta equivocada (ventas-7)", async () => {
+    state = payload({ cifra_del_cliente: "off" });
+    renderPanel();
+
+    const figure = await screen.findByRole("group", { name: "Darle la razón en una cuenta equivocada" });
+    expect(within(figure).getByText("¿le da la razón al cliente en una cuenta que no es la de su pedido? (solo con Jev)")).toBeInTheDocument();
+  });
+
   it("nombra el acuse tras la despedida con su pregunta", async () => {
     state = payload({ acuse: "off" });
     renderPanel();

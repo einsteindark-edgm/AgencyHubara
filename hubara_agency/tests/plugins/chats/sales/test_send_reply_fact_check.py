@@ -417,7 +417,7 @@ async def test_a_price_correction_is_warm_and_owns_the_mistake(tmp_path: Path, c
     held = await _send(_tool(tmp_path), ctx, "Así es, $46.000 por las dos velas 🤍")
 
     message = held["message"]
-    assert "asumiendo tú el error" in message and "«te corrijo»" in message
+    assert "Si el error fue tuyo, asúmelo" in message and "«te corrijo»" in message
     assert "¡Ay, qué pena contigo! 🙈" in message and "[el precio del catálogo]" in message
 
 
@@ -661,3 +661,185 @@ async def test_with_a_bundle_without_the_decisions_no_source_is_read(tmp_path: P
     held = await check.held(KEY, "¡Listo! Tu pago quedó confirmado con el cupón AMOR2026 🤍")
 
     assert held is None and (catalog.searches, facts.calls, promotions.calls) == (0, [], 0)
+
+
+# ── cifra_del_cliente: darle la razón en una cuenta equivocada ─────────────
+#
+# Laboratorio del 2026-10-14 (Jev real): el cliente escribió «1 cuadrada + 1
+# ondulada me da $45.000, ¿no?» (son $47.500). ventas-6 contestó una vez «Sí,
+# las dos suman $45.000» y ventas-7 «Así es: … $47.500». `precio_ajeno` no lo
+# veía: $45.000 es 2 × $22.500 y el mínimo de contra entrega, y en el segundo
+# el error no es un monto sino el «Así es». El código arma la comparación (la
+# cifra del mensaje del cliente, del historial, contra lo que suma su pedido)
+# y Jev dice si la respuesta le da la razón.
+
+ONDULADAS = _product(
+    "Velas de deseos onduladas", "velas-de-deseos-onduladas", ["Noche de Navidad"], price=22_500,
+)
+MIX = ("Velas de deseos cuadradas", "Velas de deseos onduladas")
+WRONG_SUM = "Perfecto, eso me da $45.000 en total, ¿no?"
+AGREES = "Así es: la cuadrada en $25.000 y la ondulada en $22.500, $47.500 en productos 🤍"
+#: El Jev de prueba lee «[1]» en el estado de `preambulo` y cortaría el «Así es».
+KEEP_START = {f"preambulo.{n}": 0.01 for n in range(1, 6)}
+
+
+def _customer_says(*texts: str):
+    """El historial del panel: lo último de la tienda y la ráfaga del cliente."""
+    events = [{"role": "user", "content": "Hola, quiero 1 vela de deseos cuadrada y 1 ondulada"},
+              {"role": "assistant", "content": "¡Claro! 🤍 Te las anoto."}]
+    events += [{"role": "user", "content": t} for t in texts]
+    return lambda _key: events
+
+
+def _mix_tool(vault: Path, *customer: str) -> SendReplyTool:
+    return _tool(vault, products=MIX, quantity="1", catalog=_Catalog(DESEOS, ONDULADAS, PLEGARIA),
+                 history_reader=_customer_says(*customer))
+
+
+async def test_agreeing_with_a_wrong_sum_goes_back_with_the_real_total(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    fake = _jev(monkeypatch, {**KEEP_START, "cifra_del_cliente.termino_1": 0.92})
+
+    held = await _send(_mix_tool(tmp_path, WRONG_SUM), ctx, AGREES)
+
+    assert held["error"] == "fact_check" and held["checks"] == ["cifra_del_cliente"]
+    message = held["message"]
+    assert "«$45.000»" in message
+    assert "su pedido (1 × $25.000 + 1 × $22.500) suma $47.500 en productos" in message
+    assert "su cuenta no da" in message and "No le digas «sí» ni «así es»" in message
+    [state] = [state for state, questions in fake.calls if "cifra_del_cliente.termino_1" in questions]
+    assert WRONG_SUM in state and "Así es" in state
+
+
+async def test_repeating_the_wrong_sum_of_the_customer_goes_back(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    """Lo que contestó ventas-6: $45.000 «cuadra» con el catálogo (2 × $22.500)."""
+    _jev(monkeypatch, {**KEEP_START, "cifra_del_cliente.termino_1": 0.95})
+
+    held = await _send(_mix_tool(tmp_path, WRONG_SUM), ctx, "Sí, las dos suman *$45.000* en productos 🤍")
+
+    assert held["error"] == "fact_check" and "cifra_del_cliente" in held["checks"]
+
+
+async def test_a_sum_correction_is_warm_and_never_blames_the_customer(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Pedido del operador (2026-10-14): la corrección con un emoji y sin que el
+    cliente se sienta regañado; el ejemplo es de la tienda
+    (`vocabulary.sum_correction_examples`), con huecos y sin cifras."""
+    _jev(monkeypatch, {**KEEP_START, "cifra_del_cliente.termino_1": 0.92})
+
+    message = (await _send(_mix_tool(tmp_path, WRONG_SUM), ctx, AGREES))["message"]
+
+    assert "sin culpar nunca al cliente" in message and "«te corrijo»" in message
+    assert "¡Casi! 😊" in message and "[el total]" in message
+    assert "Me equivoqué con el precio" not in message  # el ejemplo del precio es para un error del bot
+
+
+async def test_without_jev_a_customer_figure_never_holds(tmp_path: Path, ctx: ToolContext) -> None:
+    assert (await _send(_mix_tool(tmp_path, WRONG_SUM), ctx, AGREES)).get("reply") == {"text": AGREES}
+
+
+async def test_a_right_figure_of_the_customer_is_not_asked(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    fake = _jev(monkeypatch, KEEP_START)
+    text = "¡Así es! $47.500 en productos 🤍"
+
+    out = await _send(_mix_tool(tmp_path, "me da $47.500, ¿cierto?"), ctx, text)
+
+    assert out.get("reply") == {"text": text}
+    assert not any("cifra_del_cliente.termino_1" in questions for _state, questions in fake.calls)
+
+
+async def test_a_figure_from_an_earlier_message_is_not_judged(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    """Solo la ráfaga de este turno: lo que el cliente dijo antes de la última
+    respuesta de la tienda ya se contestó."""
+    fake = _jev(monkeypatch, KEEP_START)
+    events = [{"role": "user", "content": WRONG_SUM}, {"role": "assistant", "content": "Casi 😊 son $47.500."},
+              {"role": "user", "content": "Ah listo, ¿y a qué ciudad envían?"}]
+    tool = _tool(tmp_path, products=MIX, quantity="1", catalog=_Catalog(DESEOS, ONDULADAS, PLEGARIA),
+                 history_reader=lambda _key: events)
+
+    await _send(tool, ctx, "Así es, enviamos a todo el país 🚚")
+
+    assert not any("cifra_del_cliente.termino_1" in questions for _state, questions in fake.calls)
+
+
+async def test_the_shipping_rate_the_customer_says_right_is_not_judged(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """«2 cuadradas más el envío a Bogotá de $7.900 me da $52.900» (son $57.900):
+    la tarifa la dijo bien; la cuenta no."""
+    fake = _jev(monkeypatch, {**KEEP_START, "cifra_del_cliente.termino_1": 0.9})
+    tool = _tool(tmp_path, history_reader=_customer_says(
+        "Entonces 2 cuadradas más el envío a Bogotá de $7.900 me da $52.900, ¿verdad?"))
+
+    held = await _send(tool, ctx, "¡Así es! 🤍 ¿Me confirmas la dirección?")
+
+    assert "«$52.900»" in held["message"] and "«$7.900»" not in held["message"]
+    assert "su pedido (2 × $25.000) suma $50.000 en productos" in held["message"]
+    assert [q for _state, qs in fake.calls for q in qs if q.startswith("cifra_del_cliente")] == ["cifra_del_cliente.termino_1"]
+
+
+
+async def test_without_an_order_yet_agreeing_goes_back_to_do_the_sum(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Laboratorio del 2026-10-14 (antes del arreglo): el bot casi nunca anotó
+    el pedido antes de la cuenta del cliente y contestó «Sí, $25.000 + $22.500
+    son $47.500». Sin borrador, lo cierto son los precios del catálogo de los
+    productos de la charla: que haga la cuenta antes de darle la razón."""
+    fake = _jev(monkeypatch, {**KEEP_START, "cifra_del_cliente.termino_1": 0.5})
+    events = [
+        {"role": "user", "content": "Hola, quiero 1 vela de deseos cuadrada y 1 ondulada"},
+        {"role": "assistant", "content": "Estas son las velas de deseos 🤍", "component_kind": "products_list",
+         "card": {"items": [{"title": "Velas de deseos cuadradas"}, {"title": "Velas de deseos onduladas"}]}},
+        {"role": "user", "content": WRONG_SUM},
+    ]
+    tool = _tool(tmp_path, products=(), catalog=_Catalog(DESEOS, ONDULADAS, PLEGARIA), history_reader=lambda _k: events)
+
+    held = await _send(tool, ctx, "Sí, $25.000 + $22.500 son $47.500 en productos.")
+
+    assert held["error"] == "fact_check" and held["checks"] == ["cifra_del_cliente"]
+    message = held["message"]
+    assert "«$45.000»" in message and "todavía no hay un pedido anotado" in message
+    assert "Velas de deseos cuadradas cuesta $25.000" in message and "Velas de deseos onduladas cuesta $22.500" in message
+    # La pista para Jev y el modelo (sonda 2026-10-14: sin ella, «el envío nacional arranca en $16.940»
+    # a «¿sale en 16.000?» daba 0,34, al borde del umbral; con ella, 0,24–0,27).
+    assert "una de cada una suma $47.500" in message
+    [state] = [state for state, questions in fake.calls if "cifra_del_cliente.termino_1" in questions]
+    assert WRONG_SUM in state
+    # Sin pedido no se sabe si su cuenta da: primero la salida, después el ejemplo de corregir
+    # (laboratorio 2026-10-14: al cliente que sumó bien le contestó «Casi 😊»).
+    assert "Si da su cifra" in message and message.index("Si da su cifra") < message.index("¡Casi! 😊")
+
+
+async def test_without_an_order_a_right_sum_of_what_was_talked_is_not_judged(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Laboratorio del 2026-10-14: «eso me da $47.500, ¿cierto?» (una de cada
+    una) se retenía sin pedido anotado y el bot le contestó «Casi 😊» al cliente
+    que sumó bien. Una suma de los productos de la charla (uno de cada uno) es cierta."""
+    fake = _jev(monkeypatch, KEEP_START)
+    events = [
+        {"role": "user", "content": "Hola, quiero 1 vela de deseos cuadrada y 1 ondulada"},
+        {"role": "assistant", "content": "Estas son las velas de deseos 🤍", "component_kind": "products_list",
+         "card": {"items": [{"title": "Velas de deseos cuadradas"}, {"title": "Velas de deseos onduladas"}]}},
+        {"role": "user", "content": "Perfecto, eso me da $47.500 en total, ¿cierto?"},
+    ]
+    tool = _tool(tmp_path, products=(), catalog=_Catalog(DESEOS, ONDULADAS, PLEGARIA), history_reader=lambda _k: events)
+    text = "Así es, $47.500 en productos 🤍"
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}
+    assert not any("cifra_del_cliente.termino_1" in questions for _state, questions in fake.calls)
+
+
+async def test_without_an_order_a_catalog_price_the_customer_says_is_not_judged(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    fake = _jev(monkeypatch, KEEP_START)
+    tool = _tool(tmp_path, products=(), catalog=_Catalog(DESEOS, ONDULADAS, PLEGARIA),
+                 history_reader=_customer_says("¿la ondulada está en $22.500?"))
+
+    await _send(tool, ctx, "Sí, las Velas de deseos onduladas están en $22.500 🤍")
+
+    assert not any("cifra_del_cliente.termino_1" in questions for _state, questions in fake.calls)

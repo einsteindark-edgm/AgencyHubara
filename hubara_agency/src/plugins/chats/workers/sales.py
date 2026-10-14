@@ -224,8 +224,12 @@ def _customer_orders_port():
 def _fact_check() -> FactCheck:
     """Los hechos antes de enviar (incidente 2026-10-13): `send_reply` y las
     tarjetas con texto del modelo revisan contra el catálogo, el pedido
-    (OrderFacts) y los cupones (Medusa) lo que le dicen al cliente."""
-    return FactCheck(build_vault_dir(), _catalog, promotions=_promotions, order_facts=_order_facts_port())
+    (OrderFacts) y los cupones (Medusa) lo que le dicen al cliente, y contra
+    lo que el cliente acaba de escribir (el historial: sus cifras)."""
+    return FactCheck(
+        build_vault_dir(), _catalog, promotions=_promotions, order_facts=_order_facts_port(),
+        history_reader=build_session_history_reader(),
+    )
 
 
 register_tool_extension(

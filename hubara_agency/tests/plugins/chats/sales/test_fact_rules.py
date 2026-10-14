@@ -18,6 +18,7 @@ from src.plugins.chats.agent.sales.use_cases.fact_rules import (
     PaymentWords,
     StatusWords,
     coupon_claims,
+    customer_figures,
     denial_claims,
     payment_claims,
     phrases,
@@ -227,3 +228,36 @@ def test_the_order_is_read_only_when_a_pending_order_would_be_contradicted() -> 
 )
 def test_the_coupons_are_read_only_when_the_text_could_name_one(text: str, read: bool) -> None:
     assert talks_about_coupons(text, _words("cupon_ajeno", CouponWords)) is read
+
+
+# ── La cifra que afirma el cliente (laboratorio del 2026-10-14) ────────────
+#
+# «1 cuadrada + 1 ondulada me da $45.000, ¿no?» (es $47.500): la regla propone
+# las cifras del mensaje del cliente que no son ninguna de las de su pedido
+# (precios, líneas, el subtotal, con envío, el total registrado). No mira la
+# respuesta: si le da la razón lo decide Jev.
+
+ORDER_FIGURES = (22_500, 25_000, 47_500, 55_400, 64_440)
+
+
+@pytest.mark.parametrize(
+    ("text", "proposed"),
+    [
+        ("Perfecto, eso me da $45.000 en total, ¿no?", [45_000]),
+        ("son 45 mil entonces", [45_000]),
+        ("me da 45.000 y te pago ya", [45_000]),
+        # Las cifras ciertas del pedido no se proponen.
+        ("me da $47.500, ¿cierto?", []),
+        ("la cuadrada a $25.000 y la ondulada a $22.500", []),
+        # Cantidades, fechas y teléfonos no son cifras de dinero.
+        ("quiero 2 para el 7 de diciembre de 2026", []),
+        ("mi número es 3001234567", []),
+        ("¿cuánto me da todo?", []),
+    ],
+)
+def test_the_figures_of_the_customer_that_are_not_the_order(text: str, proposed: list[int]) -> None:
+    assert customer_figures(text, ORDER_FIGURES) == proposed
+
+
+def test_a_figure_said_twice_is_proposed_once() -> None:
+    assert customer_figures("$45.000? sí, $45.000", ORDER_FIGURES) == [45_000]

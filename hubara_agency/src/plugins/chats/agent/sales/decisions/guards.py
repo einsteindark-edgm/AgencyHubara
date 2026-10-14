@@ -183,7 +183,7 @@ async def option_list(
 #: Las decisiones de los hechos antes de enviar (ventas-7, 2026-10-13).
 FACT_CAPABILITIES: tuple[str, ...] = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
-    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa",
+    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
 )
 
 
@@ -210,6 +210,7 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
     import asyncio
 
     from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
+        CifraDelCliente,
         CuponDelTexto,
         EstadoDelTexto,
         NegacionDelTexto,
@@ -253,7 +254,10 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
     denial = NegacionDelTexto(
         text=text, titles=tuple(facts.titles_all), own=tuple(facts.own_labels), products=tuple(facts.titles)
     )
-    (aromas, colors, variant, wrong_prices, payments, states, coupons, denials) = await asyncio.gather(
+    figure = CifraDelCliente(
+        text=text, customer=facts.customer_text, figures=tuple(facts.order_figures), order=facts.figure_truth
+    )
+    (aromas, colors, variant, wrong_prices, payments, states, coupons, denials, figures) = await asyncio.gather(
         ask("aroma_ajeno", labels(facts.own_aromas, facts.aromas, facts.colors), ()),
         ask("color_ajeno", labels(facts.own_colors, facts.colors, facts.aromas), ()),
         ask("variante_ajena", VariantesDelTexto(text=text, sheets=tuple(facts.sheets), single=tuple(facts.single)), False),
@@ -263,6 +267,7 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         # Sin los cupones leídos no se juzga ninguno (no saber no es «no hay»).
         ask("cupon_ajeno", coupon, ()) if facts.coupons_checked else _nothing(),
         ask("negacion_falsa", denial, ()),
+        ask("cifra_del_cliente", figure, ()),
     )
 
     def pairs(name: str, terms: Sequence[str], inp: Any) -> tuple[tuple[str, str], ...]:
@@ -275,6 +280,7 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         aromas=tuple(aromas), colors=tuple(colors), variant=bool(variant), prices=tuple(wrong_prices),
         payments=pairs("pago_ajeno", payments, payment), states=pairs("estado_ajeno", states, status),
         coupons=pairs("cupon_ajeno", coupons, coupon), denials=pairs("negacion_falsa", denials, denial),
+        figures=pairs("cifra_del_cliente", figures, figure),
     )
 
 

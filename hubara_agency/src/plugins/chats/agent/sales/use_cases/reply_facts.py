@@ -65,6 +65,14 @@ class ReplyFacts:
     own_labels: tuple[str, ...] = ()
     #: Las palabras del nombre del cliente: «¡Hola Rosa!» no nombra el color Rosa.
     names: tuple[str, ...] = ()
+    #: Lo que acaba de escribir el cliente (su ráfaga, del historial), las
+    #: cifras ciertas contra las que se miran las suyas y lo cierto en
+    #: palabras («su pedido (1 × $25.000 + 1 × $22.500) suma $47.500 en
+    #: productos»; sin pedido anotado, los precios de lo que se habló). None
+    #: = no se sabe: sus cifras no se juzgan (laboratorio 2026-10-14).
+    customer_text: str = ""
+    order_figures: tuple[int, ...] = ()
+    figure_truth: str | None = None
 
     @property
     def price_lines(self) -> tuple[str, ...]:
@@ -113,6 +121,8 @@ class Findings:
     states: tuple[tuple[str, str], ...] = ()
     coupons: tuple[tuple[str, str], ...] = ()
     denials: tuple[tuple[str, str], ...] = ()
+    #: (la cifra del cliente a la que el texto le da la razón, lo cierto de su pedido).
+    figures: tuple[tuple[str, str], ...] = ()
 
     def __bool__(self) -> bool:
         return any(getattr(self, f.name) for f in fields(self))
@@ -120,7 +130,7 @@ class Findings:
     @property
     def terms(self) -> tuple[str, ...]:
         """Todo lo que no coincide, como texto (lo que se le dijo al modelo)."""
-        pairs = (*self.payments, *self.states, *self.coupons, *self.denials)
+        pairs = (*self.payments, *self.states, *self.coupons, *self.denials, *self.figures)
         return (*self.aromas, *self.colors, *(("presentación",) if self.variant else ()), *self.prices,
                 *(term for term, _fact in pairs))
 
@@ -130,7 +140,7 @@ class Findings:
         found = {
             "aroma_ajeno": self.aromas, "color_ajeno": self.colors, "variante_ajena": self.variant,
             "precio_ajeno": self.prices, "pago_ajeno": self.payments, "estado_ajeno": self.states,
-            "cupon_ajeno": self.coupons, "negacion_falsa": self.denials,
+            "cupon_ajeno": self.coupons, "negacion_falsa": self.denials, "cifra_del_cliente": self.figures,
         }
         return tuple(name for name, value in found.items() if value)
 
@@ -177,13 +187,37 @@ def _truth(pairs: tuple[tuple[str, str], ...]) -> str:
     return "; ".join(dict.fromkeys(fact for _term, fact in pairs))
 
 
+def _figure_problem(
+    pairs: tuple[tuple[str, str], ...], *, known: bool, examples: Sequence[str], tool: str
+) -> str:
+    """Laboratorio del 2026-10-14: «me da $45.000, ¿no?» y el bot contestó
+    «Así es: … $47.500»; el cliente distraído se queda con su cifra. Con el
+    pedido anotado (`known`) su cuenta no da; sin él no se sabe: primero la
+    salida, después cómo corregir (al cliente que sumó bien le contestó
+    «Casi 😊», copiando el ejemplo)."""
+    example = f" Por ejemplo: {' / '.join(f'«{e}»' for e in examples)}." if examples else ""
+    other = "otra cantidad, un mínimo, una tarifa, un abono o un presupuesto"
+    if known:
+        return (
+            f"El cliente escribió {_said(pairs)} y tu texto le da la razón, pero su cuenta no da: {_truth(pairs)}. "
+            f"No le digas «sí» ni «así es»: muéstrale cómo da la cuenta.{example} Si su cifra era de otra cosa "
+            f"({other}), déjalo como está."
+        )
+    return (
+        f"El cliente escribió {_said(pairs)} y tu texto le da la razón, pero {_truth(pairs)}. Haz la cuenta con "
+        f"esos precios. Si da su cifra, o su cifra era de otra cosa ({other}), vuelve a llamar {tool} con el mismo "
+        f"texto. Si da otra, no le digas «sí» ni «así es»: muéstrale cómo da.{example}"
+    )
+
+
 def fact_message(
     findings: Findings, facts: ReplyFacts, *, tool: str = "send_reply", tone: str | None = None,
-    price_examples: Sequence[str] = (),
+    price_examples: Sequence[str] = (), sum_examples: Sequence[str] = (),
 ) -> str:
     """El mensaje con que el texto vuelve al modelo: cada cosa que no
-    coincide con lo cierto, cómo corregirlo (`tone`, `price_examples`: de la
-    tienda, en el paquete) y, al final, la salida (mismo texto si no aplica)."""
+    coincide con lo cierto, cómo corregirlo (`tone`, `price_examples`,
+    `sum_examples`: de la tienda, en el paquete) y, al final, la salida
+    (mismo texto si no aplica)."""
     problems: list[str] = []
     option = option_problem(
         list(facts.focus), aromas=findings.aromas, colors=findings.colors, variant=findings.variant
@@ -201,6 +235,9 @@ def fact_message(
             f"Le dijiste que no tenemos {_said(findings.denials)}, y lo cierto es que {_truth(findings.denials)}. "
             "Si de verdad está agotado hoy, déjalo como está."
         )
+    if findings.figures:
+        known = facts.subtotal is not None and bool(facts.order_breakdown)
+        problems.append(_figure_problem(findings.figures, known=known, examples=sum_examples, tool=tool))
     if tone:
         problems.append(tone.strip())
     if findings.prices and price_examples:

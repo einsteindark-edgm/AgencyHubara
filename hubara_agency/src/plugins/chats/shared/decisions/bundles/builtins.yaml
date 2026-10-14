@@ -46,6 +46,7 @@ inputs:
   EstadoDelTexto: {text: string, order: "string?", stage: "string?", pay_status: "string?"}
   CuponDelTexto: {text: string, known: "tuple<string>", valid: "tuple<string>", valid_lines: "tuple<string>", valid_percents: "tuple<int>"}
   NegacionDelTexto: {text: string, titles: "tuple<string>", own: "tuple<string>", products: "tuple<string>"}
+  CifraDelCliente: {text: string, customer: string, figures: "tuple<int>", order: "string?"}
   TextCheck: {text: string, extended: bool}
   GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
   Frases: {parts: "tuple<string>"}
@@ -99,6 +100,7 @@ domain:
     # Opcionales: sin ellos, la corrección sin tono de la tienda.
     correction_tone: "string?"                # el tono de la corrección (suave, sin regaño)
     correction_examples: "list<string>?"      # ejemplos de corregir un precio
+    sum_correction_examples: "list<string>?"  # ejemplos de corregirle una suma al cliente
 
 builtins:
   # ── reglas ──
@@ -332,6 +334,11 @@ builtins:
     kind: state
     takes_items: true
     doc: "El texto para el cliente con lo que dice el sistema de cada cosa que la regla propone (pago, estado, cupón, negación)."
+  customer_and_reply_facts:
+    kind: state
+    takes_items: true
+    input: CifraDelCliente
+    doc: "Lo que escribió el cliente, lo que la tienda le va a responder y lo que dice el sistema de su pedido, si la regla propone alguna cifra."
   text_and_option_sheets:
     kind: state
     input: VariantesDelTexto
@@ -399,6 +406,11 @@ builtins:
     params: {niega_tener: str, niega_venir: str, no_es_negacion: str}
     fields: {term: string, fact: string}
     doc: "Lo que el texto niega tener y el catálogo sí tiene: lo que dice el texto (term) y lo cierto (fact). Los verbos van detrás de «no», «ya no», «tampoco» o «ni». Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  customer_figure_items:
+    kind: items
+    input: CifraDelCliente
+    fields: {term: string, fact: string}
+    doc: "Las cifras de dinero que escribió el cliente («$45.000», «45 mil») y no son ninguna de las de su pedido (precios, líneas, subtotal, con envío, el total registrado): la cifra (term) y lo que suma su pedido (fact). Sin lo que suma su pedido, ninguna (fact_rules.customer_figures)."
   foreign_label_items:
     kind: items
     input: OpcionesDelTexto
@@ -532,6 +544,9 @@ capabilities_since:
   estado_ajeno: 7
   cupon_ajeno: 7
   negacion_falsa: 7
+  # Laboratorio del 2026-10-14: el cliente afirma una suma equivocada y el bot
+  # le da la razón («Así es»). La pide `send_reply` con las demás.
+  cifra_del_cliente: 7
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -787,6 +802,15 @@ about:
       tenemos un producto, un aroma, un color o una presentación que el
       catálogo sí tiene. Si de verdad está agotado hoy, el bot puede
       dejarlo como está. La regla solo propone: decide Jev.
+  cifra_del_cliente:
+    name: Darle la razón en una cuenta equivocada
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, si el cliente escribió una cifra que no es la de su
+      pedido («1 cuadrada y 1 ondulada me da $45.000, ¿no?»; suma $47.500),
+      Jev lee su mensaje y la respuesta y dice si el bot le da la razón
+      («así es», «sí» o repitiéndola). Si se la da, el bot corrige con cariño
+      y con la cuenta real. La regla solo propone: decide Jev.
   variante_ajena:
     name: Presentación que no existe
     where: [herramientas]

@@ -370,6 +370,7 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "text_and_option_sheets": _CATALOG,
         "text_and_product_prices": _CATALOG,
         "text_and_claim_facts": _CATALOG,
+        "customer_and_reply_facts": _CATALOG,
         "greeting_texts": _EGRESS,
         "leading_sentences_state": _PARTS,
         "conversation_for_slots": _PARTS,
@@ -392,6 +393,7 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "status_claim_items": _CATALOG,
         "coupon_claim_items": _CATALOG,
         "denial_claim_items": _CATALOG,
+        "customer_figure_items": _CATALOG,
     },
     "options": {
         "catalog_categories": _CATALOG,

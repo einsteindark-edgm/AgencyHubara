@@ -1,6 +1,8 @@
-"""`ventas-7`: `ventas-6` con las decisiones nuevas `aroma_ajeno`, `color_ajeno` y
-`variante_ajena` y ③ del catálogo en el turno (`test_decisions_ventas_7_verifica.py`),
-y nada más (esta prueba lo exige, como `test_decisions_ventas_6.py`).
+"""`ventas-7`: `ventas-6` con las decisiones nuevas de los hechos (`NEW`: aromas,
+colores y presentaciones de otro producto, precio, pago, estado, cupón, lo que
+niega y darle la razón al cliente en una cuenta equivocada) y ③ del catálogo
+en el turno (`test_decisions_ventas_7_verifica.py`), y nada más (esta prueba lo
+exige, como `test_decisions_ventas_6.py`).
 
 Caso de producción del 2026-10-13 (bot V2, ventas-6): el cliente armó un
 carrito con 2 Velas de deseos cuadradas y el bot escribió «vienen en Chanel,
@@ -32,6 +34,7 @@ import yaml
 from src.platform.perception.adapters.fake import FakePerceptionAdapter
 from src.plugins.chats.agent.sales.decisions import registry
 from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
+    CifraDelCliente,
     CuponDelTexto,
     EstadoDelTexto,
     NegacionDelTexto,
@@ -51,7 +54,7 @@ SID = "wa_573001111111"
 #: Las decisiones que trae ventas-7 (todas nacen en esta versión).
 NEW = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
-    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa",
+    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
 )
 AROMAS = (
     "Caballero de la noche", "Limoncillo", "Lavanda", "Café", "Sándalo", "Ylan ylang",
@@ -143,7 +146,7 @@ def _without_catalog_verification(turn: dict[str, Any]) -> dict[str, Any]:
 #: remarketing (test_remarketing_catalog_silent.py): exactamente estas llaves.
 REMARKETING_FACTS = ("practical_facts", "hook_examples_practical")
 #: El tono con que el bot corrige algo que dijo mal (pedido del operador, 2026-10-14).
-CORRECTION_TONE = ("correction_tone", "correction_examples")
+CORRECTION_TONE = ("correction_tone", "correction_examples", "sum_correction_examples")
 
 
 def _without_remarketing_facts(domain: dict[str, Any]) -> dict[str, Any]:
@@ -392,6 +395,14 @@ DENIAL = NegacionDelTexto(
     own=("Noche de Navidad", "Multicolor", "Rojo y verde"),
     products=("Velas de deseos cuadradas",),
 )
+FIGURE = CifraDelCliente(
+    text="Así es: la cuadrada en $25.000 y la ondulada en $22.500, $47.500 en productos 🤍",
+    customer="Perfecto, eso me da $45.000 en total, ¿no?",
+    figures=(22_500, 25_000, 47_500, 55_400, 64_440),
+    order="su pedido (1 × $25.000 + 1 × $22.500) suma $47.500 en productos",
+)
+
+
 def _yes(oracle, name: str) -> None:
     """Jev de prueba que lee que el texto sí lo afirma (0,95) en cada candidato."""
     oracle["fake"] = FakePerceptionAdapter(
@@ -404,6 +415,7 @@ KEYWORD_CASES = [
     ("estado_ajeno", STATUS, ["el pago de su pedido quedó confirmado"]),
     ("cupon_ajeno", COUPON, ["AMOR2026"]),
     ("negacion_falsa", DENIAL, ["Plegaria de Luz"]),
+    ("cifra_del_cliente", FIGURE, ["$45.000"]),
 ]
 
 
@@ -508,6 +520,63 @@ async def test_denial_proposals(tmp_path: Path, oracle, jev, text: str, proposed
     assert list((await _decide(NegacionDelTexto(**{**DENIAL.__dict__, "text": text}), tmp_path, "negacion_falsa")).value) == proposed
 
 
+# ── cifra_del_cliente: darle la razón en una cuenta equivocada ─────────────
+#
+# Laboratorio del 2026-10-14 (Jev real): «1 cuadrada + 1 ondulada me da
+# $45.000, ¿no?» (es $47.500). ventas-6 contestó una vez «Sí, las dos suman
+# $45.000» y ventas-7 «Así es: … $47.500»: `precio_ajeno` no lo ve ($45.000 es
+# 2 × $22.500 y el mínimo de contra entrega; en el segundo no hay monto falso,
+# el error es el «Así es»). La regla propone las cifras del cliente que no son
+# de su pedido; Jev lee el mensaje del cliente y la respuesta y dice si le da
+# la razón.
+
+
+async def test_jev_reads_the_customer_message_the_reply_and_the_order(tmp_path: Path, oracle, jev) -> None:
+    _need_v7()
+    _yes(oracle, "cifra_del_cliente")
+
+    verdict = await _decide(FIGURE, tmp_path, "cifra_del_cliente")
+
+    assert (verdict.value, verdict.by) == (["$45.000"], "jev")
+    [(state, questions)] = oracle["fake"].calls
+    assert questions == ("cifra_del_cliente.termino_1",)
+    assert FIGURE.customer in state and FIGURE.text in state and FIGURE.order in state
+
+
+async def test_jev_removes_a_figure_the_reply_does_not_agree_with(tmp_path: Path, oracle, jev) -> None:
+    """«Casi: … serían $47.500» no le da la razón (Jev lo quita)."""
+    _need_v7()
+    oracle["fake"] = FakePerceptionAdapter(
+        {"cifra_del_cliente.termino_1": _noul("cifra_del_cliente.termino_1", 0.05)}
+    )
+    inp = CifraDelCliente(**{**FIGURE.__dict__, "text": "Casi 😊 la cuadrada $25.000 y la ondulada $22.500: serían $47.500."})
+
+    assert ((await _decide(inp, tmp_path, "cifra_del_cliente")).value, oracle["fake"].calls != []) == ([], True)
+
+
+@pytest.mark.parametrize(
+    ("customer", "order", "proposed"),
+    [
+        ("Perfecto, eso me da $45.000 en total, ¿no?", FIGURE.order, ["$45.000"]),
+        ("son 45 mil entonces, ¿cierto?", FIGURE.order, ["$45.000"]),
+        # La cifra cierta del pedido no se le pregunta a Jev.
+        ("me da $47.500, ¿cierto?", FIGURE.order, []),
+        ("¿cuánto me da todo?", FIGURE.order, []),
+        # Sin el pedido (no se sabe cuánto suma) no se juzga.
+        ("Perfecto, eso me da $45.000 en total, ¿no?", None, []),
+    ],
+)
+async def test_figure_proposals(tmp_path: Path, oracle, jev, customer: str, order: str | None, proposed: list[str]) -> None:
+    _need_v7()
+    _yes(oracle, "cifra_del_cliente")
+    inp = CifraDelCliente(**{**FIGURE.__dict__, "customer": customer, "order": order})
+
+    verdict = await _decide(inp, tmp_path, "cifra_del_cliente")
+
+    assert list(verdict.value) == proposed
+    assert (oracle["fake"].calls != []) is bool(proposed)
+
+
 # ── variante_ajena con un producto de presentación única ───────────────────
 
 SINGLE = (
@@ -543,6 +612,7 @@ def test_the_correction_examples_carry_no_figures() -> None:
     palabra por palabra. Con cifras en el ejemplo, con otro producto copiaría
     precios que no son: el ejemplo enseña el tono, los datos los pone el bot."""
     _need_v7()
-    examples = _load(V7 / "domain.yaml")["vocabulary"]["correction_examples"]
+    vocabulary = _load(V7 / "domain.yaml")["vocabulary"]
+    examples = [*vocabulary["correction_examples"], *vocabulary["sum_correction_examples"]]
 
     assert examples and not any(ch.isdigit() for e in examples for ch in e)

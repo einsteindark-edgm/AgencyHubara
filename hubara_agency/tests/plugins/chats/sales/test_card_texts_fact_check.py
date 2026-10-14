@@ -137,7 +137,8 @@ async def test_a_new_mismatch_later_in_the_same_message_is_held_again(tmp_path: 
 )
 def test_the_sales_worker_gives_every_text_tool_the_facts_with_their_sources(tmp_path: Path, monkeypatch, name: str) -> None:
     """Gotcha #6: ejecutar la fábrica caza el nombre que falte. El cupón y el
-    pedido salen de Medusa: sin esas fuentes, esos hechos no se revisarían."""
+    pedido salen de Medusa: sin esas fuentes, esos hechos no se revisarían; lo
+    que acaba de escribir el cliente, del historial (`cifra_del_cliente`)."""
     monkeypatch.setenv("MEDUSA_BASE_URL", "http://medusa.test")
     monkeypatch.setenv("MEDUSA_ADMIN_TOKEN", "dummy")
     import src.plugins.chats.workers.sales  # noqa: F401  (registra las tools)
@@ -147,6 +148,7 @@ def test_the_sales_worker_gives_every_text_tool_the_facts_with_their_sources(tmp
 
     assert isinstance(facts, FactCheck)
     assert facts._promotions is not None and facts._catalog is not None
+    assert facts._history_reader is not None
 
 
 class _DetailCatalog(_Catalog):

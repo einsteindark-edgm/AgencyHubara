@@ -97,6 +97,19 @@ describe("aromas de otro producto", () => {
     );
   });
 
+  it("darle la razón al cliente en una cuenta equivocada se lee en palabras (laboratorio 2026-10-14)", () => {
+    const figure = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "cifra_del_cliente", rule: value });
+
+    expect(capabilityLabel("cifra_del_cliente")).toBe("Darle la razón en una cuenta equivocada");
+    expect(decisionSentence(figure(["$45.000"])).text).toBe(
+      "Devuelve el texto al modelo: le daba la razón al cliente en «$45.000», y su pedido suma otra cosa",
+    );
+    expect(decisionSentence(figure([])).text).toBe("No le da la razón en ninguna cuenta equivocada");
+    expect(jevAnswers({ ...figure(["$45.000"]), answers: [{ q: "cifra_del_cliente.termino_1", p: 0.9 }] })[0]).toContain(
+      "El cliente escribió «$45.000»: ¿el texto le da la razón?",
+    );
+  });
+
   it("cada pregunta de Jev nombra el aroma que revisó", () => {
     const answers = jevAnswers(view([], [{ q: "aroma_ajeno.termino_2", p: 0.07 }]));
 

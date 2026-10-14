@@ -72,6 +72,13 @@ FACT_CHECK_ERROR = "fact_check"
 POLICY_AMOUNTS = (CASH_ON_DELIVERY_MIN_PRODUCTS_COP, SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP)
 
 
+#: Los mensajes del cliente que se leen de su ráfaga (los últimos) y los
+#: eventos de lo último de la charla que dicen de qué productos se habla.
+MAX_BURST_MESSAGES = 6
+MAX_TALK_EVENTS = 8
+#: Sin pedido anotado, los productos de la charla cuyas sumas (uno de cada uno) son ciertas.
+MAX_TALKED_PRODUCTS = 6
+
 #: Lo que se espera a Medusa por el pedido o los cupones: si no responde, ese
 #: hecho no se revisa (el texto nunca espera más que esto por una revisión).
 SOURCE_TIMEOUT_S = 3.0
@@ -123,15 +130,20 @@ class FactCheck:
         promotions: Any = None,
         order_facts: Any = None,
         now_ms: Callable[[], int] | None = None,
+        history_reader: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         """`promotions` (PromotionsPort) y `order_facts` (OrderFacts): las
         fuentes de los cupones y del pedido; sin ellas, esos hechos no se
-        revisan. `now_ms`: el reloj con que se decide qué cupones rigen."""
+        revisan. `now_ms`: el reloj con que se decide qué cupones rigen.
+        `history_reader` (`composition.build_session_history_reader`): el
+        historial del panel, de donde sale lo que acaba de escribir el
+        cliente; sin él, sus cifras no se revisan."""
         self._vault_dir = Path(vault_dir) if vault_dir is not None else None
         self._catalog = catalog
         self._promotions = promotions
         self._order_facts = order_facts
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
+        self._history_reader = history_reader
 
     async def _order(self, metadata: dict[str, Any], text: str) -> tuple[str | None, str | None, str | None, int | None]:
         """(número, etapa, pago, total) del pedido del episodio según
@@ -221,6 +233,11 @@ class FactCheck:
         if total is not None:
             prices.add(total)
         subtotal, breakdown = _subtotal(products, metadata)
+        burst, talk = self._conversation(session_key)
+        figures, truth = _figure_facts(
+            products, metadata, subtotal=subtotal, breakdown=breakdown, total=total, talk=f"{talk}\n{text}",
+            accepted=lambda handle: accepted_prices(self._vault_dir, session_key, handle, snapshot_price_cop=None),
+        )
         own = [*(a for p in focus for a in aromas_of(p)), *(c for p in focus for c in colors_of(p)),
                *(v for p in focus for v in presentations_of(p))]
         return ReplyFacts(
@@ -233,8 +250,35 @@ class FactCheck:
             titles_all=tuple(p.title for p in products if getattr(p, "title", None)),
             own_labels=tuple(dict.fromkeys(own)),
             names=_customer_names(metadata),
+            customer_text=burst, order_figures=figures, figure_truth=truth,
             **coupons,
         )
+
+    def _conversation(self, session_key: str) -> tuple[str, str]:
+        """(lo que el cliente escribió desde la última respuesta de la tienda,
+        lo último de la charla). La ráfaga es la de este turno: el ingest la
+        guarda en el historial antes del turno. Lo último de la charla (textos
+        y títulos de las tarjetas) dice de qué productos se habla cuando
+        todavía no hay pedido anotado. Vacíos sin lector o si falla (las
+        cifras del cliente no se revisan)."""
+        if self._history_reader is None:
+            return "", ""
+        try:
+            events = [e for e in (self._history_reader(session_key) or []) if isinstance(e, dict)]
+        except Exception as exc:  # noqa: BLE001 — sin historial: sus cifras no se revisan
+            logger.warning("💬 [fact_check] historial no disponible ({!r}) session={}", exc, session_key)
+            return "", ""
+        burst: list[str] = []
+        for event in reversed(events):
+            if event.get("role") != "user":
+                break
+            burst.append(str(event.get("content") or ""))
+        talk: list[str] = []
+        for event in events[-MAX_TALK_EVENTS:]:
+            card = event.get("card") if isinstance(event.get("card"), dict) else {}
+            titles = [str(i.get("title")) for i in card.get("items") or () if isinstance(i, dict) and i.get("title")]
+            talk.append(" ".join([str(event.get("content") or ""), *titles]))
+        return "\n".join(reversed(burst[:MAX_BURST_MESSAGES])), "\n".join(talk)
 
     async def held(
         self, session_key: str, text: str, *, tool: str = "send_reply", handles: Sequence[str] | None = None,
@@ -263,6 +307,7 @@ class FactCheck:
             message = fact_message(
                 findings, facts, tool=tool, tone=store.get("correction_tone"),
                 price_examples=list(store.get("correction_examples") or ()),
+                sum_examples=list(store.get("sum_correction_examples") or ()),
             )
         except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
             logger.warning("💬 [TOOL {}] sin revisar los hechos ({!r}) session={}", tool, exc, session_key)
@@ -334,6 +379,79 @@ def _customer_names(metadata: dict[str, Any]) -> tuple[str, ...]:
     slots = draft.get("slots") if isinstance(draft.get("slots"), dict) else {}
     raw = [profile.get("name"), slots.get("nombre_recibe")]
     return tuple(dict.fromkeys(w for r in raw if isinstance(r, str) for w in re.findall(r"[^\W\d_]{3,}", r)))
+
+
+def _figure_facts(
+    products: list[Any], metadata: dict[str, Any], *, subtotal: int | None, breakdown: str | None,
+    total: int | None, talk: str, accepted: Callable[[str], set[int]],
+) -> tuple[tuple[int, ...], str | None]:
+    """(las cifras ciertas, lo cierto en palabras) contra lo que se mira la
+    cifra que afirma el cliente (`cifra_del_cliente`). Con pedido anotado, lo
+    que suma. Sin pedido anotado (laboratorio 2026-10-14: el bot casi nunca lo
+    anotaba antes de la cuenta del cliente), los precios del catálogo de los
+    productos de la charla (`talk`) y sus sumas con uno de cada uno («me da
+    $47.500» por una cuadrada y una ondulada es cierto; «$45.000», no): la
+    cuenta no está hecha y el modelo la hace. Con un pedido registrado sin
+    borrador, o sin un precio, no se sabe (None): no se juzga."""
+    episode = get_active_episode(metadata) or {}
+    if draft_items(get_active_draft(metadata)):
+        promotion = (applied_coupon(metadata) or {}).get("promotion")
+        figures = _order_figures(products, metadata, total=total, promotion=promotion, accepted=accepted)
+        if not figures or subtotal is None or not breakdown:
+            return (), None
+        return figures, f"su pedido ({breakdown}) suma {format_cop(subtotal)} en productos"
+    if episode.get("order_id"):
+        return (), None
+    talked = [(p, sorted({*catalog_prices(p), *accepted(p.handle)})) for p in focus_products(products, draft=None, text=talk)]
+    priced = [(p, prices) for p, prices in talked if prices][:MAX_TALKED_PRODUCTS]
+    sums = {0}
+    for _product, prices in priced:
+        sums |= {s + price for s in sums for price in prices}
+    rates = (SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP)
+    figures = (sums - {0}) | set(rates) | {s + rate for s in sums - {0} for rate in rates}
+    lines = "; ".join(f"{p.title} cuesta {' o '.join(format_cop(x) for x in prices)}" for p, prices in priced)
+    truth = "todavía no hay un pedido anotado" + (f"; en el catálogo: {lines}" if lines else "")
+    # Con dos o tres productos de un precio, la suma de uno de cada uno es la
+    # pista que le sirve a Jev (sonda 2026-10-14: los avisos falsos bajan).
+    if 2 <= len(priced) <= 3 and all(len(prices) == 1 for _p, prices in priced):
+        truth += f" (una de cada una suma {format_cop(sum(prices[0] for _p, prices in priced))})"
+    return tuple(sorted(figures)), truth
+
+
+def _order_figures(
+    products: list[Any], metadata: dict[str, Any], *, total: int | None, promotion: dict[str, Any] | None,
+    accepted: Callable[[str], set[int]],
+) -> tuple[int, ...]:
+    """Las cifras ciertas del pedido del borrador: el precio de cada producto
+    (catálogo y en vivo), cada línea por su cantidad, lo que suman (con cada
+    precio posible), las tarifas de envío y la suma con cada una, con el
+    descuento aplicado, y el total registrado (OrderFacts). Vacío si falta un
+    producto, un precio o una cantidad (sin eso no se juzga la cifra del
+    cliente). El mínimo de contra entrega NO: «1 cuadrada + 1 ondulada me da
+    $45.000» es justo esa cifra."""
+    items = draft_items(get_active_draft(metadata))
+    if not items:
+        return ()
+    singles: set[int] = set()
+    sums = {0}
+    for item in items:
+        product = find_product(products, item.get("producto"))
+        try:
+            quantity = int(str(item.get("cantidad") or 1).strip())
+        except ValueError:
+            return ()
+        prices = {*catalog_prices(product), *accepted(product.handle)} if product is not None else set()
+        if not prices or quantity <= 0:
+            return ()
+        lines = {price * quantity for price in prices}
+        singles |= prices | lines
+        sums = {s + line for s in sums for line in lines}
+    rates = (SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP)
+    out = singles | sums | set(rates) | {s + rate for s in sums for rate in rates}
+    out |= discounted(sums, promotion)
+    if total is not None:
+        out.add(total)
+    return tuple(sorted(out))
 
 
 def _subtotal(products: list[Any], metadata: dict[str, Any]) -> tuple[int | None, str | None]:
