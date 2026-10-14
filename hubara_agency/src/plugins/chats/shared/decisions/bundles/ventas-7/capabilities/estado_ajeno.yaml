@@ -9,7 +9,27 @@
 capability: estado_ajeno
 value: "list<string>"
 input: EstadoDelTexto
-items: {builtin: status_claim_items}
+# Las frases son de la tienda (2026-10-13): un falso positivo, o algo que se
+# escapa, se corrige aquí con otra frase en una versión nueva del paquete, no
+# en el código. Separadas por comas; `*` = cualquier final («despachad*»),
+# `a/b` = una u otra palabra («tu/su»), `…` = hasta tres palabras en medio;
+# tildes y mayúsculas no importan.
+items:
+  builtin: status_claim_items
+  with:
+    pago_confirmado: >-
+      tu/su pago … confirmad*/recibid*/aprobad*/verificad*/registrad*,
+      confirm*/recib*/aprob*/verific* … tu/su pago
+    despachado: >-
+      despachad*, en camino, ya lo/la/los/las enviamos/despachamos, ya sali*,
+      pedido/paquete/orden … enviado/enviada
+    entregado: >-
+      pedido/paquete/orden … entregado/entregada, ya lleg* tu/el/su pedido/paquete/orden,
+      ya te lleg* tu/el/su pedido/paquete/orden
+    # Lo que todavía no pasó: la cláusula con una de estas no se propone.
+    todavia_no: >-
+      cuando, apenas, una vez, en cuanto, será, serán, vamos a, va a, van a, te avisamos, te aviso,
+      te avisaré, te confirmo, te confirmamos, te escribimos, te escribo
 # La regla es de palabras: solo PROPONE (los ítems). Sin Jev no se retiene nada
 # —en `reglas` y en sombra decide `no_items`; en sombra Jev contesta al lado y se
 # mide—: frases ciertas como «te he enviado el link» o «una vez despachado…»

@@ -122,6 +122,14 @@ fuera del resolutor.
   registra en `LAZY_BUILTINS` (las tools no pueden importar Temporal).
   `test_the_catalog_and_the_code_declare_the_same_builtins` exige que
   catálogo y código coincidan.
+- **Las palabras que busca una regla son de la tienda, no del builtin:**
+  van en su `with:` (`variante_ajena`: `words`; `pago_ajeno`, `estado_ajeno`,
+  `cupon_ajeno`, `negacion_falsa`: una frase por parámetro, p. ej.
+  `todavia_no: "cuando, apenas, una vez, te avisamos…"`). El builtin declara
+  los parámetros en `builtins.yaml` y las lee con `fact_rules.phrases` (`*`,
+  `a/b`, `…`; nunca un regex). Un falso positivo de una regla de palabras se
+  arregla agregando una frase en una versión nueva del paquete, no en
+  `fact_rules.py`.
 
 ## Ejemplos de la tienda en el agente (F5)
 

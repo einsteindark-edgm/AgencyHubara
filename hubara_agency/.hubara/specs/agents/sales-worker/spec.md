@@ -1401,7 +1401,12 @@ y en sombra no retienen nada (revisión del 2026-10-13: «te he enviado el
 link», «una vez despachado…» o «las velas de Halloween en promoción» no
 pueden frenar un mensaje por una palabra). Futuro y condicional («será»,
 «apenas», «si agregas otra…»), la regla general («desde $45.000», «en
-adelante») y los modismos («no hay problema») no se proponen.
+adelante») y los modismos («no hay problema») no se proponen. Las frases que
+buscan esas cuatro reglas MUST vivir en el paquete (el `with:` de los ítems de
+cada capacidad, como las palabras de presentación de `variante_ajena`): un
+falso positivo se corrige con otra frase en una versión nueva del paquete, no
+en el código, y las mismas frases deciden si se consulta el pedido o los
+cupones. Una frase del paquete son palabras (`*`, `a/b`, `…`), nunca un regex.
 
 - `precio_ajeno`: los montos que no son el precio del catálogo del producto en
   foco (por unidad o por la cantidad, en vivo o con el cupón aplicado, y sus
@@ -1410,11 +1415,12 @@ adelante») y los modismos («no hay problema») no se proponen.
   no llega al mínimo (no la regla general: «contra entrega es desde $45.000»),
   y un recargo del link distinto del vigente o «sin recargo».
 - `estado_ajeno`: el pago dado por confirmado o el pedido dado por despachado o
-  entregado cuando OrderFacts dice otra cosa. Solo se consulta el pedido si el
-  texto habla del pago o del envío.
+  entregado cuando OrderFacts dice otra cosa. Solo se consulta el pedido si,
+  con un pedido sin pagar ni despachar, el texto diría algo.
 - `cupon_ajeno`: un código que Medusa conoce y no rige para el cliente, o un
   porcentaje de descuento que ningún cupón vigente da. Solo se consulta Medusa
-  si el texto habla de cupones o descuentos.
+  si el texto habla de cupones o descuentos, o escribe algo como un código
+  («Usa AMOR2026 al pagar», en mayúsculas, sin la palabra «cupón»).
 - `negacion_falsa`: lo que el texto niega tener (con un verbo de tenerlo; para
   un aroma, color o presentación también «no viene en») y el catálogo tiene.
 
@@ -1424,7 +1430,8 @@ selector, la lista), no el pedido. El pedido se lee FRESCO de OrderFacts (se
 invalida su caché antes) y un valor viejo o sin confirmar no se juzga. Si una
 fuente no responde (Medusa, OrderFacts), ese hecho no se revisa y el texto no
 espera más de 3 s por ellas (se consultan en paralelo). Con un paquete que no
-trae ninguna de estas decisiones no se lee nada.
+trae ninguna de estas decisiones no se lee nada. `send_reply` lee el catálogo
+UNA vez por texto: lo comparten esta revisión y la de la lista de opciones.
 
 #### Scenario: «las cuadradas en $23.000» (producción, 2026-10-13, turno 3)
 
@@ -1440,6 +1447,12 @@ trae ninguna de estas decisiones no se lee nada.
 - THEN el texto vuelve con «este pedido suma $25.000 en productos y contra entrega es desde $45.000»
 - AND «contra entrega es desde $45.000; te paso el link» sale (la regla no lo propone)
 - AND sin Jev (`reglas`) el texto sale
+
+#### Scenario: Un falso positivo de una regla de palabras se corrige en el paquete
+
+- GIVEN `estado_ajeno` propone «su pedido ya salió o va en camino» para «Tu pedido va en camino mañana a primera hora»
+- WHEN el operador agrega «mañana» a `todavia_no` en una versión nueva del paquete
+- THEN la regla ya no lo propone, sin un cambio de código
 
 #### Scenario: «Tu pago quedó confirmado» con el pago pendiente
 

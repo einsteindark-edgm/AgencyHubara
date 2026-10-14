@@ -348,10 +348,6 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "enumerated_variants": _CATALOG,
         "foreign_labels_rule": _CATALOG,
         "unexplained_prices_rule": _CATALOG,
-        "payment_claims_rule": _CATALOG,
-        "status_claims_rule": _CATALOG,
-        "coupon_claims_rule": _CATALOG,
-        "denial_claims_rule": _CATALOG,
         "admin_leak": _EGRESS,
         "first_contact_greeting": _EGRESS,
         "breaks_persona": _PARTS,
@@ -476,6 +472,16 @@ class BundledCapability:
         if self._spec.items is None:
             return None
         return list(self._call("items", self._spec.items, inp))
+
+    @property
+    def items_params(self) -> dict[str, Any]:
+        """El `with:` de sus ítems (el vocabulario de una regla de palabras);
+        vacío si no decide ítem por ítem."""
+        return dict(self._spec.items.params) if self._spec.items is not None else {}
+
+    def items(self, inp: Any) -> list[dict[str, Any]]:
+        """Los ítems que propone para `inp` (vacío si no decide ítem por ítem)."""
+        return self._items(inp) or []
 
     def rule(self, inp: Any) -> Any:
         return self._call("rule", self._spec.rule, inp)

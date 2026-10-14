@@ -9,7 +9,27 @@
 capability: pago_ajeno
 value: "list<string>"
 input: PagoDelTexto
-items: {builtin: payment_claim_items}
+# Las frases son de la tienda (2026-10-13): un falso positivo, o algo que se
+# escapa, se corrige aquí con otra frase en una versión nueva del paquete, no
+# en el código. Separadas por comas; `*` = cualquier final («despachad*»),
+# `a/b` = una u otra palabra («tu/su»), `…` = hasta tres palabras en medio;
+# tildes y mayúsculas no importan.
+items:
+  builtin: payment_claim_items
+  with:
+    ofrece_contra_entrega: >-
+      contra entrega, contraentrega, pag* al/cuando recib*, pag* al/cuando te llegu*, pag* al/cuando llegu*
+    # Lo que enuncia la regla o una condición sobre el pedido no le ofrece nada
+    # a su pedido: la cláusula con una de estas no se propone.
+    regla_general: >-
+      desde, a partir de, mínimo, más de, por encima de, en adelante, al menos, debe/deben sumar,
+      si agregas/sumas/llevas/compras/pides/completas/añades, si le sumas
+    habla_de_recargo: recargo*, comisión*
+    no_es_recargo: descuento*
+    habla_del_link: link, enlace*
+    sin_recargo: >-
+      sin recargo/comisión, sin ningún recargo/comisión, sin costo adicional,
+      no tiene recargo/comisión, no tiene ningún recargo/comisión
 # La regla es de palabras: solo PROPONE (los ítems). Sin Jev no se retiene nada
 # —en `reglas` y en sombra decide `no_items`; en sombra Jev contesta al lado y se
 # mide—: frases ciertas como «te he enviado el link» o «una vez despachado…»

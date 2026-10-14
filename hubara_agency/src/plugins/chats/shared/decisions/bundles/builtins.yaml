@@ -191,26 +191,6 @@ builtins:
     value: "list<string>"
     input: PreciosDelTexto
     doc: "Los montos del texto que no explica el precio del catálogo de los productos de los que habla (por cantidad, sumas, en vivo o con descuento) ni la política (price_quotes.find_unexplained_amounts)."
-  payment_claims_rule:
-    kind: rule
-    value: "list<string>"
-    input: PagoDelTexto
-    doc: "Contra entrega ofrecida a un pedido que no llega al mínimo, o un recargo del link distinto del configurado (fact_rules.payment_claims)."
-  status_claims_rule:
-    kind: rule
-    value: "list<string>"
-    input: EstadoDelTexto
-    doc: "El pago dado por confirmado o el pedido dado por despachado o entregado cuando OrderFacts dice otra cosa (fact_rules.status_claims)."
-  coupon_claims_rule:
-    kind: rule
-    value: "list<string>"
-    input: CuponDelTexto
-    doc: "Un código que no está vigente o un porcentaje que ningún cupón vigente da (fact_rules.coupon_claims)."
-  denial_claims_rule:
-    kind: rule
-    value: "list<string>"
-    input: NegacionDelTexto
-    doc: "Lo que el texto niega tener y el catálogo sí tiene (fact_rules.denial_claims)."
   foreign_labels_rule:
     kind: rule
     value: "list<string>"
@@ -386,23 +366,27 @@ builtins:
   payment_claim_items:
     kind: items
     input: PagoDelTexto
+    params: {ofrece_contra_entrega: str, regla_general: str, habla_de_recargo: str, no_es_recargo: str, habla_del_link: str, sin_recargo: str}
     fields: {term: string, fact: string}
-    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+    doc: "Contra entrega ofrecida a un pedido que no llega al mínimo, o un recargo del link distinto del configurado: lo que dice el texto (term) y lo cierto (fact). Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
   status_claim_items:
     kind: items
     input: EstadoDelTexto
+    params: {pago_confirmado: str, despachado: str, entregado: str, todavia_no: str}
     fields: {term: string, fact: string}
-    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+    doc: "El pago dado por confirmado o el pedido dado por despachado o entregado cuando OrderFacts dice otra cosa: lo que dice el texto (term) y lo cierto (fact). Las mismas frases deciden si se consulta el pedido. Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
   coupon_claim_items:
     kind: items
     input: CuponDelTexto
+    params: {nombra_codigo: str, habla_de_descuento: str, no_es_descuento: str}
     fields: {term: string, fact: string}
-    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+    doc: "Un código que no está vigente o un porcentaje que ningún cupón vigente da: lo que dice el texto (term) y lo cierto (fact). Las mismas frases deciden si se consultan los cupones. Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
   denial_claim_items:
     kind: items
     input: NegacionDelTexto
+    params: {niega_tener: str, niega_venir: str, no_es_negacion: str}
     fields: {term: string, fact: string}
-    doc: "Un ítem por lo que la regla propone: lo que dice el texto (term) y lo cierto (fact)."
+    doc: "Lo que el texto niega tener y el catálogo sí tiene: lo que dice el texto (term) y lo cierto (fact). Los verbos van detrás de «no», «ya no», «tampoco» o «ni». Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
   foreign_label_items:
     kind: items
     input: OpcionesDelTexto

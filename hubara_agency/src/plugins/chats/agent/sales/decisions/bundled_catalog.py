@@ -26,6 +26,10 @@ from src.plugins.chats.agent.sales.variant_enumeration import (
 from src.plugins.chats.agent.sales.price_quotes import find_unexplained_amounts
 from src.plugins.chats.agent.sales.pricing import format_cop
 from src.plugins.chats.agent.sales.use_cases.fact_rules import (
+    CouponWords,
+    DenialWords,
+    PaymentWords,
+    StatusWords,
     coupon_claims,
     denial_claims,
     payment_claims,
@@ -93,42 +97,28 @@ def unexplained_prices_rule(inp: Any) -> list[str]:
     return list(dict.fromkeys(format_cop(u.amount) for u in found))
 
 
-def _payment(inp: Any) -> list[tuple[str, str]]:
-    return payment_claims(inp.text, subtotal=inp.subtotal, cod_min=inp.cod_min, surcharges=inp.surcharges)
-
-
-def _status(inp: Any) -> list[tuple[str, str]]:
-    return status_claims(inp.text, order=inp.order, stage=inp.stage, pay_status=inp.pay_status)
-
-
-def _coupon(inp: Any) -> list[tuple[str, str]]:
-    return coupon_claims(
-        inp.text, known=inp.known, valid=inp.valid, valid_lines=inp.valid_lines, valid_percents=inp.valid_percents
+def _payment(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    """(lo que dice, lo cierto) de `pago_ajeno`, con las frases del paquete."""
+    return payment_claims(
+        inp.text, subtotal=inp.subtotal, cod_min=inp.cod_min, surcharges=inp.surcharges, words=PaymentWords(**words)
     )
 
 
-def _denial(inp: Any) -> list[tuple[str, str]]:
-    return denial_claims(inp.text, titles=inp.titles, own=inp.own, products=inp.products)
+def _status(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    return status_claims(
+        inp.text, order=inp.order, stage=inp.stage, pay_status=inp.pay_status, words=StatusWords(**words)
+    )
 
 
-def payment_claims_rule(inp: Any) -> list[str]:
-    """Contra entrega o recargo del link que no coinciden con la configuración."""
-    return [term for term, _fact in _payment(inp)]
+def _coupon(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    return coupon_claims(
+        inp.text, known=inp.known, valid=inp.valid, valid_lines=inp.valid_lines, valid_percents=inp.valid_percents,
+        words=CouponWords(**words),
+    )
 
 
-def status_claims_rule(inp: Any) -> list[str]:
-    """Pago o etapa del pedido que no coinciden con OrderFacts."""
-    return [term for term, _fact in _status(inp)]
-
-
-def coupon_claims_rule(inp: Any) -> list[str]:
-    """Cupones o porcentajes de descuento que no están vigentes para el cliente."""
-    return [term for term, _fact in _coupon(inp)]
-
-
-def denial_claims_rule(inp: Any) -> list[str]:
-    """Lo que el texto niega tener y el catálogo sí tiene."""
-    return [term for term, _fact in _denial(inp)]
+def _denial(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    return denial_claims(inp.text, titles=inp.titles, own=inp.own, products=inp.products, words=DenialWords(**words))
 
 
 def foreign_labels_rule(inp: Any) -> list[str]:
@@ -147,20 +137,20 @@ def _claim_items(claims: list[tuple[str, str]]) -> list[dict[str, Any]]:
     return [{"term": term, "fact": fact} for term, fact in claims]
 
 
-def payment_claim_items(inp: Any) -> list[dict[str, Any]]:
-    return _claim_items(_payment(inp))
+def payment_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_payment(inp, words))
 
 
-def status_claim_items(inp: Any) -> list[dict[str, Any]]:
-    return _claim_items(_status(inp))
+def status_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_status(inp, words))
 
 
-def coupon_claim_items(inp: Any) -> list[dict[str, Any]]:
-    return _claim_items(_coupon(inp))
+def coupon_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_coupon(inp, words))
 
 
-def denial_claim_items(inp: Any) -> list[dict[str, Any]]:
-    return _claim_items(_denial(inp))
+def denial_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_denial(inp, words))
 
 
 def foreign_label_items(inp: Any) -> list[dict[str, Any]]:

@@ -432,6 +432,20 @@ async def test_the_coupons_are_not_read_when_the_text_does_not_talk_about_them(t
     assert promotions.calls == 0
 
 
+async def test_a_code_written_as_a_code_is_checked_without_the_word_coupon(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Premortem 2026-10-13: «Usa AMOR2026 al pagar» no traía «cupón» ni
+    «descuento» y los cupones no se consultaban: el vencido salía."""
+    _jev(monkeypatch, {"cupon_ajeno.termino_1": 0.95})
+    promotions = _Promotions()
+
+    held = await _send(_tool(tmp_path, promotions=promotions, now_ms=lambda: NOW_MS), ctx, "Usa AMOR2026 al pagar 🤍")
+
+    assert promotions.calls == 1
+    assert held["error"] == "fact_check" and "«AMOR2026»" in held["message"]
+
+
 async def test_denying_a_product_the_catalog_has_goes_back(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
     _jev(monkeypatch, {"negacion_falsa.termino_1": 0.95})
 
@@ -472,6 +486,18 @@ class _CountingCatalog(_Catalog):
     async def search(self, q: str = "", limit: int = 30):
         self.searches += 1
         return await super().search(q=q, limit=limit)
+
+
+async def test_send_reply_reads_the_catalog_once_per_text(tmp_path: Path, ctx: ToolContext) -> None:
+    """Los hechos y la lista de opciones revisan el mismo texto contra el mismo
+    catálogo: una sola lectura (seguimiento del PR #426)."""
+    catalog = _CountingCatalog()
+    text = "Las de deseos vienen en Noche de Navidad 🎄"
+
+    out = await _send(_tool(tmp_path, catalog=catalog), ctx, text)
+
+    assert out.get("reply") == {"text": text}
+    assert catalog.searches == 1
 
 
 async def test_with_a_bundle_without_the_decisions_no_source_is_read(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:

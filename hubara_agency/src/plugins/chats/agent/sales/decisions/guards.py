@@ -52,6 +52,7 @@ __all__ = [
     "decide_for_session",
     "FACT_CAPABILITIES",
     "check_facts",
+    "fact_words",
     "facts_in_bundle",
     "is_internal_text",
     "option_list",
@@ -192,6 +193,14 @@ def facts_in_bundle() -> bool:
     return any(capability_if_present(name) is not None for name in FACT_CAPABILITIES)
 
 
+def fact_words(name: str) -> dict[str, Any] | None:
+    """Las frases de una regla de palabras de los hechos (`estado_ajeno`,
+    `cupon_ajeno`…): el `with:` de sus ítems en el paquete activo. None si el
+    paquete no trae la decisión (no hay nada que revisar ni que consultar)."""
+    cap = capability_if_present(name)
+    return None if cap is None else cap.items_params
+
+
 async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path | None) -> Any:
     """Lo que el texto le dice al cliente y no coincide con los hechos que
     armó el código (`use_cases.reply_facts.ReplyFacts`): cada capacidad del
@@ -209,7 +218,6 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         PreciosDelTexto,
         VariantesDelTexto,
     )
-    from src.plugins.chats.agent.sales.use_cases import fact_rules
     from src.plugins.chats.agent.sales.use_cases.reply_facts import Findings
 
     async def ask(name: str, inp: Any, default: Any) -> Any:
@@ -247,22 +255,16 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         ask("negacion_falsa", denial, ()),
     )
 
-    def pairs(terms: Sequence[str], claims: list[tuple[str, str]]) -> tuple[tuple[str, str], ...]:
-        """Lo que quedó, con lo cierto que leyó Jev (la misma regla)."""
-        truth = dict(claims)
+    def pairs(name: str, terms: Sequence[str], inp: Any) -> tuple[tuple[str, str], ...]:
+        """Lo que quedó, con lo cierto que leyó Jev (los mismos ítems del paquete)."""
+        cap = capability_if_present(name)
+        truth = {item["term"]: item["fact"] for item in (cap.items(inp) if cap is not None and terms else ())}
         return tuple((term, truth.get(term) or "lo que dice el sistema es distinto") for term in terms)
 
     return Findings(
         aromas=tuple(aromas), colors=tuple(colors), variant=bool(variant), prices=tuple(wrong_prices),
-        payments=pairs(payments, fact_rules.payment_claims(
-            text, subtotal=facts.subtotal, cod_min=facts.cod_min, surcharges=facts.surcharges)),
-        states=pairs(states, fact_rules.status_claims(
-            text, order=facts.order, stage=facts.stage, pay_status=facts.pay_status)),
-        coupons=pairs(coupons, fact_rules.coupon_claims(
-            text, known=facts.coupons_known, valid=facts.coupons_valid, valid_lines=facts.coupons_lines,
-            valid_percents=facts.coupons_percents)),
-        denials=pairs(denials, fact_rules.denial_claims(
-            text, titles=facts.titles_all, own=facts.own_labels, products=facts.titles)),
+        payments=pairs("pago_ajeno", payments, payment), states=pairs("estado_ajeno", states, status),
+        coupons=pairs("cupon_ajeno", coupons, coupon), denials=pairs("negacion_falsa", denials, denial),
     )
 
 

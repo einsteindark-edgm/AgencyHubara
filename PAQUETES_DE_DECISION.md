@@ -368,6 +368,17 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
   la corre: el lugar que la pide usa `registry.capability_if_present(…)` (None
   con un paquete anterior: `CompiledBundle.later`) y no decide nada. Su `about` y su interruptor
   (`bots.CAPABILITIES`) son obligatorios como los de cualquier decisión.
+- **El vocabulario de una regla de palabras va en el paquete** (2026-10-13):
+  las frases que buscan `pago_ajeno`, `estado_ajeno`, `cupon_ajeno` y
+  `negacion_falsa` («contra entrega», «tu/su pago … confirmad*», «no hay …
+  problema*») son de la tienda, como las palabras de presentación de
+  `variante_ajena`, y van en el `with:` de sus ítems. El catálogo declara los
+  parámetros (falta uno = DB004) y `fact_rules.phrases` los lee: frases
+  separadas por comas, `*` = cualquier final, `a/b` = una u otra palabra, `…` =
+  hasta tres palabras en medio; nunca un regex (una frase con otra cosa falla
+  en `test_fact_vocabulary_in_bundle`). Un falso positivo = otra frase en una
+  versión nueva; el código solo sabe qué es una cláusula, qué la niega y cómo
+  se escribe un porcentaje o un código.
 
 **Promover un paquete (procedimiento, premortem del 2026-10-02):**
 

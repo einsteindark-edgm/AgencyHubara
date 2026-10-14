@@ -21,7 +21,7 @@ from typing import Any
 from loguru import logger
 
 from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
-from src.plugins.chats.agent.sales.decisions.guards import check_facts, facts_in_bundle
+from src.plugins.chats.agent.sales.decisions.guards import check_facts, fact_words, facts_in_bundle
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.tools.retention import held_before, hold_once
 from src.plugins.chats.agent.sales.use_cases.order_draft import get_active_draft
@@ -46,9 +46,13 @@ from src.plugins.chats.agent.sales.config.payments import (
 from src.plugins.chats.agent.sales.pricing import accepted_prices, catalog_prices, catalog_unit_price
 from src.plugins.chats.agent.sales.use_cases.coupons import applied_coupon, describe_promotion
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
-from src.plugins.chats.agent.sales.use_cases.fact_rules import COUPON_HINT, STATUS_HINT
+from src.plugins.chats.agent.sales.use_cases.fact_rules import (
+    CouponWords,
+    StatusWords,
+    talks_about_coupons,
+    talks_about_order,
+)
 from src.plugins.chats.shared.draft_items import draft_items, find_product
-from src.sdk.catalogkit import normalize_label
 from src.sdk.connectorkit import coupon_problem
 from src.plugins.chats.agent.sales.use_cases.reply_facts import ReplyFacts, discounted, fact_message
 
@@ -65,6 +69,43 @@ POLICY_AMOUNTS = (CASH_ON_DELIVERY_MIN_PRODUCTS_COP, SHIPPING_RATE_BOGOTA_COP, S
 #: Lo que se espera a Medusa por el pedido o los cupones: si no responde, ese
 #: hecho no se revisa (el texto nunca espera más que esto por una revisión).
 SOURCE_TIMEOUT_S = 3.0
+
+
+class CatalogRead:
+    """El catálogo entero leído a lo sumo UNA vez por texto: `send_reply` lo
+    comparte entre la revisión de los hechos y la de la lista de opciones (antes
+    eran dos lecturas por mensaje). Si la lectura falla, falla igual para las
+    dos: no se reintenta."""
+
+    def __init__(self, catalog: Any) -> None:
+        self._catalog = catalog
+        self._products: list[Any] | None = None
+        self._error: Exception | None = None
+
+    async def products(self) -> list[Any]:
+        if self._error is not None:
+            raise self._error
+        if self._products is None:
+            try:
+                self._products = list((await self._catalog.search(q="", limit=WHOLE_CATALOG)).results)
+            except Exception as exc:
+                self._error = exc
+                raise
+        return self._products
+
+
+def _talks(name: str, words_type: type, talks: Callable[..., bool], text: str) -> bool:
+    """¿El texto habla de lo que revisa `name`, según las frases del paquete?
+    Sin la decisión en el paquete, no; con una frase mal escrita, tampoco (la
+    decisión misma tampoco correría: se registra y el texto sale)."""
+    words = fact_words(name)
+    if words is None:
+        return False
+    try:
+        return talks(text, words_type(**words))
+    except (TypeError, ValueError) as exc:
+        logger.error("💬 [fact_check] las frases de {} no se pueden leer ({})", name, exc)
+        return False
 
 
 class FactCheck:
@@ -86,11 +127,12 @@ class FactCheck:
         self._order_facts = order_facts
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
 
-    async def _order(self, metadata: dict[str, Any], said: str) -> tuple[str | None, str | None, str | None]:
+    async def _order(self, metadata: dict[str, Any], text: str) -> tuple[str | None, str | None, str | None]:
         """(número, etapa, pago) del pedido del episodio según OrderFacts; solo
-        si el texto habla del pago o del envío (sin eso no se consulta)."""
+        si el texto habla del pago o del envío con las frases de `estado_ajeno`
+        (sin eso no se consulta)."""
         order_id = (get_active_episode(metadata) or {}).get("order_id")
-        if self._order_facts is None or not order_id or not STATUS_HINT.search(said):
+        if self._order_facts is None or not order_id or not _talks("estado_ajeno", StatusWords, talks_about_order, text):
             return None, None, None
         try:
             # Fresco: el caché del worker vive 60 s y solo lo invalida el bus de
@@ -108,10 +150,11 @@ class FactCheck:
             return None, None, None
         return f"#{fact.display_id}" if fact.display_id else None, fact.stage, fact.pay_status
 
-    async def _coupons(self, metadata: dict[str, Any], said: str) -> dict[str, tuple[Any, ...]]:
+    async def _coupons(self, metadata: dict[str, Any], text: str) -> dict[str, tuple[Any, ...]]:
         """Los cupones que Medusa conoce y los vigentes; solo si el texto habla
-        de cupones o descuentos (sin eso no se consulta Medusa)."""
-        if self._promotions is None or not COUPON_HINT.search(said):
+        de cupones o descuentos con las frases de `cupon_ajeno`, o escribe algo
+        como un código (sin eso no se consulta Medusa)."""
+        if self._promotions is None or not _talks("cupon_ajeno", CouponWords, talks_about_coupons, text):
             return {}
         try:
             promotions = await asyncio.wait_for(self._promotions.list_active(), timeout=SOURCE_TIMEOUT_S)
@@ -128,13 +171,16 @@ class FactCheck:
             "coupons_percents": tuple(p.value for p in valid if p.discount_type == "percentage"),
         }
 
-    async def facts(self, session_key: str, text: str, *, handles: Sequence[str] | None = None) -> ReplyFacts:
-        """Lo que el código sabe para revisar `text` (una lectura del catálogo).
-        `handles`: los productos de la tarjeta (la ficha, el selector, la
-        lista): esos son el foco, no el pedido (revisión 2026-10-13: la ficha
-        de la Plegaria se comparaba con las velas de deseos del pedido)."""
+    async def facts(
+        self, session_key: str, text: str, *, handles: Sequence[str] | None = None, catalog: CatalogRead | None = None
+    ) -> ReplyFacts:
+        """Lo que el código sabe para revisar `text` (una lectura del catálogo,
+        la de `catalog` si quien llama ya la comparte). `handles`: los
+        productos de la tarjeta (la ficha, el selector, la lista): esos son el
+        foco, no el pedido (revisión 2026-10-13: la ficha de la Plegaria se
+        comparaba con las velas de deseos del pedido)."""
         metadata = FilesystemMetadataStore(self._vault_dir).read(session_key) or {}
-        products = list((await self._catalog.search(q="", limit=WHOLE_CATALOG)).results)
+        products = await (catalog or CatalogRead(self._catalog)).products()
         if handles:
             by_handle = {p.handle: p for p in products}
             focus = [by_handle[h] for h in dict.fromkeys(handles) if h in by_handle]
@@ -147,9 +193,8 @@ class FactCheck:
             prices |= accepted_prices(self._vault_dir, session_key, product.handle, snapshot_price_cop=None)
         coupon = applied_coupon(metadata)
         prices |= discounted(prices, (coupon or {}).get("promotion"))
-        said = normalize_label(text)
         (order, stage, pay_status), coupons = await asyncio.gather(
-            self._order(metadata, said), self._coupons(metadata, said)
+            self._order(metadata, text), self._coupons(metadata, text)
         )
         own = [*(a for p in focus for a in aromas_of(p)), *(c for p in focus for c in colors_of(p)),
                *(v for p in focus for v in presentations_of(p))]
@@ -166,15 +211,17 @@ class FactCheck:
         )
 
     async def held(
-        self, session_key: str, text: str, *, tool: str = "send_reply", handles: Sequence[str] | None = None
+        self, session_key: str, text: str, *, tool: str = "send_reply", handles: Sequence[str] | None = None,
+        catalog: CatalogRead | None = None,
     ) -> str | None:
-        """El envelope que devuelve `text` al modelo, o None (sale)."""
+        """El envelope que devuelve `text` al modelo, o None (sale). `catalog`:
+        la lectura del catálogo que comparte quien llama (si no, una propia)."""
         if self._catalog is None or self._vault_dir is None or not (text or "").strip() or not facts_in_bundle():
             return None
         if held_before(self._vault_dir, session_key, FACT_CHECK_KEY):
             return None
         try:
-            facts = await self.facts(session_key, text, handles=handles)
+            facts = await self.facts(session_key, text, handles=handles, catalog=catalog)
             findings = await check_facts(text, facts, session_id=session_key, vault_dir=self._vault_dir)
         except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
             logger.warning("💬 [TOOL {}] sin revisar los hechos ({}) session={}", tool, exc, session_key)
@@ -216,4 +263,4 @@ def _subtotal(products: list[Any], metadata: dict[str, Any]) -> int | None:
     return total if items else None
 
 
-__all__ = ["FACT_CHECK_ERROR", "FACT_CHECK_KEY", "FactCheck", "held_text"]
+__all__ = ["FACT_CHECK_ERROR", "FACT_CHECK_KEY", "CatalogRead", "FactCheck", "held_text"]

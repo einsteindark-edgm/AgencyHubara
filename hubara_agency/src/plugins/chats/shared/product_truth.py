@@ -252,18 +252,11 @@ def foreign_labels(
     )
 
 
-#: Lo que niega TENER algo (no cualquier «no»: «¿No te gustaría…?» no niega
-#: nada). Va en la misma cláusula que el nombre, antes o después.
-_DENIAL_HEAD = r"\b(?:no|ya no|tampoco|ni)\s+(?:(?:lo|la|los|las|le|les|nos|te)\s+)?"
-#: Negar TENER algo (un producto): «no tenemos», «no la manejamos», «ya no hay».
-HAVE_DENIAL = _DENIAL_HEAD + (
-    # «no hay problema / afán / de qué»: no niega tener nada.
-    r"(?:tenemos|manejamos|hay(?!\s+(?:problema|lio|afan|de que|cuidado|inconveniente|prisa))|"
-    r"existe|existen|hacemos|trabajamos|contamos|queda|quedan|"
-    r"ofrecemos|vendemos|esta disponible|estan disponibles)\b"
-)
-#: Además, negar cómo VIENE (un aroma, un color, una presentación): «no viene en».
-COMES_DENIAL = _DENIAL_HEAD + r"(?:viene|vienen)\b"
+#: La cabeza de una negación de TENER algo (no cualquier «no»: «¿No te
+#: gustaría…?» no niega nada): «no», «ya no», «tampoco» o «ni» y quizá un
+#: pronombre («no la manejamos»). Los verbos que siguen son de la tienda y
+#: vienen del paquete (`fact_rules.DenialWords`).
+DENIAL_HEAD = r"\b(?:no|ya no|tampoco|ni)\s+(?:(?:lo|la|los|las|le|les|nos|te)\s+)?"
 
 
 def clauses(text: str | None) -> list[str]:
@@ -286,16 +279,21 @@ def affirms(text: str | None, pattern: str) -> bool:
 
 
 def denied_labels(
-    text: str | None, labels: tuple[str, ...] | list[str], *, how: tuple[str, ...] = (HAVE_DENIAL, COMES_DENIAL)
+    text: str | None, labels: tuple[str, ...] | list[str], *, verbs: str, ignore: str | None = None
 ) -> tuple[str, ...]:
     """Las etiquetas (títulos, aromas, colores) que el texto niega tener: las
     que nombra en una cláusula con un verbo que niega tenerlas («no tenemos
-    la Plegaria de Luz», «Lavanda no la manejamos»), en orden. `how`: qué
-    negaciones cuentan (para un producto, solo las de tenerlo: «la Plegaria
-    no viene en Chanel» niega el aroma, no el producto)."""
-    denials = re.compile("|".join(f"(?:{p})" for p in how))
+    la Plegaria de Luz», «Lavanda no la manejamos»), en orden. `verbs`: el
+    regex de los verbos que niegan detrás de `DENIAL_HEAD` (para un producto,
+    solo los de tenerlo: «la Plegaria no viene en Chanel» niega el aroma, no
+    el producto). `ignore`: el de lo que parece negación y no lo es («no hay
+    problema»), que se quita de la cláusula antes de buscar."""
+    denials = re.compile(f"{DENIAL_HEAD}(?:{verbs})")
+    skip = re.compile(ignore) if ignore else None
     out: list[str] = []
     for clause in clauses(text):
+        if skip is not None:
+            clause = skip.sub(" ", clause)
         if not denials.search(clause):
             continue
         for _start, _end, label in _spans(_words(clause), labels):

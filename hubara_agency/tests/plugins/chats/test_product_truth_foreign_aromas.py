@@ -162,6 +162,8 @@ def test_affirms_finds_a_claim_its_clause_does_not_deny(text: str, expected: boo
 
 
 TITLES = ("Plegaria de Luz", "Velas de deseos cuadradas")
+#: Los verbos los trae el paquete (`negacion_falsa`); aquí, unos de prueba.
+HAVE = r"\b(?:tenemos|manejamos|hay)\b"
 
 
 @pytest.mark.parametrize(
@@ -175,4 +177,11 @@ TITLES = ("Plegaria de Luz", "Velas de deseos cuadradas")
     ],
 )
 def test_denied_labels_are_the_ones_a_denial_verb_takes(text: str, labels: tuple, expected: tuple) -> None:
-    assert denied_labels(text, labels) == expected
+    assert denied_labels(text, labels, verbs=HAVE) == expected
+
+
+def test_what_only_looks_like_a_denial_is_ignored() -> None:
+    assert denied_labels("No hay problema con la Plegaria de Luz.", TITLES, verbs=HAVE) == ("Plegaria de Luz",)
+    assert denied_labels(
+        "No hay problema con la Plegaria de Luz.", TITLES, verbs=HAVE, ignore=r"\bno hay problema\b"
+    ) == ()
