@@ -54,6 +54,7 @@ from src.plugins.chats.agent.sales.decisions.contracts import EgressInput, Egres
 from src.sdk.connectorkit import FakePerceptionAdapter, TypedAnswer
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+from src.plugins.chats.shared.quotes import build_quote_note
 from tests.sales_workflow_versions import PARITY_SUITES
 from tests.test_sales_workflow_debounce import (
     FIRST_CONTACT_GREETING,
@@ -1201,26 +1202,31 @@ _ADDRESS = (
 )
 
 
-def _writes(box: dict, text: str):
-    """El cliente escribe `text` mientras corre la activity que lo llama."""
+def _writes(box: dict, text: str, context: list[str] | None = None):
+    """El cliente escribe `text` mientras corre la activity que lo llama
+    (`context`: las notas que el ingest le pega, p. ej. la de una cita)."""
 
     async def hook() -> None:
-        await box["handle"].signal(HubaraSalesSessionWorkflowV2.send_message, args=[text, None, None])
+        await box["handle"].signal(HubaraSalesSessionWorkflowV2.send_message, args=[text, None, context])
 
     return hook
 
 
-def _egress_while_the_customer_writes(box: dict, *, at_call: int, text: str | tuple[str, ...], seen: list[str]):
+def _egress_while_the_customer_writes(
+    box: dict, *, at_call: int, text: str | tuple[str, ...], seen: list[str],
+    contexts: tuple[list[str] | None, ...] = (),
+):
     """El egreso deja salir el texto tal cual; en su llamada `at_call` el
-    cliente escribe (uno o varios mensajes) mientras corre."""
+    cliente escribe (uno o varios mensajes) mientras corre. `contexts[i]`:
+    las notas del ingest del mensaje i."""
     texts = (text,) if isinstance(text, str) else text
 
     @activity.defn(name="decide_egress")
     async def decide_egress(inp: EgressInput) -> EgressOutput:
         seen.append(inp.final_text)
         if len(seen) == at_call:
-            for message in texts:
-                await _writes(box, message)()
+            for i, message in enumerate(texts):
+                await _writes(box, message, contexts[i] if i < len(contexts) else None)()
         return EgressOutput(text=inp.final_text, llm_text=inp.final_text, final_text=inp.final_text)
 
     return decide_egress
@@ -1394,7 +1400,7 @@ _CATALOG_DELIVERED = [{"kind": "products_list", "wamid": "wamid.cat", "ok": True
 
 
 async def _catalog_then_a_message_during_the_egress(
-    tmp_path: Path, text: str | tuple[str, ...] = "y de navidad?"
+    tmp_path: Path, text: str | tuple[str, ...] = "y de navidad?", contexts: tuple[list[str] | None, ...] = ()
 ) -> Tracker:
     """El turno ya pidió el catálogo cuando el cliente escribe otra cosa
     mientras corre el egreso (antes de que el catálogo le llegue)."""
@@ -1405,7 +1411,7 @@ async def _catalog_then_a_message_during_the_egress(
         responses=[_tool_resp("present_products"), _final("De navidad tenemos la Vela Pino 🤍")],
         tool_results={"present_products": json.dumps({"queued": True})},
         flush_results=_CATALOG_DELIVERED,
-        replace=[_egress_while_the_customer_writes(box, at_call=1, text=text, seen=[])],
+        replace=[_egress_while_the_customer_writes(box, at_call=1, text=text, seen=[], contexts=contexts)],
         box=box,
     )
 
@@ -1436,6 +1442,42 @@ async def test_the_turn_after_an_unfinished_burst_knows_it_continues(tmp_path: P
     first, second = _customer_traces(tracker)
     assert "continuation_note" in second["context_notes"]
     assert "continuation_note" not in first["context_notes"]
+
+
+_SET_QUOTE = build_quote_note({"id": "wamid.bot.set", "author": "agent", "text": "El set trae las tres velas juntas."})
+
+
+async def test_a_leftover_message_that_quotes_another_one_is_read_against_the_quote(tmp_path: Path) -> None:
+    """Caso del 2026-10-13 (anuncio de Halloween): mientras el bot respondía
+    su mensaje anterior, el cliente citó la línea del set y escribió «Estás».
+    La nota de continuación pedía leerlo «como un solo hilo» con lo que venía
+    escribiendo y contradecía a la nota de la cita: el modelo lo leyó como
+    «¿estás ahí?» y volvió a preguntar cuál quería. Con la cita, la nota dice
+    que se refiere al mensaje citado, y la nota de la cita sigue en el turno."""
+    tracker = await _catalog_then_a_message_during_the_egress(tmp_path, text="Estás", contexts=([_SET_QUOTE],))
+
+    second = _customer_prompts(tracker)[1]
+    notes = second.plugin_context or []
+    [note] = [n for n in notes if n.startswith("[CONTINUACIÓN")]
+    assert '"Estás"' in note and "«¿me mandas el catálogo?»" in note
+    assert "un solo hilo" not in note
+    assert "citando un mensaje anterior" in note and "se refiere a ESE mensaje" in note
+    assert "última pregunta" in note
+    assert _SET_QUOTE in notes
+
+
+async def test_among_several_leftover_messages_the_note_marks_the_one_that_quotes(tmp_path: Path) -> None:
+    """Dos mensajes que no alcanzaron, el segundo citando: la nota los lee
+    como un hilo pero marca cuál cita, para que no se lea contra lo anterior."""
+    tracker = await _catalog_then_a_message_during_the_egress(
+        tmp_path, text=("todas son bonitas", "Estas"), contexts=(None, [_SET_QUOTE])
+    )
+
+    second = _customer_prompts(tracker)[1]
+    [note] = [n for n in second.plugin_context or [] if n.startswith("[CONTINUACIÓN")]
+    assert '1) "todas son bonitas"\n' in note
+    assert '2) "Estas" (citando un mensaje anterior)' in note
+    assert "Los que van citando un mensaje se refieren a ESE mensaje" in note
 
 
 def _answers_during_the_capi_flush(box: dict, text: str):

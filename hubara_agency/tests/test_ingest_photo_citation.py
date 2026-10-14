@@ -233,6 +233,21 @@ async def test_reply_quoting_a_bot_text_bubble_names_it_for_the_bot():
     assert "un mensaje que le enviamos" in note and "Tu pedido #64 entró en preparación." in note
 
 
+def test_a_pointing_word_citing_a_text_points_at_what_that_text_names():
+    """Caso del 2026-10-13 (anuncio de Halloween): «Estás» (el teclado le puso
+    tilde a «Estas») citando la línea del set; el modelo lo leyó «¿estás ahí?»
+    y volvió a preguntar cuál quería. La nota de la foto ya decía qué es
+    «esta» o «esa»; la del texto citado no."""
+    from src.plugins.chats.shared.quotes import build_quote_note
+
+    note = build_quote_note({"author": "agent", "text": "El set trae las tres velas juntas."})
+
+    assert "«El set trae las tres velas juntas.»" in note
+    assert "«estas»" in note and "tilde" in note
+    assert "señala lo que nombra ese mensaje" in note
+    assert "no vuelvas a preguntar cuál" in note
+
+
 # --- El color de la vela de la foto (caso 2026-10-09) -------------------------
 # «¿No viene en este color?» citando la foto de Encanto Silvestre: la nota decía
 # el producto y un «diseño» que era el nombre del archivo del banner, no el
