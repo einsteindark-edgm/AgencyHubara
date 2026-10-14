@@ -103,8 +103,11 @@ class ChatViewModel @AssistedInject constructor(
             orderRef = chat.orderRef,
             windowOpen = chat.windowExpiresAtMs?.let { it > clock.nowMs() } ?: true,
             stage = set?.stage,
-            // Las fotos se cargan con el token de sesión, y solo desde nuestro backend.
-            messages = chat.messages.map { m -> m.copy(imageUrl = config.mediaUrl(m.imageUrl)) }.toImmutableList(),
+            // Las fotos se cargan con el token de sesión, y solo desde nuestro backend; las de una tarjeta, también
+            // del CDN de los productos (`https://`, sin token).
+            messages = chat.messages.map { m ->
+                m.copy(imageUrl = config.mediaUrl(m.imageUrl), card = m.card?.reachable(config::mediaUrl))
+            }.toImmutableList(),
             // Las burbujas solo tienen sentido con el humano en control y la ventana abierta.
             suggestions = if (human && set?.windowOpen != false) set?.suggestions.orEmpty().toImmutableList() else persistentListOf(),
             pending = chat.pendingActions.toImmutableList(),

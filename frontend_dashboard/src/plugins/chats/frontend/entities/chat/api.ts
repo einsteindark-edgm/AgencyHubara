@@ -312,13 +312,14 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
   // persiste un marker human-readable y acá se pinta como nota de sistema —
   // sin esto el operador ve huecos y no puede seguir la conversación.
   if (m.ui_type === "ui_component_sent") {
-    // Los botones SÍ se pueden reconstruir como el mensaje real que recibió el
-    // cliente (cuerpo + botones): dejan de ser una nota y vuelven a ser una
-    // burbuja del bot. El resto de componentes no tiene forma que recuperar.
-    if (m.event?.kind === "bot_buttons") {
+    // Los botones y las tarjetas (catálogo, menú, enlace, fotos con el texto
+    // entero que leyó el cliente) se reconstruyen como el mensaje real: dejan
+    // de ser una nota y vuelven a ser una burbuja del bot — o del operador, si
+    // lo mandó desde la app. El historial viejo sin tarjeta sigue como nota.
+    if (m.event?.kind === "bot_buttons" || m.event?.kind === "bot_card") {
       return {
         kind: "out",
-        author: "bot",
+        author: m.sender === "human" ? "human" : "bot",
         time: formatBogotaHourMinute(unix),
         dayIso,
         status: "read",

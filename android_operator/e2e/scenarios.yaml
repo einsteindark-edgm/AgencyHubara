@@ -720,3 +720,31 @@ scenarios:
     checks:
       - screen_has: "2× Plegaria de Luz"
       - sent_nothing_matching: ['"to": "000000000103"']
+
+  - id: S30_lo_que_envio_el_bot_se_ve_como_lo_vio_el_cliente
+    title: El catálogo y el resumen del pedido se ven como los vio el cliente, no como notas grises
+    resumen: "Caso 2026-10-13: el bot saludó DENTRO del texto del catálogo y la app solo decía, en gris, «El bot envió el catálogo con 2 productos». Ahora cada envío del bot es su tarjeta: qué fue («Catálogo»), el texto entero que leyó el cliente con la negrita de WhatsApp y los productos con su precio. En el resumen del pedido se ven sus tres botones y el toque del cliente se lee «Tocó «✅ Confirmar»», no como código."
+    # El catálogo llega antes de abrir el chat (así también lo ve Artemis, que solo corre `setup` + `goal`); el
+    # resumen llega con el chat abierto: lo nuevo tiene que verse sin desplazar (lo encontró este escenario).
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {inject: "bot-card wa_000000000101 catalogo"},
+            # Laura sube al primer lugar de la bandeja: se toca su fila cuando ya se acomodó.
+            {expect: {text: "El bot envió el catálogo", timeout: 30}}, {wait: 1}]
+    script:
+      - {tap: "000000000101"}
+      - {expect: {text: "Buenas tardes, bienvenida a Hubara", timeout: 30}}
+      - {expect_all: ["Catálogo", "Velas de deseos onduladas", "$22.500 COP"]}
+      - {shot: catalogo-con-saludo}
+      - {inject: "bot-card wa_000000000101 resumen --tap '✅ Confirmar'"}
+      - {expect: {text: "Resumen para confirmar", timeout: 30}}
+      - {expect_all: ["Modificar", "Cancelar", "Tocó «"]}
+      - {shot: resumen-con-toque}
+    goal: |
+      Abre el chat 000000000101 (Laura Prueba). Lo último que le mandó el bot es un catálogo.
+      1. Di qué dice el encabezado de esa tarjeta, qué texto le llegó a la clienta (palabra por palabra) y qué productos y
+         precios muestra. ¿Se entiende de un vistazo que fue un catálogo y que el bot saludó?
+      2. Sube un poco en el chat: hay una foto del producto que mandó el bot. Di cómo se ve y qué texto lleva.
+      3. Di si en algún lado aparece una nota gris «El bot envió…» o un texto entre corchetes como «[el cliente…]».
+    checks:
+      - screen_lacks: "El bot envió"
+      - screen_lacks: "[el cliente tocó el botón"
