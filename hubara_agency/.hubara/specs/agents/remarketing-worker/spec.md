@@ -170,9 +170,11 @@ respondía el 25 %; el 2º, a +2 h del 1º, el 4 %; el 4º y el 5º, nadie.
 El contexto del gancho MUST reconocer el caso con un hecho, no con el LLM:
 en el episodio activo el cliente solo escribió ANTES de nuestra primera
 respuesta, esa respuesta traía una tarjeta de productos (`products_list` /
-`product_detail`) y no hay pedido a medias. La nota de la tarjeta en el
-historial MUST nombrar los productos que vio (`products`), y la ficha de esos
-productos MUST ir con la descripción entera.
+`product_detail`), no hay pedido a medias, registrado ni con el pago
+pendiente (`transactional_hook`) y no es posventa. La nota de la tarjeta en el
+historial MUST nombrar los productos que vio (`products`), y la ficha de los
+primeros 4 MUST ir con la descripción entera en el 1er toque (la de siempre en
+los demás).
 
 - 1er toque: si la ficha de lo que vio tiene descripción, el trigger MUST pedir
   que le explique qué es y para qué sirve (con la ficha real, sin repetir
@@ -180,19 +182,24 @@ productos MUST ir con la descripción entera.
   pendiente», y cerrar con una pregunta fácil. Sin descripción, el gancho de
   siempre. El toque enviado MUST agendar el 2º para la mañana siguiente del
   cliente (9:00 hora local; si no cabe en su ventana de 24 h con 2 h de margen
-  y la ventana cierra después de las 8:15, en ese momento; si la mañana no
-  existe dentro de la ventana, a las 19:00 del mismo día).
+  y la ventana cierra después de que empieza la mañana —15 min después del
+  inicio del horario permitido de Terraform—, en ese momento; si la mañana no
+  existe dentro de la ventana, a las 19:00 del mismo día). Si ni eso cabe —la
+  ventana cierra antes del hueco normal desde este toque, o la tarde cae en
+  horas de silencio—, no agenda nada: hueco normal de la escalera.
 - 2º toque: si la tienda declara `vocabulary.practical_facts`, el trigger MUST
   resolverle envío, tiempos y pago con SOLO esos datos (tiempos como los de
   siempre, nunca una promesa de fecha; tarifas como mínimas; la condición del
   contra entrega). Sin esos datos, el seguimiento de siempre.
 - El último toque de la escalera MUST saberse el último con el tope real de
   Frecuencia (no 5 fijo).
-- Un número del gancho (horas, tamaños, días, valores) que no esté en la ficha,
-  la charla, la campaña, el motivo ni los datos de la tienda MUST NOT llegar al
-  cliente: el workflow redacta UNA vez más con el gancho corto de siempre, y si
-  también inventa, el toque es una abstención. El gancho bloqueado MUST NOT
-  entrar al historial del LLM.
+- Un número del gancho PROACTIVO (horas, tamaños, días, valores; también en
+  palabras desde diez, «45 mil» = 45000, sin las horas del día) que no esté en
+  la ficha, la charla, la campaña, el motivo ni —solo en el 2º toque— los datos
+  de la tienda MUST NOT llegar al cliente: el workflow redacta UNA vez más con
+  el gancho corto de siempre, y si también inventa, el toque es una
+  abstención. El gancho bloqueado MUST NOT entrar al historial del LLM. La
+  respuesta a un mensaje del cliente MUST NOT pasar por esta guarda.
 
 Todo detrás de `workflow.patched("remarketing-catalog-silent-v1")`.
 
@@ -208,6 +215,11 @@ Todo detrás de `workflow.patched("remarketing-catalog-silent-v1")`.
 - WHEN el gancho responde «La Calabaza dura 60 horas 🎃»
 - THEN ese texto no se envía ni entra al historial del LLM
 - AND se redacta el gancho corto de siempre y se envía ese
+
+#### Scenario: El cliente escribe mientras se arma el 1er toque
+- GIVEN el cliente se calló tras el catálogo y escribe «¿cuánto vale el envío a Medellín?» mientras se arma el toque
+- WHEN el turno pasa a ser suyo y la respuesta trae «$16.940»
+- THEN la respuesta sale (la guarda de números es del gancho proactivo)
 
 #### Scenario: Quien conversó sigue como siempre
 - GIVEN el cliente respondió después de la tarjeta del catálogo

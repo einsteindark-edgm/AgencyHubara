@@ -27,13 +27,11 @@ from src.plugins.chats.agent.remarketing.use_cases.context import (
     context_from_metadata,
     customer_text_for,
     episode_shown_titles,
+    hook_number_sources,
     named_products,
 )
 from src.plugins.chats.shared.agent_decisions import decide_catalog_context, decide_contact
-from src.plugins.chats.shared.product_truth import (
-    numbers_in,
-    unavailable_terms,
-)
+from src.plugins.chats.shared.product_truth import unavailable_terms
 from src.plugins.chats.shared.store_pack import vocabulary
 from src.sdk.catalogkit import CatalogError, get_catalog_client
 from src.sdk.messagingkit import effective_max_touches
@@ -44,6 +42,9 @@ _CATALOG_LIMIT = 200
 #: la descripción del producto que vio, para el toque que se lo EXPLICA
 #: (análisis 2026-10-13); la ficha de siempre se corta a 280.
 _EXPLAIN_DESCRIPTION_CHARS = 900
+#: Cuántos productos de la tarjeta llevan su ficha: el catálogo completo eran
+#: hasta 30 fichas de 900 caracteres en cada toque (revisión del PR #426).
+_EXPLAIN_MAX_PRODUCTS = 4
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -126,9 +127,12 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
         # Se calló tras el catálogo (análisis 2026-10-13): la ficha ENTERA de
         # lo que vio en la tarjeta, para explicárselo.
         titles = {p.title for p in products}
-        seen = [t for t in episode_shown_titles(metadata or {}, events) if t in titles]
+        seen = [t for t in episode_shown_titles(metadata or {}, events) if t in titles][:_EXPLAIN_MAX_PRODUCTS]
         named = list(dict.fromkeys([*named, *seen]))
-        description_chars = _EXPLAIN_DESCRIPTION_CHARS
+        # La ficha entera es para el toque que explica (el 1º); los demás, la
+        # de siempre.
+        if context.touch_number in (None, 1):
+            description_chars = _EXPLAIN_DESCRIPTION_CHARS
     facts_kwargs = {"description_chars": description_chars} if description_chars else {}
     described = context.silent_after_catalog and any(
         (p.description or "").strip() for p in products if p.title in set(named)
@@ -142,16 +146,9 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
 
 
 def _with_allowed_numbers(context: RemarketingContext) -> RemarketingContext:
-    """Los números que el gancho puede escribir: los de la ficha, la charla,
-    la campaña, el motivo y los datos de la tienda."""
-    sources = "\n".join((
-        context.catalog_facts,
-        context.transcript,
-        context.campaign_context,
-        context.tag_motivo,
-        str(vocabulary().get("practical_facts") or ""),
-    ))
-    return replace(context, allowed_numbers=numbers_in(sources))
+    """Los números que el gancho puede escribir (`hook_number_sources`)."""
+    practical_facts = str(vocabulary().get("practical_facts") or "")
+    return replace(context, allowed_numbers=hook_number_sources(context, practical_facts=practical_facts))
 
 
 async def _catalog_products() -> list[Any]:

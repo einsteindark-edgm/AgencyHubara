@@ -151,11 +151,15 @@ def ladder_state(
 #: Es el valor que el workflow le pasa a `record_remarketing_touch_activity`.
 NEXT_TOUCH_MORNING = "manana_siguiente"
 NEXT_MORNING_HOUR = 9
-#: La mañana arranca con el horario permitido (quiet hours terminan a las
-#: 8:00): adelantar el toque para no salir de la ventana, nunca antes de esto.
-EARLIEST_MORNING = (8, 15)
+#: El horario permitido por defecto (el de `quiet_hours`; en producción lo
+#: fija Terraform: `WATCHDOG_QUIET_HOURS_START/END`). La mañana arranca 15 min
+#: después de que empieza: adelantar el toque para no salir de la ventana,
+#: nunca antes de eso; la tarde, antes de que termine.
+DEFAULT_ALLOWED_FROM = (8, 0)
+DEFAULT_ALLOWED_UNTIL = (21, 30)
+_MORNING_LEAD_MIN = 15
 #: Sin mañana dentro de la ventana (el cliente escribió temprano): la tarde
-#: del mismo día, antes de que empiecen las quiet hours (21:30).
+#: del mismo día.
 EVENING_HOUR = 19
 #: Margen antes de que cierre la ventana de 24 h: el ciclo corre cada 45 min,
 #: y fuera de la ventana Meta solo acepta plantilla.
@@ -166,22 +170,41 @@ def _at(day: datetime, hour: int, minute: int = 0) -> int:
     return int(day.replace(hour=hour, minute=minute, second=0, microsecond=0).timestamp() * 1000)
 
 
-def next_morning_at_ms(touch_ms: int, window_expires_ms: int, tz: tzinfo) -> int:
-    """Cuándo sale el toque agendado para «la mañana siguiente» a `touch_ms`.
+def next_morning_at_ms(
+    touch_ms: int,
+    window_expires_ms: int,
+    tz: tzinfo,
+    *,
+    allowed_from: tuple[int, int] = DEFAULT_ALLOWED_FROM,
+    allowed_until: tuple[int, int] = DEFAULT_ALLOWED_UNTIL,
+) -> int | None:
+    """Cuándo sale el toque agendado para «la mañana siguiente» a `touch_ms`;
+    None = no cabe: hueco normal de la escalera.
 
-    Pura (R-DET): las horas son las locales del cliente (`tz`). A las 9:00 del
-    día siguiente si cabe en la ventana de 24 h con su margen; si no cabe pero
-    la ventana cierra después de las 8:15, en ese último momento; y si la
-    mañana no existe dentro de la ventana, a las 19:00 del mismo día (nunca
-    antes del hueco normal desde el toque anterior)."""
+    Pura (R-DET): las horas son las locales del cliente (`tz`) y el horario
+    permitido es el que se le pasa (`allowed_from`/`allowed_until`). A las 9:00
+    del día siguiente si cabe en la ventana de 24 h con su margen; si no cabe
+    pero la ventana cierra después de que empieza la mañana, en ese último
+    momento; y si la mañana no existe dentro de la ventana, a las 19:00 del
+    mismo día (nunca antes del hueco normal desde el toque anterior). Si ni
+    eso cabe —la ventana cierra antes del hueco normal, o la tarde caería en
+    horas de silencio—, None (revisión de producción del PR #426: agendaba el
+    2º ANTES del 1º o a las 22:30)."""
     window_end = window_expires_ms - WINDOW_MARGIN_MS
+    earliest_next = touch_ms + LADDER_GAPS_MS[1]
+    if window_end < earliest_next:
+        return None
     touched = datetime.fromtimestamp(touch_ms / 1000, tz)
     next_day = touched + timedelta(days=1)
-    morning = min(_at(next_day, NEXT_MORNING_HOUR), window_end)
-    if morning >= _at(next_day, *EARLIEST_MORNING):
+    lead = datetime(2000, 1, 1, *allowed_from) + timedelta(minutes=_MORNING_LEAD_MIN)
+    earliest_morning = _at(next_day, lead.hour, lead.minute)
+    morning = min(max(_at(next_day, NEXT_MORNING_HOUR), earliest_morning), window_end)
+    if morning >= earliest_morning:
         return morning
-    evening = max(_at(touched, EVENING_HOUR), touch_ms + LADDER_GAPS_MS[1])
-    return min(evening, window_end)
+    evening = min(max(_at(touched, EVENING_HOUR), earliest_next), window_end)
+    if evening >= _at(touched, *allowed_until):
+        return None
+    return evening
 
 
 def record_touch(

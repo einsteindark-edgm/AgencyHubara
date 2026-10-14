@@ -21,6 +21,7 @@ verificación lo veían.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -86,6 +87,37 @@ def _named(names: list[str]) -> str:
     return f"{shown} y {rest} más" if rest > 0 else shown
 
 
+#: Las llaves del sobre de `present_products` que van al principio del JSON:
+#: sobreviven al corte de la traza (`TurnResult.tool_events` lo corta a 4000).
+_HEAD_TEXT = re.compile(r'"(kind|category)"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_HEAD_INT = re.compile(r'"(count)"\s*:\s*(\d+)')
+_HEAD_LIST = re.compile(r'"(missing|left_out)"\s*:\s*\[([^\]]*)\]')
+_TITLE = re.compile(r'"title"\s*:\s*"((?:[^"\\]|\\.)*)"')
+
+
+def _envelope(result: Any) -> dict[str, Any] | None:
+    """El sobre de la tool. Si llegó cortado (revisión del PR #426: el catálogo
+    completo pasa de 4000 caracteres), lo que se lee de su principio: `kind`,
+    `count`, `category`, `missing`, `left_out` y los títulos que alcanzaron."""
+    if not isinstance(result, str):
+        return None
+    try:
+        payload = json.loads(result)
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        return payload
+    head: dict[str, Any] = {key: json.loads(f'"{value}"') for key, value in _HEAD_TEXT.findall(result)[:2]}
+    head.update({key: int(value) for key, value in _HEAD_INT.findall(result)[:1]})
+    for key, items in _HEAD_LIST.findall(result):
+        head[key] = re.findall(r'"((?:[^"\\]|\\.)*)"', items)
+    if "kind" not in head:
+        return None
+    if head.get("kind") == "products_list" and "count" in head:
+        head["products"] = [{"title": json.loads(f'"{t}"')} for t in _TITLE.findall(result)]
+    return head
+
+
 def card_contents(name: str, args: Mapping[str, Any], result: Any) -> str | None:
     """Lo que la tarjeta `name` MUESTRA: los productos de la lista, el de la
     ficha, las etiquetas de los botones. None si no muestra nada de eso. Lo lee
@@ -103,15 +135,15 @@ def card_contents(name: str, args: Mapping[str, Any], result: Any) -> str | None
         return f"{what}: {_handle_name(handle)}"
     if name != "present_products":
         return None
-    try:
-        payload = json.loads(result) if isinstance(result, str) else None
-    except ValueError:
-        payload = None
-    if not isinstance(payload, dict):
+    payload = _envelope(result)
+    if payload is None:
         return None
     if payload.get("kind") == "categories":
         return f"Menú de categorías del catálogo ({payload.get('count')} productos)"
-    handles = _listed(args.get("handles"))
+    # Solo lo que salió: no lo que la tool no encontró, no cupo o estaba incompleto.
+    not_shown = {str(h) for key in ("missing", "left_out") for h in _listed(payload.get(key))}
+    not_shown |= {str(i.get("handle")) for i in _listed(payload.get("incomplete")) if isinstance(i, Mapping)}
+    handles = [h for h in _listed(args.get("handles")) if str(h) not in not_shown]
     if handles:
         return "Lista de productos: " + _named([_handle_name(h) for h in handles])
     titles = [str(p.get("title")) for p in payload.get("products") or [] if isinstance(p, Mapping) and p.get("title")]

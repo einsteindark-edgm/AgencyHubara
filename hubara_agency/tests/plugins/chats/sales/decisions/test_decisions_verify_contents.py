@@ -97,3 +97,46 @@ def test_the_turn_lists_what_each_delivered_card_shows_in_order() -> None:
     ]
 
     assert delivered_card_contents(events) == ["Lista de productos: velas de deseos onduladas"]
+
+
+# ── Revisión de producción del PR #426 (2026-10-14) ───────────────────────
+
+#: El tope con que el resultado de una tool viaja en `TurnResult.tool_events`.
+_CUT = 4000
+
+
+def test_a_whole_catalog_result_cut_in_the_trace_still_says_what_it_shows() -> None:
+    """El catálogo completo con títulos reales pasa de 4000 caracteres y la
+    traza lo corta: el JSON ya no se lee y ③ volvía a no ver la tarjeta
+    (justo el caso del incidente)."""
+    result = json.dumps({
+        "queued": True, "kind": "products_list", "count": 30, "total": 30,
+        "products": [{"handle": f"vela-artesanal-{i}", "title": f"Vela artesanal de cera de palma número {i}, tres capas de fragancia para regalo y decoración"}
+                     for i in range(30)],
+        "summary": "Lista de 30 productos enviada al cliente.",
+    }, ensure_ascii=False)
+    assert len(result) > _CUT
+
+    assert card_contents("present_products", {}, result[:_CUT]) == "Lista con todo el catálogo: 30 productos"
+
+
+def test_a_list_with_handles_survives_a_cut_result() -> None:
+    args = {"handles": ["velas-de-deseos-cuadradas", "velas-de-deseos-onduladas"]}
+    result = json.dumps({"queued": True, "kind": "products_list", "count": 2, "pages": 1, "missing": [],
+                         "summary": "x" * _CUT})
+
+    assert card_contents("present_products", args, result[:_CUT]) == (
+        "Lista de productos: velas de deseos cuadradas, velas de deseos onduladas"
+    )
+
+
+def test_a_list_names_only_the_products_that_went_out() -> None:
+    """Lo que la tool no encontró (`missing`), lo que no cupo (`left_out`) y lo
+    incompleto (`incomplete`) no se le mostró al cliente."""
+    args = {"handles": ["velas-de-deseos-cuadradas", "vela-inventada", "plegaria-de-luz", "calabaza"]}
+    result = json.dumps({
+        "queued": True, "kind": "products_list", "count": 1, "missing": ["vela-inventada"],
+        "left_out": ["plegaria-de-luz"], "incomplete": [{"handle": "calabaza", "title": "Calabaza", "lacks": "precio"}],
+    })
+
+    assert card_contents("present_products", args, result) == "Lista de productos: velas de deseos cuadradas"

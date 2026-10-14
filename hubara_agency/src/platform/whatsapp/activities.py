@@ -45,7 +45,7 @@ from src.platform.whatsapp.cost import (
     empty_episode_cost_summary,
 )
 from src.platform.whatsapp.dtos import CarouselCard, OutboundResult
-from src.platform.whatsapp.quiet_hours import is_quiet_hours_for_session, resolve_local_timezone
+from src.platform.whatsapp.quiet_hours import allowed_hours, is_quiet_hours_for_session, resolve_local_timezone
 from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
     render_template_body,
@@ -255,7 +255,11 @@ def _scheduled_next_touch(
         if not isinstance(last_inbound, int):
             return None
         expires = last_inbound + 24 * 3600 * 1000
-    return next_morning_at_ms(now_ms, expires, resolve_local_timezone(session_id))
+    allowed_from, allowed_until = allowed_hours()
+    return next_morning_at_ms(
+        now_ms, expires, resolve_local_timezone(session_id),
+        allowed_from=allowed_from, allowed_until=allowed_until,
+    )
 
 
 def _ladder_suppress(reason: str, why: str) -> SendDecision:

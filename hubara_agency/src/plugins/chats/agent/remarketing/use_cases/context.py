@@ -25,6 +25,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from src.plugins.chats.agent.remarketing.contracts import RemarketingContext
+from src.plugins.chats.shared.product_truth import numbers_in
 from src.sdk.messagingkit import ladder_state, lead_state_from_metadata
 
 #: cuántos mensajes visibles viajan al gancho (WhatsApp: 12 alcanzan para
@@ -356,6 +357,23 @@ def customer_text_for(metadata: dict[str, Any] | None, events: list[dict[str, An
     return "\n".join(lines)
 
 
+def hook_number_sources(context: RemarketingContext, *, practical_facts: str) -> list[str]:
+    """Los números que el gancho puede escribir: los de la ficha, la charla,
+    la campaña y el motivo; los datos de la tienda (envío, tiempos, pago) solo
+    en el toque que los trae, el 2º de quien se calló tras el catálogo
+    (revisión de producción del PR #426: el 1er toque, que no los ve, podía
+    escribir «$16.940» y pasar)."""
+    practical = context.touch_number == 2 and context.silent_after_catalog and bool(practical_facts.strip())
+    sources = "\n".join((
+        context.catalog_facts,
+        context.transcript,
+        context.campaign_context,
+        context.tag_motivo,
+        practical_facts if practical else "",
+    ))
+    return numbers_in(sources)
+
+
 def context_from_metadata(
     metadata: dict[str, Any] | None,
     events: list[dict[str, Any]],
@@ -380,6 +398,8 @@ def context_from_metadata(
             silence_minutes = max(0, (now_ms - last_inbound) // 60_000)
     episode = _active_episode(meta)
     current = episode_events(events, episode)
+    # Un pedido nuevo en curso manda: es una venta, no una posventa.
+    post_purchase = "" if lead.has_order_draft else post_purchase_state(meta, events)
     return RemarketingContext(
         tag_motivo=motivo.strip() if isinstance(motivo, str) else "",
         has_order_draft=lead.has_order_draft,
@@ -387,7 +407,9 @@ def context_from_metadata(
         touch_number=touch_number,
         silence_minutes=silence_minutes,
         campaign_context=campaign_context_for(episode),
-        # Un pedido nuevo en curso manda: es una venta, no una posventa.
-        post_purchase="" if lead.has_order_draft else post_purchase_state(meta, events),
-        silent_after_catalog=not lead.has_order_draft and silent_after_catalog(current),
+        post_purchase=post_purchase,
+        # Un pedido a medias, registrado o con el pago pendiente manda (el
+        # gancho es sobre el pedido), y quien ya compró recibe el de posventa
+        # (revisión de producción del PR #426).
+        silent_after_catalog=not lead.transactional_hook and not post_purchase and silent_after_catalog(current),
     )

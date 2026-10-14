@@ -74,6 +74,19 @@ def test_the_catalog_asks_whether_the_reply_shows_what_was_asked() -> None:
     assert "verify" not in _topic(V6, "catalogo")
 
 
+def test_saying_clearly_that_we_do_not_have_it_attends_the_catalog() -> None:
+    """Revisión de producción del PR #426 (2026-10-14): «¿tienen velas de
+    Navidad?» → «por ahora no tenemos» se leía «falta» (Jev real 0,03) y el
+    complemento le mostraba una lista de otra cosa justo después. Con la
+    redacción de abajo, 0,80–0,82; el anuncio con botones, con el catálogo
+    completo o con el menú sigue en «falta» (0,06 · 0,19–0,20 · 0,11)."""
+    _need_v7()
+    topic = _topic(V7, "catalogo")
+
+    assert "no lo tenemos" in topic["verify"]["criteria"]["true"]
+    assert "no lo tenemos" in topic["complement"] and "no le muestres otros" in topic["complement"]
+
+
 def _jev(monkeypatch: pytest.MonkeyPatch, bundle: str, cover: float) -> FakePerceptionAdapter:
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", bundle)
     registry.reset()

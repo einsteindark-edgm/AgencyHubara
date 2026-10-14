@@ -109,6 +109,9 @@ class RemarketingSessionWorkflow:
         self._catalog_silent: bool = False
         self._touch_number: int | None = None
         self._allowed_numbers: list[str] = []
+        # La guarda de números es del gancho PROACTIVO (revisión de producción
+        # del PR #426): la respuesta a un mensaje del cliente no pasa por ella.
+        self._number_guard_on: bool = False
         self._trigger_input: RemarketingTriggerInput | None = None
 
     @workflow.signal
@@ -276,8 +279,12 @@ class RemarketingSessionWorkflow:
 
     def _invented_numbers(self, content: str | None) -> list[str]:
         """Números del gancho que no están en la ficha, la charla ni los datos
-        de la tienda — solo para quien se calló tras el catálogo (2026-10-13)."""
-        if not self._catalog_silent or not content:
+        de la tienda — solo para quien se calló tras el catálogo (2026-10-13)
+        y solo en el toque proactivo: la respuesta a un mensaje del cliente
+        sale como siempre (revisión de producción del PR #426: «el envío
+        arranca en $16.940» se tomaba por inventado y el cliente se quedaba sin
+        respuesta)."""
+        if not self._catalog_silent or not self._number_guard_on or not content:
             return []
         return invented_numbers(content, self._allowed_numbers)
 
@@ -629,6 +636,7 @@ class RemarketingSessionWorkflow:
                     # marca de "interrupción técnica" que el cierre de
                     # ghosting de sales busca). patched(): histories en vuelo
                     # replayean con la fabricación original.
+                    self._number_guard_on = bool(ladder and is_proactive)
                     result = await run_agent_turn(
                         input_data,
                         msg,

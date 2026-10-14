@@ -103,8 +103,7 @@ def build_remarketing_trigger(
     elif practical:
         situacion = (
             "El cliente escribió pidiendo información, recibió el catálogo y "
-            "un primer mensaje que le explicaba lo que vio, y sigue sin "
-            "responder. Este mensaje le resuelve las dudas prácticas que frenan "
+            "un primer mensaje de seguimiento, y sigue sin responder. Este mensaje le resuelve las dudas prácticas que frenan "
             "una compra: cuánto tarda en llegar, cuánto vale el envío y cómo "
             "puede pagar. NO hables de 'tu pedido': no existe."
         )
@@ -246,17 +245,28 @@ def build_remarketing_trigger(
             "de envío son mínimas: dilo así. Si un medio de pago tiene una "
             "condición (un monto mínimo), di la condición.\n\n"
         )
+        # El último toque cierra con la puerta abierta, sin pregunta insistente
+        # (revisión de producción del PR #426: con Frecuencia 2 el 2º pedía las dos cosas).
+        last = touch_number is not None and total_touches is not None and touch_number >= total_touches
         format_rule = (
             "5. **Formato**: 2 a 4 líneas cortas y cálidas. No empieces con "
-            "«Hola de nuevo». Termina con UNA pregunta fácil de contestar "
-            "(si es para él o para regalar, a qué ciudad sería el envío, si le "
-            "cuentas los aromas), no con '¿te ayudo con algo?'.\n\n"
+            "«Hola de nuevo». "
+            + (
+                "Cierra dejando la puerta abierta, sin pregunta insistente.\n\n"
+                if last
+                else "Termina con UNA pregunta fácil de contestar (si es para él o "
+                "para regalar, a qué ciudad sería el envío, si le cuentas los "
+                "aromas), no con '¿te ayudo con algo?'.\n\n"
+            )
         )
+        # Los datos de la tienda solo los ve (y la guarda solo los deja pasar)
+        # el toque que los trae.
+        where_numbers = "ficha, en los datos de la tienda o en la conversación" if practical else "ficha o en la conversación"
         numbers_rule = (
             "9. **Números**: No repitas precios: ya los vio en la tarjeta. Solo "
             "escribe un número (horas, tamaños, días, valores) si está en la "
-            "ficha, en los datos de la tienda o en la conversación; si escribes "
-            "uno que no esté ahí, el mensaje NO se envía.\n\n"
+            f"{where_numbers}; si escribes uno que no esté ahí, el mensaje NO "
+            "se envía.\n\n"
         )
         examples = list(store.get("hook_examples_explain" if explain else "hook_examples_practical") or [])
     else:

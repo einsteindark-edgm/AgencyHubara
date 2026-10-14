@@ -92,6 +92,19 @@ class TestSilentAfterCatalog:
         assert context_from_metadata(meta, events).silent_after_catalog is True
 
 
+    def test_con_pedido_registrado_o_pago_pendiente_no_es_el_caso(self) -> None:
+        """Revisión de producción del PR #426 (2026-10-14): un pedido que el
+        operador creó («Crear pedido») después del catálogo dejaba al cliente
+        en el caso, y el 2º toque le explicaba cómo pagar como si no hubiera
+        comprado. El gancho es sobre el pedido (`transactional_hook`)."""
+        events = [_ev("user", HALLOWEEN), _ev("assistant", "¡Buenas!"), _catalog("Calabaza")]
+        registered = _meta()
+        registered["episodes"][0]["order_id"] = "order_67"
+        pending = _meta(tag="CONFIRMADO_PAGO_PENDIENTE")
+
+        assert context_from_metadata(registered, events).silent_after_catalog is False
+        assert context_from_metadata(pending, events).silent_after_catalog is False
+
     def test_con_pedido_a_medias_no_es_el_caso(self) -> None:
         # Un carrito de la web / pedido en curso: el gancho es sobre el pedido.
         events = [_ev("user", HALLOWEEN), _ev("assistant", "¡Buenas!"), _catalog("Calabaza")]
@@ -133,6 +146,41 @@ class TestInventedNumbers:
 
     def test_sin_numeros_no_hay_nada_que_cazar(self) -> None:
         assert invented_numbers("¿Es para ti o para regalar? 🕯️", []) == []
+
+    # Revisión de producción del PR #426 (2026-10-14): lo que la guarda leía mal.
+
+    def test_mil_y_los_centavos_son_el_mismo_monto(self) -> None:
+        sources = numbers_in("Contra entrega desde $45.000")
+        assert invented_numbers("Desde 45 mil pagas al recibir", sources) == []
+        assert invented_numbers("Desde $45.000,00 pagas al recibir", sources) == []
+
+    def test_una_hora_no_es_un_dato_del_producto(self) -> None:
+        assert invented_numbers("Te escribo mañana a las 9:00 🌿", []) == []
+
+    def test_un_decimal_no_es_un_entero(self) -> None:
+        assert invented_numbers("Mide 2,5 cm", numbers_in("25 velas")) == ["2.5"]
+        assert invented_numbers("El recargo es 1,5 %", numbers_in("recargo del 1,5 % con Nequi")) == []
+
+    def test_un_numero_escrito_en_palabras_tambien_se_caza(self) -> None:
+        sources = numbers_in("- Calabaza: 40 horas de duración")
+        assert invented_numbers("Dura sesenta horas encendida", sources) == ["60"]
+        assert invented_numbers("Dura cuarenta horas encendida", sources) == []
+
+
+def test_los_datos_de_la_tienda_solo_valen_en_el_toque_que_los_trae() -> None:
+    """Revisión de producción del PR #426: las cifras de envío y pago se
+    permitían en TODOS los toques; el 1er toque, que no las ve, podía
+    escribir «$16.940» o «3 tamaños» y pasar."""
+    from src.plugins.chats.agent.remarketing.contracts import RemarketingContext
+    from src.plugins.chats.agent.remarketing.use_cases.context import hook_number_sources
+
+    facts = "Bogotá: $7.900, 1 a 2 días hábiles. Nacional: $16.940, 3 a 5 días."
+    first = RemarketingContext(touch_number=1, silent_after_catalog=True, catalog_facts="- Calabaza: 40 horas.")
+    second = RemarketingContext(touch_number=2, silent_after_catalog=True, catalog_facts="- Calabaza: 40 horas.")
+
+    assert "16940" not in hook_number_sources(first, practical_facts=facts)
+    assert "40" in hook_number_sources(first, practical_facts=facts)
+    assert {"16940", "7900", "5"} <= set(hook_number_sources(second, practical_facts=facts))
 
 
 # ── El texto del gancho ────────────────────────────────────────────────────────
@@ -368,3 +416,64 @@ def test_los_datos_de_la_tienda_de_ventas_7_son_los_de_ventas() -> None:
     assert numbers_in(" ".join(vocab["hook_examples_practical"])) and not invented_numbers(
         " ".join(vocab["hook_examples_practical"]), numbers_in(facts)
     ), "los ejemplos no pueden traer cifras que no estén en los datos"
+
+
+async def test_la_ficha_entera_es_de_pocos_productos_y_solo_en_el_primer_toque(_isolate_vault_dir, monkeypatch) -> None:
+    """Revisión de producción del PR #426: con el catálogo completo en la
+    tarjeta, el gancho llevaba la ficha de 900 caracteres de hasta 30
+    productos (~27k caracteres) en TODOS los toques."""
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.chats.agent.remarketing.activities import context as context_mod
+    from src.plugins.chats.agent.remarketing.activities.context import read_remarketing_context_activity
+
+    titles = [f"Vela {i}" for i in range(8)]
+    catalogo = [_dto(t, f"vela-{i}", _LARGA) for i, t in enumerate(titles)]
+    monkeypatch.setattr(context_mod, "get_catalog_client", lambda: _Catalog(catalogo))
+    sid = "wa_573001234567"
+    _seed(_isolate_vault_dir, sid, [_ev("user", HALLOWEEN), _ev("assistant", "¡Buenas!"), _catalog(*titles)])
+
+    ctx = await ActivityEnvironment().run(read_remarketing_context_activity, sid)
+
+    assert ctx.catalog_facts.count("hecho en Colombia") <= 4
+
+
+class TestLoQueElGanchoNoDebeAfirmar:
+    """Revisión de producción del PR #426 (2026-10-14): contradicciones del texto."""
+
+    def test_el_segundo_no_afirma_que_el_primero_le_explico(self, monkeypatch) -> None:
+        # El 1º pudo abstenerse, ser plantilla o el gancho corto.
+        _store(monkeypatch, practical_facts=DATOS_TIENDA)
+        text = build_remarketing_trigger("miró Halloween", touch_number=2, **_SILENT)
+        assert "le explicaba lo que vio" not in text
+
+    def test_el_primero_no_invita_a_usar_datos_que_no_ve(self, monkeypatch) -> None:
+        # La guarda del 1er toque ya no deja pasar las cifras de la tienda.
+        _store(monkeypatch, practical_facts=DATOS_TIENDA)
+        text = build_remarketing_trigger("miró Halloween", touch_number=1, **_SILENT)
+        assert "en los datos de la tienda" not in text
+
+    def test_el_ultimo_toque_no_pide_terminar_con_pregunta(self, monkeypatch) -> None:
+        # Con Frecuencia 2, el 2º es el último: «sin pregunta insistente».
+        _store(monkeypatch, practical_facts=DATOS_TIENDA)
+        text = build_remarketing_trigger("miró Halloween", touch_number=2, **{**_SILENT, "total_touches": 2})
+        assert "Sin pregunta insistente" in text
+        assert "Termina con UNA pregunta" not in text
+
+
+def test_quien_ya_compro_no_es_el_caso_aunque_viera_el_catalogo() -> None:
+    """Revisión de producción del PR #426: el gancho de posventa habla de su
+    compra, pero el workflow igual agendaba el toque de la mañana y pasaba la
+    guarda de números (el número de pedido o su total no están en la ficha)."""
+    events = [
+        _ev("user", "Quiero la Cruz de Vida"), _ev("assistant", "¡Listo! Tu pedido quedó registrado."),
+        _ev("user", HALLOWEEN), _ev("assistant", "¡Buenas de nuevo!"), _catalog("Calabaza"),
+    ]
+    meta = _meta(episodes=[
+        {"episode_id": "ep_1", "msgs_count_at_start": 0, "closed_at_ms": 1, "closing_tag": "COMPRA_EXITOSA"},
+        {"episode_id": "ep_2", "msgs_count_at_start": 2},
+    ])
+    ctx = context_from_metadata(meta, events)
+
+    assert ctx.post_purchase  # el gancho es el de posventa
+    assert ctx.silent_after_catalog is False

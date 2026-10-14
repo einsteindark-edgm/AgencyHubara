@@ -216,3 +216,43 @@ async def test_un_numero_inventado_no_sale_y_se_redacta_el_gancho_corto(tmp_path
     assert [t.silent_after_catalog for t in tracker.triggers] == [True, False], "la 2ª redacción es la corta"
     assert tracker.record_turns == 1, "el gancho con el número inventado no entra al historial"
     assert tracker.touches == [("free_form", NEXT_TOUCH_MORNING)]
+
+
+@pytest.mark.asyncio
+async def test_la_respuesta_a_un_mensaje_del_cliente_no_pasa_por_la_guarda_de_numeros(tmp_path) -> None:
+    """Revisión de producción del PR #426 (2026-10-14): el cliente escribe
+    mientras se arma el 1er toque y el turno pasa a ser SUYO. La respuesta con
+    una cifra real («el envío nacional arranca en $16.940»: con ventas-6 no hay
+    datos de la tienda en las fuentes) se tomaba por inventada y no salía nada:
+    ni respuesta ni relevo. La guarda es del gancho proactivo, no de la charla."""
+    import asyncio
+
+    tracker = Tracker()
+    entered, gate = asyncio.Event(), asyncio.Event()
+    reply = "El envío nacional arranca en $16.940 🚚 ¿A qué ciudad sería?"
+    context = _silent()
+
+    @activity.defn(name="read_remarketing_context_activity")
+    async def gated_context(session_id: str) -> RemarketingContext:
+        entered.set()
+        await gate.wait()
+        return context
+
+    activities = [
+        a for a in _fakes(tracker, llm_contents=[reply], workspace_path=str(tmp_path), context=context)
+        if a.__temporal_activity_definition.name != "read_remarketing_context_activity"
+    ] + [gated_context]
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(env.client, task_queue=REMARKETING_QUEUE, workflows=[RemarketingSessionWorkflow],
+                          activities=activities):
+            handle = await env.client.start_workflow(
+                RemarketingSessionWorkflow.run, RemarketingSessionInput(session_id=SID, motivo="vio la colección"),
+                id=f"remarketing-{SID}", task_queue=REMARKETING_QUEUE,
+            )
+            await entered.wait()
+            await handle.signal("send_message", args=["hola, ¿cuánto vale el envío a Medellín?", None, None])
+            await asyncio.sleep(0.3)
+            gate.set()
+            await handle.result()
+
+    assert tracker.sends == [reply]

@@ -87,10 +87,17 @@ questionnaire:
     - {id: catalogo, label: "catálogo", hint: "pide ver el catálogo, o pide información o pregunta por un tipo, estilo, colección, kit u ocasión de velas (p. ej. religiosas, de Halloween, las velitas del 7 de diciembre, para el 7 de diciembre, velas para navidad, para regalo), o por los diseños o modelos",
        # ventas-7 (③ del catálogo, 2026-10-13): ofrecer verlos (un botón, una pregunta)
        # o mandar todo el catálogo a quien pidió algo puntual no es mostrarle lo que pidió.
+       # Revisión de producción (2026-10-14): decirle con claridad que no lo
+       # tenemos también lo atiende (sin eso, «no tenemos velas de Navidad» daba
+       # 0,03 y el complemento le mostraba otra cosa). Sonda con Jev real: «no
+       # tenemos» 0,80–0,82; anuncio con botones 0,06, con el catálogo completo
+       # 0,19–0,20, con el menú 0,11 (falta); las dos velitas 0,71–0,73; el
+       # menú de categorías a quien pidió el catálogo 0,64–0,66 (duda: no hay
+       # complemento, no sale dos veces).
        verify: {text: "¿La respuesta del asesor (texto y tarjetas) le MUESTRA al cliente los productos que pidió en el asunto «{label}»{where}",
-                criteria: {"true": "sí: le muestra justo los productos que pidió (en una lista, una ficha o fotos)",
+                criteria: {"true": "sí: le muestra justo los productos que pidió (en una lista, una ficha o fotos), o le dice que eso no lo tenemos",
                            "false": "no: solo le pregunta, le ofrece verlos (un botón «Ver catálogo», «¿quieres ver…?») o le muestra otros productos o todo el catálogo cuando pidió algo puntual"}},
-       complement: "Muéstrale los productos que pidió: búscalos con search_products (con las palabras de lo que pidió o del anuncio; si no aparece nada, con una palabra más corta) y muéstralos con present_products, con lo que le digas en intro_text. No le preguntes otra vez qué busca."}
+       complement: "Muéstrale los productos que pidió: búscalos con search_products (con las palabras de lo que pidió o del anuncio; si no aparece nada, con una palabra más corta) y muéstralos con present_products, con lo que le digas en intro_text. Si de verdad no lo tenemos, dile en una línea que eso no lo tenemos y no le muestres otros productos. No le preguntes otra vez qué busca."}
     - {id: precio, label: "precio", hint: "pregunta cuánto vale o cuánto cuesta algo"}
     - {id: envio, label: "envío", hint: "pregunta por el envío o el domicilio (costo o cobertura)"}
     - {id: tiempos, label: "tiempos de entrega", hint: "pregunta cuánto tarda en llegar o cuándo está listo"}

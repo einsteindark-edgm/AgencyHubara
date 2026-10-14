@@ -80,3 +80,29 @@ async def test_sin_pedido_de_agenda_el_siguiente_usa_el_hueco_normal(_isolate_va
     await ActivityEnvironment().run(record_remarketing_touch_activity, SID, "free_form")
     data = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
     assert "next_at_ms" not in data["remarketing_touches"][-1]
+
+
+@pytest.mark.asyncio
+async def test_la_manana_sigue_el_horario_permitido_de_terraform(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Revisión de producción del PR #426: el 8:15 fijo quedaba dentro de las
+    horas de silencio si Terraform corría el inicio. Con el horario desde las
+    9:00 y la ventana cerrando a las 9:00 (con margen), la mañana no cabe: va
+    a las 19:00 del mismo día."""
+    bog = ZoneInfo("America/Bogota")
+    escribio = int(datetime(2026, 10, 13, 13, 0, tzinfo=bog).timestamp() * 1000)
+    toque = int(datetime(2026, 10, 13, 12, 30, tzinfo=bog).timestamp() * 1000)
+    d = _isolate_vault_dir / SID
+    d.mkdir(parents=True)
+    (d / "metadata.json").write_text(
+        json.dumps({"last_inbound_at_ms": escribio, "service_window_expires_at_ms": escribio + 22 * 3600 * 1000}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(act, "_now_ms", lambda: toque)
+    monkeypatch.setenv("WATCHDOG_QUIET_HOURS_START", "9")
+
+    await ActivityEnvironment().run(record_remarketing_touch_activity, SID, "free_form", NEXT_TOUCH_MORNING)
+
+    data = json.loads((d / "metadata.json").read_text(encoding="utf-8"))
+    assert data["remarketing_touches"][-1]["next_at_ms"] == int(datetime(2026, 10, 13, 19, 0, tzinfo=bog).timestamp() * 1000)

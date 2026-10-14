@@ -128,16 +128,51 @@ def unavailable_terms(customer_text: str, products: list[Any]) -> list[str]:
     return out
 
 
-#: Un número con separadores de miles/decimales («$16.940», «2,5»).
-_NUMBER = re.compile(r"\d(?:[\d.,]*\d)?")
+#: Un número con separadores de miles/decimales («$16.940», «2,5»), con «mil»
+#: detrás («45 mil»). OJO: la guarda del remarketing decide DENTRO del workflow
+#: con esta lectura; cambiarla cambia qué actividades agenda una historia en
+#: vuelo → va con un `workflow.patched` nuevo (revisión del PR #426).
+_NUMBER = re.compile(r"\d(?:[\d.,]*\d)?(?:\s*mil\b)?", re.IGNORECASE)
+#: «a las 9:00»: una hora no es un dato del producto.
+_TIME = re.compile(r"\b\d{1,2}:\d{2}\b")
+_THOUSANDS = re.compile(r"\d{1,3}(?:[.,]\d{3})+")
+_DECIMAL = re.compile(r"(\d+)[.,](\d{1,2})")
+#: Las decenas escritas en palabras («dura sesenta horas»). Las de uno a nueve
+#: no: «las dos velitas», «una vela» no son datos inventados.
+_WORD_NUMBERS = {
+    "diez": 10, "once": 11, "doce": 12, "quince": 15, "veinte": 20, "treinta": 30, "cuarenta": 40,
+    "cincuenta": 50, "sesenta": 60, "setenta": 70, "ochenta": 80, "noventa": 90, "cien": 100,
+}
+_WORD_NUMBER = re.compile(r"\b(" + "|".join(_WORD_NUMBERS) + r")\b")
+
+
+def _canonical(raw: str) -> str:
+    """«$16.940» → 16940; «45 mil» → 45000; «$45.000,00» → 45000; «2,5» → 2.5."""
+    thousand = raw.lower().endswith("mil")
+    digits = re.sub(r"\s*mil$", "", raw, flags=re.IGNORECASE).strip()
+    cents = re.fullmatch(r"(.*\d)[.,]0{1,2}", digits)
+    if cents and _THOUSANDS.fullmatch(cents.group(1)):
+        digits = cents.group(1)
+    decimal = _DECIMAL.fullmatch(digits)
+    if decimal and not _THOUSANDS.fullmatch(digits):
+        whole, part = decimal.groups()
+        value = whole if set(part) == {"0"} else f"{whole}.{part}"
+    else:
+        value = re.sub(r"[.,]", "", digits)
+    if thousand:
+        value = str(round(float(value) * 1000))
+    return value
 
 
 def numbers_in(text: str) -> list[str]:
-    """Los números de `text`, sin separadores (`$16.940` → `16940`), sin
-    repetir. Son las fuentes contra las que se mira un mensaje."""
+    """Los números de `text` en una forma comparable (`$16.940` → `16940`,
+    «45 mil» → `45000`, «2,5» → `2.5`, «sesenta» → `60`), sin repetir y sin
+    las horas («9:00»). Son las fuentes contra las que se mira un mensaje."""
     out: list[str] = []
-    for raw in _NUMBER.findall(text or ""):
-        number = re.sub(r"[.,]", "", raw)
+    clean = _TIME.sub(" ", text or "")
+    found = [_canonical(raw) for raw in _NUMBER.findall(clean)]
+    found += [str(_WORD_NUMBERS[w]) for w in _WORD_NUMBER.findall(_fold(clean))]
+    for number in found:
         if number not in out:
             out.append(number)
     return out

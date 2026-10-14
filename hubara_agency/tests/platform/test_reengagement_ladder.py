@@ -210,3 +210,27 @@ def test_sin_manana_dentro_de_la_ventana_va_a_la_tarde_del_mismo_dia():
 def test_la_tarde_respeta_el_hueco_minimo_desde_el_primer_toque():
     # El 1er toque salió a las 18:00 y la mañana no cabe: no antes de las 20:00.
     assert next_morning_at_ms(_bog(13, 18), _bog(14, 9), BOG) == _bog(13, 20)
+
+
+# Revisión de producción del PR #426 (2026-10-14).
+
+
+def test_sin_espacio_para_el_hueco_normal_no_se_agenda_nada():
+    # Escribió a las 19:00 y el 1er toque salió a las 18:00 del día siguiente:
+    # la ventana (con su margen) cierra a las 17:00, ANTES del 1er toque. Antes
+    # agendaba el 2º a las 17:00 (−1 h): dos textos libres seguidos. Ahora,
+    # hueco normal (la escalera decide, con plantilla si ya cerró).
+    assert next_morning_at_ms(_bog(14, 18), _bog(14, 19), BOG) is None
+
+
+def test_la_tarde_no_cae_en_horas_de_silencio():
+    # 1er toque a las 20:30, ventana hasta las 9:00: la tarde sería 22:30.
+    assert next_morning_at_ms(_bog(13, 20, 30), _bog(14, 9), BOG) is None
+
+
+def test_la_manana_sigue_al_horario_permitido_configurado():
+    # Ventana con margen hasta las 9:00 del 14. Con el horario de siempre
+    # (desde las 8:00) el 2º sale a las 9:00; si Terraform lo corre a las
+    # 9:00, la mañana empezaría a las 9:15 y ya no cabe: va a la tarde del 13.
+    assert next_morning_at_ms(_bog(13, 12, 30), _bog(14, 11), BOG) == _bog(14, 9)
+    assert next_morning_at_ms(_bog(13, 12, 30), _bog(14, 11), BOG, allowed_from=(9, 0)) == _bog(13, 19)
