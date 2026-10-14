@@ -45,7 +45,7 @@ from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
 )
 from src.plugins.chats.agent.sales.price_quotes import extract_cop_amounts
-from src.plugins.chats.agent.sales.pricing import accepted_prices, catalog_prices, catalog_unit_price
+from src.plugins.chats.agent.sales.pricing import accepted_prices, catalog_prices, catalog_unit_price, format_cop
 from src.plugins.chats.agent.sales.use_cases.coupons import applied_coupon, describe_promotion
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.agent.sales.use_cases.fact_rules import (
@@ -219,13 +219,14 @@ class FactCheck:
         # El total real del pedido (OrderFacts): el envío que cobró la tienda.
         if total is not None:
             prices.add(total)
+        subtotal, breakdown = _subtotal(products, metadata)
         own = [*(a for p in focus for a in aromas_of(p)), *(c for p in focus for c in colors_of(p)),
                *(v for p in focus for v in presentations_of(p))]
         return ReplyFacts(
             focus=tuple(focus), aromas=tuple(aromas), colors=tuple(colors), sheets=option_sheets(focus),
             single=single_sheets(focus),
             prices=tuple(sorted(prices)), policy=POLICY_AMOUNTS,
-            subtotal=_subtotal(products, metadata), cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
+            subtotal=subtotal, order_breakdown=breakdown, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
             surcharges=(PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA, PAYMENT_LINK_SURCHARGE_OTHER_BANKS),
             order=order, stage=stage, pay_status=pay_status,
             titles_all=tuple(p.title for p in products if getattr(p, "title", None)),
@@ -330,21 +331,24 @@ def _customer_names(metadata: dict[str, Any]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(w for r in raw if isinstance(r, str) for w in re.findall(r"[^\W\d_]{3,}", r)))
 
 
-def _subtotal(products: list[Any], metadata: dict[str, Any]) -> int | None:
-    """Los productos del borrador × su precio del catálogo; None si falta un
-    precio o no hay productos (sin dato, el pago no se revisa)."""
+def _subtotal(products: list[Any], metadata: dict[str, Any]) -> tuple[int | None, str | None]:
+    """Los productos del borrador × su precio del catálogo y cómo se arma
+    («2 × $25.000»); (None, None) si falta un precio o no hay productos (sin
+    dato, el pago no se revisa)."""
     total = 0
+    parts: list[str] = []
     items = draft_items(get_active_draft(metadata))
     for item in items:
         price = catalog_unit_price(find_product(products, item.get("producto")))
         try:
             quantity = int(str(item.get("cantidad") or 1).strip())
         except ValueError:
-            return None
+            return None, None
         if price is None or quantity <= 0:
-            return None
+            return None, None
         total += price * quantity
-    return total if items else None
+        parts.append(f"{quantity} × {format_cop(price)}")
+    return (total, " + ".join(parts)) if items else (None, None)
 
 
 __all__ = ["FACT_CHECK_ERROR", "FACT_CHECK_KEY", "CatalogRead", "FactCheck", "held_text"]

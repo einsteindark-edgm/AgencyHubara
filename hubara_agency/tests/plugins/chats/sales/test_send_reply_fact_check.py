@@ -396,6 +396,19 @@ async def test_a_price_the_catalog_does_not_have_goes_back_with_the_real_one(tmp
     assert "«$23.000»" in held["message"] and "Velas de deseos cuadradas cuesta $25.000" in held["message"]
 
 
+async def test_a_wrong_price_is_corrected_head_on_with_the_order_total(tmp_path: Path, ctx: ToolContext) -> None:
+    """Laboratorio del 2026-10-14 (Jev real, prefijo del incidente): el cliente
+    preguntó «entonces son $46.000 las dos, ¿cierto?»; con la retención el bot
+    corrigió el monto pero empezó con «Así es, $50.000» y nunca dijo que los
+    $23.000 de antes estaban mal. El mensaje le da el total del pedido y le
+    pide corregirlo de frente."""
+    held = await _send(_tool(tmp_path), ctx, "Así es, $46.000 por las dos velas 🤍")
+
+    message = held["message"]
+    assert "este pedido (2 × $25.000) suma $50.000 en productos" in message
+    assert "no empieces con «así es»" in message and "ese valor estaba mal" in message
+
+
 async def test_the_catalog_price_by_the_quantity_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
     text = "Las dos cuadradas te quedan en $50.000 🤍"
 

@@ -44,6 +44,8 @@ class ReplyFacts:
     #: El pago: subtotal de productos del borrador (None = no se sabe), el
     #: mínimo de contra entrega y los recargos del link de pago.
     subtotal: int | None = None
+    #: Cómo se arma ese subtotal: «2 × $25.000» (o «2 × $25.000 + 1 × $16.000»).
+    order_breakdown: str | None = None
     cod_min: int = 0
     surcharges: tuple[str, ...] = ()
     #: El pedido según OrderFacts (None = no hay pedido o no se miró).
@@ -154,7 +156,15 @@ def _price_problem(found: tuple[str, ...], facts: ReplyFacts) -> str:
         real = f"en el catálogo {title} cuesta {price}"
     else:
         real = "en el catálogo: " + "; ".join(line.replace(": ", " cuesta ", 1) for line in lines)
-    return f"Le dijiste {said} como precio, y {real}."
+    if facts.subtotal is not None and facts.order_breakdown:
+        real += f"; este pedido ({facts.order_breakdown}) suma {format_cop(facts.subtotal)} en productos"
+    # Laboratorio del 2026-10-14: con «¿son $46.000 las dos, cierto?» el bot
+    # corrigió el monto pero empezó con «Así es» y nunca desmintió el anterior.
+    return (
+        f"Le dijiste {said} como precio, y {real}. Corrígeselo de frente: no empieces con «así es» ni con "
+        "«sí» como si fuera correcto; dale el valor del catálogo y, si antes le habías dado otro valor, dile "
+        "que ese valor estaba mal."
+    )
 
 
 def _said(pairs: tuple[tuple[str, str], ...]) -> str:
