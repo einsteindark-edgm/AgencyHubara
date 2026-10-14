@@ -47,7 +47,7 @@ def _grant(**overrides) -> CouponGrant:
 def test_granted_coupon_is_active_for_that_person_only(store):
     store.grant(_grant())
     assert store.active(S, "GRACIAS5", NOW + DAY).code == "GRACIAS5"
-    assert store.active("wa_573009999999", "GRACIAS5", NOW + DAY) is None
+    assert store.active("wa_573009876543", "GRACIAS5", NOW + DAY) is None
 
 
 def test_grant_is_idempotent_per_reference(store):
@@ -78,10 +78,10 @@ def test_two_grants_are_used_one_at_a_time(store):
     assert remaining is not None and remaining.reference == "order_01C"
 
 
-def test_first_active_returns_the_one_that_expires_first(store):
-    store.grant(_grant(code="GRACIAS10", percent=10, reference="r1", expires_at_ms=NOW + 30 * DAY))
+def test_first_active_with_the_same_discount_returns_the_one_that_expires_first(store):
+    store.grant(_grant(code="GRACIAS5", reference="r1", expires_at_ms=NOW + 30 * DAY))
     store.grant(_grant(code="GRACIAS5", reference="r2", expires_at_ms=NOW + 10 * DAY))
-    assert store.first_active(S, NOW).code == "GRACIAS5"
+    assert store.first_active(S, NOW).reference == "r2"
 
 
 def test_mark_used_without_an_active_grant_returns_none(store):
@@ -91,3 +91,14 @@ def test_mark_used_without_an_active_grant_returns_none(store):
 def test_session_id_cannot_build_a_path(tmp_path):
     with pytest.raises(ValueError):
         VaultCouponGrantsStore(tmp_path).list_for("../../etc")
+
+
+def test_first_active_prefers_the_biggest_discount_then_the_earliest_expiry(store):
+    """Premortem C8: la de 10 % (con foto) gana a la de 5 % que vence antes."""
+    store.grant(_grant(code="gracias5", reference="order_01A", expires_at_ms=NOW + 2 * DAY))
+    store.grant(_grant(code="gracias10", percent=10, reference="order_01B", expires_at_ms=NOW + 30 * DAY))
+    store.grant(_grant(code="gracias10", percent=10, reference="order_01C", expires_at_ms=NOW + 9 * DAY))
+
+    first = store.first_active(S, NOW + DAY)
+
+    assert (first.code, first.reference) == ("GRACIAS10", "order_01C")

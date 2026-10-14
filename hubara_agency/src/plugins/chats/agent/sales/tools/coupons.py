@@ -196,7 +196,12 @@ class ListPromotionsTool(ToolBase):
             if grant is not None:
                 entry["personal"] = True
                 entry["applies_to_customer"] = True
-                entry["ends_at_ms"] = grant.expires_at_ms
+                # Vence lo primero: la concesión o la promoción de Medusa
+                # (premortem C8: después de esa fecha ya no se aplica).
+                entry["ends_at_ms"] = min(
+                    grant.expires_at_ms,
+                    promo.ends_at_ms if promo.ends_at_ms is not None else grant.expires_at_ms,
+                )
             if promo.first_purchase_only:
                 entry["first_purchase_only"] = True
                 if self._store is not None:

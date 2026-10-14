@@ -80,7 +80,7 @@ async def test_someone_else_typing_the_code_does_not_get_it(ctx, _isolate_vault_
     path = _seed(_isolate_vault_dir)
 
     env = json.loads(
-        await _apply(_isolate_vault_dir, _grants("wa_573009999999")).execute_with_context(ctx, code="GRACIAS5")
+        await _apply(_isolate_vault_dir, _grants("wa_573009876543")).execute_with_context(ctx, code="GRACIAS5")
     )
 
     assert env["applied"] is False
@@ -113,13 +113,30 @@ async def test_list_promotions_shows_the_personal_coupon_only_to_its_owner(ctx, 
     _seed(_isolate_vault_dir)
 
     mine = json.loads(await _list(_isolate_vault_dir, _grants()).execute_with_context(ctx))
-    others = json.loads(await _list(_isolate_vault_dir, _grants("wa_573009999999")).execute_with_context(ctx))
+    others = json.loads(await _list(_isolate_vault_dir, _grants("wa_573009876543")).execute_with_context(ctx))
 
     mine_codes = {p["code"]: p for p in mine["promotions"]}
     assert mine_codes["GRACIAS5"]["applies_to_customer"] is True
     assert mine_codes["GRACIAS5"]["personal"] is True
     assert "GRACIAS5" not in {p["code"] for p in others["promotions"]}
     assert "AMOR2026" in {p["code"] for p in others["promotions"]}
+
+
+@pytest.mark.asyncio
+async def test_list_promotions_never_promises_a_personal_coupon_past_its_promotion(ctx, _isolate_vault_dir):
+    """Premortem C8: si la promoción de Medusa vence antes que la concesión,
+    el bot dice la fecha de la promoción (después ya no se puede aplicar)."""
+    _seed(_isolate_vault_dir)
+    ends = NOW + 3_600_000
+    short = _promo(id="promo_gracias5", code="GRACIAS5", value=5, granted_only=True, ends_at_ms=ends)
+    tool = ListPromotionsTool(
+        workspace=str(_isolate_vault_dir), promotions=FakePromotionsPort([short]), catalog=FakeCatalog(),
+        metadata_store=FilesystemMetadataStore(_isolate_vault_dir), coupon_grants=_grants(), now_ms=lambda: NOW,
+    )
+
+    listed = {p["code"]: p for p in json.loads(await tool.execute_with_context(ctx))["promotions"]}
+
+    assert listed["GRACIAS5"]["ends_at_ms"] == ends
 
 
 # ---------- el uso: registrar el pedido gasta la concesión ----------

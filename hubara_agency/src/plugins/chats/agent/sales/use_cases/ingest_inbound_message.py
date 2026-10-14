@@ -137,6 +137,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
 from src.plugins.chats.agent.sales.use_cases.photo_reads import PhotoReads
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
+    declined_coupons,
     build_coupon_note,
 )
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
@@ -206,6 +207,23 @@ def _has_coupon(metadata: dict[str, Any]) -> bool:
     sea viejo)? Un cupón aplicado nunca se pisa con otro."""
     episodes = metadata.get("episodes") or []
     return bool(episodes and isinstance(episodes[-1], dict) and episodes[-1].get("applied_coupon"))
+
+
+def _thanks_coupon_episode(metadata: dict[str, Any], code: str) -> dict[str, Any] | None:
+    """El episodio donde puede quedar el cupón de agradecimiento, o None.
+
+    Solo un episodio ABIERTO de una conversación que lleva el bot (premortem
+    C1): guardarlo abría un episodio si el último estaba cerrado (y la
+    etiqueta volvía a NO_ETIQUETADO: con el equipo al frente el chat salía de
+    la bandeja humana; un «¡Gracias!» al gracias abría uno fantasma). Tampoco
+    si ya tiene un cupón o si en este episodio lo quitaron (premortem C8: no
+    se vuelve a poner en cada mensaje)."""
+    if metadata.get("active_route") == ROUTE_HUMANO or _has_coupon(metadata):
+        return None
+    episode = get_active_episode(metadata)
+    if episode is None or code in declined_coupons(episode):
+        return None
+    return episode
 
 
 #: `(sesión, now_ms) → CouponApplication | None`: el cupón de agradecimiento
@@ -1066,17 +1084,28 @@ class IngestInboundMessage:
         # Reseñas tras la entrega (2026-10-13): el gracias promete «cuando nos
         # escribas, lo aplicamos solo». Como el de la campaña: validado acá
         # (timeout corto, L-2) y guardado en el episodio sin pisar otro cupón.
-        if self._thanks_coupon is not None and not _has_coupon(metadata):
+        # Nunca abre un episodio ni toca la etiqueta (premortem C1): con el
+        # equipo al frente, tras un acuse o sin episodio abierto, espera al
+        # mensaje que abra la venta (el camino normal de 2c lo abre y acá se
+        # aplica en ESE episodio).
+        if (
+            self._thanks_coupon is not None
+            and not closing_ack
+            and _thanks_coupon_episode(metadata, "") is not None
+        ):
             thanks = await self._check_thanks_coupon(session_id, now_ms)
-            if thanks is not None and thanks.applied:
-                thanks_episode_id = (metadata.get("episodes") or [{}])[-1].get("episode_id")
+            target = (
+                _thanks_coupon_episode(metadata, thanks.code)
+                if thanks is not None and thanks.applied
+                else None
+            )
+            if thanks is not None and target is not None:
+                thanks_episode_id = target.get("episode_id")
 
                 def _thanks_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
-                    episodes = fresh.get("episodes") or []
-                    if episodes and episodes[-1].get("episode_id") != thanks_episode_id:
-                        return None  # otra ráfaga abrió otro episodio
-                    if _has_coupon(fresh):
-                        return None  # ya tiene un cupón: no se pisa
+                    episode = _thanks_coupon_episode(fresh, thanks.code)
+                    if episode is None or episode.get("episode_id") != thanks_episode_id:
+                        return None  # otra ráfaga cambió el episodio, o ya no toca
                     return store_coupon_application(fresh, thanks, now_ms=now_ms)
 
                 stored = self._update_best_effort(session_id, _thanks_mutator, what="cupon_de_agradecimiento")

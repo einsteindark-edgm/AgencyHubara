@@ -79,9 +79,15 @@ def _add(grants: list[CouponGrant], grant: CouponGrant) -> tuple[list[CouponGran
 
 
 def _active(grants: list[CouponGrant], code: str | None, now_ms: int) -> CouponGrant | None:
+    """La concesión vigente que vence primero (de un código), o, sin código,
+    la de MAYOR porcentaje (premortem C8: a quien le prometimos 10 % con foto
+    no se le aplica el 5 % de otra calificación porque vence antes); a igual
+    porcentaje, la que vence primero."""
     candidates = [
         g for g in grants if g.is_active(now_ms) and (code is None or g.code == _code(code))
     ]
+    if code is None:
+        return min(candidates, key=lambda g: (-g.percent, g.expires_at_ms), default=None)
     return min(candidates, key=lambda g: g.expires_at_ms, default=None)
 
 

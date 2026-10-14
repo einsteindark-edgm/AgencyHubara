@@ -251,7 +251,7 @@ def build_photo_identifier(catalog: Any) -> PhotoIdentifier:
 
 def _thanks_coupon_check() -> Callable[[str, int], Awaitable[CouponApplication | None]]:
     """El cupón de agradecimiento por calificar de quien escribe (reseñas,
-    2026-10-13): la concesión que vence primero, validada con los mismos
+    2026-10-13): la concesión de mayor porcentaje, validada con los mismos
     puertos del SDK que `apply_coupon` (L-32). None = no tiene ninguna."""
 
     async def _check(session_id: str, now_ms: int) -> CouponApplication | None:
