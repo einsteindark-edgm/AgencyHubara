@@ -13,6 +13,7 @@ editando el metadata). El sesgo es deliberadamente conservador PERO con la
 condición de campaña reciente para no confundir "no más velas por ahora"
 de una charla de venta normal.
 """
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,15 +75,28 @@ def is_opt_out_text(text: str) -> bool:
 _is_opt_out_text = is_opt_out_text
 
 
-def has_recent_marketing_context(metadata: dict[str, Any], now_ms: int) -> bool:
+def has_recent_marketing_context(
+    metadata: dict[str, Any], now_ms: int, *, text: str | None = None
+) -> bool:
     """¿Le llegó hace poco algo que promete la baja? Una campaña (touch dentro
     de la ventana de atribución de 7 días) o una plantilla de la escalera de
-    reactivación. Fuera de ese contexto, "no más" es conversación normal."""
-    return (
+    reactivación. Fuera de ese contexto, "no más" es conversación normal.
+
+    La invitación a calificar (premortem C4) da contexto 48 h y, si viene el
+    `text` del cliente, solo cuando el mensaje es la frase de baja sola: tras
+    un pedido entregado el cliente sigue comprando, y «quiero otra igual, no
+    más que en azul» no puede ser una baja para siempre. Sin `text`, cuenta
+    (el piso legal: ante la duda, la baja)."""
+    if (
         matching_campaign_touch(metadata.get("campaign_touches"), now_ms) is not None
         or _recent_ladder_template(metadata, now_ms)
-        or _recent_template(metadata.get("review_request_touches"), now_ms)
-    )
+    ):
+        return True
+    if not _recent_template(
+        metadata.get("review_request_touches"), now_ms, window_ms=_REVIEW_TEMPLATE_CONTEXT_MS
+    ):
+        return False
+    return text is None or is_standalone_opt_out(text)
 
 
 def detect_marketing_opt_out(
@@ -93,14 +107,44 @@ def detect_marketing_opt_out(
     (`is_opt_out_text`)."""
     if not text:
         return False
-    if not has_recent_marketing_context(metadata, now_ms):
+    if not has_recent_marketing_context(metadata, now_ms, text=text):
         return False
     return is_opt_out_text(text)
+
+
+#: Cortesías que pueden acompañar la frase sola («no más, gracias»).
+_COURTESY_WORDS: frozenset[str] = frozenset(
+    {"por", "favor", "porfa", "porfavor", "gracias", "ya", "mas", "plis", "please", "pls"}
+)
+#: Frases de baja que el cliente escribe solas (sobre texto normalizado).
+_STANDALONE_PHRASES: tuple[tuple[str, ...], ...] = tuple(
+    tuple(phrase.split()) for phrase in (*_OPT_OUT_PHRASES, *_OPT_OUT_SHORT_WORDS, "dame de baja", "denme de baja")
+)
+
+
+def is_standalone_opt_out(text: str) -> bool:
+    """¿El mensaje es SOLO el pedido de baja? («NO MÁS», «No más 🙏», «no
+    mas, gracias», «Baja», «No me escribas más»). Una frase de baja dentro de
+    otra charla («quiero otra igual, no más que en azul») no lo es."""
+    words = re.findall(r"[a-z0-9]+", _normalize(text))
+    if not words:
+        return False
+    for phrase in _STANDALONE_PHRASES:
+        size = len(phrase)
+        for start in range(len(words) - size + 1):
+            if tuple(words[start : start + size]) == phrase:
+                rest = words[:start] + words[start + size :]
+                if all(w in _COURTESY_WORDS for w in rest):
+                    return True
+    return False
 
 
 #: Misma ventana que la atribución de campañas: una plantilla de hace más de
 #: 7 días ya no es el contexto del "no más".
 _LADDER_TEMPLATE_CONTEXT_MS = 7 * 24 * 60 * 60 * 1000
+#: La invitación a calificar da contexto de baja menos tiempo (premortem C4):
+#: después el cliente que escribe está comprando otra vez, no contestándola.
+_REVIEW_TEMPLATE_CONTEXT_MS = 48 * 60 * 60 * 1000
 
 
 def _recent_ladder_template(metadata: dict[str, Any], now_ms: int) -> bool:
@@ -112,16 +156,19 @@ def _recent_ladder_template(metadata: dict[str, Any], now_ms: int) -> bool:
     return _recent_template(metadata.get("remarketing_touches"), now_ms)
 
 
-def _recent_template(touches: Any, now_ms: int) -> bool:
-    """¿Alguno de estos toques es una PLANTILLA de los últimos 7 días? También
-    la invitación a calificar (`review_request_touches`, reseñas 2026-10-13):
-    es de marketing (dice el descuento) y promete la baja."""
+def _recent_template(
+    touches: Any, now_ms: int, *, window_ms: int = _LADDER_TEMPLATE_CONTEXT_MS
+) -> bool:
+    """¿Alguno de estos toques es una PLANTILLA de la ventana (7 días por
+    defecto)? También la invitación a calificar (`review_request_touches`,
+    reseñas 2026-10-13, 48 h): es de marketing (dice el descuento) y promete
+    la baja."""
     for touch in touches or []:
         if (
             isinstance(touch, dict)
             and touch.get("kind") == "template"
             and isinstance(touch.get("at_ms"), int)
-            and 0 <= now_ms - touch["at_ms"] <= _LADDER_TEMPLATE_CONTEXT_MS
+            and 0 <= now_ms - touch["at_ms"] <= window_ms
         ):
             return True
     return False

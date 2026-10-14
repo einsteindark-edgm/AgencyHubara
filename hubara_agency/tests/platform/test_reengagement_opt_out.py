@@ -85,3 +85,47 @@ def test_no_mas_tras_la_plantilla_de_calificacion_es_baja():
 def test_no_mas_tras_la_invitacion_dentro_de_la_ventana_no_es_baja():
     meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "flow"}]}
     assert detect_marketing_opt_out("NO MÁS", meta, NOW) is False
+
+
+# --- Premortem C4: tras la invitación a calificar, solo la baja explícita -----
+
+
+@pytest.mark.parametrize("text", ["NO MÁS", "No más 🙏", "no mas, gracias", "Baja", "STOP", "No me escribas más"])
+def test_tras_la_calificacion_la_frase_sola_sigue_siendo_baja(text: str) -> None:
+    meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "template"}]}
+    assert detect_marketing_opt_out(text, meta, NOW) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "quiero otra igual, no más que en azul",
+        "Me encantó, no más llegó la caja la abrí",
+        "No más de 50 mil, ¿qué me recomiendas?",
+    ],
+)
+def test_tras_la_calificacion_una_frase_dentro_de_la_charla_no_es_baja(text: str) -> None:
+    """«no más» dentro de un mensaje de compra no es una baja pegajosa."""
+    meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "template"}]}
+    assert detect_marketing_opt_out(text, meta, NOW) is False
+
+
+def test_la_invitacion_a_calificar_da_contexto_de_baja_solo_48_horas() -> None:
+    meta = {"review_request_touches": [{"at_ms": NOW - 49 * H, "kind": "template"}]}
+    assert detect_marketing_opt_out("NO MÁS", meta, NOW) is False
+
+
+def test_las_campanas_siguen_igual_con_no_mas_dentro_del_mensaje() -> None:
+    """Solo cambia el contexto de la calificación: tras una plantilla de la
+    escalera, la frase dentro del mensaje sigue contando (como hoy)."""
+    meta = {"remarketing_touches": [{"at_ms": NOW - 3 * 24 * H, "kind": "template"}]}
+    assert detect_marketing_opt_out("quiero otra igual, no más que en azul", meta, NOW) is True
+
+
+def test_el_contexto_sin_texto_cuenta_la_calificacion_como_hasta_hoy() -> None:
+    from src.platform.whatsapp.marketing_opt_out import has_recent_marketing_context
+
+    meta = {"review_request_touches": [{"at_ms": NOW - 3 * H, "kind": "template"}]}
+    assert has_recent_marketing_context(meta, NOW) is True
+    assert has_recent_marketing_context(meta, NOW, text="quiero otra, no más que en azul") is False
+    assert has_recent_marketing_context(meta, NOW, text="NO MÁS") is True
