@@ -52,6 +52,7 @@ from src.platform.catalog import (
     parse_variant_colors,
     parse_variant_tags,
     primary_colors,
+    split_choices,
     split_multi_label,
     values_for_color,
 )
@@ -604,7 +605,7 @@ class SetOrderSlotTool(ToolBase):
         """
         if not valid:
             return raw_value, None
-        tokens = split_multi_label(raw_value) or [raw_value]
+        tokens = split_choices(raw_value, valid) or [raw_value]
         canonical: list[str] = []
         invalid: list[str] = []
         for token in tokens:
@@ -644,7 +645,7 @@ class SetOrderSlotTool(ToolBase):
           * familia que el producto no maneja → `color_family_not_offered`;
           * palabra desconocida → rechazo legacy con `invalid`/`available`.
         """
-        tokens = split_multi_label(raw_value) or [raw_value]
+        tokens = split_choices(raw_value, valid) or [raw_value]
         canonical: list[str] = []
         invalid: list[str] = []
         resolved_by_family: list[dict[str, Any]] = []
@@ -1241,7 +1242,7 @@ def _products_accepting(
         else:
             attrs = parse_variant_tags(p.tags)
             valid = attrs.aromas if kind == "aroma" else attrs.colors
-        tokens = split_multi_label(value) or [value]
+        tokens = split_choices(value, valid) or [value]
         if valid and all(match_option(t, valid) is not None for t in tokens):
             owners.append(p.title)
     return owners
