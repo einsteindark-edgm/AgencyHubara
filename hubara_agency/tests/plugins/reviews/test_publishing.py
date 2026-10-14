@@ -55,7 +55,9 @@ async def test_publishing_writes_one_row_per_product_with_photo_and_rebuilds(tmp
     assert record.status == "approved"
     assert len(port.rows) == 2
     row = next(iter(port.rows.values()))
-    assert row["external_id"] == f"{review_id}:prod_1"
+    assert row["external_id"].endswith(":prod_1")
+    # Premortem M1: nada público lleva el id del pedido de Medusa.
+    assert "order_01J" not in row["external_id"]
     assert (row["status"], row["rating"], row["body"], row["author_name"]) == ("approved", 5, "Hermosa", "Ana G.")
     assert row["order_display_id"] == 31
     assert row["photo_urls"] == ("https://fake.cdn/order_01J_0.jpg",)
@@ -160,3 +162,112 @@ async def test_a_failed_hook_call_is_not_counted_as_done(tmp_path):
         await rebuild(NOW)
     await rebuild(NOW + 1000)
     assert len(calls) == 2
+
+
+# ---------- premortem 2026-10-14 ----------
+
+
+@pytest.mark.asyncio
+async def test_an_upload_is_not_repeated_when_the_publication_is_retried(tmp_path):
+    """M9: si Medusa falla después de subir la foto, el reintento no la sube
+    otra vez (cada subida es un objeto público huérfano)."""
+    store = ReviewsStore(tmp_path)
+    review_id = _seed(store)
+
+    class _FlakyUpsert(FakeProductReviews):
+        def __init__(self):
+            super().__init__()
+            self.fail = True
+
+        async def upsert(self, review):
+            if self.fail:
+                self.fail = False
+                raise ProductReviewsUnavailableError("Medusa respondió 503")
+            return await super().upsert(review)
+
+    port = _FlakyUpsert()
+    with pytest.raises(ProductReviewsUnavailableError):
+        await publish_review(store, port, review_id, now_ms=NOW, rebuild=_Rebuild())
+    await publish_review(store, port, review_id, now_ms=NOW + 5, rebuild=_Rebuild())
+    assert len(port.uploads) == 1
+
+
+@pytest.mark.asyncio
+async def test_hiding_after_a_half_done_publication_hides_every_row(tmp_path):
+    """M5: la primera fila quedó publicada y la segunda falló; «Ocultar» tiene
+    que bajar las dos (antes no tocaba Medusa porque no había ids)."""
+    store = ReviewsStore(tmp_path)
+    review_id = _seed(store)
+
+    class _SecondFails(FakeProductReviews):
+        async def upsert(self, review):
+            if review.product_id == "prod_2" and review.status == "approved":
+                raise ProductReviewsUnavailableError("Medusa no respondió")
+            return await super().upsert(review)
+
+    port = _SecondFails()
+    with pytest.raises(ProductReviewsUnavailableError):
+        await publish_review(store, port, review_id, now_ms=NOW, rebuild=_Rebuild())
+    await hide_review(store, port, review_id, now_ms=NOW + 5, rebuild=_Rebuild())
+    assert {r["status"] for r in port.rows.values()} == {"hidden"}
+
+
+@pytest.mark.asyncio
+async def test_a_review_without_publishable_products_is_not_marked_published(tmp_path):
+    """M11: sin productos con id (borrados) no se dice «publicada»."""
+    store, port = ReviewsStore(tmp_path), FakeProductReviews()
+    review_id = _seed(store, products=({"product_id": None, "title": "Velón borrado", "handle": None},))
+    with pytest.raises(ProductReviewsUnavailableError, match="productos"):
+        await publish_review(store, port, review_id, now_ms=NOW, rebuild=_Rebuild())
+    assert store.get_review(review_id).status == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_moderation_inside_the_window_leaves_the_rebuild_scheduled(tmp_path):
+    """M3/W4: aprobar en tanda no deja la tienda sin reconstruir: lo que cae
+    dentro de los 10 minutos queda pendiente y sale al vencer."""
+    posts = []
+
+    async def post(url):
+        posts.append(url)
+
+    rebuild = StorefrontRebuild(tmp_path, url="https://hooks.test/deploy", post=post, every_ms=600_000)
+    await rebuild(NOW)
+    await rebuild(NOW + 60_000)
+    assert len(posts) == 1
+    assert rebuild.due_at_ms() == NOW + 600_000
+    assert await rebuild.flush(NOW + 300_000) is False
+    assert await rebuild.flush(NOW + 600_000) is True
+    assert len(posts) == 2 and rebuild.due_at_ms() is None
+
+
+@pytest.mark.asyncio
+async def test_hiding_rebuilds_at_once(tmp_path):
+    """W4: una reseña ocultada (datos personales, foto equivocada) no espera."""
+    posts = []
+
+    async def post(url):
+        posts.append(url)
+
+    rebuild = StorefrontRebuild(tmp_path, url="https://hooks.test/deploy", post=post, every_ms=600_000)
+    await rebuild(NOW)
+    await rebuild(NOW + 60_000, urgent=True)
+    assert len(posts) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_deploy_hook_status_is_checked_and_remembered(tmp_path):
+    """M8: un hook revocado (4xx/5xx) no cuenta como reconstruida y queda el
+    error a la vista."""
+    import httpx
+
+    from src.plugins.reviews.agent.publishing import post_hook
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(404, text="hook not found"))
+    rebuild = StorefrontRebuild(
+        tmp_path, url="https://hooks.test/deploy", post=lambda url: post_hook(url, transport=transport)
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        await rebuild(NOW)
+    status = rebuild.status()
+    assert status["last_ok_at_ms"] is None and "404" in status["last_error"]

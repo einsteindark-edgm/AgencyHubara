@@ -1,7 +1,8 @@
 """API del plugin reviews — el panel «Reseñas» del dashboard (router DELGADO).
 
   GET  /reviews?status=          lista (más nuevas primero) + conteos por estado
-  GET  /summary                  invitaciones, reseñas, cupones y el modo
+  GET  /summary                  invitaciones (y por qué no salieron), reseñas,
+                                 cupones, el modo, qué falta y la tienda
   POST /reviews/{id}/approve     publicar en la tienda (Medusa) → 502 si falla
   POST /reviews/{id}/hide        ocultar
   POST /reviews/{id}/reply       respuesta pública del equipo
@@ -12,6 +13,8 @@ dependencias son funciones de módulo para que los tests las reemplacen.
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
 import time
 from typing import Any
@@ -38,6 +41,7 @@ from src.sdk.mediakit import is_safe_segment
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 # ── dependencias (reemplazables en tests) ──────────────────────────────────
@@ -61,6 +65,44 @@ def settings() -> ReviewSettings:
 
 def rebuild() -> StorefrontRebuild:
     return StorefrontRebuild(WORKSPACE_VAULT_DIR, url=os.getenv("STOREFRONT_DEPLOY_HOOK_URL"))
+
+
+async def coupons_ready() -> bool:
+    """¿GRACIAS5/GRACIAS10 existen, son personales y duran lo prometido? (lo
+    mismo que exige el flujo antes de invitar)."""
+    from src.plugins.reviews.agent.composition import coupons_ready as ready
+    from src.sdk.connectorkit import get_promotions_port
+
+    cfg = settings()
+    return await ready(
+        get_promotions_port(),
+        (cfg.coupon_code_5, cfg.coupon_code_10),
+        now_ms(),
+        valid_for_ms=cfg.timing.give_up_after_ms + cfg.coupon_days * 86_400_000,
+    )
+
+
+#: Reconstrucciones programadas (referencia viva: asyncio no las retiene).
+_PENDING_FLUSHES: set[asyncio.Task[Any]] = set()
+
+
+async def _flush_later(rb: Any, delay_s: float) -> None:
+    await asyncio.sleep(delay_s)
+    try:
+        await rb.flush(now_ms())
+    except Exception as exc:  # noqa: BLE001 — la abre el próximo panel/moderación
+        log.warning("storefront rebuild (pending) failed: %s", exc)
+
+
+def _schedule_pending_rebuild(rb: Any) -> None:
+    """Lo moderado dentro de la ventana de 10 min sale al vencer (premortem
+    M3), aunque nadie vuelva a tocar el panel."""
+    due = rb.due_at_ms()
+    if due is None:
+        return
+    task = asyncio.create_task(_flush_later(rb, max(0.0, (due - now_ms()) / 1000)))
+    _PENDING_FLUSHES.add(task)
+    task.add_done_callback(_PENDING_FLUSHES.discard)
 
 
 def now_ms() -> int:
@@ -116,7 +158,12 @@ def list_reviews(status: str | None = None) -> dict[str, Any]:
 
 
 @router.get("/summary")
-def summary() -> dict[str, Any]:
+async def summary() -> dict[str, Any]:
+    rb = rebuild()
+    try:
+        await rb.flush(now_ms())
+    except Exception as exc:  # noqa: BLE001 — el panel abre igual
+        log.warning("storefront rebuild (pending) failed: %s", exc)
     st = store()
     reviews = st.list_reviews()
     grants_store = grants()
@@ -127,8 +174,18 @@ def summary() -> dict[str, Any]:
         except ValueError:
             continue
     cfg = settings()
-    return summarize(st.list_requests(), reviews, review_grants) | {
-        "settings": {"mode": cfg.mode, "google_url": cfg.google_url}
+    try:
+        ready = await coupons_ready()
+    except Exception:  # noqa: BLE001 — Medusa caído: no listos
+        ready = False
+    return summarize(st.list_requests(), reviews, review_grants, st.list_plans()) | {
+        "settings": {
+            "mode": cfg.mode,
+            "google_url": cfg.google_url,
+            "flow_configured": cfg.flow_id is not None,
+            "coupons_ready": ready,
+        },
+        "storefront": rb.status(),
     }
 
 
@@ -136,12 +193,14 @@ def summary() -> dict[str, Any]:
 async def approve(review_id: str) -> dict[str, Any]:
     st = store()
     _found(st.get_review(review_id))
+    rb = rebuild()
     try:
-        record = await publish_review(st, product_reviews(), review_id, now_ms=now_ms(), rebuild=rebuild())
+        record = await publish_review(st, product_reviews(), review_id, now_ms=now_ms(), rebuild=rb)
     except ProductReviewsUnavailableError as exc:
         raise HTTPException(
             status_code=502, detail=f"No se pudo publicar en la tienda: {exc}"
         ) from exc
+    _schedule_pending_rebuild(rb)
     return {"review": _review_json(record)}
 
 
@@ -165,12 +224,14 @@ class ReplyBody(BaseModel):
 async def reply(review_id: str, body: ReplyBody) -> dict[str, Any]:
     st = store()
     _found(st.get_review(review_id))
+    rb = rebuild()
     try:
         record = await reply_review(
-            st, product_reviews(), review_id, body.reply, now_ms=now_ms(), rebuild=rebuild()
+            st, product_reviews(), review_id, body.reply, now_ms=now_ms(), rebuild=rb
         )
     except ProductReviewsUnavailableError as exc:
         raise HTTPException(status_code=502, detail=f"No se pudo actualizar la tienda: {exc}") from exc
+    _schedule_pending_rebuild(rb)
     return {"review": _review_json(record)}
 
 

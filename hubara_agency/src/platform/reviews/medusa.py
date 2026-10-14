@@ -11,11 +11,12 @@ from src.platform.reviews.port import ProductReviewInput, ProductReviewsUnavaila
 
 
 def _unavailable(exc: MedusaAPIError) -> ProductReviewsUnavailableError:
-    hint = (
-        " — ¿está desplegado el módulo de reseñas en Medusa y corrida su migración?"
-        if exc.status_code in (404, 500)
-        else ""
-    )
+    if exc.status_code in (404, 500):
+        hint = " — ¿está desplegado el módulo de reseñas en Medusa y corrida su migración?"
+    elif 400 <= exc.status_code < 500:
+        hint = f": {str(exc.body or '')[:200]}"  # el motivo del rechazo (premortem M5)
+    else:
+        hint = ""
     return ProductReviewsUnavailableError(f"Medusa respondió {exc.status_code}{hint}")
 
 
@@ -44,12 +45,14 @@ class MedusaProductReviews:
             "source": "whatsapp",
             "submitted_at": _iso_utc(review.submitted_at_ms),
         }
-        # Cuerpos estrictos: lo que no hay no se manda (None ≠ «borrar»).
-        payload = {k: v for k, v in payload.items() if v is not None}
+        # Lo que no hay va como null (Medusa lo acepta): una respuesta quitada o
+        # un permiso retirado también se borran en la tienda (premortem M10).
         try:
             data = await self._client.upsert_product_review(payload)
         except MedusaAPIError as exc:
             raise _unavailable(exc) from exc
+        except httpx.HTTPError as exc:
+            raise ProductReviewsUnavailableError(f"Medusa no respondió al publicar: {exc}") from exc
         return str(data["id"])
 
     async def upload_photo(self, filename: str, content: bytes, mime: str) -> str:

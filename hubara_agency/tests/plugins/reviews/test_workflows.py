@@ -124,7 +124,7 @@ async def test_submission_workflow_processes_the_answer():
 
 @pytest.mark.asyncio
 async def test_a_released_invitation_is_retried_later():
-    plans, sends, submissions = [], [], []
+    plans, sends = [], []
     outcomes = ["retry", "sent"]
 
     @activity.defn(name="reviews_plan_step")
