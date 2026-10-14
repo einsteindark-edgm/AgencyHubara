@@ -294,7 +294,7 @@ async def test_el_contexto_del_que_se_callo_tras_el_catalogo(_isolate_vault_dir,
     monkeypatch.setenv("REMARKETING_MAX_TOUCHES", "3")
     catalogo = [_dto("Calabaza", "calabaza", _LARGA), _dto("Momia", "momia", "Vela de momia, 40 horas."), _dto("Cubo Love", "cubo-love", "Cubo.")]
     monkeypatch.setattr(context_mod, "get_catalog_client", lambda: _Catalog(catalogo))
-    sid = "wa_573000001013"
+    sid = "wa_573001234567"
     _seed(_isolate_vault_dir, sid, [
         _ev("user", HALLOWEEN),
         _ev("assistant", "¡Buenas! Bienvenido a *Hubara*."),
@@ -319,7 +319,7 @@ async def test_sin_descripciones_no_hay_nada_que_explicar(_isolate_vault_dir, mo
     from src.plugins.chats.agent.remarketing.activities.context import read_remarketing_context_activity
 
     monkeypatch.setattr(context_mod, "get_catalog_client", lambda: _Catalog([_dto("Calabaza", "calabaza")]))
-    sid = "wa_573000001014"
+    sid = "wa_573001234567"
     _seed(_isolate_vault_dir, sid, [_ev("user", HALLOWEEN), _ev("assistant", "¡Buenas!"), _catalog("Calabaza")])
 
     ctx = await ActivityEnvironment().run(read_remarketing_context_activity, sid)
