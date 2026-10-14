@@ -330,6 +330,11 @@ def _escalate(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms
     un humano ya tiene el hilo, NO pisa su estado (devuelve False)."""
     if data.get("active_route") == ROUTE_HUMANO:
         return False
+    _mark_human(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms)
+    return True
+
+
+def _mark_human(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms: int) -> None:
     data["active_route"] = ROUTE_HUMANO
     data["tag"] = "HUMANO"
     data["motivo"] = motivo
@@ -344,6 +349,19 @@ def _escalate(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms
             "source": _SOURCE,
         }
     )
+
+
+def _escalate_requested(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms: int) -> bool:
+    """La escalación que se PIDE (endpoint ``/escalate``). Como `_escalate`,
+    salvo en la posventa: ruta humano con otro tag que HUMANO (COMPRA_EXITOSA)
+    es un hilo que nadie atiende y que a las 21:00 vuelve al bot — el pedido de
+    ayuda tiene que llegar a la bandeja del equipo (premortem de reseñas,
+    2026-10-14: una calificación de 2★ quedaba sin nadie)."""
+    if _escalate(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms):
+        return True
+    if data.get("tag") == "HUMANO":
+        return False
+    _mark_human(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms)
     return True
 
 
@@ -1016,7 +1034,7 @@ async def escalate(session_key: SessionKey, body: EscalateBody, deps: Deps) -> d
     outcome: dict[str, Any] = {}
 
     def _mutate(data: dict[str, Any]) -> dict[str, Any]:
-        outcome["escalated"] = _escalate(
+        outcome["escalated"] = _escalate_requested(
             data, reason_category=body.reason_category, motivo=body.summary, now_ms=now_ms
         )
         return data
