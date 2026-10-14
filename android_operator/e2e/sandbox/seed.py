@@ -206,9 +206,14 @@ class Chat:
             ev["tools_used"] = tools
         self.events.append(ev)
 
-    def card(self, at: int, component_kind: str, text: str) -> None:
-        self.events.append({"role": "assistant", "kind": "ui_component", "component_kind": component_kind,
-                            "content": text, "timestamp": iso_utc(at), "wamid": _wamid()})
+    def card(self, at: int, component_kind: str, text: str, card: dict[str, Any] | None = None) -> None:
+        """Un envío del bot que no es texto. `card` = lo que guarda el flush con el mensaje entero que leyó el
+        cliente (`flush_ui_intents._history_card`); el backend lo proyecta como `event: bot_card`."""
+        ev: dict[str, Any] = {"role": "assistant", "kind": "ui_component", "component_kind": component_kind,
+                              "content": text, "timestamp": iso_utc(at), "wamid": _wamid()}
+        if card:
+            ev["card"] = card
+        self.events.append(ev)
 
     def human(self, at: int, text: str) -> None:
         self.events.append({"role": "assistant", "sender": "human", "content": text, "timestamp": iso_utc(at)})
@@ -227,6 +232,18 @@ class Chat:
             })
         base.update(metadata)
         atomic_write_json(meta_path, base)
+
+
+#: El resumen del pedido como lo guarda el flush (sin la dirección del cliente) y sus tres botones.
+ORDER_SUMMARY_CARD: dict[str, Any] = {
+    "text": "*Resumen de tu pedido*\n• 2× Dúo Zodiacal (Lavanda · Azul) — $89.900\n\n"
+            "Subtotal productos: $179.800 COP\nEnvío (tarifa mínima): $7.900 COP\nTotal: $187.700 COP\n\n"
+            "💳 Medio de pago: Nequi",
+    "buttons": [{"title": "✅ Confirmar"}, {"title": "✏️ Modificar"}, {"title": "❌ Cancelar"}],
+}
+
+#: La base de las fotos del catálogo de esta siembra (la fija `build`): las tarjetas de foto la usan.
+_IMAGE_BASE: list[str] = [DEFAULT_IMAGE_BASE]
 
 
 def _status(tag: str, motivo: str, route: str, at: int, **extra: Any) -> dict[str, Any]:
@@ -256,7 +273,8 @@ def _laura(t: int) -> None:
     c.user(t - 20 * MIN_MS, "Hola 👋 vi sus velas en Instagram, ¿tienen el Dúo Zodiacal?")
     c.bot(t - 19 * MIN_MS, "¡Hola Laura! 🤍 Sí, claro. El Dúo Zodiacal son dos velas de cera de palma con el "
                            "diseño de tu signo, a $89.900. ¿Para quién sería?", tools=["search_products"])
-    c.card(t - 19 * MIN_MS + 5_000, "product_detail", "📷 El bot envió una foto del producto: «Dúo Zodiacal · $89.900»")
+    c.card(t - 19 * MIN_MS + 5_000, "product_detail", "📷 El bot envió una foto del producto: «Dúo Zodiacal · $89.900»",
+           card={"images": [{"url": f"{_IMAGE_BASE[0]}/duo-leo.png", "caption": "Dúo Zodiacal · $89.900"}]})
     c.user(t - 6 * MIN_MS, "Me encanta 😍 es para mi mamá y para mi tía")
     c.bot(t - 5 * MIN_MS, "¡Qué lindo regalo! 🎁 ¿Cuántos te gustaría llevar?")
     c.user(t - 3 * MIN_MS, "¿y qué aromas tienen? quiero 2")
@@ -305,7 +323,9 @@ def _camilo(t: int) -> None:
     c.bot(t - 19 * MIN_MS, "¡Perfecto! 2 Plegaria de Luz blancos con sándalo 🕯️ ¿Te los enviamos?",
           tools=["set_order_slot"])
     c.user(t - 12 * MIN_MS, "Sí, de una")
-    c.card(t - 11 * MIN_MS, "shipping_flow", "📋 El bot pidió los datos de envío (formulario)")
+    c.card(t - 11 * MIN_MS, "shipping_flow", "📋 El bot pidió los datos de envío (formulario)",
+           card={"text": "Para enviarte tu pedido necesito unos datos 🤍 Toca «Completar datos» para llenar el "
+                                 "formulario (toma 30 segundos).", "action": "Completar datos"})
     c.user(t - 2 * MIN_MS, "[datos de envío recibidos] receiver_name=Camilo Prueba; phone=3000000000; city=Medellín; "
                            "neighborhood=Laureles; address=Calle Falsa # 12-34; payment_method=Nequi")
     c.write({
@@ -332,8 +352,9 @@ def _andres(t: int) -> None:
     due = bogota_day(t, -4)
     c.user(ordered, "Hola, quiero el Dúo Zodiacal en lavanda, color azul, 2 por favor")
     c.bot(ordered + 60_000, "¡Hola Andrés! 🤍 Anotado: 2 Dúo Zodiacal lavanda, color azul.", tools=["set_order_slot"])
-    c.card(ordered + 5 * MIN_MS, "order_confirmation", "🧾 El bot envió el resumen del pedido con botones para confirmar")
-    c.user(ordered + 7 * MIN_MS, "[el cliente tocó el botón: Confirmar pedido]")
+    c.card(ordered + 5 * MIN_MS, "order_confirmation", "🧾 El bot envió el resumen del pedido con botones para confirmar",
+           card=ORDER_SUMMARY_CARD)
+    c.user(ordered + 7 * MIN_MS, "[el cliente tocó el botón: ✅ Confirmar]")
     c.bot(ordered + 8 * MIN_MS, _payment_text(187_700, 179_800, 7_900, "#41 (Dúo Zodiacal)"), tools=["register_order"])
     c.user(ordered + 40 * MIN_MS, "Listo, ya pagué ✅")
     c.human(ordered + 2 * HOUR_MS, f"¡Pago confirmado, Andrés! Tu pedido #41 queda agendado para el {due} 🙌")
@@ -421,7 +442,9 @@ def _daniela(t: int) -> None:
     c.user(t - 60 * MIN_MS, "¡Hola! Quiero 2 velas Luz Serena en lavanda para Cali")
     c.bot(t - 59 * MIN_MS, "¡Hola Daniela! 🤍 Claro: 2 Luz Serena con aroma a lavanda, $29.000 cada una.",
           tools=["set_order_slot"])
-    c.card(t - 57 * MIN_MS, "shipping_flow", "📋 El bot pidió los datos de envío (formulario)")
+    c.card(t - 57 * MIN_MS, "shipping_flow", "📋 El bot pidió los datos de envío (formulario)",
+           card={"text": "Para enviarte tu pedido necesito unos datos 🤍 Toca «Completar datos» para llenar el "
+                                 "formulario (toma 30 segundos).", "action": "Completar datos"})
     c.user(t - 54 * MIN_MS, "[datos de envío recibidos] receiver_name=Daniela Prueba; phone=3000000000; city=Cali; "
                             "neighborhood=San Fernando; address=Carrera Falsa # 45-67; payment_method=Nequi")
     c.bot(t - 50 * MIN_MS, _payment_text(74_940, 58_000, 16_940, "#42 (Luz Serena)"), tools=["register_order"])
@@ -640,6 +663,7 @@ def build(*, image_base: str = DEFAULT_IMAGE_BASE) -> dict[str, Any]:
     VAULT_DIR.mkdir(parents=True, exist_ok=True)
 
     products, photos = _catalog(image_base)
+    _IMAGE_BASE[0] = image_base.rstrip("/")
     photo_dir = STATIC_DIR / "catalog"
     photo_dir.mkdir(parents=True, exist_ok=True)
     for name, blob in photos.items():

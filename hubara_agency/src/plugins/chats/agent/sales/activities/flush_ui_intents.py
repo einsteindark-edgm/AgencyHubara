@@ -1011,6 +1011,13 @@ async def _dispatch_intent(
                 )
                 mpm_total += len(items)
             if product_sections:
+                native_body = wa_limits.truncate(
+                    _with_card_guide(
+                        params.get("intro_text") or "Toca un producto para ver más:",
+                        first_page=params.get("page") in (None, 1),
+                    ),
+                    wa_limits.MAX_PRODUCT_LIST_BODY,
+                )
                 try:
                     native_result = await wa_client.send_product_list(
                         phone_number_id,
@@ -1026,13 +1033,7 @@ async def _dispatch_intent(
                                 or "Nuestro catálogo",
                                 wa_limits.MAX_PRODUCT_LIST_HEADER,
                             ),
-                            body=wa_limits.truncate(
-                                _with_card_guide(
-                                    params.get("intro_text") or "Toca un producto para ver más:",
-                                    first_page=params.get("page") in (None, 1),
-                                ),
-                                wa_limits.MAX_PRODUCT_LIST_BODY,
-                            ),
+                            body=native_body,
                             sections=product_sections,
                             footer="Hubara",
                         ),
@@ -1044,6 +1045,8 @@ async def _dispatch_intent(
                         extra={"error": str(e)},
                     )
                 if native_result is not None and native_result.ok:
+                    if sent is not None:
+                        sent["text"] = native_body
                     return native_result
                 # Native rechazado (ej. (#131009) "product not found": items aún
                 # no shoppables tras conectar el catálogo al WABA, o gap de
@@ -1104,6 +1107,8 @@ async def _dispatch_intent(
                 result = await wa_client.send_interactive_list(phone_number_id, to_number, outbound_page)
                 if result is None or not result.ok:
                     return result
+                if sent is not None:
+                    sent["text"] = outbound_page.body
                 first = result
                 continue
             # La página 1 ya llegó: lo que falle de acá en adelante (respuesta
@@ -1263,15 +1268,8 @@ async def _dispatch_intent(
             wa_dtos.InteractiveButtonsOutbound(
                 body=body,
                 buttons=[
-                    wa_dtos.ReplyButton(
-                        id=f"order.confirm.{ref}", title="✅ Confirmar"
-                    ),
-                    wa_dtos.ReplyButton(
-                        id=f"order.modify.{ref}", title="✏️ Modificar"
-                    ),
-                    wa_dtos.ReplyButton(
-                        id=f"order.cancel.{ref}", title="❌ Cancelar"
-                    ),
+                    wa_dtos.ReplyButton(id=f"order.{action}.{ref}", title=title)
+                    for action, title in ORDER_CONFIRMATION_BUTTONS
                 ],
             ),
         )
@@ -1347,34 +1345,16 @@ async def _dispatch_intent(
         # delante) — el cliente ve QUÉ es cada foto y puede nombrarla.
         # Compat: intents encolados pre-deploy traen solo `image_urls`
         # (sin `images` etiquetadas) — se mandan sin label.
-        labeled_images = params.get("images")
-        if labeled_images:
-            gallery = [
-                (img.get("url"), img.get("label"), img.get("color"))
-                for img in labeled_images
-                if img.get("url")
-            ]
-        else:
-            gallery = [(url, None, None) for url in (params.get("image_urls") or [])]
-        gallery = gallery[:_GALLERY_MAX_IMAGES]
+        gallery = _gallery_shots(params)
         if not gallery:
             return None
-        lead_caption = params.get("lead_caption")
         last_result = None
         all_ok = True
-        for idx, (url, label, color) in enumerate(gallery):
+        for idx, (url, caption, label, color) in enumerate(gallery):
             if idx > 0:
                 # Pausa para que no se vea robótico (burst de imágenes).
                 # El @with_heartbeat sigue dando keepalive aunque haya sleep.
                 await _gallery_inter_delay()
-            if idx == 0:
-                caption = (
-                    f"{lead_caption} · {label}"
-                    if lead_caption and label
-                    else (lead_caption or label)
-                )
-            else:
-                caption = label
             result = await wa_client.send_image(
                 phone_number_id,
                 to_number,
@@ -1462,9 +1442,42 @@ CATALOG_CARD_GUIDE = (
 )
 
 
+#: Los botones del resumen del pedido (`order.<acción>.<referencia>`): los
+#: comparten el envío y la tarjeta del panel.
+ORDER_CONFIRMATION_BUTTONS = (
+    ("confirm", "✅ Confirmar"),
+    ("modify", "✏️ Modificar"),
+    ("cancel", "❌ Cancelar"),
+)
+
+
 def _with_card_guide(intro: str, *, first_page: bool) -> str:
     """El texto del catálogo con la guía de los botones (solo la primera página)."""
     return f"{intro}\n\n{CATALOG_CARD_GUIDE}" if first_page else intro
+
+
+def _gallery_shots(params: dict[str, Any]) -> list[tuple[str, str | None, str | None, str | None]]:
+    """Las fotos de una galería como salen: `(url, caption, label, color)`. La
+    primera lleva el texto del asesor delante de su diseño; las demás, su
+    diseño. Lo comparten el envío y la tarjeta del panel."""
+    labeled_images = params.get("images")
+    if labeled_images:
+        gallery = [
+            (img.get("url"), img.get("label"), img.get("color"))
+            for img in labeled_images
+            if img.get("url")
+        ]
+    else:
+        gallery = [(url, None, None) for url in (params.get("image_urls") or [])]
+    lead_caption = params.get("lead_caption")
+    shots = []
+    for idx, (url, label, color) in enumerate(gallery[:_GALLERY_MAX_IMAGES]):
+        if idx == 0:
+            caption = f"{lead_caption} · {label}" if lead_caption and label else (lead_caption or label)
+        else:
+            caption = label
+        shots.append((url, caption, label, color))
+    return shots
 
 
 def render_variant_picker_text(params: dict[str, Any]) -> str | None:
@@ -1667,6 +1680,14 @@ def _build_history_event(
         "component_kind": <kind>, "content": <nota>}`, que el clasificador
         del dashboard proyecta como `ui_type: ui_component_sent` y el
         frontend pinta como nota de sistema.
+
+    `content` es la línea corta que leen Jev, Calidad LLM y la app (recorta
+    los textos largos). `card` lleva, para el panel del chat, el mensaje
+    ENTERO que leyó el cliente y lo que traía: productos o categorías, el
+    enlace, las fotos (caso 2026-10-13, run 2395ffd6: el saludo iba en el
+    texto del catálogo y el panel no lo mostraba). `sent_text`, en el
+    catálogo, es el texto que salió (con la guía de la ficha si fue por el
+    catálogo de WhatsApp).
     """
     if kind == "variant_picker":
         text = _render_variant_picker_text(params)
@@ -1696,10 +1717,13 @@ def _build_history_event(
             len(s.get("rows") or []) for s in (params.get("sections") or [])
         )
         category = str(params.get("category") or "").strip()
-        content = (
-            f"🛍️ {actor} envió los productos de la categoría {category} ({total})"
-            if category
-            else f"🛍️ {actor} envió el catálogo con {total} productos"
+        content = _card_marker(
+            (
+                f"🛍️ {actor} envió los productos de la categoría {category} ({total})"
+                if category
+                else f"🛍️ {actor} envió el catálogo con {total} productos"
+            ),
+            str(params.get("intro_text") or ""),
         )
     elif kind == "categories":
         content = _categories_note(params)
@@ -1747,12 +1771,107 @@ def _build_history_event(
         # envió con éxito, el operador merece saber que ALGO salió.
         content = f"📤 {actor} envió un mensaje interactivo ({kind})"
 
-    return {
+    event: dict[str, Any] = {
         "role": "assistant",
         "kind": "ui_component",
         "component_kind": kind,
         "content": content,
     }
+    card = _history_card(kind, params, sent_text=sent_text)
+    if card:
+        event["card"] = card
+    return event
+
+
+def _history_card(
+    kind: str | None, params: dict[str, Any], *, sent_text: str | None
+) -> dict[str, Any] | None:
+    """El mensaje que leyó el cliente, entero, para el panel y la app:
+    `text`, `items` (filas de una lista), `buttons` (los que pudo tocar),
+    `action` (el botón que abre la lista o el formulario), `link` (botón con
+    enlace), `images` (fotos con su texto) y `title` (la categoría, o «por
+    texto» si el formulario no salió). None = no hay más que su línea."""
+    card: dict[str, Any] = {}
+    if kind == "shipping_flow":
+        if sent_text:
+            # El Flow no salió: el cliente leyó la lista de campos por texto.
+            text, items = sent_text, []
+            card["title"] = "por texto"
+        else:
+            text, items = str(params.get("body") or ""), []
+            card["action"] = str(params.get("flow_cta") or "Completar")
+    elif kind == "order_confirmation":
+        from src.plugins.chats.agent.sales.card_messages import order_card_record
+
+        # Sin la dirección: la misma regla del registro (lo leen modelos).
+        text, items = order_card_record(params), []
+        card["buttons"] = [{"title": title} for _, title in ORDER_CONFIRMATION_BUTTONS]
+    elif kind == "contact_card":
+        text = ""
+        item = {"title": os.getenv("HUBARA_ADVISOR_NAME", "Hubara Atención")}
+        if os.getenv("HUBARA_ADVISOR_PHONE"):
+            item["detail"] = os.environ["HUBARA_ADVISOR_PHONE"]
+        items = [item]
+    elif kind == "products_list":
+        text = sent_text or str(params.get("intro_text") or "")
+        items = _list_items(params)
+        category = str(params.get("category") or "").strip()
+        if category:
+            card["title"] = category
+    elif kind == "categories":
+        from src.platform.whatsapp import limits as wa_limits
+        from src.plugins.chats.agent.sales.catalog_menu import category_menu_body
+
+        text = category_menu_body(
+            str(params.get("intro_text") or ""),
+            params.get("more_categories") or [],
+            max_len=wa_limits.MAX_LIST_BODY,
+        )
+        items = _list_items(params)
+        card["action"] = str(params.get("button_label") or "Ver categorías")
+    elif kind == "quick_replies":
+        text, items = str(params.get("body") or ""), []
+    elif kind == "cta_url":
+        text, items = str(params.get("body_text") or ""), []
+        if params.get("url"):
+            card["link"] = {"label": str(params.get("button_text") or ""), "url": str(params["url"])}
+    elif kind == "product_detail":
+        text, items = "", []
+        if params.get("image_url"):
+            card["images"] = [_card_image(params["image_url"], params.get("caption"))]
+    elif kind == "product_gallery":
+        text, items = "", []
+        card["images"] = [_card_image(url, caption) for url, caption, _, _ in _gallery_shots(params)]
+    else:
+        return None
+    if text.strip():
+        card["text"] = text.strip()
+    if items:
+        card["items"] = items
+    return {k: v for k, v in card.items() if v} or None
+
+
+def _list_items(params: dict[str, Any]) -> list[dict[str, str]]:
+    """Las filas de una lista (productos o categorías), en su orden."""
+    items = []
+    for section in params.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        for row in section.get("rows") or []:
+            if not isinstance(row, dict) or not row.get("title"):
+                continue
+            item = {"title": str(row["title"])}
+            if row.get("description"):
+                item["detail"] = str(row["description"])
+            items.append(item)
+    return items
+
+
+def _card_image(url: Any, caption: Any) -> dict[str, str]:
+    image = {"url": str(url)}
+    if caption and str(caption).strip():
+        image["caption"] = str(caption).strip()
+    return image
 
 
 def _categories_note(params: dict[str, Any]) -> str:

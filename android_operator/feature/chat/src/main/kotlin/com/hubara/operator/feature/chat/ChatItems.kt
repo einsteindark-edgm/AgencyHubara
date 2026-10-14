@@ -25,6 +25,8 @@ fun chatItems(messages: List<Message>, nowMs: Long, zone: ZoneId): List<ChatItem
     fun day(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone).toLocalDate()
     fun joins(prev: Message, next: Message): Boolean {
         if (prev.author != next.author || prev.author == Author.SYSTEM) return false
+        // Una tarjeta o un toque son un mensaje entero con su forma: no se pegan a la burbuja de al lado.
+        if (prev.card != null || next.card != null || prev.tap != null || next.tap != null) return false
         val a = prev.timestampMs ?: return true
         val b = next.timestampMs ?: return true
         return day(a) == day(b) && b - a <= GROUP_GAP_MS

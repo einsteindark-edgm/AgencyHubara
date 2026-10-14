@@ -47,6 +47,10 @@ data class Message(
     val sentAtMs: Long? = null,
     /** Llegó con la ventana de 24 h cerrada: el bot no pudo contestarle. */
     val arrivedAfterWindow: Boolean = false,
+    /** Envío que no es texto (catálogo, botones, formulario…) con lo que leyó el cliente; null = mensaje normal. */
+    val card: MessageCard? = null,
+    /** El cliente tocó un botón (no escribió): el título del botón; null = no fue un toque. */
+    val tap: String? = null,
 )
 
 /** Estado de un mensaje del operador que pasa por el outbox. */

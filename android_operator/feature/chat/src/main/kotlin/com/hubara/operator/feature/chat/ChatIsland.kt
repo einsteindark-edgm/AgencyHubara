@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.Composable
@@ -134,15 +136,31 @@ fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modif
 private fun History(ui: ChatUiState, modifier: Modifier) {
     val zone = remember { ZoneId.systemDefault() }
     val items = remember(ui.messages) { chatItems(ui.messages, System.currentTimeMillis(), zone).asReversed() }
+    val list = rememberLazyListState()
+    // Llega algo (el cliente, el bot, lo que mandó el operador): si estaba al final, se ve. La lista se ancla al
+    // mensaje que ya se veía y lo nuevo quedaba debajo del borde (S30, 2026-10-13). Si subió a leer, no se lo mueve:
+    // tras insertar abajo, el que estaba al final pasa a ser el segundo (el tercero si el nuevo abrió un día).
+    val newest = ui.messages.lastOrNull()?.key
+    LaunchedEffect(newest) {
+        if (newest != null && list.firstVisibleItemIndex <= 2) list.animateScrollToItem(0)
+    }
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
+        state = list,
         reverseLayout = true,
         contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.md),
     ) {
         items(
             items,
             key = { if (it is ChatItem.Bubble) it.message.key else "day:${(it as ChatItem.Day).label}" },
-            contentType = { if (it is ChatItem.Bubble) it.message.author else "day" },
+            contentType = {
+                when {
+                    it !is ChatItem.Bubble -> "day"
+                    it.message.card != null -> "card"
+                    it.message.tap != null -> "tap"
+                    else -> it.message.author
+                }
+            },
         ) { item ->
             when (item) {
                 is ChatItem.Day -> DayHeader(item.label)

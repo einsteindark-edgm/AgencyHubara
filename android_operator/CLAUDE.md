@@ -257,6 +257,19 @@ cd android_operator && ./gradlew :app:bundleRelease \
     vuelve al inicio cuando cambia la primera (Robolectric no lo reproduce: el guardia es S29). El backend de prueba no
     crea pedidos en su Medusa: S29 llega hasta el formulario prellenado.
 
+34. **Lo que el bot envía y no es texto es una tarjeta que arma el servidor** (caso 2026-10-13: el saludo iba dentro
+    del texto del catálogo y la app solo decía, en gris, «El bot envió el catálogo con 2 productos»). El historial trae
+    `event` (`chats/shared/chat_events.py`): `bot_card` (catálogo, menú, formulario, resumen, enlace, fotos, contacto)
+    y `bot_buttons`; `Mappers.kt` lo lee tolerante (`JsonElement`, L-10) a `MessageCard` y el mensaje pasa de SYSTEM a
+    BOT/HUMAN (`sender`). Room v5 guarda la tarjeta en JSON (`cardJson`) y el toque del cliente (`tap`). La pinta
+    `CardBubble.kt`; **qué fue (`label`) y su ícono (`icon`, lista cerrada → `CardIcon`) los decide el servidor**: un
+    envío nuevo con texto, filas, botones, enlace o fotos se ve bien sin publicar otra versión. Los botones del cliente
+    se ven pero no se tocan; el que tocó lleva «Tocó». Fotos: solo `https://` o rutas del backend (`reachable`).
+    El historial viejo sin tarjeta sigue como nota. S30 en el emulador (`inject.py bot-card`).
+    **Trampa que encontró S30:** con el chat abierto al final, lo que llegaba (del cliente o del bot) quedaba debajo
+    del borde: la lista invertida se ancla al mensaje que ya se veía. `History` baja al más nuevo si el operador
+    estaba al final (fila ≤ 2) y no lo mueve si subió a leer (`NewMessageScrollTest`).
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
