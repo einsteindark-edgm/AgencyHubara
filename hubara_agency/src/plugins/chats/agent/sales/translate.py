@@ -485,6 +485,15 @@ def is_review_reply_message(msg: WhatsAppMessage) -> bool:
     )
 
 
+def review_reply_text(msg: WhatsAppMessage) -> str | None:
+    """Lo que el chat muestra de una calificación (`[calificación recibida]
+    ★★★★☆ …`), o None si el mensaje no es una. Sincrónico: lo usa también el
+    oído standby de MBA (premortem C9)."""
+    if not is_review_reply_message(msg):
+        return None
+    return _format_review_response((msg.interactive or {}).get("response_json") or {})
+
+
 def _format_review_response(payload: dict[str, Any]) -> str:
     """`[calificación recibida] ★★★★☆ (4/5) · «comentario» · con foto`."""
     try:

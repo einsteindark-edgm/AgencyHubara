@@ -186,6 +186,9 @@ def build_ingest_use_case() -> IngestInboundMessage:
         order_facts=build_order_facts_reader(),
         # Cupón de agradecimiento por calificar: se aplica solo al escribirnos.
         thanks_coupon=thanks_coupon,
+        # La calificación llega al plugin de reseñas por el dispatcher
+        # (premortem C3: sin fábrica no salía nunca).
+        review_client_factory=get_temporal_client,
     )
     return _INGEST_USE_CASE
 
@@ -380,12 +383,22 @@ def build_ingest_standby_use_case() -> IngestStandby:
         # con la fábrica REAL de Temporal: sin ella el emisor es un no-op.
         await emit_watchdog_events(session_id, metadata, temporal_client_factory=get_temporal_client)
 
+    async def _standby_review_reply(
+        session_id: str, wa_message_id: str, response_json: dict, received_at_ms: int
+    ) -> None:
+        # Premortem C9: la calificación que llega con MBA al frente va por el
+        # MISMO emisor del ingest regular (pendientes + reintentos).
+        await build_ingest_use_case().emit_review_submitted(
+            session_id, wa_message_id, response_json, received_at_ms
+        )
+
     _STANDBY_USE_CASE = IngestStandby(
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
         is_customer_allowed=mba_customer_allowed,
         emit_window_events=_standby_window_events,
+        on_review_reply=_standby_review_reply,
     )
     return _STANDBY_USE_CASE
 

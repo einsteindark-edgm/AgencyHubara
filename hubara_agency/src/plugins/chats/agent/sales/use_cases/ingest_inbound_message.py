@@ -244,7 +244,8 @@ _PHOTO_NOTICE_TIMEOUT_S = 2.0
 _CAMPAIGN_COUPON_TIMEOUT_S = 5.0
 
 #: Reintentos del despacho de una calificación (revisión M1): Temporal puede
-#: fallar un instante y la calificación trae el cupón prometido.
+#: fallar un instante y la calificación trae el cupón prometido. Corren en
+#: segundo plano (premortem C3): el webhook no los espera.
 _REVIEW_DISPATCH_BACKOFF_S: tuple[float, ...] = (0.5, 1.0, 2.0)
 
 #: Lo que el cliente pide y no existe: el catálogo es el snapshot local (~30
@@ -391,11 +392,19 @@ class IngestInboundMessage:
         photo_notifier: PhotoNotifier | None = None,
         order_facts: OrderFactsReader | None = None,
         thanks_coupon: ThanksCouponApplier | None = None,
+        review_client_factory: TemporalClientFactory | None = None,
     ) -> None:
         self._history_store = history_store
+        # Fábrica de Temporal SOLO para la calificación (premortem C3): la
+        # composición no le pasa `temporal_client_factory` al ingest (el
+        # watchdog sigue apagado ahí) y sin fábrica toda calificación quedaba
+        # guardada sin llegar al plugin de reseñas. Sin ella, la de siempre.
+        self._review_client_factory = review_client_factory or temporal_client_factory
         # Cupón de agradecimiento por calificar (reseñas, 2026-10-13): se
         # aplica solo cuando quien lo tiene nos escribe ("lo aplicamos solo").
         self._thanks_coupon = thanks_coupon
+        # Tareas de segundo plano propias (reintentos de una calificación).
+        self._background: set[Any] = set()
         # Los datos reales de un pedido (OrderFacts): el cliente que escribe
         # justo después de comprar abre el episodio en post-venta, con la etapa
         # y el pago del pedido (caso pedido #64). Sin él, la nota de siempre.
@@ -497,6 +506,18 @@ class IngestInboundMessage:
             )
             metadata = {}
             base = _Unread()
+
+        # Calificaciones que no llegaron al plugin de reseñas (premortem C3):
+        # otra vez, en segundo plano, con cada mensaje de este cliente.
+        _parked = metadata.get("pending_review_submissions")
+        if isinstance(_parked, list) and _parked and self._review_client_factory is not None:
+            self._spawn_background(
+                self._redrive_review_submissions(
+                    session_id, [p for p in _parked if isinstance(p, dict)]
+                ),
+                label="reviews.redrive_submissions",
+                session_id=session_id,
+            )
 
         # --- 1b. Nombre de perfil de WhatsApp (`contacts[].profile.name`) ---
         # La bandeja de la app y los incendios muestran quién escribe, no solo
@@ -1737,53 +1758,138 @@ class IngestInboundMessage:
     ) -> None:
         """`ReviewSubmittedEvent` al plugin de reseñas por el dispatcher.
 
-        Se espera y se reintenta (perder la calificación es perder el cupón
-        prometido; el webhook ya respondió 200 y Meta no la reentrega). Si
-        Temporal sigue caído, queda en `pending_review_submissions` del
-        metadata (recuperable: se re-despacha a mano con el mismo evento) y
-        un error en el log."""
-        import asyncio
+        Perder la calificación es perder el cupón prometido (el webhook ya
+        respondió 200 y Meta no la reentrega). Premortem C3: queda guardada en
+        `pending_review_submissions` ANTES de despachar (un reinicio a mitad no
+        la pierde) y sale de ahí solo cuando un workflow la tomó; un despacho
+        sin transición o con `reviews` apagado NO cuenta como hecho. Un intento
+        en línea; los reintentos van en segundo plano (los mensajes que vienen
+        detrás en el mismo webhook no esperan). Lo que siga guardado se vuelve
+        a despachar con el próximo mensaje del cliente (el workflow es por
+        wamid y la actividad es idempotente)."""
         import json as _json
 
-        payload = _json.dumps(response_json, ensure_ascii=False)
-        event = ReviewSubmittedEvent(
+        entry = {
+            "wa_message_id": wa_message_id,
+            "response_json": _json.dumps(response_json, ensure_ascii=False),
+            "received_at_ms": received_at_ms,
+        }
+        self._park_review_submission(session_id, entry)
+        reason = await self._dispatch_review_submission(session_id, entry)
+        if reason is None:
+            return
+        if self._review_client_factory is None:
+            self._log_parked_reviews(session_id, wa_message_id, reason)
+            return
+        self._spawn_background(
+            self._retry_review_submission(session_id, entry, reason),
+            label="reviews.retry_submission",
             session_id=session_id,
-            wa_message_id=wa_message_id,
-            response_json=payload,
-            received_at_ms=received_at_ms,
-        )
-        last_error = "sin dispatcher"
-        if self._temporal_client_factory is not None:
-            for delay in (0.0, *_REVIEW_DISPATCH_BACKOFF_S[:-1]):
-                if delay:
-                    await asyncio.sleep(delay)
-                try:
-                    client = await self._temporal_client_factory()
-                    await dispatch_envelope_with_client(
-                        envelope_for(event, source_plugin="chats", source_worker="sales"),
-                        client,
-                    )
-                    return
-                except Exception as exc:  # noqa: BLE001 — se reintenta y se guarda
-                    last_error = type(exc).__name__
-        logger.error(
-            "review_submitted_dispatch_failed",
-            session_id=session_id,
-            wa_message_id=wa_message_id,
-            reason=last_error,
         )
 
+    async def emit_review_submitted(
+        self, session_id: str, wa_message_id: str, response_json: dict[str, Any], received_at_ms: int
+    ) -> None:
+        """La calificación que llegó por otro oído (standby de MBA, C9): mismo
+        camino que la del webhook normal."""
+        await self._emit_review_submitted(session_id, wa_message_id, response_json, received_at_ms)
+
+    def _park_review_submission(self, session_id: str, entry: dict[str, Any]) -> None:
         def _keep(fresh: dict[str, Any]) -> dict[str, Any] | None:
             pending = list(fresh.get("pending_review_submissions") or [])
-            if any(p.get("wa_message_id") == wa_message_id for p in pending):
+            if any(isinstance(p, dict) and p.get("wa_message_id") == entry["wa_message_id"] for p in pending):
                 return None
-            pending.append(
-                {"wa_message_id": wa_message_id, "response_json": payload, "received_at_ms": received_at_ms}
-            )
-            fresh["pending_review_submissions"] = pending[-20:]
+            fresh["pending_review_submissions"] = [*pending, entry][-20:]
             return fresh
 
         self._update_best_effort(session_id, _keep, what="calificacion_pendiente")
+
+    def _unpark_review_submission(self, session_id: str, wa_message_id: str) -> None:
+        def _drop(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            pending = list(fresh.get("pending_review_submissions") or [])
+            kept = [p for p in pending if not (isinstance(p, dict) and p.get("wa_message_id") == wa_message_id)]
+            if len(kept) == len(pending):
+                return None
+            if kept:
+                fresh["pending_review_submissions"] = kept
+            else:
+                fresh.pop("pending_review_submissions", None)
+            return fresh
+
+        self._update_best_effort(session_id, _drop, what="calificacion_despachada")
+
+    async def _dispatch_review_submission(self, session_id: str, entry: dict[str, Any]) -> str | None:
+        """Un intento. None = un workflow la tomó (y sale de la lista); si
+        no, el motivo."""
+        if self._review_client_factory is None:
+            return "sin dispatcher"
+        event = ReviewSubmittedEvent(
+            session_id=session_id,
+            wa_message_id=str(entry.get("wa_message_id") or ""),
+            response_json=str(entry.get("response_json") or "{}"),
+            received_at_ms=int(entry.get("received_at_ms") or 0),
+        )
+        try:
+            client = await self._review_client_factory()
+            result = await dispatch_envelope_with_client(
+                envelope_for(event, source_plugin="chats", source_worker="sales"), client
+            )
+        except Exception as exc:  # noqa: BLE001 — queda guardada y se reintenta
+            return type(exc).__name__
+        if not getattr(result, "matches", None):
+            return "reviews_apagado" if getattr(result, "skipped_disabled", None) else "sin_transicion"
+        self._unpark_review_submission(session_id, event.wa_message_id)
+        return None
+
+    async def _retry_review_submission(self, session_id: str, entry: dict[str, Any], reason: str) -> None:
+        import asyncio
+
+        for delay in _REVIEW_DISPATCH_BACKOFF_S:
+            await asyncio.sleep(delay)
+            reason = await self._dispatch_review_submission(session_id, entry) or ""
+            if not reason:
+                return
+        self._log_parked_reviews(session_id, str(entry.get("wa_message_id")), reason)
+
+    async def _redrive_review_submissions(self, session_id: str, pending: list[dict[str, Any]]) -> None:
+        """Las calificaciones guardadas de este cliente, otra vez al plugin."""
+        reason = None
+        for entry in pending:
+            reason = await self._dispatch_review_submission(session_id, entry) or reason
+        if reason is not None:
+            self._log_parked_reviews(session_id, str(pending[-1].get("wa_message_id")), reason)
+
+    def _log_parked_reviews(self, session_id: str, wa_message_id: str, reason: str) -> None:
+        """ERROR con cuántas siguen guardadas: el operador lo ve en el log."""
+        try:
+            pending = self._metadata_store.read(session_id).get("pending_review_submissions") or []
+        except Exception:  # noqa: BLE001 — el conteo es informativo
+            pending = []
+        logger.error(
+            "review_submissions_parked",
+            session_id=session_id,
+            wa_message_id=wa_message_id,
+            reason=reason,
+            parked=len(pending),
+        )
+
+    def _spawn_background(self, coro: Any, *, label: str, session_id: str) -> None:
+        """`_spawn_safe` guardando la tarea (que el recolector no la corte a
+        mitad; los tests la esperan)."""
+        import asyncio
+
+        async def _run() -> None:
+            try:
+                await coro
+            except Exception as e:  # noqa: BLE001 — fire-and-forget safety
+                logger.warning(
+                    "background_task_failed", label=label, session_id=session_id,
+                    error_type=type(e).__name__, error=str(e),
+                )
+
+        task = asyncio.create_task(_run())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
 
     async def _check_thanks_coupon(
         self, session_id: str, now_ms: int
