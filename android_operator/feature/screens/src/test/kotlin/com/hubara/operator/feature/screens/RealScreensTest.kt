@@ -10,6 +10,7 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -237,6 +238,106 @@ class RealScreensTest {
                   "label": "Pedir datos de envío · 2× Luz Serena", "args": {"product": "luz-serena", "quantity": "2"}}"""),
             )
         }
+    }
+
+    /** `GET /api/chats/catalog` con sus categorías; `?category=…&q=…` filtra los productos (lo filtra el backend). */
+    private fun productos(filterLabel: String, vararg handles: String): String {
+        val all = mapOf(
+            "san-miguel" to """{"handle": "san-miguel", "title": "Vela San Miguel Arcángel", "price_cop": 25000, "thumbnail_url": null,
+               "aromas": [], "colors": [], "designs": [], "categories": ["Velas Religiosas"]}""",
+            "difusor-lavanda" to """{"handle": "difusor-lavanda", "title": "Difusor Lavanda", "price_cop": 32000, "thumbnail_url": null,
+               "aromas": [], "colors": [], "designs": [], "categories": ["Difusores"]}""",
+            "virgen-guadalupe" to """{"handle": "virgen-guadalupe", "title": "Vela Virgen de Guadalupe", "price_cop": 25000,
+               "thumbnail_url": null, "aromas": [], "colors": [], "designs": [], "categories": ["Velas Religiosas"]}""",
+        )
+        val shown = if (handles.isEmpty()) all.keys.toList() else handles.toList()
+        return """{"products": [${shown.joinToString { all.getValue(it) }}],
+          "categories": [{"value": "", "name": "Todas", "label": "Todas · 3", "count": 3},
+                         {"value": "difusores", "name": "Difusores", "label": "Difusores · 1", "count": 1},
+                         {"value": "velas-religiosas", "name": "Velas Religiosas", "label": "Velas Religiosas · 2", "count": 2}],
+          "total": 3, "count": ${shown.size}, "filter_label": "$filterLabel"}"""
+    }
+
+    /**
+     * Caso 2026-10-13: «Enviar productos» mandaba el catálogo entero. Ahora el operador elige una categoría y sale solo
+     * esa; la lista de la pantalla es la que el backend va a mandar.
+     */
+    @Test fun enviar_productos_por_categoria_manda_solo_esa_categoria() {
+        data.ok("/api/chats/catalog", productos(""))
+        data.ok("/api/chats/catalog?category=velas-religiosas", productos("Velas Religiosas", "san-miguel", "virgen-guadalupe"))
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar productos").performClick()
+        node("Enviar todo el catálogo").assertExists()
+        node("Velas Religiosas · 2").performScrollTo().performClick()
+        compose.runOnIdle { assertThat(data.paths().last()).isEqualTo("/api/chats/catalog?category=velas-religiosas") }
+        compose.onNodeWithText("Difusor Lavanda").assertDoesNotExist()
+        compose.onNodeWithText("Enviar todo el catálogo").assertDoesNotExist()
+        node("Enviar 2 productos").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "present_products",
+                  "label": "Enviar productos · Velas Religiosas", "args": {"category": "velas-religiosas", "q": ""}}"""),
+            )
+            assertThat(effects).contains(ScreenEffect.Back)
+        }
+    }
+
+    @Test fun enviar_productos_sin_filtro_manda_el_catalogo_como_antes() {
+        data.ok("/api/chats/catalog", productos(""))
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar productos").performClick()
+        node("Enviar todo el catálogo").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "present_products", "label": "Enviar productos"}"""),
+            )
+        }
+    }
+
+    @Test fun enviar_productos_busca_por_nombre_y_manda_lo_que_coincide() {
+        data.ok("/api/chats/catalog", productos(""))
+        data.ok("/api/chats/catalog?q=miguel", productos("«miguel»", "san-miguel"))
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar productos").performClick()
+        node("Buscar producto").performTextInput("miguel")
+        // El buscador espera a que el operador deje de escribir antes de pedir.
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(1, java.util.concurrent.TimeUnit.SECONDS)
+        compose.runOnIdle { assertThat(data.paths().last()).isEqualTo("/api/chats/catalog?q=miguel") }
+        compose.onNodeWithText("Vela Virgen de Guadalupe").assertDoesNotExist()
+        node("Enviar 1 producto").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "present_products",
+                  "label": "Enviar productos · «miguel»", "args": {"category": "", "q": "miguel"}}"""),
+            )
+        }
+    }
+
+    /** El producto exacto: tocarlo lo manda solo, con su foto y su precio. */
+    @Test fun enviar_productos_toca_uno_y_lo_manda_solo() {
+        data.ok("/api/chats/catalog", productos(""))
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar productos").performClick()
+        node("Difusor Lavanda").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "present_product_detail",
+                  "label": "Enviar producto · Difusor Lavanda", "args": {"handle": "difusor-lavanda"}}"""),
+            )
+            assertThat(effects).contains(ScreenEffect.Back)
+        }
+    }
+
+    @Test fun volver_de_enviar_productos_quita_los_filtros() {
+        data.ok("/api/chats/catalog", productos(""))
+        data.ok("/api/chats/catalog?category=difusores", productos("Difusores", "difusor-lavanda"))
+        open("acciones", mapOf("session" to "wa_000000000101"))
+        node("Enviar productos").performClick()
+        node("Difusores · 1").performScrollTo().performClick()
+        node("Volver a las acciones").performClick()
+        // Los colores, los aromas y el formulario vuelven a leer el catálogo entero.
+        compose.runOnIdle { assertThat(data.paths().last()).isEqualTo("/api/chats/catalog") }
+        node("Medios de pago").assertExists()
     }
 
     @Test fun volver_a_las_acciones_deja_el_menu_como_estaba() {

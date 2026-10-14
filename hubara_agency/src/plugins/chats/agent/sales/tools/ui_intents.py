@@ -688,7 +688,7 @@ class PresentProductsTool(ToolBase):
                 ),
             }, ensure_ascii=False)
         if len(products) > _MAX_ROWS and categories:
-            entries = _category_entries(products, categories)
+            entries = category_entries(products, categories)
             if len(entries) == 1:
                 _slug, label, members = entries[0]
                 return self._present_group(ctx, label, members, intro_text, incomplete)
@@ -735,7 +735,7 @@ class PresentProductsTool(ToolBase):
             categories = list(await self._catalog.list_categories())
             row_slug = category_from_row_id(category)
             if row_slug is not None:
-                picked = _row_members(row_slug, everything, categories)
+                picked = category_members(row_slug, everything, categories)
                 if picked is None:
                     return _category_not_found(category, None, [c.label for c in categories])
                 label, members = picked
@@ -1140,12 +1140,13 @@ def _others(products: list[Any], categories: list[Any]) -> list[Any]:
     return [p for p in products if not p.categories or others.intersection(p.categories)]
 
 
-def _category_entries(
+def category_entries(
     products: list[Any], categories: list[Any]
 ) -> list[tuple[str, str, list[Any]]]:
     """`(slug, nombre, productos)` de cada fila del menú, en el orden de
     `list_categories`; los productos sin categoría van en «Otros», al final,
-    junto con los de una categoría «Otros» real si la hay."""
+    junto con los de una categoría «Otros» real si la hay. Son también los
+    chips de «Enviar productos» de la app (`api/catalog_picker.py`)."""
     loose = any(not p.categories for p in products)
     entries: list[tuple[str, str, list[Any]]] = []
     for c in categories:
@@ -1159,7 +1160,7 @@ def _category_entries(
     return entries
 
 
-def _row_members(
+def category_members(
     slug: str, products: list[Any], categories: list[Any]
 ) -> tuple[str, list[Any]] | None:
     """`(nombre, productos)` de la fila del menú `categoria:<slug>`; None si

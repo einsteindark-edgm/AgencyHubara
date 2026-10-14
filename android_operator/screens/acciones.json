@@ -1,18 +1,19 @@
 {
   "$schema": "./screen.schema.json",
-  "_nota": "«+ Más» del chat: las acciones del bot que el operador puede mandar. Van por el outbox (con los 5 s de deshacer). Las que necesitan un producto (colores, aromas, formulario de envío) muestran el catálogo para elegirlo: con el bot apagado nadie llena el pedido y sin esto el formulario respondía «faltan datos» y los colores no se podían mandar (caso 2026-10-09).",
+  "_nota": "«+ Más» del chat: las acciones del bot que el operador puede mandar. Van por el outbox (con los 5 s de deshacer). Las que necesitan un producto (colores, aromas, formulario de envío) muestran el catálogo para elegirlo: con el bot apagado nadie llena el pedido y sin esto el formulario respondía «faltan datos» y los colores no se podían mandar (caso 2026-10-09). «Enviar productos» filtra por categoría o por nombre y manda solo eso, o un producto suelto (caso 2026-10-13: mandaba el catálogo entero). El backend filtra (`category`, `q`) con la misma regla que usa al enviar: lo que se ve es lo que se manda.",
   "schema": 1,
   "id": "acciones",
   "title": "Acciones",
   "params": ["session"],
-  "state": { "elegir": "", "cantidad": "1" },
+  "state": { "elegir": "", "cantidad": "1", "categoria": "", "buscar": "" },
   "data": {
-    "catalogo": { "get": "/api/chats/catalog", "optional": true }
+    "catalogo": { "get": "/api/chats/catalog", "query": { "category": "{{state.categoria}}", "q": "{{state.buscar}}" }, "optional": true }
   },
   "computed": {
     "menu": "{{state.elegir | empty}}",
     "con_colores": "{{catalogo.products | where:'colors'}}",
-    "con_aromas": "{{catalogo.products | where:'aromas'}}"
+    "con_aromas": "{{catalogo.products | where:'aromas'}}",
+    "filtrado": "{{state.categoria | or:state.buscar}}"
   },
   "body": [
     {
@@ -22,11 +23,8 @@
           "type": "list",
           "children": [
             {
-              "type": "list_item", "icon": "inventory", "title": "Enviar productos",
-              "action": [
-                { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos" } },
-                { "type": "back" }
-              ]
+              "type": "list_item", "icon": "inventory", "title": "Enviar productos", "subtitle": "Por categoría, por nombre o uno solo", "chevron": true,
+              "action": { "type": "set_state", "values": { "elegir": "productos" } }
             },
             {
               "type": "list_item", "icon": "apps", "title": "Enviar colores", "subtitle": "Eliges el producto", "chevron": true,
@@ -87,6 +85,51 @@
               ]
             }
           ]
+        }
+      ]
+    },
+    {
+      "type": "section", "title": "Enviar productos", "subtitle": "Elige una categoría o busca por nombre: al cliente le llega solo eso.",
+      "visible": "{{state.elegir | eq:'productos'}}",
+      "children": [
+        { "type": "chips", "bind": "state.categoria", "options": "{{catalogo.categories}}" },
+        { "type": "text_field", "bind": "state.buscar", "label": "Buscar producto", "placeholder": "Ej.: San Miguel" },
+        { "type": "progress", "label": "Cargando el catálogo…", "visible": "{{status.catalogo.loading}}" },
+        {
+          "type": "button", "icon": "send", "full_width": true, "text": "Enviar todo el catálogo",
+          "visible": "{{filtrado | not}}", "enabled": "{{status.catalogo.loading | not}}",
+          "action": [
+            { "type": "native", "name": "send_tool", "args": { "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos" } },
+            { "type": "back" }
+          ]
+        },
+        {
+          "type": "button", "icon": "send", "full_width": true, "text": "Enviar {{catalogo.count | plural:'producto':'productos'}}",
+          "visible": "{{filtrado | and:catalogo.count}}", "enabled": "{{status.catalogo.loading | not}}",
+          "action": [
+            { "type": "native", "name": "send_tool", "args": {
+              "session": "{{params.session}}", "tool": "present_products", "label": "Enviar productos · {{catalogo.filter_label}}",
+              "args": { "category": "{{state.categoria}}", "q": "{{state.buscar}}" } } },
+            { "type": "back" }
+          ]
+        },
+        {
+          "type": "notice", "tone": "info", "icon": "info", "visible": "{{catalogo.count | gt:30}}",
+          "text": "Un mensaje de WhatsApp lleva hasta 30 productos: salen los primeros 30. Elige una categoría o busca para mandar justo lo que necesitas."
+        },
+        { "type": "text", "style": "label", "emphasis": true, "text": "O toca uno para enviarlo solo, con su foto y su precio" },
+        {
+          "type": "list", "items": "{{catalogo.products}}", "as": "p", "key": "{{p.handle}}",
+          "item": {
+            "type": "list_item", "title": "{{p.title}}", "subtitle": "{{p.categories | join}}", "trailing": "{{p.price_cop | money}}",
+            "action": [
+              { "type": "native", "name": "send_tool", "args": {
+                "session": "{{params.session}}", "tool": "present_product_detail", "label": "Enviar producto · {{p.title}}",
+                "args": { "handle": "{{p.handle}}" } } },
+              { "type": "back" }
+            ]
+          },
+          "empty": { "type": "empty", "icon": "search", "title": "Ningún producto coincide", "body": "Prueba con otra categoría u otro nombre." }
         }
       ]
     },
@@ -172,7 +215,7 @@
     },
     {
       "type": "button", "style": "text", "icon": "arrow_back", "text": "Volver a las acciones", "visible": "{{menu | not}}",
-      "action": { "type": "set_state", "values": { "elegir": "" } }
+      "action": { "type": "set_state", "values": { "elegir": "", "categoria": "", "buscar": "" } }
     }
   ]
 }

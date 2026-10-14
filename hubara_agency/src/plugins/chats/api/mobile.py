@@ -33,7 +33,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi import Path as PathParam
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -50,6 +50,13 @@ from src.plugins.chats.agent.sales.use_cases.funnel_stage import (
 )
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
+from src.plugins.chats.api.catalog_picker import (
+    UnknownCategory,
+    category_labels,
+    category_options,
+    filter_label,
+    pick,
+)
 from src.plugins.chats.api.dashboard import (
     _compute_pending_payment_order_id,
     _order_ref_candidate_ids,
@@ -212,6 +219,15 @@ async def _catalog_products(deps: MobileDeps) -> list[Any] | None:
         logger.warning("[chats.mobile] catálogo no disponible: {}", exc)
         return None
     return [p for p in result.results if getattr(p, "status", "published") == "published"]
+
+
+async def _catalog_categories(deps: MobileDeps) -> list[Any]:
+    """Las categorías del snapshot (las del menú del bot); sin ellas, solo «Todas»."""
+    try:
+        return list(await deps.catalog.list_categories())
+    except Exception as exc:  # noqa: BLE001 — sin categorías la app filtra por nombre igual
+        logger.warning("[chats.mobile] categorías del catálogo no disponibles: {}", exc)
+        return []
 
 
 def _image_count(product: Any) -> int:
@@ -669,7 +685,7 @@ def _designs(product: Any) -> list[str]:
     return designs
 
 
-def _catalog_entry(product: Any) -> dict[str, Any]:
+def _catalog_entry(product: Any, categories: list[str]) -> dict[str, Any]:
     attrs = parse_variant_tags(product.tags)
     images = [img.url for img in (product.images or []) if getattr(img, "url", None)]
     return {
@@ -680,12 +696,34 @@ def _catalog_entry(product: Any) -> dict[str, Any]:
         "aromas": list(attrs.aromas),
         "colors": list(attrs.colors),
         "designs": _designs(product),
+        "categories": categories,
     }
 
 
 @router.get("/catalog")
-async def catalog(deps: Deps) -> Any:
+async def catalog(
+    deps: Deps,
+    category: Annotated[str, Query(max_length=200)] = "",
+    q: Annotated[str, Query(max_length=100)] = "",
+) -> Any:
+    """`category` (el `value` de un chip) y `q` (el buscador) filtran
+    `products` con la MISMA regla que usa «Enviar» (`catalog_picker.pick`);
+    `categories` (los chips) y `total` son siempre los del catálogo entero, y
+    `filter_label` dice lo elegido en palabras."""
     products = await _catalog_products(deps)
     if products is None:
         return _error(503, "catalog_unavailable")
-    return {"products": [_catalog_entry(p) for p in products]}
+    categories = await _catalog_categories(deps)
+    labels = category_labels(products, categories)
+    try:
+        picked = pick(products, categories, category=category, q=q)
+    except UnknownCategory:
+        picked = None  # la copia cambió: la app vuelve a pintar los chips
+    shown = picked.products if picked is not None else []
+    return {
+        "products": [_catalog_entry(p, labels.get(p.handle, [])) for p in shown],
+        "categories": category_options(products, categories),
+        "total": len(products),
+        "count": len(shown),
+        "filter_label": filter_label(picked, q),
+    }
