@@ -103,6 +103,7 @@ with workflow.unsafe.imports_passed_through():
         contract_policy_of,
         decide_egress_activity,
         delivered_card_texts,
+        delivered_card_contents,
         delivered_components,
         perceive_burst_activity,
         plan_of,
@@ -879,6 +880,7 @@ class HubaraSalesSessionWorkflowV2:
                             topics=list(decided.topics),
                             reply_text=verify_reply,
                             components=delivered_components(result.tool_events),
+                            card_contents=delivered_card_contents(result.tool_events),
                         )
                     )
                     trace_steps.append(_verify_step(verify_out, verified_ms, applied=True))
@@ -995,6 +997,7 @@ class HubaraSalesSessionWorkflowV2:
                                     trace_sent_texts, None, delivered_card_texts(result.tool_events)
                                 ),
                                 components=delivered_components(result.tool_events),
+                                card_contents=delivered_card_contents(result.tool_events),
                             )
                         )
                         trace_steps.append(_verify_step(shadow_verify, shadow_verified_ms, applied=False))

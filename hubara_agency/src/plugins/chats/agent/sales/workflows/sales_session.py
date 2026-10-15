@@ -46,6 +46,7 @@ with workflow.unsafe.imports_passed_through():
         VerifyOutput,
         complement_note_of,
         delivered_card_texts,
+        delivered_card_contents,
         delivered_components,
         perceive_burst_activity,
         plan_of,
@@ -1653,6 +1654,7 @@ class HubaraSalesSessionWorkflow:
                                 # Solo las tarjetas que el cliente recibe (ni
                                 # `send_reply` ni las tools que se negaron).
                                 components=delivered_components(result.tool_events),
+                                card_contents=delivered_card_contents(result.tool_events),
                             )
                         )
                         trace_steps.append(_verify_step(verify_out, verified_ms, applied=True))
@@ -1810,6 +1812,7 @@ class HubaraSalesSessionWorkflow:
                                         trace_sent_texts, None, delivered_card_texts(result.tool_events)
                                     ),
                                     components=delivered_components(result.tool_events),
+                                    card_contents=delivered_card_contents(result.tool_events),
                                 )
                             )
                             trace_steps.append(_verify_step(shadow_verify, shadow_verified_ms, applied=False))

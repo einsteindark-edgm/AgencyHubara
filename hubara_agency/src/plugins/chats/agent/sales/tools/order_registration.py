@@ -112,6 +112,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.option_choice import unchosen_options
 from src.plugins.chats.agent.sales.use_cases.order_draft import split_lines_mismatch
 from src.sdk.catalogkit import (
     CatalogPort,
@@ -804,6 +805,30 @@ class RegisterOrderTool(ToolBase):
                         "cliente. Si el cliente cambió las variantes o las cantidades, "
                         "actualiza primero el borrador con set_order_slot(lineas=...) y "
                         "vuelve a presentar la confirmación."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        # La opción de Medusa sin escoger (2026-10-14, ···0686: `variant_label`
+        # «Navidad», el aroma, y Medusa cayó a la primera variante). Para el
+        # bot: el operador que registra desde el panel ya habló con el cliente.
+        unchosen = (
+            await unchosen_options(self._catalog, items, metadata_before) if self._closing_guard else []
+        )
+        if unchosen:
+            logger.warning(
+                "🧾 [TOOL register_order] rechazada session={}: variant_not_chosen {}", ctx.session_key, unchosen
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "variant_not_chosen",
+                    "error": "variant_not_chosen",
+                    "summary": (
+                        f"Falta que el cliente escoja {'; '.join(unchosen)}. El pedido NO se registró: "
+                        "pregúntaselo con present_variant_picker, anota lo que escoja con set_order_slot, "
+                        "vuelve a presentar la confirmación y registra con su `variant_label`."
                     ),
                 },
                 ensure_ascii=False,

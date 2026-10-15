@@ -341,6 +341,10 @@ class Catalog(_Strict):
     #: traerlas todas (si no, se corría la clase de Python: la inteligencia de
     #: otra tienda).
     capabilities: list[str] = Field(default_factory=list)
+    #: capacidad → versión desde la que el código la pide. Las versiones
+    #: publicadas antes no la traen (no se editan) y siguen certificando; el
+    #: código no la corre con ellas. Desde esa versión, falta = DB003.
+    capabilities_since: dict[str, int] = Field(default_factory=dict)
     #: El plugin le pasa los ítems (`items=`) al estado de una capacidad por
     #: ítems: entonces ese estado tiene que recibirlos (`takes_items`).
     items_to_state: bool = False

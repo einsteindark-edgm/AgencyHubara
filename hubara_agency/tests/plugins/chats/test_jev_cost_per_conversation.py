@@ -100,7 +100,7 @@ async def test_reading_the_turn_charges_the_profile_and_its_shadow(_isolate_vaul
 async def test_reviewing_the_reply_charges_the_conversation(_isolate_vault_dir: Path, monkeypatch) -> None:
     path = _seed(_isolate_vault_dir)
 
-    async def verify(inp, *, redact=()):
+    async def verify(inp, *, redact=(), context=None):
         return VerifyOutput(ok=True, decision="send", cost_usd=0.00004)
 
     monkeypatch.setattr(engine, "verify", verify)

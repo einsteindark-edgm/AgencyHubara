@@ -412,6 +412,31 @@ def _now_ms() -> int:
     return int(workflow.now().timestamp() * 1000)
 
 
+#: Ronda de cierre (laboratorio del PR #426, 2026-10-14): al agotar las rondas
+#: en un turno que el cliente espera, UNA ronda más con solo `send_reply` en
+#: vez de la disculpa fabricada «se me cortó» (una falla técnica contada como
+#: de una persona; regla del operador: un error interno nunca va al cliente).
+CLOSING_ROUND_PATCH = "closing-round-no-fabricated-apology-v1"
+CLOSING_ROUND_NOTE = (
+    "Ya usaste todas las herramientas de este turno: no vuelvas a buscar. Respóndele AHORA al cliente "
+    "con send_reply, con lo que encontraste; si lo que pide no está en el catálogo, dile en una línea que "
+    "no lo tenemos y ofrécele lo más cercano que sí viste."
+)
+
+
+def _reply_only_tools(tool_definitions_json: str) -> str:
+    """Las definiciones de tools con solo `send_reply` ("" si el agente no la tiene)."""
+    try:
+        tools = json.loads(tool_definitions_json or "[]")
+    except ValueError:
+        return ""
+    kept = [
+        t for t in tools if isinstance(t, dict) and isinstance(t.get("function"), dict)
+        and t["function"].get("name") == "send_reply"
+    ] if isinstance(tools, list) else []
+    return json.dumps(kept) if kept else ""
+
+
 def _ends_turn(tool_names: list[str], *, version: int = 1) -> bool:
     """¿Este batch de tool calls deja la conversación esperando al cliente?"""
     ending = TURN_ENDING_TOOLS_V2 if version >= 2 else TURN_ENDING_TOOLS
@@ -1280,6 +1305,10 @@ async def _run_agent_turn_impl(
 
     iteration = 0
     final_content: str | None = None
+    # Ronda de cierre (`CLOSING_ROUND_PATCH`): cuántas rondas hay y si ya se abrió.
+    max_rounds = session.llm.max_iterations
+    closing_round = False
+    reply_only_tools = _reply_only_tools(session.tool_definitions_json) if fabricate_fallback_on_empty else ""
     # Motor de decisiones (preámbulo): lo que el LLM escribió ANTES del
     # saneador cuando `final_content` sale de él (texto final o despedida del
     # relevo). Solo lo lee el gancho de egreso: sin gancho no se usa.
@@ -1374,7 +1403,29 @@ async def _run_agent_turn_impl(
     # El gancho `on_llm_outage` se rindió: el turno termina sin texto.
     llm_unavailable = False
 
-    while iteration < session.llm.max_iterations:
+    def _open_closing_round() -> bool:
+        """Se agotaron las rondas sin nada para el cliente: UNA ronda más con
+        solo `send_reply` y la nota. Solo en un turno que el cliente espera
+        (`fabricate_fallback_on_empty`) y con `send_reply` entre las tools.
+        `patched()` va ÚLTIMO: solo se consulta cuando la regla nueva difiere."""
+        nonlocal max_rounds, closing_round, messages
+        if (
+            closing_round
+            or final_content is not None
+            or not reply_only_tools
+            or not workflow.patched(CLOSING_ROUND_PATCH)
+        ):
+            return False
+        closing_round = True
+        max_rounds += 1
+        messages = [*messages, {"role": "system", "content": CLOSING_ROUND_NOTE}]
+        steps.append(
+            {"kind": "guard", "at_ms": _now_ms(), "name": "closing_round",
+             "before": None, "after": CLOSING_ROUND_NOTE, "tools": list(tools_used)}
+        )
+        return True
+
+    while iteration < max_rounds or _open_closing_round():
         iteration += 1
 
         # Lo que recibe el modelo en esta ronda (el «Paso a paso» lo muestra):
@@ -1386,7 +1437,8 @@ async def _run_agent_turn_impl(
             LLMChatInput(
                 messages=messages,
                 llm=session.llm,
-                tool_definitions_json=session.tool_definitions_json,
+                # En la ronda de cierre, solo `send_reply` (sus controles siguen).
+                tool_definitions_json=reply_only_tools if closing_round else session.tool_definitions_json,
                 # HU-003: IDs de atribución de costo. `llm_chat` los attachea al
                 # contexto → el span gen_ai de OpenLIT los recibe (Temporal no
                 # propaga baggage workflow→activity, por eso van por el input).
@@ -1483,6 +1535,10 @@ async def _run_agent_turn_impl(
             # Canal único al cliente (run 28a8e407): textos que `send_reply`
             # validó en este batch (`reply.text` del resultado grabado).
             batch_reply_texts: list[str] = []
+            # Un `send_reply` de este batch devolvió el texto al modelo
+            # (`sent: false` + `error`: no coincidía con el catálogo, era nota
+            # interna…): el modelo tiene que leer por qué y reenviarlo.
+            batch_reply_held = False
             # Lo que esos textos prometen y el estado no cumplía al validarlos
             # (`promises` del resultado grabado de `send_reply`).
             batch_promises: list[dict[str, Any]] = []
@@ -1599,6 +1655,8 @@ async def _run_agent_turn_impl(
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
+                        if tc.name == "send_reply" and payload.get("sent") is False:
+                            batch_reply_held = True
                     reply = payload.get("reply")
                     if isinstance(reply, dict) and isinstance(reply.get("text"), str):
                         reply_text = reply["text"].strip()
@@ -1873,6 +1931,24 @@ async def _run_agent_turn_impl(
             # con el corte viejo; tras el drain (idle 5min en Sales), eliminar
             # la rama vieja + `deprecate_patch("turn-cut-on-delivery-v1")`.
             if turn_cut_v1 and _ends_turn(batch_tool_names, version=ends_turn_version):
+                # Premortem del PR #426 (2026-10-13): `send_reply` devolvió su
+                # texto al modelo y una tarjeta del MISMO paso salió y cortaba
+                # el turno: el cliente recibía solo la tarjeta y el modelo nunca
+                # leía por qué. UNA ronda más (la tarjeta ya salió; la
+                # retención es una por mensaje del cliente, así que el segundo
+                # `send_reply` sale). `patched()` va ÚLTIMO: solo se consulta
+                # cuando la regla nueva difiere de la vieja.
+                if (
+                    batch_awaits_customer
+                    and batch_reply_held
+                    and not batch_reply_texts
+                    and workflow.patched("held-reply-round-v1")
+                ):
+                    steps.append(
+                        {"kind": "guard", "at_ms": _now_ms(), "name": "held_reply_round",
+                         "before": None, "after": None, "tools": batch_tool_names}
+                    )
+                    continue
                 if batch_awaits_customer or not workflow.patched(
                     "turn-cut-on-delivery-v1"
                 ):
@@ -2106,7 +2182,9 @@ async def _run_agent_turn_impl(
                 # `fabricate_fallback_on_empty=False`: vacío = abstención — un
                 # cliente frío no debe recibir "¿Me repites lo que
                 # necesitabas?" de la nada.
-                if fabricate_fallback_on_empty:
+                # En la ronda de cierre (`CLOSING_ROUND_PATCH`) tampoco: vacío =
+                # nada inventado, queda la alerta.
+                if fabricate_fallback_on_empty and not closing_round:
                     workflow.logger.error(
                         "LLM final response remained empty after recovery attempt — "
                         "using human-sounding fallback line",
@@ -2161,6 +2239,13 @@ async def _run_agent_turn_impl(
             messages = [*messages, msg_dict]
             break
 
+    if final_content is None and closing_round:
+        # Ni la ronda de cierre respondió: no sale nada inventado (queda la alerta).
+        workflow.logger.error(
+            "turno sin respuesta tras la ronda de cierre — no se envía la disculpa fabricada",
+            extra={"session_id": session.session_id, "iteration": iteration},
+        )
+        final_content = ""
     if final_content is None:
         final_content = (
             "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"

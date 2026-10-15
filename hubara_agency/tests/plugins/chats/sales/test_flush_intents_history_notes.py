@@ -351,6 +351,22 @@ def test_build_history_event_products_list_counts_items():
     assert "catálogo" in ev["content"] or "productos" in ev["content"]
 
 
+def test_build_history_event_products_list_names_the_products_shown():
+    # Análisis 2026-10-13: el remarketing del cliente que se calló tras el
+    # catálogo le explica lo que vio; lee los títulos de `card.items`.
+    ev = _build_history_event(
+        "products_list",
+        {
+            "sections": [
+                {"title": "Halloween", "rows": [{"id": "calabaza", "title": "Calabaza"}, {"id": "momia", "title": "Momia"}]},
+                {"title": "Sets", "rows": [{"id": "trilogia", "title": "Trilogía del Terror"}]},
+            ]
+        },
+    )
+    assert ev is not None
+    assert [i["title"] for i in ev["card"]["items"]] == ["Calabaza", "Momia", "Trilogía del Terror"]
+
+
 def test_build_history_event_product_gallery_counts_photos():
     ev = _build_history_event(
         "product_gallery",

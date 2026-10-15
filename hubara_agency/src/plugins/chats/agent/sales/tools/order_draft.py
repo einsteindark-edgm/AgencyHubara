@@ -61,10 +61,15 @@ from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.decisions.guards import (
     ColorPedido,
     DatoDelItem,
+    boxes_in_bundle,
+    boxes_reading,
     capability,
     decide_for_session,
+    named_box_reading,
     unconfirmed_order_data,
 )
+from src.plugins.chats.agent.sales.pricing import catalog_unit_price
+from src.plugins.chats.agent.sales.use_cases.pack_quantity import as_boxes, as_candles, needs_reading, other_box_named
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     current_item,
     get_active_draft,
@@ -74,13 +79,27 @@ from src.plugins.chats.agent.sales.use_cases.order_draft import (
     set_product_lines,
     update_order_draft,
 )
+from src.plugins.chats.agent.sales.use_cases.product_options import boxed_products, options_to_choose, pack_units
 from src.plugins.chats.shared.draft_items import (
+    CHOICE_FIELDS,
     ITEM_FIELDS,
     NOT_OFFERED_KEY,
+    TO_CHOOSE_KEY,
+    chooses,
     draft_items,
     product_key,
+    to_choose,
 )
-from src.plugins.chats.shared.store_pack import vocabulary
+from src.plugins.chats.shared.store_pack import store_domain, vocabulary
+
+#: La duda de cajas o velas vuelve al modelo UNA vez por mensaje del cliente:
+#: la marca es el `last_inbound_message_id` en que volvió (···0686, 2026-10-14).
+BOXES_CHECK_KEY = "cajas_revisadas"
+#: Igual la caja de otro producto («Dos cajas de 12» y se iba a anotar la
+#: ondulada, que trae 10; capacidad `caja_nombrada`, ···0686, 2026-10-14).
+NAMED_BOX_CHECK_KEY = "caja_nombrada_revisada"
+#: Lo último de la charla que leen `cajas` y `caja_nombrada`.
+TALK_EVENTS = 6
 
 #: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
 #: del paquete activo (`domain.yaml: vocabulary`, PAQUETES_DE_DECISION.md F5).
@@ -348,7 +367,9 @@ class SetOrderSlotTool(ToolBase):
         ]
         valid_by_kind = {
             "aroma": attrs.aromas,
-            "color": attrs.colors,
+            # Sin etiquetas «Color:», los valores de la opción «Color» de
+            # Medusa (las velas de deseos, 2026-10-14).
+            "color": attrs.colors or options_to_choose(product).get("color", []),
             "diseno": design_values,
         }
         canonical_values: dict[str, str] = {}
@@ -415,6 +436,113 @@ class SetOrderSlotTool(ToolBase):
             return verdict.value
 
         return resolve
+
+    async def _boxes(
+        self, session_key: str, product: Any, raw: Any, data: dict[str, Any]
+    ) -> tuple[str, str | None, dict[str, Any] | None]:
+        """`(cantidad a anotar, nota para el sobre, rechazo)` de un producto
+        que se cobra por caja (`pack_units`). Desde una caja entera decide la
+        capacidad `cajas`: «velas» anota las cajas que son, «cajas» deja la
+        cantidad y la duda (o velas que no son cajas enteras) no la anota: el
+        texto vuelve al modelo con las dos cuentas, UNA vez por mensaje del
+        cliente (`BOXES_CHECK_KEY` en `data`: el segundo intento es el modelo
+        que ya lo revisó y se anota; sin Jev la regla siempre duda). Sin la
+        decisión en el paquete (ventas-6) o sin caja, como siempre."""
+        units = pack_units(product, store_domain().get("sold_by_box"))
+        text = str(raw).strip()
+        if not units or not boxes_in_bundle():
+            return text, None, None
+        if not text.isdigit():
+            # «3 cajas (36 unidades)» (laboratorio, 2026-10-14): quien lee el
+            # borrador solo entiende números; va el de cajas.
+            return text, None, {
+                "field": "cantidad", "given": text, "reason": "pack_units", "por_caja": units,
+                "message": (
+                    f"la cantidad {text!r} de {product.title} no se anotó: va solo el número de cajas, "
+                    f"en cifras (ej. '3'); cada caja trae {units} velas"
+                ),
+            }
+        quantity = int(text)
+        unit_note = f"La cantidad es de cajas: cada caja trae {units} velas y se cobra por caja."
+        price = catalog_unit_price(product)
+        if not needs_reading(quantity, units):
+            return text, unit_note, None
+        inbound = data.get("last_inbound_message_id")
+        if inbound and data.get(BOXES_CHECK_KEY) == inbound:
+            return text, f"{unit_note} Quedaron {as_boxes(quantity, units, price)}.", None
+        reading = await boxes_reading(
+            product.title, quantity, units, price, _talk(self._talk_events(session_key)),
+            session_id=session_key, vault_dir=self._vault_dir,
+        )
+        if reading is None or reading == "cajas":
+            return text, f"{unit_note} Quedaron {as_boxes(quantity, units, price)}.", None
+        if reading == "velas" and quantity % units == 0:
+            return (
+                str(quantity // units),
+                f"{unit_note} El cliente pidió {as_candles(quantity, units, price)}: quedó la cantidad "
+                f"{quantity // units}. Usa esa cantidad en el resumen y el registro.",
+                None,
+            )
+        if inbound:
+            data[BOXES_CHECK_KEY] = inbound
+        return text, None, {
+            "field": "cantidad", "given": text, "reason": "pack_units", "por_caja": units,
+            "message": (
+                f"la cantidad {quantity} de {product.title} no se anotó: se cobra por caja y cada caja trae "
+                f"{units} velas. Si son cajas: {as_boxes(quantity, units, price)}; si son velas: "
+                f"{as_candles(quantity, units, price)}. Revisa lo que dijo el cliente y vuelve a llamar "
+                "set_order_slot con el número de CAJAS; si no está claro, pregúntaselo"
+            ),
+        }
+
+    async def _named_box(
+        self, session_key: str, product: Any, data: dict[str, Any], items_now: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
+        """El rechazo si el cliente nombró la caja de OTRO producto y no la de
+        este, que se va a anotar por primera vez (laboratorio de ···0686,
+        2026-10-14: «Dos cajas de 12» y se anotó la ondulada, que trae 10).
+        Lo decide la capacidad `caja_nombrada`: «otro» y la duda no lo
+        anotan, UNA vez por mensaje del cliente (`NAMED_BOX_CHECK_KEY`: el
+        segundo intento es el modelo que ya lo revisó). None = se anota."""
+        boxes = store_domain().get("sold_by_box")
+        units = pack_units(product, boxes)
+        if not units:
+            return None
+        names = {product_key(product.title), product_key(getattr(product, "handle", None))} - {""}
+        if any(product_key(item.get("producto")) in names for item in items_now):
+            return None
+        sizes = dict(boxed_products(boxes))
+        events = self._talk_events(session_key)
+        other = other_box_named("\n".join(e["content"] for e in events if e["role"] == "user"), units, sizes)
+        if other is None:
+            return None
+        inbound = data.get("last_inbound_message_id")
+        if inbound and data.get(NAMED_BOX_CHECK_KEY) == inbound:
+            return None
+        reading = await named_box_reading(
+            product.title, units, other, sizes[other], _talk(events), session_id=session_key, vault_dir=self._vault_dir
+        )
+        if reading is None or reading == "este":
+            return None
+        if inbound:
+            data[NAMED_BOX_CHECK_KEY] = inbound
+        return {
+            "field": "producto", "given": product.title, "reason": "other_box",
+            "message": (
+                f"no se anotó {product.title}: el cliente habló de cajas de {sizes[other]} y la caja de "
+                f"{sizes[other]} es {other} ({product.title} trae {units} velas por caja). Si pidió {other}, "
+                f"vuelve a llamar set_order_slot con ese producto; si de verdad pide {product.title}, vuelve "
+                "a llamar igual"
+            ),
+        }
+
+    def _talk_events(self, session_key: str) -> list[dict[str, str]]:
+        """Lo último de la charla (cliente y asesor) con texto."""
+        return [
+            {"role": str(e["role"]), "content": str(e.get("content") or "").strip()}
+            for e in self._events(session_key)[-TALK_EVENTS:]
+            if e.get("role") in ("user", "assistant") and str(e.get("content") or "").strip()
+        ]
 
     def _events(self, session_key: str) -> list[dict[str, Any]]:
         """Lo último de la conversación; vacío sin lector o si falla (es
@@ -555,6 +683,10 @@ class SetOrderSlotTool(ToolBase):
                 None,
             )
             producto = same["producto"] if same is not None else product.title
+            # La caja de otro producto, también en líneas (···0686, 2026-10-14).
+            refused = await self._named_box(ctx.session_key, product, data, items_now)
+            if refused is not None:
+                return producto, None, [refused]
         family = self._family_by_engine(ctx.session_key)
         lines: list[dict[str, str]] = []
         rejected: list[dict[str, Any]] = []
@@ -579,12 +711,18 @@ class SetOrderSlotTool(ToolBase):
                 filled, lacking = _only_options(product, values, {}, [])
                 values.update(filled)
                 not_offered.update(lacking)
-            lines.append({**values, "cantidad": line["cantidad"]})
+            quantity = line["cantidad"]
+            if product is not None:
+                # Cajas o velas, también en cada línea (···0686, 2026-10-14).
+                quantity, _note, refused = await self._boxes(ctx.session_key, product, quantity, data)
+                if refused is not None:
+                    rejected.append({**refused, "line": n})
+            lines.append({**values, "cantidad": quantity})
         if rejected:
             return producto, None, rejected
         set_product_lines(data, producto=producto, lines=lines, now_ms=now_ms)
-        if not_offered and product is not None:
-            _mark_not_offered(data, product, sorted(not_offered), producto)
+        if product is not None:
+            _mark_options(data, product, sorted(not_offered), producto)
         if tones:
             # El tono pedido queda para el operador (empaque), como en un ítem.
             note = f"{producto}: tono de color pedido por el cliente, " + "; ".join(tones)
@@ -987,6 +1125,28 @@ class SetOrderSlotTool(ToolBase):
         ):
             rejected.append({"field": slot, "given": provided.pop(slot), "reason": "not_given_by_customer"})
 
+        # La caja de otro producto (···0686, 2026-10-14: «Dos cajas de 12» y se
+        # anotó la ondulada, que trae 10): `caja_nombrada`. Si no, el producto
+        # no se anota (los datos de envío de la llamada sí).
+        if product is not None and any(k in provided for k in ITEM_FIELDS):
+            refused_box = await self._named_box(ctx.session_key, product, data, items_now)
+            if refused_box is not None:
+                rejected.append(refused_box)
+                for field in ITEM_FIELDS:
+                    provided.pop(field, None)
+
+        # La cantidad de un producto que se cobra por caja (laboratorio de
+        # ···0686, 2026-10-14: «Dos cajas de 12» se anotó 24 y el resumen salió
+        # con 24 cajas): desde una caja entera, ¿cajas o velas? (`cajas`).
+        boxes_note: str | None = None
+        if product is not None and str(provided.get("cantidad") or "").strip():
+            quantity, boxes_note, refused = await self._boxes(ctx.session_key, product, provided["cantidad"], data)
+            if refused is not None:
+                rejected.append(refused)
+                provided.pop("cantidad")
+            else:
+                provided["cantidad"] = quantity
+
         # Lo que el catálogo no deja elegir (incidente del 2026-10-09): un
         # producto con UNA opción de aroma o de color la trae anotada; uno sin
         # ninguna queda marcado para que la etapa no la espere. Solo si esta
@@ -994,7 +1154,8 @@ class SetOrderSlotTool(ToolBase):
         # y nunca sobre lo que el modelo dio, borró o le rechazaron.
         auto_filled: dict[str, str] = {}
         not_offered: list[str] = []
-        if product is not None and len(own) <= 1 and any(k in provided for k in ITEM_FIELDS):
+        options_read = product is not None and len(own) <= 1 and any(k in provided for k in ITEM_FIELDS)
+        if options_read:
             auto_filled, not_offered = _only_options(product, provided, target_item or {}, rejected)
             provided.update(auto_filled)
 
@@ -1012,9 +1173,11 @@ class SetOrderSlotTool(ToolBase):
         wrote = bool(provided) and not (injected and set(provided) == {"producto"})
         if wrote:
             update_order_draft(data, slots=provided, now_ms=now_ms)
-            if not_offered and product is not None:
-                _mark_not_offered(data, product, not_offered, provided.get("producto"))
-        if wrote or lines_written is not None:
+            if options_read:
+                _mark_options(data, product, not_offered, provided.get("producto"))
+        # Las marcas de la duda de cajas se anotan aunque no quede otro dato.
+        marks = any(data.get(key) != base.get(key) for key in (BOXES_CHECK_KEY, NAMED_BOX_CHECK_KEY))
+        if wrote or lines_written is not None or marks:
             self._store.write_merged(ctx.session_key, base=base, ours=data)
         wrote = wrote or lines_written is not None
         current_slots = get_projectable_draft(data) or {}
@@ -1100,6 +1263,16 @@ class SetOrderSlotTool(ToolBase):
             envelope["summary"] += (
                 f" El producto tiene una sola opción de {only}: quedó anotada y NO se le pregunta al cliente."
             )
+        if boxes_note:
+            envelope["summary"] += f" {boxes_note}"
+        pending = _pending_choices(data, touched)
+        if pending:
+            # 2026-10-14 (···0686): la opción de Medusa sin escoger no frenaba nada.
+            envelope["to_choose"] = pending
+            envelope["summary"] += (
+                f" Falta que el cliente escoja {_choices_text(pending)} de {touched}: pregúntaselo (con "
+                "present_variant_picker) antes del resumen del pedido; el resumen y el registro no salen sin eso."
+            )
         if rejected:
             envelope["rejected"] = rejected
             parts = []
@@ -1135,6 +1308,9 @@ class SetOrderSlotTool(ToolBase):
                         "NO adivines — ofrécele esas opciones (picker si son "
                         "2+) sin negarle el color"
                     )
+                elif r.get("reason") in ("pack_units", "other_box"):
+                    if r["message"] not in parts:
+                        parts.append(r["message"])
                 elif r.get("reason") == "color_family_not_offered":
                     parts.append(
                         f"el color {r['given']!r} es de la familia "
@@ -1169,12 +1345,14 @@ class SetOrderSlotTool(ToolBase):
 
 def offered_options(product: Any) -> dict[str, list[str]]:
     """Las opciones que el catálogo le ofrece al cliente: aroma por tags;
-    color por la paleta real (`metadata.colores`) si existe, si no por tags
-    (la misma lista con que `_check_values` valida)."""
+    color por la paleta real (`metadata.colores`) si existe, si no por tags y,
+    sin ellos, por la opción «Color» de Medusa (la misma lista con que
+    `_check_values` valida; 2026-10-14: las velas de deseos quedaban «sin
+    color»)."""
     attrs = parse_variant_tags(product.tags)
     variant_colors = parse_variant_colors(product.metadata)
     colors = primary_colors(variant_colors) if variant_colors else list(attrs.colors)
-    return {"aroma": list(attrs.aromas), "color": colors}
+    return {"aroma": list(attrs.aromas), "color": colors or options_to_choose(product).get("color", [])}
 
 
 def _only_options(
@@ -1200,19 +1378,51 @@ def _only_options(
     return filled, not_offered
 
 
-def _mark_not_offered(data: dict[str, Any], product: Any, kinds: list[str], name: Any) -> None:
-    """`order_draft[NOT_OFFERED_KEY][producto] = atributos sin opciones`, con
-    el nombre que quedó en el ítem (la etapa lo busca así: con el handle, la
-    marca por título no se encontraba — revisión del premortem 2026-10-09),
-    el título y el handle."""
+def _mark_options(data: dict[str, Any], product: Any, kinds: list[str], name: Any) -> None:
+    """Lo que el catálogo dice del producto, leído en esta llamada:
+    `order_draft[NOT_OFFERED_KEY][producto]` = atributos sin opciones y
+    `order_draft[TO_CHOOSE_KEY][producto]` = las opciones de Medusa que se
+    escogen. Se reescriben (una marca vieja se corrige: 2026-10-14, el color de
+    las velas de deseos quedaba «sin opciones»), con el nombre que quedó en el
+    ítem (la etapa lo busca así: con el handle, la marca por título no se
+    encontraba — revisión del premortem 2026-10-09), el título y el handle."""
     draft = get_active_draft(data)
     if not isinstance(draft, dict):
         return
-    marks = draft.get(NOT_OFFERED_KEY)
-    marks = dict(marks) if isinstance(marks, dict) else {}
-    for key in {product_key(name), product_key(product.title), product_key(product.handle)} - {""}:
-        marks[key] = sorted(set(marks.get(key) or []) | set(kinds))
-    draft[NOT_OFFERED_KEY] = marks
+    choose = options_to_choose(product)
+    keys = {product_key(name), product_key(product.title), product_key(product.handle)} - {""}
+    for mark, value in ((NOT_OFFERED_KEY, sorted(set(kinds))), (TO_CHOOSE_KEY, choose)):
+        marks = draft.get(mark)
+        marks = dict(marks) if isinstance(marks, dict) else {}
+        for key in keys:
+            if value:
+                marks[key] = value
+            else:
+                marks.pop(key, None)
+        if marks:
+            draft[mark] = marks
+        else:
+            draft.pop(mark, None)
+
+
+def _pending_choices(data: dict[str, Any], producto: Any) -> dict[str, list[str]]:
+    """Las opciones de Medusa que el producto pide escoger y alguna línea suya
+    (o el producto, sin líneas) todavía no tiene: lo que se le dice al modelo
+    en el sobre."""
+    if not producto:
+        return {}
+    draft = get_active_draft(data)
+    options = to_choose(draft, producto)
+    lines = [i for i in draft_items(draft) if product_key(i.get("producto")) == product_key(producto)]
+    return {
+        axis: values for axis, values in options.items()
+        if not lines or any(not chooses([line.get(k) for k in CHOICE_FIELDS], values) for line in lines)
+    }
+
+
+def _choices_text(pending: dict[str, list[str]]) -> str:
+    """«el color (Rojo y verde o Multicolor)»."""
+    return " y ".join(f"el {axis} ({' o '.join(values)})" for axis, values in pending.items())
 
 
 def _find_product(products: list[Any], name: Any) -> Any | None:
@@ -1250,6 +1460,13 @@ def _products_accepting(
 
 #: Lo que distingue una línea de otra del mismo producto (`lineas`).
 _LINE_VARIANTS: tuple[str, ...] = ("color", "aroma", "diseno")
+
+
+def _talk(events: list[dict[str, str]]) -> str:
+    """«[cliente] …» / «[asesor] …», lo que leen `cajas` y `caja_nombrada`."""
+    return "\n".join(
+        f"[{'cliente' if e['role'] == 'user' else 'asesor'}] {e['content'][:400]}" for e in events
+    )
 
 
 def _parse_lines(raw: Any) -> list[dict[str, str]] | None:

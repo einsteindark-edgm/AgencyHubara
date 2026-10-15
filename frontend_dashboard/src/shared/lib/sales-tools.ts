@@ -138,6 +138,7 @@ const REJECTIONS: Record<string, string> = {
   verified_photos: "negaba un producto que las fotos ya confirmaron",
   promise_later: "prometía revisar y responder después",
   option_list: "escribió la lista de opciones como texto",
+  fact_check: "decía algo que no coincide con el catálogo o con el pedido",
   internal_text: "era una nota interna, no para el cliente",
 };
 

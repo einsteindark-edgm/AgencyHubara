@@ -19,6 +19,7 @@ Sin Temporal, sin red: lectura del vault por el store de metadata del plugin
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
@@ -42,6 +43,17 @@ def catalog_unit_price(product: Any) -> int | None:
     except (TypeError, ValueError, AttributeError):
         return None
     return value if value > 0 else None
+
+
+def catalog_prices(product: Any) -> list[int]:
+    """Los precios (int COP) de todas las variantes del producto, sin repetir
+    (el de cada variante con la misma vara que `catalog_unit_price`)."""
+    out: list[int] = []
+    for variant in getattr(product, "variants", None) or []:
+        price = catalog_unit_price(SimpleNamespace(variants=[variant]))
+        if price is not None and price not in out:
+            out.append(price)
+    return out
 
 
 def format_cop(amount: int) -> str:

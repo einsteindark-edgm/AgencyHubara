@@ -220,6 +220,53 @@ Medusa live durante la conversación (latency + cuota).
 - AND una elección doble se reparte por la opción más larga que exista («Multicolor y Rojo y verde» → `Multicolor, Rojo y verde`); «Drakar y Café» se sigue partiendo en dos
 - AND si el valor es de otro producto del catálogo, el rechazo trae `belongs_to` con ese producto
 
+#### Scenario: la opción de Medusa se escoge antes de cerrar (···0686, 2026-10-14)
+
+- GIVEN un producto con una opción de Medusa de dos valores o más y sin etiquetas que la nombren (Velas de deseos: `Color` = «Rojo y verde» / «Multicolor», etiqueta solo `Aroma: Navidad`; Duo Zodiacal: `Signo`)
+- WHEN el LLM invoca `set_order_slot(producto=…, cantidad=…)` sin la opción
+- THEN el borrador la anota en `order_draft.por_elegir` (no en `sin_opciones`), la etapa se queda en `etapa_variantes` hasta que el color, el diseño o el aroma del ítem tenga uno de sus valores, y el sobre trae `to_choose` y le pide preguntarla con `present_variant_picker` antes del resumen
+- AND el color se valida contra esa opción si el producto no tiene etiquetas `Color:` ni `metadata.colores`
+- AND una marca vieja (`sin_opciones: color` de antes del arreglo) se corrige en la siguiente llamada; un borrador sin `por_elegir` se lee como antes
+- AND `present_order_confirmation` y `register_order` (este, solo con `closing_guard`: el operador del panel no se frena) MUST NOT salir sin uno de sus valores en la línea (color, diseño, aroma o `variant_label`) o en el borrador: vuelven con `variant_not_chosen` y lo que falta escoger. Sin catálogo o sin el producto, no frenan
+- AND en `ventas-7`, en `etapa_variantes`, preguntar cómo pagar, dar los datos de envío o confirmar pide `present_variant_picker` en ese turno (fila del contrato); el envío sigue pidiendo sus tarifas
+
+#### Scenario: la cantidad de un producto que se cobra por caja son cajas (···0686, 2026-10-14)
+
+- GIVEN un producto que se cobra por caja, que la tienda declara en su paquete (`domain.yaml: sold_by_box`; decisión del operador: SOLO las velas de deseos, 12 las cuadradas y 10 las onduladas): las Velas de deseos cuadradas a $25.000 la caja de 12
+- WHEN el LLM invoca `set_order_slot(cantidad="24")` (o una línea de `lineas`) tras «Dos cajas de 12, ¿cómo sería el envío y el pago?»
+- THEN desde una caja entera (24 de 12, no 2) decide la capacidad `cajas` (ventas-7): Jev lee lo último de la charla y las dos cuentas («24 cajas = 288 velas, $600.000» / «24 velas = 2 cajas, $50.000») y dice si pide esa cantidad de CAJAS
+- AND «velas» anota las cajas que son (`cantidad: "2"`) y el sobre lo dice; «cajas» deja la cantidad
+- AND la duda (sin Jev, la regla siempre duda) no anota la cantidad: vuelve al modelo con las dos cuentas UNA vez por mensaje del cliente (`cajas_revisadas`); el segundo intento con la misma cantidad se anota
+- AND menos de una caja, cualquier otro producto (aunque su descripción hable de una caja) y `ventas-6` no cambian; en las velas de deseos el sobre dice que la cantidad es de cajas. La descripción de `cantidad`, `TOOLS.md` y `escalate_to_human` no hablan de cajas
+- AND en las velas de deseos una cantidad en palabras («3 cajas (36 unidades)») no se anota: vuelve al modelo para que mande solo el número de cajas (quien lee el borrador solo entiende números)
+- AND con un ítem del borrador sin cantidad (36 velitas de las onduladas no son cajas enteras y no se anotaron), el revisor de hechos de `send_reply` no juzga el pago ni la cifra del cliente: sin cantidad no hay subtotal (antes contaba 1 caja, $22.500, y el bot «corrigió» que el contra entrega no aplicaba)
+
+#### Scenario: el catálogo que lee el bot dice la caja de lo que se cobra por caja (laboratorio, 2026-10-14)
+
+- GIVEN las velas de deseos declaradas en `domain.yaml: sold_by_box` (12 la cuadrada, 10 la ondulada)
+- WHEN el LLM invoca `search_products` o `get_product_by_handle` y el resultado trae una de ellas
+- THEN el producto lleva `por_caja` y `se_vende_por_caja` («caja de 12 unidades: el precio es el de la caja y la cantidad del pedido es el número de cajas (36 unidades → cantidad 3); al por mayor se cuenta en cajas (más de 20)»)
+- AND los demás productos y `ventas-6` no cambian (sin `sold_by_box`, nada lo lleva)
+- AND sin esto, en el laboratorio: «una caja de las de 12 y una de las de 10» → «no manejamos cajas de 12 ni de 10»; «Dos cajas de 12» → las onduladas; «me vendes 36 velitas?» → a un colega como pedido al por mayor
+
+#### Scenario: el cliente nombra la caja de otro producto (···0686, 2026-10-14)
+
+- GIVEN el cliente escribió «Dos cajas de 12, ¿cómo sería el envío y el pago?» (la caja de 12 es la de las Velas de deseos cuadradas)
+- WHEN el LLM invoca `set_order_slot(producto="Velas de deseos onduladas", …)` (o con `lineas`) y las onduladas, que traen 10, aún no están en el pedido
+- THEN como el cliente nombró el tamaño de la caja de otro producto y no el de este (`pack_quantity.other_box_named`), decide la capacidad `caja_nombrada` (ventas-7): Jev lee lo último de la charla y dice si quiere el otro producto
+- AND «otro» y la duda (sin Jev, la regla siempre duda) no anotan el producto (los datos de envío de la misma llamada sí): el sobre dice cuál es la caja que nombró, UNA vez por mensaje del cliente (`caja_nombrada_revisada`); el segundo intento se anota
+- AND «este», un cliente que nombró la caja de este producto, un producto que ya está en el pedido, lo que no va por caja y `ventas-6` se anotan como siempre
+
+#### Scenario: unas velas sueltas no son un pedido al por mayor (laboratorio, 2026-10-14)
+
+- GIVEN el cliente escribió «Hola! me vendes 36 velitas?» y las velas de deseos se cobran por caja (`sold_by_box`)
+- WHEN el LLM invoca `escalate_to_human(reason_category="BULK_ORDER", …)`
+- THEN si el cliente dio una cifra que pasa de 20 pero, contada en velas, cabe en 20 cajas o menos (`pack_quantity.candle_counts`: 36 = 3 cajas de 12), decide la capacidad `por_mayor` (ventas-7): Jev lee la charla con la nota del asesor para el colega y dice si pide uno de los productos que van por caja y si su número cuenta velas sueltas
+- AND «velas» y la duda (sin Jev) NO escalan: la ruta no cambia y el modelo recibe lo que se cobra por caja y las cuentas («en Velas de deseos cuadradas, 36 velas = 3 cajas»), UNA vez por mensaje del cliente (`por_mayor_revisado`); el segundo intento escala
+- AND «por_mayor» («necesito 25 cajas», «30 velas Luz Serena para un evento»), una cifra que no cabe en 20 cajas (300 velitas), otra razón de escalación y `ventas-6` escalan como siempre
+- AND el worker le inyecta a la tool el historial de la sesión (`build_session_history_reader`)
+- AND lo mismo ANTES de enviar un texto que le promete un colega por la cantidad sin llamar la tool (laboratorio A/B del 2026-10-15, capas como en producción: «son 3 cajas. Para esa cantidad te coordino con un colega» y la red del relevo prometido lo pasaba al equipo): con una cifra que cabe en cajas y el texto que promete el relevo (`relevo`), `send_reply` y las tarjetas lo retienen con las cuentas si `por_mayor` dice «velas» o duda (`checks: ["por_mayor"]`, una vez por mensaje del cliente, como los demás hechos)
+
 #### Scenario: get_product_by_handle
 
 - GIVEN un handle válido `wax-soja-vainilla`
@@ -1409,6 +1456,241 @@ de variantes): el selector trae las opciones del catálogo.
 - WHEN el bot escribe «Ese color no lo manejamos, pero sí el lila» o nombra dos opciones
 - THEN el texto sale como está
 
+### Requirement: Lo que el bot ofrece de un producto es de ese producto (`ventas-7`, 2026-10-13)
+
+Antes de enviar, `send_reply` y las tarjetas con texto del modelo (el cuerpo
+de la lista y del selector, el pie de la ficha, el texto sobre los botones y
+sobre el enlace) SHALL preguntarle al motor, en paralelo y con los hechos
+armados UNA vez (`tools/fact_check.py`), si el texto le ofrece al producto en
+foco algo que no es suyo:
+
+- **Aromas o colores de otro producto** (`aroma_ajeno`, `color_ajeno`). El
+  error es tomar prestado el nombre real de otro producto, y eso lo sabe el
+  catálogo. La regla propone las etiquetas del catálogo que el texto nombra y
+  no son del foco. Tolera la escritura con distancias de RapidFuzz y la regla
+  de género y número del catálogo (`catalogkit.stem_word`): «Drakkar», «Ylang
+  Ylang» frente al «Ylan ylang» del catálogo, «moradas» por «Morado»,
+  «azules» por «Azul»; ningún error en nombres cortos, uno en medianos y dos
+  en largos (según la más corta de las dos palabras: «canela» no es un
+  «Chanel» mal escrito), y un nombre tal cual gana el lugar a uno parecido de
+  las mismas palabras. Deja fuera los nombres que
+  están en las dos dimensiones («Café») y lo que su cláusula niega («no vienen
+  en Chanel ni en Drakar»). Gana el nombre más largo: «Rojo y verde» no es
+  también «verde». Los colores del producto son la paleta de sus variantes si
+  la tiene (Duo Zodiacal); si no, sus etiquetas «Color: …» y su opción
+  «Color» (Multicolor, Rojo y verde). El nombre del cliente (su perfil de
+  WhatsApp y quien recibe) no es un aroma ni un color: «Gracias Lila». Sin
+  Jev (`reglas`, sombra), la regla SHALL juzgar solo las oraciones que ofrecen
+  algo (frases del paquete: «viene en», «te las dejo», «¿cuál prefieres?») y
+  no hablan del empaque, de las notas de un aroma ni de otro producto
+  («caja azul con moño amarillo», «notas de sándalo», «¿agregas una de
+  lavanda?»). Con Jev, por cada etiqueta ajena que el texto nombra (en
+  cualquier oración) Jev solo QUITA los avisos falsos (otro producto, una
+  fecha, el color de la caja), y solo con certeza (umbral 0,15).
+- **Una presentación, signo, diseño o tamaño que no tiene** (`variante_ajena`).
+  Lo inventado no está en ningún catálogo, así que no hay qué buscar: Jev lee
+  la ficha de cada producto en foco que tiene presentaciones para escoger
+  (aromas, colores y presentaciones) y contesta (marca desde 0,60, duda entre
+  0,40 y 0,60). La regla no marca nada: sin Jev no revisa. La ficha de un
+  producto de una sola presentación («el Cubo Love también viene en vaso»)
+  solo se pregunta si el texto nombra una presentación (las palabras van en el
+  paquete: vaso, tamaño, caja, set…); la de uno con presentaciones, si además
+  el texto ofrece algo («Quedo atenta» no gasta la llamada).
+
+El foco son los productos del pedido, los que el texto nombra por su título y
+los que nombra con una palabra que solo tienen uno o dos títulos («la
+plegaria»; si la palabra es también del producto del pedido, habla de ese y
+no de su hermano). Lo encontrado MUST volver al modelo (`fact_check`, con las
+decisiones que lo encontraron en `checks`), con lo que el producto sí tiene y
+la salida: si hablaba de otro producto o le decía que no lo tiene, reenvía el
+mismo texto. Lo que ya se le dijo en ese mensaje del cliente MUST salir al
+segundo intento (un aviso falso cuesta un reenvío); algo NUEVO se retiene otra
+vez, y como mucho dos veces por mensaje del cliente (`send_reply` y las
+tarjetas juntas). Si en el mismo paso una tarjeta que deja al cliente
+esperando salió y `send_reply` volvió al modelo, el turno MUST seguir una
+ronda más (`held-reply-round-v1`): el cliente nunca recibe solo la tarjeta.
+
+Sin catálogo, sin vault, sin producto en foco o con un paquete anterior a las
+decisiones (`ventas-6` y antes), el texto sale como siempre. El catálogo las
+pide desde `ventas-7` (`capabilities_since`): las versiones publicadas no las
+traen y siguen certificando.
+
+Límites conocidos:
+- Los aromas y colores del foco se juntan: con Velas de deseos y Plegaria en
+  el pedido, «las de deseos vienen en Drakar» sale (Drakar es de la Plegaria).
+- Un color inventado que no tiene ningún producto («dorado» en la Plegaria)
+  solo lo ve `variante_ajena`, y solo en productos con presentaciones.
+- La regla sola de precios todavía marca el precio de un producto que el
+  texto nombra solo por su aroma («las de lavanda cuestan…») o un rango del
+  catálogo («desde $18.000 hasta $49.500»); con Jev, lo quita.
+
+### Requirement: Los hechos que el bot afirma coinciden con el sistema (`ventas-7`, 2026-10-13)
+
+Con la misma revisión (y la misma retención única), el motor SHALL comparar
+lo que el texto le afirma al cliente con lo que sabe el código. En
+`precio_ajeno` la regla propone y decide (Jev solo QUITA, umbral 0,15). En
+`pago_ajeno`, `estado_ajeno`, `cupon_ajeno` y `negacion_falsa` la regla es de
+palabras: solo PROPONE y decide Jev con la comparación ya armada; en `reglas`
+y en sombra no retienen nada (revisión del 2026-10-13: «te he enviado el
+link», «una vez despachado…» o «las velas de Halloween en promoción» no
+pueden frenar un mensaje por una palabra). Futuro y condicional («será»,
+«apenas», «si agregas otra…»), la regla general («desde $45.000», «en
+adelante») y los modismos («no hay problema») no se proponen. Las frases que
+buscan esas cuatro reglas MUST vivir en el paquete (el `with:` de los ítems de
+cada capacidad, como las palabras de presentación de `variante_ajena`): un
+falso positivo se corrige con otra frase en una versión nueva del paquete, no
+en el código, y las mismas frases deciden si se consulta el pedido o los
+cupones. Una frase del paquete son palabras (`*`, `a/b`, `…`), nunca un regex.
+
+- `precio_ajeno`: los montos que no son el precio del catálogo del producto en
+  foco (por unidad o por la cantidad, en vivo, con el cupón aplicado o con un
+  cupón vigente que el texto le ofrece, con el recargo del link, y sus sumas),
+  ni el total del pedido en OrderFacts, ni un monto de política en una
+  oración que lo dice (frases del paquete: «envío», «desde», «total»…).
+- `pago_ajeno`: contra entrega ofrecida a un pedido cuyo subtotal de productos
+  no llega al mínimo (no la regla general: «contra entrega es desde $45.000»),
+  y un recargo del link distinto del vigente o «sin recargo».
+- `estado_ajeno`: el pago dado por confirmado o el pedido dado por despachado o
+  entregado cuando OrderFacts dice otra cosa. Lo que todavía no pasó cuenta
+  solo dicho antes de la frase («apenas recibamos tu pago»), no después («tu
+  pago quedó confirmado y te avisamos cuando…»). Solo se consulta el pedido
+  si, con un pedido sin pagar ni despachar, el texto diría algo, o si dice un
+  monto (el total real del pedido).
+- `cupon_ajeno`: un código que Medusa conoce y no rige para el cliente, o un
+  porcentaje de descuento que ningún cupón vigente da. Si los cupones no se
+  pudieron leer, no se juzga ninguno (no saber no es «no hay»). Solo se consulta Medusa
+  si el texto habla de cupones o descuentos, o escribe algo como un código
+  («Usa AMOR2026 al pagar», en mayúsculas, sin la palabra «cupón»).
+- `negacion_falsa`: lo que el texto niega tener (con un verbo de tenerlo; para
+  un aroma, color o presentación también «no viene en») y el catálogo tiene.
+
+Lo que quede MUST volver en la misma retención con lo cierto (las mismas
+frases que leyó Jev). El foco de una tarjeta es su producto (la ficha, el
+selector, la lista), no el pedido. El pedido se lee FRESCO de OrderFacts (se
+invalida su caché antes) y un valor viejo o sin confirmar no se juzga. Si una
+fuente no responde (Medusa, OrderFacts), ese hecho no se revisa y el texto no
+espera más de 3 s por ellas (se consultan en paralelo). Con un paquete que no
+trae ninguna de estas decisiones no se lee nada. `send_reply` lee el catálogo
+UNA vez por texto: lo comparten esta revisión y la de la lista de opciones.
+
+#### Scenario: «las cuadradas en $23.000» (producción, 2026-10-13, turno 3)
+
+- GIVEN las Velas de deseos cuadradas a $25.000 en el catálogo
+- WHEN el bot escribe «Las cuadradas te quedan en $23.000 cada una»
+- THEN el texto vuelve una vez con el precio del catálogo
+- AND «las dos te quedan en $50.000» o «el total con envío es $66.940» salen
+
+#### Scenario: Contra entrega a un pedido que no llega al mínimo
+
+- GIVEN una vela de $25.000 en el pedido y `pago_ajeno` con Jev (sombra o canary)
+- WHEN el bot escribe «Claro, puedes pagar contra entrega»
+- THEN el texto vuelve con «este pedido suma $25.000 en productos y contra entrega es desde $45.000»
+- AND «contra entrega es desde $45.000; te paso el link» sale (la regla no lo propone)
+- AND sin Jev (`reglas`) el texto sale
+
+#### Scenario: Un falso positivo de una regla de palabras se corrige en el paquete
+
+- GIVEN `estado_ajeno` propone «su pedido ya salió o va en camino» para «Mañana a primera hora tu pedido va en camino»
+- WHEN el operador agrega «mañana» a `todavia_no` en una versión nueva del paquete
+- THEN la regla ya no lo propone, sin un cambio de código
+
+#### Scenario: Una tarjeta y una respuesta que volvió en el mismo paso
+
+- GIVEN el modelo llama en un paso `send_reply` (retenido por los hechos) y el selector de aromas
+- WHEN el selector sale
+- THEN el turno sigue una ronda más y el modelo reenvía su texto corregido
+- AND el cliente recibe el selector y el texto
+
+#### Scenario: «Tu pago quedó confirmado» con el pago pendiente
+
+- GIVEN el pedido #67 en preparación y sin pago según OrderFacts (leído fresco) y `estado_ajeno` con Jev
+- WHEN el bot escribe «¡Listo! Tu pago quedó confirmado»
+- THEN el texto vuelve con «el pago del pedido #67 está pendiente»
+- AND «te avisamos apenas esté en camino» sale (Jev: 0,06)
+
+#### Scenario: «vienen en Chanel, Drakar y Ylang Ylang» (producción, 2026-10-13)
+
+- GIVEN 2 Velas de deseos cuadradas en el pedido, con un solo aroma en el catálogo
+- WHEN el bot responde con `send_reply` «Las de deseos cuadradas vienen en Chanel, Drakar y Ylang Ylang»
+- THEN el texto no sale y el modelo recibe que esos aromas no son del producto y cuál es el real
+- AND si insiste con el mismo texto, sale
+
+#### Scenario: Aroma y color ajenos en una sola retención
+
+- GIVEN las Velas de deseos en el pedido (presentaciones Multicolor y Rojo y verde)
+- WHEN el bot escribe «Las de deseos te las dejo en Drakar y en azul»
+- THEN el texto vuelve una vez con «Drakar» como aroma y «Azul» como color, y lo que el producto tiene
+
+#### Scenario: Un signo que no existe (con Jev)
+
+- GIVEN un Duo Zodiacal en el pedido y `variante_ajena` en sombra o canary
+- WHEN el bot escribe «Lo tenemos en Ofiuco»
+- THEN el texto vuelve una vez con las presentaciones reales del producto
+- AND sin Jev (`reglas`), el texto sale
+
+#### Scenario: Habla de otro producto o lo niega
+
+- GIVEN las Velas de deseos en el pedido
+- WHEN el bot escribe «La plegaria sí viene en Drakar» o «Las de deseos no vienen en Chanel»
+- THEN el texto sale: el producto nombrado entra al foco, o la cláusula niega el aroma
+
+#### Scenario: Un aviso falso con la regla sola
+
+- GIVEN una Plegaria de Luz en el pedido y las decisiones en `reglas`
+- WHEN el bot escribe «Tu Plegaria de Luz te llega antes de la noche de Navidad»
+- THEN el texto vuelve una vez con la salida «reenvía el mismo texto» y el segundo intento sale
+- AND con Jev el aviso no ocurre (Jev lee que es una fecha: 0,06–0,11 en la sonda)
+
+### Requirement: El bot no le da la razón al cliente en una cuenta equivocada (`ventas-7`, 2026-10-14)
+
+En la misma revisión de los hechos (y la misma retención única), `cifra_del_cliente`
+SHALL comparar las cifras de dinero que el cliente acaba de escribir (su ráfaga:
+lo que escribió desde la última respuesta de la tienda, leído del historial)
+con las cifras ciertas de su pedido: el precio de cada producto del borrador
+(catálogo y en vivo), cada línea por su cantidad, lo que suman, las tarifas de
+envío y la suma con cada una, con el descuento aplicado y el total registrado
+(OrderFacts). El mínimo de contra entrega NO es una cifra cierta: una suma falsa
+puede ser justo esa cifra. Sin pedido anotado (en el laboratorio el bot casi
+nunca lo anotaba antes de la cuenta del cliente), las cifras ciertas son los
+precios del catálogo de los productos de lo último de la charla (textos y
+tarjetas del historial), sus sumas con uno de cada uno y las tarifas; con un
+pedido registrado sin borrador, no se juzga. La regla solo PROPONE las cifras
+que no coinciden; Jev lee el mensaje del cliente, la respuesta y lo cierto, y
+dice si la respuesta le da la razón («sí», «así es», «correcto», o repetir la
+cifra como lo que suma, aunque después ponga otro número). Jev solo QUITA
+(umbral 0,35). Sin Jev, sin historial o sin un precio, no se juzga nada.
+
+Lo que quede MUST volver al modelo con lo cierto y el tono de la tienda
+(`vocabulary.correction_tone`: con cariño, un emoji, sin culpar nunca al
+cliente). Con el pedido anotado su cuenta no da: que no le diga «sí» ni «así
+es» y le muestre cómo da, con el ejemplo de la tienda (`sum_correction_examples`,
+con huecos, sin cifras). Sin pedido anotado no se sabe: PRIMERO la salida (si da
+su cifra o era de otra cosa, el mismo texto) y después cómo corregir; con el
+ejemplo primero, al cliente que sumó bien el bot le contestó «Casi 😊».
+
+El texto final que el modelo escribe sin `send_reply` no pasa por esta revisión
+(ni por ninguna de `send_reply`): en el laboratorio salió así una vez «Sí,
+exacto: $25.000 + $22.500 = $45.000». Ese camino es el pendiente de llevar el
+texto final suelto por `send_reply`.
+
+#### Scenario: «1 cuadrada + 1 ondulada me da $45.000, ¿no?» (laboratorio, 2026-10-14)
+
+- GIVEN 1 Vela de deseos cuadrada ($25.000) y 1 ondulada ($22.500) en el pedido
+- WHEN el cliente escribe «eso me da $45.000 en total, ¿no?» y el bot contesta
+  «Así es: … $47.500» o «Sí, las dos suman $45.000»
+- THEN el texto vuelve una vez con «su pedido (1 × $25.000 + 1 × $22.500) suma
+  $47.500 en productos» (`precio_ajeno` no lo ve: $45.000 es 2 × $22.500)
+- AND «Casi 😊 … serían $47.500» sale
+- AND sin pedido anotado, vuelve con los precios de las dos velas de la charla y
+  «haz la cuenta», y «me da $47.500, ¿cierto?» no se juzga (una de cada una)
+
+#### Scenario: La cifra del cliente era de otra cosa
+
+- GIVEN el mismo pedido
+- WHEN el cliente pregunta «¿el mínimo para contra entrega es de 45 mil?» y el bot contesta «Así es, … desde $45.000»
+- THEN el texto sale (Jev: 0,13–0,18 en la sonda)
+- AND «más el envío de $7.900» no se le pregunta a Jev: la tarifa es una cifra cierta
+
 ### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
 
 Cuando el cliente escribe desde la ficha de un producto del catálogo de
@@ -1942,6 +2224,28 @@ Sin datos del pedido (Medusa caído o lento), o con el pedido entregado o cancel
 - GIVEN el pedido anterior figura entregado en OrderFacts
 - WHEN el cliente vuelve a escribir
 - THEN la conversación nueva abre como siempre
+
+### Requirement: Al agotar las rondas, el bot responde; nunca una disculpa fabricada (2026-10-14)
+
+Laboratorio del PR #426 (bot V2 + Jev, ventas-6): «¿Tienen velas de cumpleaños
+con números para el pastel?» hizo que el modelo llamara `search_products` 19
+veces, agotara `max_iterations` y el turno le enviara al cliente «¡Perdón! Justo
+se me cortó un segundito. ¿Me repites lo que necesitabas?»: una falla técnica
+contada como si fuera de una persona.
+
+En un turno que el cliente espera (`fabricate_fallback_on_empty`), si se agotan
+las rondas sin nada para el cliente, `run_agent_turn` MUST abrir UNA ronda de
+cierre con solo `send_reply` (sus controles siguen) y una nota de sistema («ya
+buscaste; respóndele con lo que encontraste o dile que no lo tenemos»). Si ni
+así responde, MUST NOT enviar la disculpa fabricada: no sale nada y queda la
+alerta. Los turnos proactivos no cambian. Detrás de
+`workflow.patched("closing-round-no-fabricated-apology-v1")`.
+
+#### Scenario: Pide algo que no existe y el modelo busca sin parar
+- GIVEN el modelo pide `search_products` en cada ronda hasta agotar `max_iterations`
+- WHEN se agotan las rondas
+- THEN hay una ronda más que solo ofrece `send_reply`, con la nota
+- AND el cliente recibe esa respuesta, nunca «se me cortó un segundito»
 
 ### Requirement: Una tool mal llamada o que falla no deja al cliente sin respuesta (2026-10-15)
 

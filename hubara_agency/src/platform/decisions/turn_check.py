@@ -165,6 +165,12 @@ class _TurnCheck:
             for part in path.split("."):
                 node = getattr(node, part)
             self._template(f"questionnaire.{path}", node, allowed)
+        if q.reply_state.contents is not None:
+            self._template("questionnaire.reply_state.contents", q.reply_state.contents, {"contents"})
+        for i, topic in enumerate(q.topics):
+            if topic.verify is not None:
+                self._template(f"questionnaire.topics[{i}].verify.text", topic.verify.text, _TEMPLATES["verify.text"])
+            self._template(f"questionnaire.topics[{i}].complement", topic.complement, set())
         if policy is None:
             return
         if q.verify.id != policy.verify_question:

@@ -552,6 +552,10 @@ def _check_domain(bundle_dir: Path, catalog: Catalog, out: list[Diagnostic]) -> 
             out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", "campo que el catálogo no declara"))
         for name, kind in declared.items():
             if name not in values:
+                # Un campo anulable (`string?`) puede faltar: lo trae el
+                # paquete que lo usa y los anteriores siguen certificando.
+                if not isinstance(kind, dict) and parse_type(kind).nullable:
+                    continue
                 out.append(Diagnostic("DB014", f"domain.yaml: {prefix}{name}", "falta"))
             elif isinstance(kind, dict):
                 check(kind, values[name], f"{prefix}{name}.")
@@ -595,7 +599,8 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
     oracles = load_profiles()
     if bundle.oracle not in oracles:
         out.append(Diagnostic("DB016", "bundle.yaml: oracle", f"oráculo desconocido {bundle.oracle!r} (hay: {', '.join(oracles)})"))
-    missing = [name for name in catalog.capabilities if name not in bundle.capabilities]
+    asked = [*catalog.capabilities, *(n for n, since in catalog.capabilities_since.items() if bundle.version >= since)]
+    missing = [name for name in asked if name not in bundle.capabilities]
     if missing:
         out.append(Diagnostic("DB003", "bundle.yaml: capabilities", f"faltan capacidades que el código pide: {missing}"))
     _check_about(catalog, catalog_path.name, out)
@@ -648,6 +653,7 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
         CompiledBundle(
             bundle.id, bundle.version, bundle.oracle, compiled, domain, turn,
             places=tuple(catalog.places.items()), about=about,
+            later=frozenset(n for n, since in catalog.capabilities_since.items() if bundle.version < since),
         ),
         [],
     )
@@ -656,12 +662,20 @@ def _build(bundle_dir: Path, catalog_path: Path, expressions: ExpressionPort | N
 def _check_about(catalog: Catalog, label: str, out: list[Diagnostic]) -> None:
     """Cada decisión que el código pide dice qué resuelve y dónde actúa
     (Calidad LLM la muestra, 2026-10-02): una decisión nueva nunca llega muda
-    a la pantalla. DB003, como la capacidad que falta."""
-    for name in catalog.capabilities:
+    a la pantalla. DB003, como la capacidad que falta. Una que nace en una
+    versión (`capabilities_since`) también, y no se pide de las dos formas."""
+    asked = [*catalog.capabilities, *catalog.capabilities_since]
+    for name in catalog.capabilities_since:
+        if name in catalog.capabilities:
+            out.append(Diagnostic(
+                "DB003", f"{label}: capabilities_since",
+                f"{name}: ya está en `capabilities` (se pide siempre o desde una versión, no las dos)",
+            ))
+    for name in dict.fromkeys(asked):
         if name not in catalog.about:
             out.append(Diagnostic("DB003", f"{label}: about", f"{name}: falta qué resuelve y dónde actúa (`about`)"))
     for name, about in catalog.about.items():
-        if catalog.capabilities and name not in catalog.capabilities:
+        if asked and name not in asked:
             out.append(Diagnostic("DB003", f"{label}: about.{name}", "no es una capacidad que el código pide (`capabilities`)"))
         unknown = [where for where in about.where if where not in catalog.places]
         if unknown:

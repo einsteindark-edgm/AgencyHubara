@@ -42,7 +42,7 @@ from src.sdk.decisionkit import BundleError, CompiledBundle, CompiledTurn, Diagn
 
 __all__ = [
     "BUNDLES_DIR", "BUNDLE_ENV", "DEFAULT_BUNDLE", "active_bundle", "active_bundle_id", "active_turn", "capability",
-    "foreign_capability", "reset", "warm_up",
+    "capability_if_present", "foreign_capability", "reset", "warm_up",
 ]
 
 logger = structlog.get_logger()
@@ -178,6 +178,16 @@ def capability(name: str) -> Any:
     found = BundledCapability(bundle.capability(name))
     _resolved[key] = found
     return found
+
+
+def capability_if_present(name: str) -> Any | None:
+    """La capacidad `name` si el paquete activo la trae; None si es una
+    decisión que el catálogo pide desde una versión posterior a la del
+    paquete activo (`capabilities_since`): el lugar que la pide no decide
+    nada. Un nombre que el catálogo no conoce sigue fallando fuerte."""
+    if name in _load(active_bundle_id(), str(BUNDLES_DIR)).later:
+        return None
+    return capability(name)
 
 
 #: Capacidades de otros paquetes (catálogo propio) ya resueltas: (id@versión, nombre) → capacidad.

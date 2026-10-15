@@ -7,12 +7,13 @@ del cliente a UNA categoría real del snapshot — o admite que no la reconoce y
 devuelve la lista cerrada de las que existen (mismo patrón que el variant
 picker con aromas/colores).
 
-Solo stdlib (R-DIP de `platform/catalog`): funciones puras, testeables sin IO.
+Funciones puras, testeables sin IO (R-DIP de `platform/catalog`): stdlib más RapidFuzz
+(`fuzz.ratio`, cómputo puro; con estos umbrales decide igual que el `difflib` de antes).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
+from rapidfuzz import fuzz
 
 from src.platform.catalog.dtos import CatalogProductDTO
 from src.platform.catalog.variant_attrs import normalize_label
@@ -86,9 +87,7 @@ def _fuzzy_score(q_tokens: tuple[str, ...], c_tokens: tuple[str, ...]) -> float:
         return 0.0
     total = 0.0
     for qt in q_tokens:
-        total += max(
-            SequenceMatcher(None, qt, ct).ratio() for ct in c_tokens
-        )
+        total += max(fuzz.ratio(qt, ct) / 100 for ct in c_tokens)
     return total / len(q_tokens)
 
 
@@ -220,7 +219,7 @@ def text_matches_loosely(query: str, text: str) -> bool:
     for qt in q_tokens:
         if any(qt in tt or tt in qt for tt in t_tokens):
             continue
-        best = max(SequenceMatcher(None, qt, tt).ratio() for tt in t_tokens)
+        best = max(fuzz.ratio(qt, tt) / 100 for tt in t_tokens)
         if best < _FUZZY_THRESHOLD:
             return False
     return True
