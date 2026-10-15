@@ -90,6 +90,67 @@ outbound, y queda esperando el próximo signal.
 - THEN `read_idle_timeout_seconds_activity` detecta el Flow pendiente y devuelve timeout extendido (default 5min → 30min)
 - AND el workflow waitea más antes de decidir ghosting
 
+### Requirement: El turno sobrevive a una caída total del LLM (2026-10-15)
+
+Incidente 2026-10-15: DeepSeek se colgó, el respaldo `gemini-backup` no alcanzó
+a entrar, `llm_chat` agotó sus reintentos y el `ActivityError` tumbó el workflow
+con los mensajes del cliente adentro; el equipo los levantó a mano. En el
+`HubaraSalesSessionWorkflowV2`, cuando `llm_chat` agota sus reintentos, el turno
+SHALL NOT caerse: Temporal espera con un timer durable (1, 2, 4, 8 y después
+10 min entre vueltas) y vuelve a llamar al modelo con el mismo turno. Cada
+vuelta lee de nuevo la metadata (`read_reply_window`). El turno MUST rendirse
+sin enviar nada (ni texto, ni componentes, ni el saludo, ni la verificación ③)
+cuando una persona tomó el chat (`active_route == humano`) o cuando, después de
+la espera, la respuesta ya no alcanzaría a salir 5 min antes de que cierre la
+ventana de 24 h (`service_window_expires_at_ms`; sin ventana conocida, un día
+desde la primera falla). Rendirse no pasa el chat al equipo (una falla técnica
+no es un traspaso): deja un log de ERROR (`llm_outage_gave_up`), la traza del
+turno con `suppressed_reason = llm_unavailable` y la razón, y lo que escribió el
+cliente grabado en el historial del LLM. Cada vuelta deja un paso `llm_outage`
+en la traza y un log de ERROR (`llm_outage_waiting`). Gate del turno compartido:
+`llm-outage-wait-v1`. El V1 (congelado), remarketing y ETA no cambian.
+
+#### Scenario: El modelo vuelve antes de que cierre la ventana
+
+- GIVEN DeepSeek y el respaldo caídos: `llm_chat` falla del todo dos veces
+- WHEN el turno espera 1 min, vuelve a llamar, espera 2 min y vuelve a llamar
+- AND el modelo responde
+- THEN el cliente recibe la respuesta y la sesión sigue viva
+- AND la traza del turno trae dos pasos `llm_outage` con `retry: true`
+
+#### Scenario: Lo que el cliente escribe durante la caída entra en la misma respuesta
+
+- GIVEN el turno espera a que vuelva el modelo
+- WHEN el cliente escribe otro mensaje durante la espera y el modelo vuelve
+- THEN el turno se recompone (corrientazo) y el modelo lee los dos mensajes
+- AND sale UNA respuesta
+
+#### Scenario: La ventana de 24 h está por cerrar
+
+- GIVEN el modelo sigue caído y la ventana cierra en 3 min
+- WHEN `llm_chat` agota sus reintentos
+- THEN el turno se rinde sin enviar nada y la sesión no falla
+- AND la traza dice `suppressed_reason = llm_unavailable`, razón `window_closing`
+- AND lo que escribió el cliente queda en el historial del LLM (sin respuesta del asistente)
+
+#### Scenario: Una persona tomó el chat durante la caída
+
+- GIVEN el chat pasó a `humano` (escalar, comprobante o reverso de pago solo escriben la metadata; «Intervenir» además termina el workflow)
+- WHEN el turno vuelve a leer la metadata
+- THEN se rinde con razón `human_took_over`: no envía texto, ni componentes, ni el saludo de primer contacto, ni le pide a Jev verificar o complementar
+
+#### Scenario: La ruta de remarketing pegada no corta la espera
+
+- GIVEN el ciclo de reactivación reclamó el chat (`active_route == remarketing`) y su turno murió por la misma caída
+- WHEN el turno de ventas vuelve a leer la metadata
+- THEN sigue esperando y responde cuando el modelo vuelve
+
+#### Scenario: Un caso del laboratorio no espera
+
+- GIVEN un turno del banco del laboratorio con el LLM caído
+- WHEN `llm_chat` agota sus reintentos
+- THEN el sandbox dice que la ventana ya cerró (`read_reply_window` falso) y el turno se rinde de una con su traza
+
 ### Requirement: Tools de catálogo
 
 El sales-worker MUST tener acceso a tools que consulten el snapshot de
