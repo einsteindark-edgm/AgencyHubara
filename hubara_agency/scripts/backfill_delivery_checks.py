@@ -17,7 +17,7 @@ Este script los une, solo con datos de Meta:
   `<vault>/<sid>/delivery_statuses.jsonl` con `DeliveryStatusLog`. Sin hora
   real: `at_ms` en null, nunca inventada.
 
-Idempotente. Sin `--apply` solo dice qué haría. Imprime solo conteos, con la
+Idempotente. `--since AAAA-MM-DD`: solo mensajes desde esa fecha. Sin `--apply` solo dice qué haría. Imprime solo conteos, con la
 conversación enmascarada. Receta: `docs/doble-check-whatsapp/relleno.md`.
 """
 from __future__ import annotations
@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp.formatting import to_whatsapp_text
@@ -43,6 +44,9 @@ from src.plugins.chats.shared.delivery_status import (
     message_wamids,
 )
 from src.sdk.identitykit import is_customer_session_id
+
+#: `--since` es una fecha del negocio: medianoche de Bogotá.
+_BOGOTA = ZoneInfo("America/Bogota")
 
 #: El paso `outbound` de la traza se graba al volver el envío y el evento del
 #: historial justo después: segundos. Más allá no se adivina.
@@ -209,13 +213,15 @@ def _read_jsonl(path: Path, *, only_with: str | None = None) -> list[dict[str, A
     return [row for _, row in _parse_lines(raw) if row is not None]
 
 
-def _meta_statuses(vault: Path) -> dict[str, list[str]]:
+def _meta_statuses(vault: Path, since_day: str | None = None) -> dict[str, list[str]]:
     """wamid → estados que Meta informó por webhook, de dos registros:
 
     * `_orphan_delivery_statuses.jsonl`: los que no encontraron su mensaje
       (caso 2026-10-15: episodio sin `outbound_messages`).
     * `_analytics/<día>.jsonl` (`delivery_status`): TODOS, también los que
-      entraron por el camino del costo con el episodio abierto.
+      entraron por el camino del costo con el episodio abierto. Un estado
+      siempre llega después del envío: con `since_day` (AAAA-MM-DD, UTC) los
+      días anteriores no se leen.
     """
     out: dict[str, list[str]] = {}
 
@@ -226,6 +232,8 @@ def _meta_statuses(vault: Path) -> dict[str, list[str]]:
     for row in _read_jsonl(vault / "_orphan_delivery_statuses.jsonl"):
         add(row.get("wa_message_id"), row.get("status"))
     for day in sorted((vault / "_analytics").glob("*.jsonl")):
+        if since_day is not None and day.stem < since_day:
+            continue
         for row in _read_jsonl(day, only_with='"delivery_status"'):
             correlation, payload = row.get("correlation"), row.get("payload")
             if row.get("kind") == "delivery_status" and isinstance(correlation, dict) and isinstance(payload, dict):
@@ -301,16 +309,27 @@ class _SessionPlan:
     unconfirmed_after: int
 
 
-def _plan_session(vault: Path, sid: str, statuses: dict[str, list[str]]) -> tuple[_SessionPlan, set[str]]:
+def _plan_session(
+    vault: Path, sid: str, statuses: dict[str, list[str]], since_ms: int | None = None
+) -> tuple[_SessionPlan, set[str]]:
     """Qué le falta a la conversación y qué va a mostrar el chat después.
-    Devuelve también los wamids de sus mensajes."""
+    Devuelve también los wamids de sus mensajes. Con `since_ms`, solo los
+    mensajes desde esa hora (las uniones se deciden mirando todo el chat)."""
     events = _read_jsonl(vault / sid / "sessions" / f"{sid}.jsonl")
     # Las burbujas que ya son de un mensaje (los de después del deploy).
     owned = {w for e in events for w in message_wamids(e)}
     linked = _link_from_traces(events, turn_traces.read_traces(vault, sid), owned)
     index = _metadata(vault, sid).get("outbound_text_index")
     linked |= _link_from_text_index(events, index, linked, owned)
-    after = [{**e, "wamids": linked[i]} if i in linked else e for i, e in enumerate(events)]
+
+    def in_range(event: dict[str, Any]) -> bool:
+        at = _event_ms(event)
+        return since_ms is None or (at is not None and at >= since_ms)
+
+    linked = {i: wamids for i, wamids in linked.items() if in_range(events[i])}
+    after = [
+        {**e, "wamids": linked[i]} if i in linked else e for i, e in enumerate(events) if in_range(e)
+    ]
     wamids = [w for e in after for w in message_wamids(e)]
 
     existing = _read_jsonl(vault / sid / DELIVERY_LOG_FILENAME)
@@ -339,10 +358,16 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     parser.add_argument("--vault", type=Path, required=True, help="en la caja: /app/hubara_vault")
     parser.add_argument("--apply", action="store_true", help="escribe; sin esto solo dice qué haría")
     parser.add_argument("--session", action="append", default=[], help="solo esta conversación (repetible)")
+    parser.add_argument("--since", help="solo mensajes desde esta fecha (AAAA-MM-DD, medianoche de Bogotá)")
     args = parser.parse_args(argv)
     vault: Path = args.vault
 
-    statuses = _meta_statuses(vault)
+    since_ms = since_day = None
+    if args.since:
+        since = datetime.fromisoformat(args.since).replace(tzinfo=_BOGOTA)
+        since_ms = int(since.timestamp() * 1000)
+        since_day = since.astimezone(timezone.utc).date().isoformat()
+    statuses = _meta_statuses(vault, since_day)
     log = DeliveryStatusLog(vault)
     # Solo conversaciones de clientes: las únicas en que el chat muestra el check.
     found = {d.name for d in vault.glob("wa_*") if d.is_dir() and is_customer_session_id(d.name)}
@@ -357,7 +382,7 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
     }
     referenced: set[str] = set()
     for sid in sids:
-        plan, wamids = _plan_session(vault, sid, statuses)
+        plan, wamids = _plan_session(vault, sid, statuses, since_ms)
         referenced |= wamids
         report["text_events_linked"] += len(plan.linked)
         report["status_rows"] += len(plan.rows)

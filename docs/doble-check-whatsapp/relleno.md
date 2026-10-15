@@ -62,24 +62,43 @@ lo que el script no pudo unir con certeza (`unconfirmed_after` en el informe).
 
 ### 3. El resto del vault
 
-El ayudante de SSM espera solo un minuto. Para todo el vault, entra a la caja (con este PR
-desplegado, el script ya está en la imagen):
+El ayudante de SSM espera solo un minuto: para todo el vault, copia el script al contenedor por SSH.
+Tampoco necesita que este PR esté desplegado. `--since` limita a los mensajes desde esa fecha
+(medianoche de Bogotá) y no lee los días anteriores del log analítico: la caja tiene poca memoria.
+
+Desde la raíz del repo, el script de la rama del PR:
 
 ```bash
-ssh -i ~/.ssh/hubara_ops ec2-user@<ip de la caja>
+git fetch origin claude/backfill-delivery-checks
 ```
 
 ```bash
-sudo docker exec -w /app/hubara_agency hubara-prod-api-1 python -m scripts.backfill_delivery_checks --vault /app/hubara_vault
+git show origin/claude/backfill-delivery-checks:hubara_agency/scripts/backfill_delivery_checks.py > /tmp/backfill_delivery_checks.py
 ```
-
-Y si el informe está bien:
 
 ```bash
-sudo docker exec -w /app/hubara_agency hubara-prod-api-1 python -m scripts.backfill_delivery_checks --vault /app/hubara_vault --apply
+scp -i ~/.ssh/hubara_ops /tmp/backfill_delivery_checks.py ec2-user@<ip de la caja>:/tmp/
 ```
 
-Una segunda corrida con `--apply` debe dar `text_events_linked: 0` y `status_rows: 0`.
+```bash
+ssh -i ~/.ssh/hubara_ops ec2-user@<ip de la caja> 'sudo docker cp /tmp/backfill_delivery_checks.py hubara-prod-api-1:/tmp/backfill_delivery_checks.py'
+```
+
+Ensayo:
+
+```bash
+ssh -i ~/.ssh/hubara_ops ec2-user@<ip de la caja> 'sudo docker exec -e PYTHONPATH=/app/hubara_agency -w /app/hubara_agency hubara-prod-api-1 python /tmp/backfill_delivery_checks.py --vault /app/hubara_vault --since 2026-09-16'
+```
+
+Y si el informe está bien, lo mismo con `--apply`:
+
+```bash
+ssh -i ~/.ssh/hubara_ops ec2-user@<ip de la caja> 'sudo docker exec -e PYTHONPATH=/app/hubara_agency -w /app/hubara_agency hubara-prod-api-1 python /tmp/backfill_delivery_checks.py --vault /app/hubara_vault --since 2026-09-16 --apply'
+```
+
+Una segunda corrida con `--apply` debe dar `text_events_linked: 0` y `status_rows: 0`. Con este PR
+desplegado, el script ya está en la imagen:
+`sudo docker exec -w /app/hubara_agency hubara-prod-api-1 python -m scripts.backfill_delivery_checks …`.
 
 ## Cómo leer el informe
 

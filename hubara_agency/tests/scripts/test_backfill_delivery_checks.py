@@ -479,3 +479,50 @@ def test_a_bubble_that_already_belongs_to_a_message_is_not_taken_again(panel) ->
 
     old, _, new = messages()
     assert (old["delivery"]["status"], new["delivery"]["status"]) == ("unconfirmed", "read")
+
+
+def test_since_only_fills_the_messages_from_that_day_on(panel) -> None:
+    """`--since 2026-09-16` (medianoche de Bogotá): lo anterior queda como estaba."""
+    from scripts.backfill_delivery_checks import main
+
+    vault, messages = panel
+    _seed(
+        vault,
+        history=[
+            {"role": "assistant", "content": "Antes", "timestamp": "2026-09-16T04:30:01+00:00"},
+            {"role": "assistant", "content": "Después", "timestamp": "2026-09-16T05:30:01+00:00"},
+        ],
+        traces=[
+            _bot_turn("2026-09-16T04:30:00+00:00", [("wamid.A1", "Antes")]),
+            _bot_turn("2026-09-16T05:30:00+00:00", [("wamid.D1", "Después")]),
+        ],
+    )
+    _orphans(vault, [("wamid.A1", "read"), ("wamid.D1", "read")])
+
+    report = main(["--vault", str(vault), "--apply", "--since", "2026-09-16"])
+
+    before, after = messages()
+    assert "wamids" not in before and before["delivery"]["status"] == "unconfirmed"
+    assert after["delivery"]["status"] == "read"
+    assert report.get("sessions") == {
+        "···4567": {"text_events_linked": 1, "status_rows": 1, "outbound": 1, "unconfirmed_after": 0},
+    }
+
+
+def test_since_skips_the_days_of_the_analytics_log_before_it(panel) -> None:
+    """Un estado siempre llega después del envío: los días del log analítico
+    anteriores a `--since` no se leen (en la caja la memoria es poca)."""
+    from scripts.backfill_delivery_checks import main
+
+    vault, _ = panel
+    _seed(
+        vault,
+        history=[{"role": "assistant", "content": "Hola", "timestamp": "2026-09-20T15:00:01+00:00"}],
+        traces=[_bot_turn("2026-09-20T15:00:00+00:00", [("wamid.H1", "Hola")])],
+    )
+    _analytics(vault, "2026-09-10", [("wamid.H1", "sent", _SID)])
+    _analytics(vault, "2026-09-20", [("wamid.H1", "read", _SID)])
+
+    report = main(["--vault", str(vault), "--since", "2026-09-16"])
+
+    assert report.get("status_rows") == 1
