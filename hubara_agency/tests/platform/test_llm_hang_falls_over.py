@@ -49,6 +49,8 @@ from typing import Any
 import pytest
 import yaml
 
+from src.platform.temporal.retry_policies import _LLM_OPTIONS
+
 _LITELLM_CONFIG = (
     Path(__file__).resolve().parents[3] / "exoclaw-temporal" / "litellm_config.yaml"
 )
@@ -56,9 +58,9 @@ _LITELLM_CONFIG = (
 #: Los dos alias de DeepSeek que el router manda a ``gemini-backup``.
 _DEEPSEEK_ALIASES = ("deepseek-v4-flash", "deepseek-v4-flash-thinking")
 
-#: ``start_to_close_timeout`` de ``_LLM_OPTIONS`` (retry_policies.py): pasado
-#: esto Temporal mata el intento y el cliente sigue sin respuesta.
-_ACTIVITY_ATTEMPT_S = 5 * 60
+#: ``start_to_close_timeout`` de ``_LLM_OPTIONS`` (hoy 5 min): pasado esto
+#: Temporal mata el intento de ``llm_chat`` y el cliente sigue sin respuesta.
+_ACTIVITY_ATTEMPT_S = _LLM_OPTIONS["start_to_close_timeout"].total_seconds()
 #: El respaldo tiene que entrar antes de la MITAD del intento: queda margen para
 #: el respaldo mismo y para la segunda llamada del turno.
 _BACKUP_MUST_START_BY_S = _ACTIVITY_ATTEMPT_S / 2
@@ -74,10 +76,12 @@ _SLOWEST_HEALTHY_TURN_S = 9.45
 #: El tope deja pasar con holgura a la llamada sana más lenta.
 _MIN_DEADLINE_S = 3 * _SLOWEST_HEALTHY_TURN_S
 
-#: Tope al que se escala el del YAML para que la prueba dure segundos.
-_SCALED_DEADLINE_S = 1.0
+#: Tope al que se escala el del YAML para que la prueba dure segundos. No más
+#: chico: con 45 s contra 60 s (``-thinking``) el margen escalado es un tercio de
+#: esto, y en una máquina cargada pedir el respaldo tarda unas décimas.
+_SCALED_DEADLINE_S = 3.0
 #: Si a esta altura no contestó nadie, sigue colgado.
-_STILL_HUNG_AFTER_S = 15.0
+_STILL_HUNG_AFTER_S = 20.0
 
 _DEEPSEEK_OK = {
     "id": "chatcmpl-fake",
@@ -331,7 +335,7 @@ async def test_the_limit_a_keepalive_faster_than_the_timeout_is_never_cut() -> N
         call = asyncio.ensure_future(
             router.acompletion(model=alias, messages=[{"role": "user", "content": "hola"}])
         )
-        done, _ = await asyncio.wait({call}, timeout=_SCALED_DEADLINE_S * 4)
+        done, _ = await asyncio.wait({call}, timeout=_SCALED_DEADLINE_S * 3)
         call.cancel()
         await asyncio.gather(call, return_exceptions=True)
     finally:
