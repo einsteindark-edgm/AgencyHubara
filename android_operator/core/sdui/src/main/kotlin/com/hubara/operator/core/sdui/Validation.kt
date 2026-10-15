@@ -198,7 +198,9 @@ private class ScreenValidator(private val doc: ScreenDoc, private val known: Map
                 is JsonArray -> value.forEachIndexed { i, el ->
                     val o = el as? JsonObject
                     if (o == null || o["value"] == null || o["label"] == null) problems += "$where[$i]: cada opción es {\"value\": …, \"label\": …}."
-                    else (o["label"] as? JsonPrimitive)?.content?.let { template(it, "$where[$i].label", names) }
+                    else listOf("label", "badge").forEach { key ->
+                        (o[key] as? JsonPrimitive)?.content?.let { template(it, "$where[$i].$key", names) }
+                    }
                 }
                 else -> str?.let { template(it, where, names) } ?: run { problems += "$where: tiene que ser una lista de opciones." }
             }

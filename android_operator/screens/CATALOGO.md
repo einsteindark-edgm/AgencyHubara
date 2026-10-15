@@ -265,7 +265,7 @@ Elige UNA opción. Guarda el valor en `bind` (`state.x` vuelve a pedir los datos
 | Propiedad | Tipo | Qué es |
 |---|---|---|
 | `bind` **(obligatoria)** | `state.x` / `form.x` | Dónde se guarda: `state.<clave>`. |
-| `options` **(obligatoria)** | opciones | `[{ "value": "…", "label": "…" }]`. |
+| `options` **(obligatoria)** | opciones | `[{ "value": "…", "label": "…", "badge": "{{…}}" }]`. `badge` (opcional): un número en una bolita al lado del texto, como los no leídos de la bandeja (vacío o 0: sin bolita). Con bolitas los chips bajan de línea en vez de deslizarse: se ven todos. |
 | `style` | `chips` · `segmented` | Chips (por defecto) o botones segmentados. |
 
 ### `text_field`

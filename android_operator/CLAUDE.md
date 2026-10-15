@@ -293,6 +293,12 @@ cd android_operator && ./gradlew :app:bundleRelease \
     del widget. El paquete `operador-2` no podía arreglarlo solo: el veredicto de Jev cambia gravedad y tipo, nunca
     quita la tarjeta. S36 en el emulador (`inject.py answered`).
 
+37. **Cada filtro con su bolita** (pedido del operador, 2026-10-15): una opción de `chips` puede traer `badge`
+    (`"{{chats | where:'unread' | count | number}}"`) y se pinta con la misma bolita de los no leídos (`Badge`); vacío o 0
+    no la lleva. Sale con frontend-deploy (una app vieja ignora `badge` y deja el texto). Con bolitas los chips bajan de
+    línea (`FlowRow`): en una línea del teléfono «Con pedido» quedaba escondido a la derecha. **Trampa:** Robolectric mide
+    el texto muy angosto y ahí siempre caben; lo que depende del ancho real del texto se cuida en el emulador (S35).
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,

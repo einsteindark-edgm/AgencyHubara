@@ -30,10 +30,10 @@
     {
       "type": "chips", "bind": "state.filtro",
       "options": [
-        { "value": "all", "label": "Todos" },
-        { "value": "unread", "label": "No leídos" },
-        { "value": "human", "label": "Humano" },
-        { "value": "has_order", "label": "Con pedido" }
+        { "value": "all", "label": "Todos", "badge": "{{chats | count | number}}" },
+        { "value": "unread", "label": "No leídos", "badge": "{{chats | where:'unread' | count | number}}" },
+        { "value": "human", "label": "Humano", "badge": "{{chats | where:'human' | count | number}}" },
+        { "value": "has_order", "label": "Con pedido", "badge": "{{chats | where:'has_order' | count | number}}" }
       ]
     },
     { "type": "notifications_banner" },

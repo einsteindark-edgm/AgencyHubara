@@ -210,7 +210,13 @@ object Catalog {
         ComponentSpec(
             "chips", "Elige UNA opción. Guarda el valor en `bind` (`state.x` vuelve a pedir los datos que lo usan).",
             listOf(PropSpec("bind", PropKind.BIND, "Dónde se guarda: `state.<clave>`.", required = true),
-                PropSpec("options", PropKind.OPTIONS, "`[{ \"value\": \"…\", \"label\": \"…\" }]`.", required = true),
+                PropSpec(
+                    "options", PropKind.OPTIONS,
+                    "`[{ \"value\": \"…\", \"label\": \"…\", \"badge\": \"{{…}}\" }]`. `badge` (opcional): un número en una " +
+                        "bolita al lado del texto, como los no leídos de la bandeja (vacío o 0: sin bolita). Con bolitas los chips " +
+                        "bajan de línea en vez de deslizarse: se ven todos.",
+                    required = true,
+                ),
                 enum("style", "Chips (por defecto) o botones segmentados.", listOf("chips", "segmented"))),
         ),
         ComponentSpec(
