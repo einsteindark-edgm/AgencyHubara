@@ -43,6 +43,17 @@ def _refusal(error: str, message: str) -> str:
     return json.dumps({"queued": False, "error": error, "message": message}, ensure_ascii=False)
 
 
+def tool_failed_result(name: str) -> str:
+    """Lo que el modelo lee cuando la tool falló por dentro: aquí (`TypeError`)
+    o en el workflow, agotados los reintentos de `execute_tool`
+    (`run_agent_turn`)."""
+    return _refusal(
+        "tool_failed",
+        f"No se envió nada: {name} falló por un error interno. "
+        "No la vuelvas a llamar en este turno; responde al cliente sin ella.",
+    )
+
+
 async def dispatch_tool(
     registry: ToolRegistry, name: str, params: dict[str, Any], ctx: ToolContext
 ) -> str:
@@ -78,8 +89,4 @@ async def dispatch_tool(
         logger.exception(
             "💥 [TOOL {}] TypeError (determinista: no se reintenta) session={}", name, ctx.session_key
         )
-        return _refusal(
-            "tool_failed",
-            f"No se envió nada: {name} falló por un error interno. "
-            "No la vuelvas a llamar en este turno; responde al cliente sin ella.",
-        )
+        return tool_failed_result(name)
