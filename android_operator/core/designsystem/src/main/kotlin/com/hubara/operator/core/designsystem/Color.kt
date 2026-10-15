@@ -37,6 +37,9 @@ data class OperatorColors(
     val onBubbleOperator: Color,
     val bubbleBot: Color,
     val onBubbleBot: Color,
+    /** El ✓✓ de «leído por WhatsApp» sobre las burbujas salientes (2026-10-15); entregado/enviado van en el color del
+     *  texto de la burbuja, atenuado. */
+    val readCheck: Color,
 )
 
 internal val LightScheme = lightColorScheme(
@@ -125,6 +128,7 @@ internal val LightOperator = OperatorColors(
     bubbleCustomer = Color(0xFFE8E7ED), onBubbleCustomer = Color(0xFF1A1C1F),
     bubbleOperator = Color(0xFFD6E3FF), onBubbleOperator = Color(0xFF00468D),
     bubbleBot = Color(0xFFF6D9FF), onBubbleBot = Color(0xFF5E3671),
+    readCheck = Color(0xFF0077A8),
 )
 
 internal val DarkOperator = OperatorColors(
@@ -135,6 +139,7 @@ internal val DarkOperator = OperatorColors(
     bubbleCustomer = Color(0xFF282A2E), onBubbleCustomer = Color(0xFFE2E2E7),
     bubbleOperator = Color(0xFF00468D), onBubbleOperator = Color(0xFFD6E3FF),
     bubbleBot = Color(0xFF5E3671), onBubbleBot = Color(0xFFF6D9FF),
+    readCheck = Color(0xFF7FD8F0),
 )
 
 /**

@@ -447,6 +447,13 @@ class WhatsAppStatusUpdate:
     timestamp_ms: int | None = None
     #: `errors[0].code` de un `failed` (131049, 131026…).
     error_code: int | None = None
+    #: `errors[0].title` de un `failed` ("Re-engagement message"…).
+    error_title: str | None = None
+    #: A quién iba el mensaje: su teléfono (`recipient_id`) o, si el cliente
+    #: usa nombre de usuario, su BSUID (`recipient_user_id`). Ubica la
+    #: conversación del doble check sin escanear el vault (caso 2026-10-15).
+    recipient_id: str | None = None
+    recipient_user_id: str | None = None
 
 
 def parse_whatsapp_statuses(body: dict) -> list[WhatsAppStatusUpdate]:
@@ -515,12 +522,20 @@ def _parse_status(status: Any) -> WhatsAppStatusUpdate | None:
     errors = status.get("errors")
     first = errors[0] if isinstance(errors, list) and errors else None
     code = first.get("code") if isinstance(first, dict) else None
+    title = first.get("title") if isinstance(first, dict) else None
+    recipient_id = status.get("recipient_id")
+    recipient_user_id = status.get("recipient_user_id")
     return WhatsAppStatusUpdate(
         wa_message_id=wa_message_id,
         status=status_kind,
         pricing=pricing,
         timestamp_ms=timestamp_ms,
         error_code=code if isinstance(code, int) and not isinstance(code, bool) else None,
+        error_title=title if isinstance(title, str) and title else None,
+        recipient_id=recipient_id if isinstance(recipient_id, str) and recipient_id else None,
+        recipient_user_id=(
+            recipient_user_id if isinstance(recipient_user_id, str) and recipient_user_id else None
+        ),
     )
 
 

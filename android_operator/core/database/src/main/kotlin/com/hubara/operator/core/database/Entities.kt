@@ -39,6 +39,12 @@ data class MessageEntity(
     /** v5: la tarjeta de un envío del bot (`MessageCard` en JSON) y el botón que tocó el cliente (2026-10-13). */
     val cardJson: String? = null,
     val tap: String? = null,
+    /** v6: el doble check de WhatsApp de un saliente (`WhatsAppStatus`), su hora y el error de Meta (2026-10-15).
+     *  null en los mensajes del cliente. */
+    val waStatus: String? = null,
+    val waStatusAtMs: Long? = null,
+    val waErrorCode: Int? = null,
+    val waErrorTitle: String? = null,
 )
 
 /** Envíos del operador que todavía no confirmó el servidor. */

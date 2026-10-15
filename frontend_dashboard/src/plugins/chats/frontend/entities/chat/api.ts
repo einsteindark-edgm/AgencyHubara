@@ -37,6 +37,7 @@ import type {
   ChatInboxItem,
   ChatOrderBadge,
   ChatPostponedBadge,
+  ChatDeliveryItem,
   ChatMessageItem,
   ChatOverview,
   ChatQuote,
@@ -305,6 +306,19 @@ function adaptQuote(q: ChatMessage["reply_to"]): ChatQuote | undefined {
   };
 }
 
+/** El doble check de un saliente. Sin dato del backend: «sin confirmación»
+ *  (nunca se inventa un check — antes el panel pintaba «leído» fijo). */
+function adaptDelivery(d: ChatMessage["delivery"]): ChatDeliveryItem {
+  if (!d || d.status === "unconfirmed") return { status: "unconfirmed" };
+  const time = typeof d.at_ms === "number" ? formatBogotaHourMinute(Math.floor(d.at_ms / 1000)) : "";
+  return {
+    status: d.status,
+    ...(time ? { time } : {}),
+    ...(typeof d.error_code === "number" ? { errorCode: d.error_code } : {}),
+    ...(d.error_title ? { errorTitle: d.error_title } : {}),
+  };
+}
+
 function adaptMessage(m: ChatMessage): ChatMessageItem {
   const unix = toUnixSeconds(m.timestamp);
   const dayIso = bogotaDayIsoFromUnix(unix) || undefined;
@@ -322,7 +336,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
         author: m.sender === "human" ? "human" : "bot",
         time: formatBogotaHourMinute(unix),
         dayIso,
-        status: "read",
+        delivery: adaptDelivery(m.delivery),
         event: m.event,
         turnKey: m.turn_key,
       };
@@ -350,7 +364,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     text: m.content ?? "",
     time: formatBogotaHourMinute(unix),
     dayIso,
-    status: isOutbound ? "read" : undefined,
+    delivery: isOutbound ? adaptDelivery(m.delivery) : undefined,
     author: isOutbound ? (sender === "human" ? "human" : "bot") : undefined,
     imageUrl: m.image_url ? toMediaUrl(m.image_url) : undefined,
     documentUrl: m.document_url ? toMediaUrl(m.document_url) : undefined,

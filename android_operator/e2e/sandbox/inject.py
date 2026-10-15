@@ -14,6 +14,10 @@
     python3 inject.py screen mas.json --from ../screens/mas.json
                                                    # serve this App Operador screen instead of the repo's one
                                                    #   (what frontend-deploy would publish); reset removes it
+    python3 inject.py wa-status wa_000000000101 read [--back 1] [--code 131047 --title "Re-engagement message"]
+                                                   # WhatsApp reports the status of an outbound message (the last
+                                                   #   one, or --back N before it): the Meta webhook
+                                                   #   `statuses[]` POSTed to the sandbox API (no signature in dev)
 
 Everything goes through files, exactly where the real ingest writes: the
 session JSONL + metadata.json (atomic write, same ``metadata.json.lock`` flock
@@ -34,6 +38,8 @@ import os
 import re
 import shutil
 import sys
+import time
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -48,6 +54,7 @@ from sandbox_common import (  # noqa: E402
     MOBILE_SCREENS,
     NETWORK_RULES,
     PHONE_NUMBER_ID,
+    PORT,
     PUSH_CURSOR,
     PUSH_OUTBOX,
     SANDBOX_DIR,
@@ -232,6 +239,47 @@ def bot_card(session_id: str, which: str, tap: str | None) -> None:
     print(f"bot-card: {session_id} ← {which}" + (f" (tocó «{tap}»)" if tap else ""))
 
 
+# ── wa-status ────────────────────────────────────────────────────────────────
+
+
+def _outbound_wamids(jsonl: Path, back: int) -> list[str]:
+    """Los wamids del mensaje saliente (bot u operador) número `back` contando desde el último."""
+    outbound: list[list[str]] = []
+    for line in jsonl.read_text(encoding="utf-8").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("role") != "assistant" or ev.get("tool_calls"):
+            continue
+        wamids = ev.get("wamids") or ([ev["wamid"]] if ev.get("wamid") else [])
+        outbound.append([w for w in wamids if isinstance(w, str) and w])
+    if back >= len(outbound) or not outbound[-1 - back]:
+        sys.exit(f"no outbound message with a wamid at --back {back} in {jsonl}")
+    return outbound[-1 - back]
+
+
+def wa_status(session_id: str, status: str, back: int, code: int | None, title: str | None) -> None:
+    """WhatsApp informa el estado de un mensaje saliente: el webhook `statuses[]` de Meta, al backend de prueba
+    (mismo parser, mismo use case y mismo evento en vivo que en producción; el sandbox corre sin firma, HUBARA_ENV=dev)."""
+    _require_session(session_id)
+    _meta, jsonl, _media = session_paths(session_id)
+    statuses = []
+    for wamid in _outbound_wamids(jsonl, back):
+        st: dict[str, Any] = {"id": wamid, "status": status, "timestamp": str(int(time.time())),
+                              "recipient_id": session_id.removeprefix("wa_")}
+        if status == "failed":
+            st["errors"] = [{"code": code or 131026, "title": title or "Message undeliverable"}]
+        statuses.append(st)
+    body = {"object": "whatsapp_business_account", "entry": [{"id": "WABA-SANDBOX", "changes": [
+        {"field": "messages", "value": {"metadata": {"phone_number_id": PHONE_NUMBER_ID}, "statuses": statuses}}]}]}
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/webhook", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        r.read()
+    print(f"wa-status: {session_id} ← {status} for {len(statuses)} bubble(s) (--back {back})")
+
+
 # ── reset ────────────────────────────────────────────────────────────────────
 
 
@@ -334,6 +382,12 @@ def main() -> None:
     p_net.add_argument("--delay", type=float, default=0.0, help="seconds before answering")
     p_net.add_argument("--fail", action="store_true", help="answer 503 instead of the real response")
     p_net.add_argument("--clear", action="store_true", help="remove every rule")
+    p_status = sub.add_parser("wa-status", help="WhatsApp reports the status of an outbound message (webhook)")
+    p_status.add_argument("session")
+    p_status.add_argument("status", choices=["sent", "delivered", "read", "failed"])
+    p_status.add_argument("--back", type=int, default=0, help="0 = the last outbound message, 1 = the one before…")
+    p_status.add_argument("--code", type=int, help="Meta error code of a failed message")
+    p_status.add_argument("--title", help="Meta error title of a failed message")
     p_device = sub.add_parser("push-device", help="register a phone token for push notices")
     p_device.add_argument("token")
     sub.add_parser("push-relay", help="print the pushes the backend sent since the last call (JSON lines)")
@@ -356,6 +410,8 @@ def main() -> None:
         mobile_screen(args.name, args.source)
     elif args.cmd == "network":
         network(args.path, args.delay, args.fail, args.clear)
+    elif args.cmd == "wa-status":
+        wa_status(args.session, args.status, args.back, args.code, args.title)
     elif args.cmd == "push-device":
         push_device(args.token)
     elif args.cmd == "push-relay":
