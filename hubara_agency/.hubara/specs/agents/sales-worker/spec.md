@@ -265,6 +265,7 @@ Medusa live durante la conversación (latency + cuota).
 - AND «velas» y la duda (sin Jev) NO escalan: la ruta no cambia y el modelo recibe lo que se cobra por caja y las cuentas («en Velas de deseos cuadradas, 36 velas = 3 cajas»), UNA vez por mensaje del cliente (`por_mayor_revisado`); el segundo intento escala
 - AND «por_mayor» («necesito 25 cajas», «30 velas Luz Serena para un evento»), una cifra que no cabe en 20 cajas (300 velitas), otra razón de escalación y `ventas-6` escalan como siempre
 - AND el worker le inyecta a la tool el historial de la sesión (`build_session_history_reader`)
+- AND lo mismo ANTES de enviar un texto que le promete un colega por la cantidad sin llamar la tool (laboratorio A/B del 2026-10-15, capas como en producción: «son 3 cajas. Para esa cantidad te coordino con un colega» y la red del relevo prometido lo pasaba al equipo): con una cifra que cabe en cajas y el texto que promete el relevo (`relevo`), `send_reply` y las tarjetas lo retienen con las cuentas si `por_mayor` dice «velas» o duda (`checks: ["por_mayor"]`, una vez por mensaje del cliente, como los demás hechos)
 
 #### Scenario: get_product_by_handle
 

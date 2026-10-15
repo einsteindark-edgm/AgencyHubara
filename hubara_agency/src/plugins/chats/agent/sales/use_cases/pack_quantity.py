@@ -64,4 +64,18 @@ def other_box_named(text: str | None, own: int, sizes: Mapping[str, int]) -> str
     return next((name for name, size in sizes.items() if size != own and size in said), None)
 
 
-__all__ = ["BULK_UNITS", "as_boxes", "as_candles", "candle_counts", "needs_reading", "other_box_named"]
+def loose_candles_note(boxes: Sequence[tuple[str, int]], cifras: Sequence[int]) -> str:
+    """Lo que se cobra por caja y las cifras del cliente contadas en velas en
+    cada caja: lo que lee el modelo cuando un «por mayor» eran velas sueltas
+    (`escalate_to_human` y la retención de `send_reply`, capacidad `por_mayor`)."""
+    sizes = ", ".join(f"{name} (caja de {units} velas)" for name, units in boxes)
+    counts = "; ".join(f"en {name}, {as_candles(n, units, None)}" for n in cifras for name, units in boxes)
+    return (
+        f"Se cobran por caja: {sizes}. Si el cliente cuenta velas: {counts}; un pedido al por mayor es de más "
+        f"de {BULK_UNITS} cajas."
+    )
+
+
+__all__ = [
+    "BULK_UNITS", "as_boxes", "as_candles", "candle_counts", "loose_candles_note", "needs_reading", "other_box_named",
+]

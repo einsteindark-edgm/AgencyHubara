@@ -855,3 +855,51 @@ async def test_without_an_order_a_catalog_price_the_customer_says_is_not_judged(
     await _send(tool, ctx, "Sí, las Velas de deseos onduladas están en $22.500 🤍")
 
     assert not any("cifra_del_cliente.termino_1" in questions for _state, questions in fake.calls)
+
+
+# --- Prometer un colega por unas velas sueltas (laboratorio A/B, 2026-10-15) ---
+#
+# Con ventas-7 y las capas como en producción, «quiero 30 velitas de las
+# onduladas»: el bot calculó «son 3 cajas» y en el MISMO texto escribió «Para
+# esa cantidad te coordino con un colega del equipo» sin llamar
+# escalate_to_human; la red del relevo prometido lo pasó al equipo. La guarda
+# de `por_mayor` estaba en la tool, no en el texto. Ahora, si el cliente dio una
+# cifra que en velas cabe en 20 cajas o menos y el texto le promete un colega
+# (`relevo`), decide `por_mayor` ANTES de enviar: «velas» o la duda devuelven
+# el texto con las cuentas (una vez por mensaje del cliente, como las demás).
+
+LOOSE_CANDLES = "buenas tardes, quiero 30 velitas de las onduladas"
+HANDOFF = (
+    "Las onduladas vienen en caja de 10, así que 30 unidades son 3 cajas. Para esa cantidad te coordino con un "
+    "colega del equipo, que maneja esos pedidos y te responde en este mismo chat 🤍"
+)
+
+
+def _asked(text: str):
+    return lambda _key: [{"role": "user", "content": text}]
+
+
+async def test_promising_a_colleague_for_loose_candles_goes_back_with_the_boxes(tmp_path: Path, ctx: ToolContext) -> None:
+    tool = _tool(tmp_path, products=(), history_reader=_asked(LOOSE_CANDLES))
+
+    first = await _send(tool, ctx, HANDOFF)
+    again = await _send(tool, ctx, HANDOFF)
+
+    assert first.get("reply") is None and first["checks"] == ["por_mayor"]
+    assert "30 velas = 3 cajas" in first["message"] and "set_order_slot" in first["message"]
+    assert "colega" in first["message"]
+    assert again.get("reply") == {"text": HANDOFF}  # insiste: sale (una retención por mensaje)
+
+
+async def test_a_real_bulk_order_keeps_its_colleague(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    _jev(monkeypatch, {**KEEP_START, "por_mayor.producto_por_caja": 0.97, "por_mayor.velas_sueltas": 0.08})
+    tool = _tool(tmp_path, products=(), history_reader=_asked("Hola, necesito 25 cajas de velas de deseos cuadradas"))
+
+    assert (await _send(tool, ctx, HANDOFF)).get("reply") == {"text": HANDOFF}
+
+
+async def test_loose_candles_without_promising_a_colleague_go_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    text = "Las onduladas vienen en caja de 10, así que 30 unidades son 3 cajas 🤍 ¿En qué color las quieres?"
+    tool = _tool(tmp_path, products=(), history_reader=_asked(LOOSE_CANDLES))
+
+    assert (await _send(tool, ctx, text)).get("reply") == {"text": text}

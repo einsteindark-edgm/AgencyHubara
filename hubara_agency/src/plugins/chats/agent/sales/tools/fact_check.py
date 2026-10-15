@@ -17,17 +17,26 @@ import json
 import re
 import time
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
 from src.plugins.chats.agent.sales.catalog_scope import WHOLE_CATALOG
-from src.plugins.chats.agent.sales.decisions.guards import check_facts, fact_words, facts_in_bundle
+from src.plugins.chats.agent.sales.decisions.guards import (
+    bulk_reading,
+    check_facts,
+    fact_words,
+    facts_in_bundle,
+    promised_handoff,
+)
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.order_draft import get_active_draft
+from src.plugins.chats.agent.sales.use_cases.pack_quantity import BULK_UNITS, candle_counts, loose_candles_note
 from src.plugins.chats.agent.sales.use_cases.product_options import (
     aromas_of,
+    boxed_products,
     catalog_labels,
     colors_of,
     focus_products,
@@ -55,7 +64,7 @@ from src.plugins.chats.agent.sales.use_cases.fact_rules import (
     talks_about_order,
 )
 from src.plugins.chats.shared.draft_items import draft_items, find_product
-from src.plugins.chats.shared.store_pack import vocabulary
+from src.plugins.chats.shared.store_pack import store_domain, vocabulary
 from src.sdk.connectorkit import coupon_problem
 from src.plugins.chats.agent.sales.use_cases.reply_facts import ReplyFacts, discounted, fact_message
 
@@ -70,6 +79,15 @@ FACT_CHECK_ERROR = "fact_check"
 #: entrega desde $45.000», «el envío nacional cuesta $16.940»): los mismos
 #: que acepta la verificación del checkout.
 POLICY_AMOUNTS = (CASH_ON_DELIVERY_MIN_PRODUCTS_COP, SHIPPING_RATE_BOGOTA_COP, SHIPPING_RATE_NATIONAL_COP)
+
+
+@dataclass(frozen=True)
+class _PromisedBulk:
+    """La retención del texto que promete un colega por unas velas sueltas
+    (`por_mayor`), con la forma de los hallazgos de los hechos."""
+
+    terms: tuple[str, ...] = ("por_mayor",)
+    checks: tuple[str, ...] = ("por_mayor",)
 
 
 #: Los mensajes del cliente que se leen de su ráfaga (los últimos) y los
@@ -300,19 +318,54 @@ class FactCheck:
             if holds >= MAX_HOLDS_PER_MESSAGE:
                 return None
             facts = await self.facts(session_key, text, handles=handles, catalog=catalog)
-            findings = await check_facts(text, facts, session_id=session_key, vault_dir=self._vault_dir)
-            if not findings or (holds and set(findings.terms) <= reported):
-                return None
-            store = vocabulary()
-            message = fact_message(
-                findings, facts, tool=tool, tone=store.get("correction_tone"),
-                price_examples=list(store.get("correction_examples") or ()),
-                sum_examples=list(store.get("sum_correction_examples") or ()),
-            )
+            findings: Any = await check_facts(text, facts, session_id=session_key, vault_dir=self._vault_dir)
+            if findings and not (holds and set(findings.terms) <= reported):
+                store = vocabulary()
+                message = fact_message(
+                    findings, facts, tool=tool, tone=store.get("correction_tone"),
+                    price_examples=list(store.get("correction_examples") or ()),
+                    sum_examples=list(store.get("sum_correction_examples") or ()),
+                )
+            else:
+                promised = await self._promised_bulk(session_key, text, tool=tool)
+                if promised is None or (holds and {"por_mayor"} <= reported):
+                    return None
+                findings, message = _PromisedBulk(), promised
         except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
             logger.warning("💬 [TOOL {}] sin revisar los hechos ({!r}) session={}", tool, exc, session_key)
             return None
         return self._hold(session_key, findings, message, tool=tool)
+
+    async def _promised_bulk(self, session_key: str, text: str, *, tool: str) -> str | None:
+        """El mensaje con que vuelve un texto que le promete un colega al
+        cliente por la cantidad cuando eran velas sueltas de lo que se cobra
+        por caja; None si no. Laboratorio A/B del 2026-10-15 (ventas-7, capas
+        como en producción): «quiero 30 velitas de las onduladas» → «son 3
+        cajas. Para esa cantidad te coordino con un colega», sin
+        escalate_to_human, y la red del relevo prometido lo pasó al equipo.
+        Solo con una cifra del cliente que en velas cabe en 20 cajas o menos
+        (`candle_counts`, sin llamar a nadie), un texto que promete el relevo
+        (`relevo`) y la lectura de `por_mayor` («velas» o la duda)."""
+        boxes = boxed_products(store_domain().get("sold_by_box"))
+        if not boxes:
+            return None
+        burst, talk = self._conversation(session_key)
+        cifras = candle_counts(burst, [units for _name, units in boxes])
+        if not cifras or not await promised_handoff(text, session_id=session_key, vault_dir=self._vault_dir):
+            return None
+        reading = await bulk_reading(
+            f"[cliente] {burst.strip()}\n[asesor, va a responder] {text.strip()[:400]}",
+            cifras, [name for name, _u in boxes], [units for _n, units in boxes],
+            session_id=session_key, vault_dir=self._vault_dir,
+        )
+        if reading is None or reading == "por_mayor":
+            return None
+        return (
+            "No se envió: le prometes pasarlo a un colega por la cantidad, pero no es un pedido al por mayor. "
+            f"{loose_candles_note(boxes, cifras)} No le prometas un colega: anota las cajas con set_order_slot y "
+            f"sigue la venta. Si de verdad pide más de {BULK_UNITS} cajas u otro producto, llama "
+            f"escalate_to_human; si no aplica, vuelve a llamar {tool} con el mismo texto."
+        )
 
     def _hold(self, session_key: str, findings: Any, message: str, *, tool: str) -> str | None:
         """Anota la retención (con lo que se le dijo) y devuelve el envelope;

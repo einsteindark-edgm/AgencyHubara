@@ -30,7 +30,7 @@ from exoclaw.agent.tools import ToolContext
 
 from src.plugins.chats.agent.sales.decisions.guards import bulk_reading, clean_llm_text, safe_customer_text
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
-from src.plugins.chats.agent.sales.use_cases.pack_quantity import BULK_UNITS, as_candles, candle_counts
+from src.plugins.chats.agent.sales.use_cases.pack_quantity import BULK_UNITS, candle_counts, loose_candles_note
 from src.plugins.chats.agent.sales.use_cases.product_options import boxed_products
 from src.plugins.chats.shared.purchase_signals import has_purchase_confirmation
 from src.plugins.chats.shared.store_pack import store_domain
@@ -117,8 +117,6 @@ def guarded_escalation_tool(base: type) -> type:
                 FilesystemMetadataStore(self._vault_dir).update(
                     ctx.session_key, lambda d: {**d, BULK_CHECK_KEY: inbound}
                 )
-            sizes = ", ".join(f"{name} (caja de {units} velas)" for name, units in boxes)
-            counts = "; ".join(f"en {name}, {as_candles(n, units, None)}" for n in cifras for name, units in boxes)
             lead = (
                 "NO se pasó el caso a un colega: no es un pedido al por mayor."
                 if reading == "velas"
@@ -127,8 +125,7 @@ def guarded_escalation_tool(base: type) -> type:
             return json.dumps(
                 {
                     "error": (
-                        f"{lead} Se cobran por caja: {sizes}. Si el cliente cuenta velas: {counts}; un pedido "
-                        f"al por mayor es de más de {BULK_UNITS} cajas. Anota las cajas con set_order_slot y "
+                        f"{lead} {loose_candles_note(boxes, cifras)} Anota las cajas con set_order_slot y "
                         "sigue la venta (si no sabes de cuál producto, pregúntaselo). Si de verdad pide más de "
                         f"{BULK_UNITS} cajas u otro producto, vuelve a llamar escalate_to_human."
                     ),
