@@ -33,6 +33,9 @@ from src.plugins.chats.agent.sales.activities.inject_context import (
     build_first_contact_greeting_activity,
     compute_bogota_context_activity,
 )
+from src.plugins.chats.agent.sales.activities.reply_window import (
+    read_reply_window_activity,
+)
 from src.plugins.chats.agent.sales.activities.transcribe_audio import (
     transcribe_audio_activity,
 )
@@ -52,6 +55,7 @@ __all__ = [
     "read_and_clear_pending_handoff_activity",
     "read_order_draft_note_activity",
     "read_idle_timeout_seconds_activity",
+    "read_reply_window_activity",
     "flush_pending_ui_intents_activity",
     "persist_turn_trace_activity",
     "transcribe_audio_activity",

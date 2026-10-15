@@ -42,3 +42,19 @@ class SalesSessionInput:
     session_id: str
     turn_count: int = 0
     runtime_workspace_path: str | None = None
+
+
+@dataclass(frozen=True)
+class ReplyWindow:
+    """Lo que el turno de ventas lee mientras espera a que vuelva el LLM
+    (incidente 2026-10-15; `read_reply_window`).
+
+    Campos:
+      * `route`: quién tiene el chat (`active_route`; sin ruta, `ventas`). Si lo
+        tomó una persona (`humano`), el turno deja de esperar.
+      * `window_expires_at_ms`: cuándo cierra la ventana de 24 h para el texto
+        libre (`service_window_expires_at_ms`); None si no se sabe.
+    """
+
+    route: str
+    window_expires_at_ms: int | None = None
