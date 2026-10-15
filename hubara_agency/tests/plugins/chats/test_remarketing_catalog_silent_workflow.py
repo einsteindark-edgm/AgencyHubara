@@ -125,7 +125,9 @@ def _fakes(tracker: Tracker, *, llm_contents: list[str], workspace_path: str, co
         tracker.sends.append(message)
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def fake_persist(session_id: str, message: str) -> None:
+    async def fake_persist(
+        session_id: str, message: str, tools_used: object = None, delivered: object = None
+    ) -> None:
         return None
 
     @activity.defn(name="record_remarketing_touch_activity")
