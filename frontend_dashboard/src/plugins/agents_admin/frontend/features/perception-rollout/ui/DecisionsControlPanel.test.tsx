@@ -132,6 +132,16 @@ describe("DecisionsControlPanel", () => {
     expect(within(boxes).getByText("¿la cantidad que anota el bot son cajas o las velas que traen?")).toBeInTheDocument();
   });
 
+  it("nombra por mayor o velas sueltas y la caja que nombró el cliente (ventas-7)", async () => {
+    state = payload({ por_mayor: "off", caja_nombrada: "off" });
+    renderPanel();
+
+    const bulk = await screen.findByRole("group", { name: "Por mayor o velas sueltas" });
+    expect(within(bulk).getByText("¿lo que el bot iba a pasar como pedido al por mayor son unas velas sueltas?")).toBeInTheDocument();
+    const box = screen.getByRole("group", { name: "La caja que nombró el cliente" });
+    expect(within(box).getByText("¿el cliente pidió el producto de la otra caja?")).toBeInTheDocument();
+  });
+
   it("nombra darle la razón al cliente en una cuenta equivocada (ventas-7)", async () => {
     state = payload({ cifra_del_cliente: "off" });
     renderPanel();

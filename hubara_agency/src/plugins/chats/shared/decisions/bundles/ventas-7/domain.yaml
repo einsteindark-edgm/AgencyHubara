@@ -9,8 +9,10 @@ store_name: Hubara
 farewell_order_registered: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
 # Lo único que se cobra por caja, con las velas que trae (decisión del operador,
 # 2026-10-14: «solo aplica para las velas de deseos», las del 7 de diciembre).
-# `set_order_slot` anota cajas, no velas (capacidad `cajas`). Otro producto
-# que se venda por caja se agrega aquí, en una versión nueva del paquete.
+# El catálogo que lee el bot dice la caja de cada uno; `set_order_slot` anota
+# cajas, no velas (capacidades `cajas` y `caja_nombrada`) y `escalate_to_human`
+# no pasa como pedido al por mayor unas velas sueltas (`por_mayor`). Otro
+# producto que se venda por caja se agrega aquí, en una versión nueva del paquete.
 sold_by_box:
   - {producto: velas-de-deseos-cuadradas, por_caja: 12}
   - {producto: velas-de-deseos-onduladas, por_caja: 10}

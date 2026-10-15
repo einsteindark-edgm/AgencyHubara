@@ -119,6 +119,20 @@ def pack_units(product: Any, boxes: Any) -> int | None:
     return None
 
 
+def boxed_products(boxes: Any) -> list[tuple[str, int]]:
+    """Lo que la tienda cobra por caja (`domain.yaml: sold_by_box`), como
+    `(nombre, velas por caja)`: «velas-de-deseos-cuadradas» → «Velas de deseos
+    cuadradas». Para las cuentas que lee Jev y el modelo cuando no hay ficha
+    del catálogo a mano (`escalate_to_human`, `set_order_slot`)."""
+    out: list[tuple[str, int]] = []
+    for entry in boxes or ():
+        units = entry.get("por_caja") if isinstance(entry, dict) else None
+        name = str(entry.get("producto") or "").replace("-", " ").strip() if isinstance(entry, dict) else ""
+        if name and isinstance(units, int) and not isinstance(units, bool) and units >= 2:
+            out.append((name[0].upper() + name[1:], units))
+    return out
+
+
 def colors_of(product: Any) -> list[str]:
     """Los colores del producto. Con el mapeo variante→color de la metadata
     (Duo Zodiacal), su paleta: las etiquetas pueden estar viejas. Si no, sus
@@ -252,6 +266,7 @@ def correction_tail(tool: str = "send_reply") -> str:
 
 __all__ = [
     "aromas_of",
+    "boxed_products",
     "catalog_labels",
     "colors_of",
     "correction_tail",

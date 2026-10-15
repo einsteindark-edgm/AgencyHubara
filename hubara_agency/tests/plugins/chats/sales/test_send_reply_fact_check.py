@@ -491,6 +491,18 @@ async def test_cash_on_delivery_for_an_order_that_reaches_the_minimum_goes_as_is
     assert (await _send(_tool(tmp_path, quantity="2"), ctx, text)).get("reply") == {"text": text}
 
 
+async def test_without_the_quantity_in_the_order_cash_on_delivery_is_not_checked(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    """Laboratorio (2026-10-14): «36 velitas» de las onduladas (cajas de 10) no
+    quedaron anotadas y el revisor contó 1 caja ($22.500): el bot «corrigió»
+    que el contra entrega no aplicaba. Sin la cantidad no hay subtotal."""
+    _jev(monkeypatch, {"pago_ajeno.termino_1": 0.95})
+    text = "Claro, puedes pagar contra entrega 🤍"
+
+    assert (await _send(_tool(tmp_path, quantity=""), ctx, text)).get("reply") == {"text": text}
+
+
 async def test_without_jev_the_keyword_facts_never_hold(tmp_path: Path, ctx: ToolContext) -> None:
     """Pago, estado, cupón y negación no actúan con la regla sola (`reglas`, sombra)."""
     text = "Claro, puedes pagar contra entrega 🤍"

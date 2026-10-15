@@ -58,6 +58,8 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   negacion_falsa: "Negar lo que sí tenemos",
   cifra_del_cliente: "Darle la razón en una cuenta equivocada",
   cajas: "Cajas o velas",
+  caja_nombrada: "La caja que nombró el cliente",
+  por_mayor: "Por mayor o velas sueltas",
   cantidad: "Cantidad",
   categoria: "Categoría",
   familia_de_color: "Familia de color",
@@ -254,6 +256,20 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
       : value === "duda"
         ? warn("No se sabe si son cajas o velas: vuelve al modelo con las dos cuentas")
         : plain("Son cajas: la cantidad queda"),
+  // El cliente nombró la caja de otro producto («Dos cajas de 12» y la ondulada trae 10; ···0686, 2026-10-14).
+  caja_nombrada: (value) =>
+    value === "otro"
+      ? warn("Pidió el producto de la otra caja: no se anota este")
+      : value === "duda"
+        ? warn("No se sabe de qué caja habla: vuelve al bot una vez")
+        : plain("Es el producto que pidió: se anota"),
+  // El «por mayor» que eran velas sueltas de lo que va por caja (36 velitas = 3 cajas; laboratorio 2026-10-14).
+  por_mayor: (value) =>
+    value === "velas"
+      ? warn("Eran velas sueltas: no pasa a un colega, el bot anota las cajas")
+      : value === "duda"
+        ? warn("No se sabe si es al por mayor: vuelve al bot una vez con las cuentas")
+        : plain("Es al por mayor: pasa a un colega"),
   // El cliente afirma una suma que no es la de su pedido y el texto le daba la razón (2026-10-14).
   cifra_del_cliente: (value) => {
     const terms = list(value);
@@ -405,6 +421,9 @@ const QUESTIONS: Record<string, string> = {
   "cortesia.saludo_solo": "¿Es solo un saludo, sin agradecer ni contar nada?",
   "relevo.promete": "¿El mensaje promete que un colega lo atiende?",
   "cajas.pide_cajas": "¿El cliente pide esa cantidad de cajas?",
+  "caja_nombrada.pide_la_otra": "¿Quiere el producto de la otra caja?",
+  "por_mayor.producto_por_caja": "¿Pide uno de los productos que se cobran por caja?",
+  "por_mayor.velas_sueltas": "¿El número del cliente cuenta velas sueltas, no cajas?",
   "cierre.etiqueta": "¿Con qué etiqueta cierra?",
   "afirmacion.sin_consultar": "¿Afirma algo que requiere consultar, sin haber consultado?",
   // ventas-3 (2026-10-06): Jev dice qué afirma; la tabla lo cruza con las herramientas del turno.

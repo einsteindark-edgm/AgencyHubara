@@ -362,7 +362,8 @@ cambios de talla, `material` como atributo de producto, y las zonas del país.
 - **Una decisión nueva nace en una versión** (2026-10-13, las de
   `ventas-7`: `aroma_ajeno`, `color_ajeno`, `variante_ajena`, `precio_ajeno`,
   `pago_ajeno`, `estado_ajeno`, `cupon_ajeno`, `negacion_falsa` y, del
-  laboratorio del 2026-10-14, `cifra_del_cliente` y `cajas`): las versiones publicadas no
+  laboratorio del 2026-10-14, `cifra_del_cliente`, `cajas`, `caja_nombrada` y
+  `por_mayor`): las versiones publicadas no
   la traen y tienen que seguir certificando, así que el catálogo no la pone en
   `capabilities:` (todas la exigirían) sino en `capabilities_since:
   {aroma_ajeno: 7, …}`. Desde esa versión, falta = DB003; antes, el código no

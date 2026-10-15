@@ -312,6 +312,51 @@ async def boxes_reading(
     return verdict.value
 
 
+async def bulk_reading(
+    charla: str, cifras: Sequence[int], productos: Sequence[str], por_caja: Sequence[int],
+    *, session_id: str, vault_dir: Path | None,
+) -> str | None:
+    """¿El pedido al por mayor que el bot va a pasar a un colega son velas
+    sueltas de lo que se cobra por caja? (capacidad `por_mayor`, laboratorio
+    2026-10-14: «me vendes 36 velitas?» eran 3 cajas): «velas», «por_mayor» o
+    «duda». None si el paquete no trae la decisión: escala como siempre."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import PedidoPorMayor
+
+    cap = capability_if_present("por_mayor")
+    if cap is None:
+        return None
+    verdict = await decide_for_session(
+        cap,
+        PedidoPorMayor(charla=charla, cifras=tuple(cifras), productos=tuple(productos), por_caja=tuple(por_caja)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return verdict.value
+
+
+async def named_box_reading(
+    producto: str, por_caja: int, otro: str, otro_por_caja: int, charla: str,
+    *, session_id: str, vault_dir: Path | None,
+) -> str | None:
+    """¿El cliente pide el producto que va a anotar el asesor o el de la caja
+    que nombró? (capacidad `caja_nombrada`, laboratorio de ···0686,
+    2026-10-14: «Dos cajas de 12» y se anotó la ondulada, que trae 10):
+    «este», «otro» o «duda». None si el paquete no trae la decisión: se anota
+    como siempre."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CajaNombrada
+
+    cap = capability_if_present("caja_nombrada")
+    if cap is None:
+        return None
+    verdict = await decide_for_session(
+        cap,
+        CajaNombrada(producto=producto, por_caja=por_caja, otro=otro, otro_por_caja=otro_por_caja, charla=charla),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return verdict.value
+
+
 async def catalog_choice_buttons(
     body: str,
     titles: Sequence[str],

@@ -109,6 +109,33 @@ describe("aromas de otro producto", () => {
     );
   });
 
+  it("por mayor o velas sueltas se lee en palabras (laboratorio 2026-10-14)", () => {
+    const bulk = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "por_mayor", rule: "duda" });
+
+    expect(capabilityLabel("por_mayor")).toBe("Por mayor o velas sueltas");
+    expect(decisionSentence(bulk("velas")).text).toBe("Eran velas sueltas: no pasa a un colega, el bot anota las cajas");
+    expect(decisionSentence(bulk("por_mayor")).text).toBe("Es al por mayor: pasa a un colega");
+    expect(decisionSentence(bulk("duda")).text).toBe("No se sabe si es al por mayor: vuelve al bot una vez con las cuentas");
+    expect(jevAnswers({ ...bulk("velas"), answers: [{ q: "por_mayor.velas_sueltas", p: 0.9 }] })[0]).toContain(
+      "¿El número del cliente cuenta velas sueltas, no cajas?",
+    );
+    expect(jevAnswers({ ...bulk("velas"), answers: [{ q: "por_mayor.producto_por_caja", p: 0.9 }] })[0]).toContain(
+      "¿Pide uno de los productos que se cobran por caja?",
+    );
+  });
+
+  it("la caja que nombró el cliente se lee en palabras (···0686, 2026-10-14)", () => {
+    const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_nombrada", rule: "duda" });
+
+    expect(capabilityLabel("caja_nombrada")).toBe("La caja que nombró el cliente");
+    expect(decisionSentence(box("otro")).text).toBe("Pidió el producto de la otra caja: no se anota este");
+    expect(decisionSentence(box("este")).text).toBe("Es el producto que pidió: se anota");
+    expect(decisionSentence(box("duda")).text).toBe("No se sabe de qué caja habla: vuelve al bot una vez");
+    expect(jevAnswers({ ...box("otro"), answers: [{ q: "caja_nombrada.pide_la_otra", p: 0.9 }] })[0]).toContain(
+      "¿Quiere el producto de la otra caja?",
+    );
+  });
+
   it("darle la razón al cliente en una cuenta equivocada se lee en palabras (laboratorio 2026-10-14)", () => {
     const figure = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "cifra_del_cliente", rule: value });
 

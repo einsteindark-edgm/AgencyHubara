@@ -308,6 +308,50 @@ def pack_quantity_state(inp: Any) -> str | None:
     )
 
 
+def bulk_candles_rule(inp: Any) -> str:
+    """Sin Jev: con una cifra del cliente que, contada en velas, cabe en 20
+    cajas o menos, no se sabe si es al por mayor («duda»: el bot lo revisa
+    con las cuentas); sin ella, lo es (`por_mayor`)."""
+    return "duda" if inp.cifras else "por_mayor"
+
+
+def bulk_candles_state(inp: Any) -> str | None:
+    """Lo último de la charla, lo que se cobra por caja y las cifras del
+    cliente contadas en velas en cada caja (`por_mayor`); sin cifras o sin lo
+    que escribió el cliente, no se le pregunta a Jev."""
+    from src.plugins.chats.agent.sales.use_cases.pack_quantity import BULK_UNITS, as_candles
+
+    if not inp.cifras or "[cliente]" not in (inp.charla or ""):
+        return None
+    boxes = list(zip(inp.productos, inp.por_caja))
+    sizes = "\n".join(f"- {name}: caja de {units} velas" for name, units in boxes)
+    counts = "\n".join(f"- {name}: {as_candles(n, units, None)}" for n in inp.cifras for name, units in boxes)
+    return (
+        f"Lo último de la conversación:\n{inp.charla.strip()}\n\n"
+        f"Lo que se cobra por caja (un pedido al por mayor es de más de {BULK_UNITS} cajas):\n{sizes}\n"
+        f"Si las cifras del cliente son velas:\n{counts}"
+    )
+
+
+def named_box_rule(inp: Any) -> str:
+    """Sin Jev no se sabe si el cliente pide este producto o el de la caja
+    que nombró: «duda» (el bot lo revisa una vez)."""
+    return "duda"
+
+
+def named_box_state(inp: Any) -> str | None:
+    """Lo último de la charla, el producto que va a anotar el asesor con su
+    caja y el de la caja que nombró el cliente (`caja_nombrada`); sin lo que
+    escribió el cliente, no se le pregunta a Jev."""
+    if "[cliente]" not in (inp.charla or ""):
+        return None
+    return (
+        f"Lo último de la conversación:\n{inp.charla.strip()}\n\n"
+        f"El asesor va a anotar {inp.producto}: viene en caja de {inp.por_caja} velas.\n"
+        f"La caja de {inp.otro_por_caja} velas es otro producto: {inp.otro}."
+    )
+
+
 def text_and_option_sheets(inp: Any, *, words: str, ofrece: str) -> str | None:
     """El texto y la ficha de cada producto con presentaciones para escoger
     (`variante_ajena`) si el texto ofrece algo (una frase de `ofrece`) o

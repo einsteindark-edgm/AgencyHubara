@@ -48,6 +48,8 @@ inputs:
   NegacionDelTexto: {text: string, titles: "tuple<string>", own: "tuple<string>", products: "tuple<string>"}
   CifraDelCliente: {text: string, customer: string, figures: "tuple<int>", order: "string?"}
   CajasDelPedido: {producto: string, cantidad: int, por_caja: int, precio: "int?", charla: string}
+  PedidoPorMayor: {charla: string, cifras: "tuple<int>", productos: "tuple<string>", por_caja: "tuple<int>"}
+  CajaNombrada: {producto: string, por_caja: int, otro: string, otro_por_caja: int, charla: string}
   TextCheck: {text: string, extended: bool}
   GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
   Frases: {parts: "tuple<string>"}
@@ -213,6 +215,16 @@ builtins:
     value: string
     input: CajasDelPedido
     doc: "Sin Jev: desde una caja entera (24 de 12) no se sabe si la cantidad es de cajas o de velas → «duda» (el texto vuelve al modelo con las dos cuentas); menos, «cajas» (pack_quantity.needs_reading)."
+  bulk_candles_rule:
+    kind: rule
+    value: string
+    input: PedidoPorMayor
+    doc: "Sin Jev: con una cifra del cliente que pasa de 20 pero, contada en velas, cabe en 20 cajas o menos («36 velitas» = 3 cajas de 12), no se sabe si es al por mayor → «duda» (el bot lo revisa una vez con las cuentas); sin ella, «por_mayor» (pack_quantity.candle_counts)."
+  named_box_rule:
+    kind: rule
+    value: string
+    input: CajaNombrada
+    doc: "Sin Jev no se sabe si el cliente pide el producto que va a anotar el asesor o el de la caja que nombró («Dos cajas de 12» y la ondulada trae 10) → «duda» (el bot lo revisa una vez; pack_quantity.other_box_named)."
   foreign_labels_rule:
     kind: rule
     value: "list<string>"
@@ -348,6 +360,14 @@ builtins:
     kind: state
     input: CajasDelPedido
     doc: "Lo último de la charla (cliente y asesor) y las dos cuentas de la cantidad («24 cajas = 288 velas, $600.000» / «24 velas = 2 cajas, $50.000»); sin una caja entera o sin lo que escribió el cliente, no se pregunta."
+  bulk_candles_state:
+    kind: state
+    input: PedidoPorMayor
+    doc: "Lo último de la charla (con la nota del asesor para el colega), lo que se cobra por caja y las cifras del cliente contadas en velas en cada caja («36 velas = 3 cajas»); sin cifras o sin lo que escribió el cliente, no se pregunta."
+  named_box_state:
+    kind: state
+    input: CajaNombrada
+    doc: "Lo último de la charla, el producto que va a anotar el asesor con su caja y el de la caja que nombró el cliente; sin lo que escribió el cliente, no se pregunta."
   customer_and_reply_facts:
     kind: state
     takes_items: true
@@ -564,6 +584,12 @@ capabilities_since:
   # Laboratorio de ···0686 (2026-10-14): «Dos cajas de 12» se anotó 24. La
   # pide `set_order_slot` al anotar la cantidad de un producto que va por caja.
   cajas: 7
+  # El mismo día: «Dos cajas de 12» y se anotó la ondulada, que trae 10 (la pide
+  # `set_order_slot` al anotar por primera vez un producto que va por caja), y
+  # «me vendes 36 velitas?» se pasó a un colega como por mayor (la pide
+  # `escalate_to_human` con BULK_ORDER).
+  caja_nombrada: 7
+  por_mayor: 7
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -827,6 +853,24 @@ about:
       deseos traen 12 o 10), si el número llega a una caja entera, Jev lee lo
       que escribió el cliente y dice si pidió cajas o velas: «Dos cajas de 12»
       son 2 cajas, no 24. Si no está claro, el bot lo revisa o le pregunta.
+  caja_nombrada:
+    name: La caja que nombró el cliente
+    where: [herramientas]
+    solves: >-
+      Al anotar por primera vez un producto que se cobra por caja, si el
+      cliente nombró el tamaño de la caja de otro («Dos cajas de 12» y el bot
+      iba a anotar las onduladas, que traen 10), Jev lee la charla y dice si
+      pide ese producto o el de la otra caja. Si no está claro, el bot lo
+      revisa una vez.
+  por_mayor:
+    name: Por mayor o velas sueltas
+    where: [herramientas]
+    solves: >-
+      Antes de pasar un caso a un colega como pedido al por mayor, si el
+      cliente dio una cifra que contada en velas cabe en 20 cajas o menos
+      («me vendes 36 velitas?» son 3 cajas de 12), Jev lee la charla y dice si
+      cuenta velas sueltas. Si es así, el bot no lo pasa: anota las cajas y
+      sigue la venta.
   cifra_del_cliente:
     name: Darle la razón en una cuenta equivocada
     where: [herramientas]

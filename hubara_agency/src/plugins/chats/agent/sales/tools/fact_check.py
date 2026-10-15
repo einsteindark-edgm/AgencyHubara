@@ -436,13 +436,11 @@ def _order_figures(
     sums = {0}
     for item in items:
         product = find_product(products, item.get("producto"))
-        try:
-            quantity = int(str(item.get("cantidad") or 1).strip())
-        except ValueError:
-            return ()
+        raw = str(item.get("cantidad") or "").strip()
         prices = {*catalog_prices(product), *accepted(product.handle)} if product is not None else set()
-        if not prices or quantity <= 0:
+        if not prices or not raw.isdigit() or int(raw) <= 0:
             return ()
+        quantity = int(raw)
         lines = {price * quantity for price in prices}
         singles |= prices | lines
         sums = {s + line for s in sums for line in lines}
@@ -456,18 +454,19 @@ def _order_figures(
 
 def _subtotal(products: list[Any], metadata: dict[str, Any]) -> tuple[int | None, str | None]:
     """Los productos del borrador × su precio del catálogo y cómo se arma
-    («2 × $25.000»); (None, None) si falta un precio o no hay productos (sin
-    dato, el pago no se revisa)."""
+    («2 × $25.000»); (None, None) si falta un precio, una cantidad o no hay
+    productos (sin dato, el pago no se revisa). Laboratorio 2026-10-14: sin la
+    cantidad contaba 1 caja y el bot «corrigió» el contra entrega."""
     total = 0
     parts: list[str] = []
     items = draft_items(get_active_draft(metadata))
     for item in items:
         price = catalog_unit_price(find_product(products, item.get("producto")))
-        try:
-            quantity = int(str(item.get("cantidad") or 1).strip())
-        except ValueError:
+        raw = str(item.get("cantidad") or "").strip()
+        if price is None or not raw.isdigit():
             return None, None
-        if price is None or quantity <= 0:
+        quantity = int(raw)
+        if quantity <= 0:
             return None, None
         total += price * quantity
         parts.append(f"{quantity} × {format_cop(price)}")

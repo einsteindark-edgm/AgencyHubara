@@ -197,6 +197,36 @@ class CajasDelPedido:
     charla: str
 
 
+@dataclass(frozen=True)
+class PedidoPorMayor:
+    """El asesor va a pasar el caso a un colega como pedido al por mayor:
+    lo último de la charla con su nota para el colega (`charla`), las cifras
+    del cliente que pasan de 20 pero, contadas en velas, caben en 20 cajas o
+    menos (`cifras`) y lo que se cobra por caja (`productos` con su
+    `por_caja`). Capacidad `por_mayor` (laboratorio, 2026-10-14: «me vendes 36
+    velitas?» se pasó a un colega; eran 3 cajas)."""
+
+    charla: str
+    cifras: tuple[int, ...]
+    productos: tuple[str, ...]
+    por_caja: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CajaNombrada:
+    """El asesor va a anotar un producto que se cobra por caja (`producto`,
+    `por_caja`) y el cliente nombró el tamaño de la caja de otro (`otro`,
+    `otro_por_caja`), no el de este; `charla`: lo último de la conversación.
+    Capacidad `caja_nombrada` (laboratorio de ···0686, 2026-10-14: «Dos cajas
+    de 12» y se anotó la ondulada, que trae 10)."""
+
+    producto: str
+    por_caja: int
+    otro: str
+    otro_por_caja: int
+    charla: str
+
+
 @en_retiro("clase:cantidad")
 class Cantidad:
     """«¿El asesor preguntó cuántas?» y «¿Qué cantidad dio?» {1…20, otra,

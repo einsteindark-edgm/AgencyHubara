@@ -40,7 +40,12 @@
 # caja (12 o 10 velas; `domain.yaml: sold_by_box`, decisión del operador): desde
 # una caja entera, Jev lee la charla y las dos cuentas y
 # dice si son cajas o velas; `set_order_slot` anota las cajas que son. Sin Jev,
-# el modelo lo revisa una vez por mensaje del cliente.
+# el modelo lo revisa una vez por mensaje del cliente. El catálogo que lee el
+# bot dice la caja de cada una (código: test_catalog_sold_by_box.py), y dos más
+# del mismo laboratorio: `caja_nombrada` («Dos cajas de 12» y se anotó la
+# ondulada, que trae 10: Jev dice si quiere la de la otra caja) y `por_mayor`
+# («me vendes 36 velitas?» se pasó a un colega como pedido al por mayor; eran 3
+# cajas: Jev dice si cuenta velas sueltas y `escalate_to_human` no lo pasa).
 # `send_reply` y las tarjetas con texto del modelo (`tools/fact_check.py`)
 # juntan todas en una retención con lo que es cierto: lo ya dicho sale al
 # segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
@@ -118,6 +123,7 @@ capabilities:
   - afirmacion
   - aroma_ajeno
   - baja
+  - caja_nombrada
   - cajas
   - cantidad
   - categoria
@@ -142,6 +148,7 @@ capabilities:
   - negacion_falsa
   - pago_ajeno
   - persona
+  - por_mayor
   - portavelas
   - preambulo
   - precio_ajeno

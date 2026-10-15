@@ -177,6 +177,33 @@ Medusa live durante la conversación (latency + cuota).
 - AND «velas» anota las cajas que son (`cantidad: "2"`) y el sobre lo dice; «cajas» deja la cantidad
 - AND la duda (sin Jev, la regla siempre duda) no anota la cantidad: vuelve al modelo con las dos cuentas UNA vez por mensaje del cliente (`cajas_revisadas`); el segundo intento con la misma cantidad se anota
 - AND menos de una caja, cualquier otro producto (aunque su descripción hable de una caja) y `ventas-6` no cambian; en las velas de deseos el sobre dice que la cantidad es de cajas. La descripción de `cantidad`, `TOOLS.md` y `escalate_to_human` no hablan de cajas
+- AND en las velas de deseos una cantidad en palabras («3 cajas (36 unidades)») no se anota: vuelve al modelo para que mande solo el número de cajas (quien lee el borrador solo entiende números)
+- AND con un ítem del borrador sin cantidad (36 velitas de las onduladas no son cajas enteras y no se anotaron), el revisor de hechos de `send_reply` no juzga el pago ni la cifra del cliente: sin cantidad no hay subtotal (antes contaba 1 caja, $22.500, y el bot «corrigió» que el contra entrega no aplicaba)
+
+#### Scenario: el catálogo que lee el bot dice la caja de lo que se cobra por caja (laboratorio, 2026-10-14)
+
+- GIVEN las velas de deseos declaradas en `domain.yaml: sold_by_box` (12 la cuadrada, 10 la ondulada)
+- WHEN el LLM invoca `search_products` o `get_product_by_handle` y el resultado trae una de ellas
+- THEN el producto lleva `por_caja` y `se_vende_por_caja` («caja de 12 unidades: el precio es el de la caja y la cantidad del pedido es el número de cajas (36 unidades → cantidad 3); al por mayor se cuenta en cajas (más de 20)»)
+- AND los demás productos y `ventas-6` no cambian (sin `sold_by_box`, nada lo lleva)
+- AND sin esto, en el laboratorio: «una caja de las de 12 y una de las de 10» → «no manejamos cajas de 12 ni de 10»; «Dos cajas de 12» → las onduladas; «me vendes 36 velitas?» → a un colega como pedido al por mayor
+
+#### Scenario: el cliente nombra la caja de otro producto (···0686, 2026-10-14)
+
+- GIVEN el cliente escribió «Dos cajas de 12, ¿cómo sería el envío y el pago?» (la caja de 12 es la de las Velas de deseos cuadradas)
+- WHEN el LLM invoca `set_order_slot(producto="Velas de deseos onduladas", …)` (o con `lineas`) y las onduladas, que traen 10, aún no están en el pedido
+- THEN como el cliente nombró el tamaño de la caja de otro producto y no el de este (`pack_quantity.other_box_named`), decide la capacidad `caja_nombrada` (ventas-7): Jev lee lo último de la charla y dice si quiere el otro producto
+- AND «otro» y la duda (sin Jev, la regla siempre duda) no anotan el producto (los datos de envío de la misma llamada sí): el sobre dice cuál es la caja que nombró, UNA vez por mensaje del cliente (`caja_nombrada_revisada`); el segundo intento se anota
+- AND «este», un cliente que nombró la caja de este producto, un producto que ya está en el pedido, lo que no va por caja y `ventas-6` se anotan como siempre
+
+#### Scenario: unas velas sueltas no son un pedido al por mayor (laboratorio, 2026-10-14)
+
+- GIVEN el cliente escribió «Hola! me vendes 36 velitas?» y las velas de deseos se cobran por caja (`sold_by_box`)
+- WHEN el LLM invoca `escalate_to_human(reason_category="BULK_ORDER", …)`
+- THEN si el cliente dio una cifra que pasa de 20 pero, contada en velas, cabe en 20 cajas o menos (`pack_quantity.candle_counts`: 36 = 3 cajas de 12), decide la capacidad `por_mayor` (ventas-7): Jev lee la charla con la nota del asesor para el colega y dice si pide uno de los productos que van por caja y si su número cuenta velas sueltas
+- AND «velas» y la duda (sin Jev) NO escalan: la ruta no cambia y el modelo recibe lo que se cobra por caja y las cuentas («en Velas de deseos cuadradas, 36 velas = 3 cajas»), UNA vez por mensaje del cliente (`por_mayor_revisado`); el segundo intento escala
+- AND «por_mayor» («necesito 25 cajas», «30 velas Luz Serena para un evento»), una cifra que no cabe en 20 cajas (300 velitas), otra razón de escalación y `ventas-6` escalan como siempre
+- AND el worker le inyecta a la tool el historial de la sesión (`build_session_history_reader`)
 
 #### Scenario: get_product_by_handle
 

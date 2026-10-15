@@ -43,6 +43,11 @@ CUADRADAS = CatalogProductDTO(
     description="Pequeñas velas con grandes intenciones. El kit trae 12 velas en su caja. Cada caja trae 12 velas",
     variants=[_variant("Multicolor"), _variant("Rojo y verde")],
 )
+ONDULADAS = CatalogProductDTO(
+    id="prod_onduladas", handle="velas-de-deseos-onduladas", title="Velas de deseos onduladas", status="published",
+    tags=["Aroma: Navidad"], options={"Color": ["Rojo y verde", "Multicolor"]},
+    description="Cada caja trae 10 velas.", variants=[_variant("Multicolor"), _variant("Rojo y verde")],
+)
 LUZ = CatalogProductDTO(
     id="prod_luz", handle="luz-serena", title="Luz Serena", status="published", tags=["Aroma: Lavanda"],
     description="Vela de 40 horas en caja de regalo.", variants=[_variant("Unico")],
@@ -51,10 +56,10 @@ LUZ = CatalogProductDTO(
 
 class _Catalog:
     async def search(self, q: str, *, limit: int = 10) -> SearchResult:
-        products = [CUADRADAS, LUZ]
+        products = [CUADRADAS, ONDULADAS, LUZ]
         return SearchResult(
             query=q, count=len(products), truncated=False, stale=False,
-            manifest=CatalogManifestDTO(version="v1", fetched_at="2026-10-14T00:00:00Z", product_count=2),
+            manifest=CatalogManifestDTO(version="v1", fetched_at="2026-10-14T00:00:00Z", product_count=3),
             results=products,
         )
 
@@ -68,12 +73,12 @@ def _bundle(monkeypatch):
     registry.reset()
 
 
-def _jev(monkeypatch, p: float):
+def _jev(monkeypatch, p: float, question: str = "cajas.pide_cajas"):
     from src.platform.perception.adapters.fake import FakePerceptionAdapter
     from src.sdk import connectorkit
     from src.sdk.connectorkit import TypedAnswer
 
-    fake = FakePerceptionAdapter({"cajas.pide_cajas": TypedAnswer(id="cajas.pide_cajas", kind="noul", p=p)})
+    fake = FakePerceptionAdapter({question: TypedAnswer(id=question, kind="noul", p=p)})
 
     def _get(_oracle: str):
         return fake
@@ -84,9 +89,9 @@ def _jev(monkeypatch, p: float):
     return fake
 
 
-def _tool(tmp_path: Path) -> SetOrderSlotTool:
-    events = [{"role": "assistant", "content": "¿Te la dejo en rojo y verde o en multicolor? 🤍"},
-              {"role": "user", "content": ASKED}]
+def _tool(tmp_path: Path, events: list[dict] | None = None) -> SetOrderSlotTool:
+    events = events or [{"role": "assistant", "content": "¿Te la dejo en rojo y verde o en multicolor? 🤍"},
+                        {"role": "user", "content": ASKED}]
     return SetOrderSlotTool(workspace=tmp_path, vault_dir=tmp_path / "vault", catalog=_Catalog(),
                             history_reader=lambda _key: events)
 
@@ -228,3 +233,131 @@ def test_only_the_wishing_candles_are_sold_by_the_box(tmp_path: Path, monkeypatc
 
     assert _quantity(tmp_path) == "12"
     assert not any("cajas.pide_cajas" in qs for _s, qs in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_a_quantity_in_words_goes_back_as_the_number_of_boxes(tmp_path: Path) -> None:
+    """Laboratorio (2026-10-14): «3 cajas (36 unidades)» quedó en el borrador
+    y quien lo lee solo entiende números (cantidad desconocida en el registro).
+    En un producto que va por caja vuelve al modelo: solo el número de cajas."""
+    result = await _set(_tool(tmp_path), producto="Velas de deseos cuadradas", cantidad="3 cajas (36 unidades)")
+
+    assert _quantity(tmp_path) is None
+    assert [r["reason"] for r in result["rejected"]] == ["pack_units"]
+    assert "solo el número de cajas" in result["summary"] and "'3'" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_product_sold_by_the_unit_keeps_its_quantity_as_written(tmp_path: Path) -> None:
+    await _set(_tool(tmp_path), producto="Luz Serena", cantidad="2 unidades")
+
+    assert _quantity(tmp_path) == "2 unidades"
+
+
+# --- La caja de otro producto (`caja_nombrada`, laboratorio de ···0686) ------
+#
+# «Dos cajas de 12, ¿cómo sería el envío y el pago?» y el bot anotó las
+# onduladas, que traen 10 (la de 12 es la cuadrada); una vez le escribió a la
+# clienta «cada caja trae 10 velas, no 12». Al anotar por primera vez un
+# producto que va por caja, si el cliente nombró el tamaño de la caja de otro
+# y no el de este, decide `caja_nombrada`: «otro» no anota el producto (los
+# datos de envío sí); «duda» (sin Jev, así nace) lo devuelve UNA vez por
+# mensaje del cliente; «este» lo anota.
+
+NAMED = "caja_nombrada.pide_la_otra"
+TWELVE = [
+    {"role": "assistant", "content": "Las velitas de intención vienen en caja 🤍 ¿Te muestro los diseños?"},
+    {"role": "user", "content": ASKED},
+    {"role": "user", "content": "Multicolor para todas, pago contra entrega"},
+]
+
+
+def _seed_inbound(tmp_path: Path, inbound: str = "wamid.A") -> None:
+    vault = tmp_path / "vault" / SID
+    vault.mkdir(parents=True, exist_ok=True)
+    meta_file = vault / "metadata.json"
+    meta = json.loads(meta_file.read_text(encoding="utf-8")) if meta_file.exists() else {
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None}]}
+    meta["last_inbound_message_id"] = inbound
+    meta_file.write_text(json.dumps(meta), encoding="utf-8")
+
+
+def _draft(tmp_path: Path) -> dict:
+    meta_file = tmp_path / "vault" / SID / "metadata.json"
+    if not meta_file.exists():
+        return {}  # nada se escribió
+    episodes = json.loads(meta_file.read_text(encoding="utf-8")).get("episodes") or [{}]
+    return episodes[-1].get("order_draft") or {}
+
+
+@pytest.mark.asyncio
+async def test_with_the_rule_the_box_of_the_other_product_goes_back(tmp_path: Path) -> None:
+    result = await _set(_tool(tmp_path, TWELVE), producto="Velas de deseos onduladas", cantidad="2",
+                        color="Multicolor")
+
+    assert draft_items(_draft(tmp_path)) == []
+    assert [r["reason"] for r in result["rejected"]] == ["other_box"]
+    assert "la caja de 12 es Velas de deseos cuadradas" in result["summary"]
+
+
+@pytest.mark.asyncio
+async def test_jev_reads_the_other_box_and_the_product_is_not_noted(tmp_path: Path, monkeypatch) -> None:
+    fake = _jev(monkeypatch, 0.9, NAMED)
+
+    result = await _set(_tool(tmp_path, TWELVE), producto="Velas de deseos onduladas", cantidad="2")
+
+    assert draft_items(_draft(tmp_path)) == [] and [r["reason"] for r in result["rejected"]] == ["other_box"]
+    [state] = [s for s, qs in fake.calls if NAMED in qs]
+    assert ASKED in state and "La caja de 12 velas es otro producto: Velas de deseos cuadradas." in state
+
+
+@pytest.mark.asyncio
+async def test_jev_reads_this_product_and_it_is_noted(tmp_path: Path, monkeypatch) -> None:
+    _jev(monkeypatch, 0.05, NAMED)
+
+    await _set(_tool(tmp_path, TWELVE), producto="Velas de deseos onduladas", cantidad="2")
+
+    assert _quantity(tmp_path) == "2"
+
+
+@pytest.mark.asyncio
+async def test_the_shipping_data_of_the_same_call_is_kept(tmp_path: Path) -> None:
+    await _set(_tool(tmp_path, TWELVE), producto="Velas de deseos onduladas", cantidad="2", ciudad="Bogotá")
+
+    draft = _draft(tmp_path)
+    assert draft_items(draft) == [] and draft["slots"]["ciudad"] == "Bogotá"
+
+
+@pytest.mark.asyncio
+async def test_naming_this_box_is_not_asked(tmp_path: Path, monkeypatch) -> None:
+    fake = _jev(monkeypatch, 0.9, NAMED)
+    ten = [{"role": "user", "content": "Quiero dos cajas de 10, multicolor"}]
+
+    await _set(_tool(tmp_path, ten), producto="Velas de deseos onduladas", cantidad="2")
+
+    assert _quantity(tmp_path) == "2" and not any(NAMED in qs for _s, qs in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_it_goes_back_once_per_customer_message_and_not_again_once_noted(tmp_path: Path) -> None:
+    """El segundo intento en el mismo mensaje es el modelo que ya lo revisó;
+    ya anotado, otro mensaje del cliente no lo vuelve a preguntar."""
+    tool = _tool(tmp_path, TWELVE)
+    _seed_inbound(tmp_path, "wamid.A")
+
+    first = await _set(tool, producto="Velas de deseos onduladas", cantidad="2")
+    second = await _set(tool, producto="Velas de deseos onduladas", cantidad="2")
+    _seed_inbound(tmp_path, "wamid.B")
+    third = await _set(tool, producto="Velas de deseos onduladas", cantidad="3")
+
+    assert [r["reason"] for r in first["rejected"]] == ["other_box"]
+    assert "rejected" not in second and "rejected" not in third and _quantity(tmp_path) == "3"
+
+
+@pytest.mark.asyncio
+async def test_lines_of_the_other_box_are_not_written(tmp_path: Path) -> None:
+    lines = [{"color": "Multicolor", "cantidad": "1"}, {"color": "Rojo y verde", "cantidad": "1"}]
+
+    result = await _set(_tool(tmp_path, TWELVE), producto="Velas de deseos onduladas", lineas=lines)
+
+    assert draft_items(_draft(tmp_path)) == [] and {r["reason"] for r in result["rejected"]} == {"other_box"}

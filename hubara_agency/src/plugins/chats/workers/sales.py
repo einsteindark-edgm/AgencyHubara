@@ -284,7 +284,11 @@ register_tool_extension(
 # (`frontend_dashboard/src/entities/chat/model.ts:10`).
 register_tool_extension(
     "sales.escalate_to_human",
-    lambda workspace: guarded_escalation_tool(EscalateToHumanTool)(workspace=str(workspace)),
+    # El historial: lo que escribió el cliente para `por_mayor` (36 velitas
+    # que son 3 cajas no van a un colega; laboratorio 2026-10-14).
+    lambda workspace: guarded_escalation_tool(EscalateToHumanTool)(
+        workspace=str(workspace), history_reader=build_session_history_reader()
+    ),
 )
 
 # Convivencia ETA/Sales (2026-06-10): el agente ETA es notificador puro — las

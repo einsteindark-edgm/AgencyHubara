@@ -69,8 +69,10 @@ CAPABILITIES: tuple[str, ...] = (
     # lo que niega teniéndolo (ventas-7, 2026-10-13), y darle la razón al
     # cliente en una cuenta equivocada (laboratorio del 2026-10-14).
     "precio_ajeno", "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
-    # La cantidad de un producto que se cobra por caja: ¿cajas o velas? (···0686).
-    "cajas",
+    # La cantidad de un producto que se cobra por caja: ¿cajas o velas? (···0686);
+    # ¿pide el producto de la caja que nombró?, y el «por mayor» que son velas
+    # sueltas (laboratorio del 2026-10-14).
+    "cajas", "caja_nombrada", "por_mayor",
     # Decisiones del agente (F8) y la promesa del relevo a un colega
     # (red de seguridad antes de enviar, 2026-09-30).
     "contactar", "cierre", "relevo",

@@ -1,6 +1,8 @@
 """`ventas-7`: `ventas-6` con las decisiones nuevas de los hechos (`NEW`: aromas,
 colores y presentaciones de otro producto, precio, pago, estado, cupón, lo que
-niega y darle la razón al cliente en una cuenta equivocada) y ③ del catálogo
+niega, darle la razón al cliente en una cuenta equivocada, y lo que se cobra
+por caja: cajas o velas, la caja que nombró y el «por mayor» que son velas
+sueltas) y ③ del catálogo
 en el turno (`test_decisions_ventas_7_verifica.py`), y nada más (esta prueba lo
 exige, como `test_decisions_ventas_6.py`).
 
@@ -55,6 +57,7 @@ SID = "wa_573001111111"
 NEW = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
     "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente", "cajas",
+    "caja_nombrada", "por_mayor",
 )
 AROMAS = (
     "Caballero de la noche", "Limoncillo", "Lavanda", "Café", "Sándalo", "Ylan ylang",
