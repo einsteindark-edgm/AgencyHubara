@@ -67,6 +67,17 @@ _DEBOUNCE_SILENCE = timedelta(seconds=1.5)
 _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 
 
+def _persist_args_with_wamids(args: list, delivered: object) -> list:
+    """Args de `persist_assistant_message_activity` con las burbujas que
+    salieron (`[{wamid, text}]`, 4.º argumento): el doble check de WhatsApp
+    del chat se une por esos wamids (caso 2026-10-15). Detrás de
+    `persist-wamids-v1`: los runs en vuelo replayean con los args de su history
+    (L-9)."""
+    if not workflow.patched("persist-wamids-v1"):
+        return args
+    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+
+
 def reply_summary(message: object) -> str:
     """El resumen del traspaso determinista a ventas: lo que el cliente
     respondió, con el tope de los otros traspasos (500). Premortem 2026-10-09:
@@ -714,7 +725,7 @@ class RemarketingSessionWorkflow:
                         and workflow.patched("send-pre-tool-messages-v1")
                     ):
                         for pre_msg in result.pre_tool_messages:
-                            await workflow.execute_activity(
+                            pre_delivered = await workflow.execute_activity(
                                 send_whatsapp_message_activity,
                                 args=[session_id, pre_msg],
                                 start_to_close_timeout=timedelta(seconds=90),
@@ -723,7 +734,7 @@ class RemarketingSessionWorkflow:
                             if workflow.patched("persist-assistant-message-v1"):
                                 await workflow.execute_activity(
                                     persist_assistant_message_activity,
-                                    args=[session_id, pre_msg],
+                                    args=_persist_args_with_wamids([session_id, pre_msg], pre_delivered),
                                     start_to_close_timeout=timedelta(seconds=10),
                                     retry_policy=RetryPolicy(maximum_attempts=2),
                                 )
@@ -733,7 +744,7 @@ class RemarketingSessionWorkflow:
                         and not self._force_shutdown
                         and not abstained
                     ):
-                        await workflow.execute_activity(
+                        final_delivered = await workflow.execute_activity(
                             send_whatsapp_message_activity,
                             args=[session_id, result.final_content],
                             start_to_close_timeout=timedelta(seconds=90),
@@ -747,7 +758,9 @@ class RemarketingSessionWorkflow:
                         if workflow.patched("persist-assistant-message-v1"):
                             await workflow.execute_activity(
                                 persist_assistant_message_activity,
-                                args=[session_id, result.final_content],
+                                args=_persist_args_with_wamids(
+                                    [session_id, result.final_content], final_delivered
+                                ),
                                 start_to_close_timeout=timedelta(seconds=10),
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )

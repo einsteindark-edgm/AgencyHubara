@@ -1547,7 +1547,10 @@ def _answers_while_the_panel_saves(box: dict, text: str, *, at_call: int):
 
     @activity.defn(name="persist_assistant_message_activity")
     async def persist_assistant_message_activity(
-        session_id: str, message: str, tools_used: list[str] | None = None
+        session_id: str,
+        message: str,
+        tools_used: list[str] | None = None,
+        delivered: list[dict] | None = None,
     ) -> None:
         calls["n"] += 1
         if calls["n"] == at_call:

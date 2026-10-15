@@ -53,6 +53,9 @@ data class ChatMessageDto(
     /** La forma real del mensaje (`chats/shared/chat_events.py`): `bot_card`, `bot_buttons`, `button_tap`…
      *  `JsonElement` a propósito: un evento que la app no conoce o mal formado se ignora (L-10). */
     val event: JsonElement? = null,
+    /** Doble check de WhatsApp de un saliente: `{status, at_ms, error_code, error_title}` con lo que Meta informó
+     *  por webhook (`chats/shared/delivery_status.py`). `JsonElement`: un valor raro queda «sin confirmación». */
+    val delivery: JsonElement? = null,
 )
 
 @Serializable

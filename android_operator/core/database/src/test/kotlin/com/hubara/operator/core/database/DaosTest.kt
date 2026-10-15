@@ -39,7 +39,7 @@ class DaosTest {
      * Caso 2026-10-15: con más de 999 chats el Motorola (Android 11, SQLite 3.28) no guardaba la bandeja: el borrado
      * de las que ya no están ligaba un parámetro por chat («too many SQL variables») y la lista quedaba congelada
      * (chats nuevos que no salían en «Todos», rutas y pedidos viejos en «Humano» y «Con pedido»). Robolectric trae un
-     * SQLite nuevo (32 766 parámetros): el caso se reproduce por encima de ese tope; el de 999 lo cuida S34.
+     * SQLite nuevo (32 766 parámetros): el caso se reproduce por encima de ese tope; el de 999 lo cuida S35.
      */
     @Test fun la_bandeja_se_guarda_aunque_lleguen_mas_chats_de_los_que_sqlite_liga_en_una_consulta() = runTest {
         val dao = db.conversations()

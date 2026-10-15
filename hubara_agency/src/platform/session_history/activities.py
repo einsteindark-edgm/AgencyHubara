@@ -25,6 +25,7 @@ async def persist_assistant_message_activity(
     session_id: str,
     content: str,
     tools_used: list[str] | None = None,
+    delivered: list[dict[str, str]] | None = None,
 ) -> None:
     """Append ``role=assistant`` event al JSONL de la sesion.
 
@@ -33,6 +34,11 @@ async def persist_assistant_message_activity(
     de las tools ejecutadas en el turno; evidencia para el juez del eval (ver
     docstring de ``append_assistant_event``). NO confundir con ``tool_calls``
     (payload completo), que sigue fuera del contrato v1.
+
+    ``delivered`` (param posicional 4, opcional): lo que devolvió
+    ``send_whatsapp_message_activity`` — ``[{wamid, text}]`` de cada burbuja
+    que Meta aceptó. El evento guarda esos ``wamids``: el chat les une el
+    estado que informe WhatsApp (doble check, caso 2026-10-15).
     """
     if not content:
         # Empty/None content -> el agente decidio no responder (ej. tool-only
@@ -40,4 +46,5 @@ async def persist_assistant_message_activity(
         return
 
     store = FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR)
-    store.append_assistant_event(session_id, content, tools_used=tools_used)
+    wamids = [b.get("wamid") or "" for b in delivered or () if isinstance(b, dict)]
+    store.append_assistant_event(session_id, content, tools_used=tools_used, wamids=wamids)

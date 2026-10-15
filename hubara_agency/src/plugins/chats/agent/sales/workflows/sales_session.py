@@ -286,6 +286,17 @@ def _note_guard(
         guards.append(name)
 
 
+def _persist_args_with_wamids(args: list, delivered: object) -> list:
+    """Args de `persist_assistant_message_activity` con las burbujas que
+    salieron (`[{wamid, text}]`, 4.º argumento): el doble check de WhatsApp
+    del chat se une por esos wamids (caso 2026-10-15). Detrás de
+    `persist-wamids-v1`: los runs en vuelo replayean con los args de su history
+    (L-9, mismo criterio que `persist-tools-used-v1`)."""
+    if not workflow.patched("persist-wamids-v1"):
+        return args
+    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+
+
 def _text_outbound(text: str, delivered: object) -> dict:
     """Paso `outbound` de un envío de texto. `delivered` es lo que devolvió
     `send_whatsapp_message_activity`: `[{wamid, text}]` desde la traza v2;
@@ -1394,7 +1405,7 @@ class HubaraSalesSessionWorkflow:
                         trace_steps.append(_text_outbound(greeting, greeting_delivered))
                         await workflow.execute_activity(
                             persist_assistant_message_activity,
-                            args=[session.session_id, greeting],
+                            args=_persist_args_with_wamids([session.session_id, greeting], greeting_delivered),
                             start_to_close_timeout=timedelta(seconds=10),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
@@ -1453,7 +1464,7 @@ class HubaraSalesSessionWorkflow:
                             if workflow.patched("persist-assistant-message-v1"):
                                 await workflow.execute_activity(
                                     persist_assistant_message_activity,
-                                    args=[session.session_id, pre_msg],
+                                    args=_persist_args_with_wamids([session.session_id, pre_msg], pre_delivered),
                                     start_to_close_timeout=timedelta(seconds=10),
                                     retry_policy=RetryPolicy(maximum_attempts=2),
                                 )
@@ -1653,6 +1664,9 @@ class HubaraSalesSessionWorkflow:
                         and not leak_blocked
                     ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
+                        # Sin envío (selector de variantes) no hay burbujas: el
+                        # chat lo mostrará «sin confirmación».
+                        final_delivered: object = None
                         if not suppress_text_for_picker:
                             # El texto promete que un colega lo atiende y
                             # nadie escaló: la red escala antes de enviarlo
@@ -1709,6 +1723,7 @@ class HubaraSalesSessionWorkflow:
                             ]
                             if workflow.patched("persist-tools-used-v1"):
                                 _persist_args.append(list(result.tools_used or []))
+                                _persist_args = _persist_args_with_wamids(_persist_args, final_delivered)
                             await workflow.execute_activity(
                                 persist_assistant_message_activity,
                                 args=_persist_args,

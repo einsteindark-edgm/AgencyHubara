@@ -68,7 +68,9 @@ def _fakes(tracker: Tracker):
         tracker.sent.append(f"[template {template}] {variables}")
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def fake_persist(session_id: str, message: str) -> None:
+    async def fake_persist(
+        session_id: str, message: str, tools_used: object = None, delivered: object = None
+    ) -> None:
         return None
 
     @activity.defn(name="record_eta_notification_activity")

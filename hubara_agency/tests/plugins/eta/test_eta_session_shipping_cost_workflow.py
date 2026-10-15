@@ -70,7 +70,9 @@ def _fakes(tracker: Tracker, *, in_window: bool):
         return {"wa_message_id": "wamid-1", "ok": True, "error": None}
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def fake_persist(session_id: str, message: str) -> None:
+    async def fake_persist(
+        session_id: str, message: str, tools_used: object = None, delivered: object = None
+    ) -> None:
         return None
 
     @activity.defn(name="record_eta_notification_activity")

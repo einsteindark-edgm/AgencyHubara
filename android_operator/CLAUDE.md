@@ -282,7 +282,7 @@ cd android_operator && ./gradlew :app:bundleRelease \
     guardaba y quedaba congelada: chats nuevos que no salían en «Todos», «Humano» y «Con pedido» con rutas y pedidos
     viejos, «No leídos» con contadores viejos. Nunca una lista de tamaño libre en un `IN (:…)`: se lee lo guardado y se
     borra en tandas (`ConversationDao.replaceAll`, `MAX_BOUND_ARGS`). Robolectric trae un SQLite nuevo: el test unitario
-    usa 33 000 chats y el tope de 999 lo cuida S34 (`inject.py crowd`). En «Todos» el chat que atiende una persona
+    usa 33 000 chats y el tope de 999 lo cuida S35 (`inject.py crowd`). En «Todos» el chat que atiende una persona
     lleva la etiqueta «Humano» al lado del nombre (`title_tag` del `list_item` en `chats.json`). Con `tag` (debajo
     del título) cada chat del humano crecía una línea, Laura (101) quedaba bajo el borde y se caían los escenarios
     que arrancan con `fresh`. Una propiedad nueva no pide `requires`: una app vieja la ignora y pinta lo demás.
@@ -291,7 +291,7 @@ cd android_operator && ./gradlew :app:bundleRelease \
     stickers (las marcas de `translate.py`) ni el texto que la ruta lee como acuse con `is_closing_ack`; si antes hubo
     una pregunta, se espera desde la pregunta. Vale para la bandeja de Incendios, el aviso push y el «sin responder»
     del widget. El paquete `operador-2` no podía arreglarlo solo: el veredicto de Jev cambia gravedad y tipo, nunca
-    quita la tarjeta. S35 en el emulador (`inject.py answered`).
+    quita la tarjeta. S36 en el emulador (`inject.py answered`).
 
 ## Endpoints
 
