@@ -47,6 +47,7 @@ with workflow.unsafe.imports_passed_through():
         sanitize_llm_text,
     )
     from src.platform.temporal.activities import execute_tool
+    from src.platform.tool_dispatch import tool_failed_result
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
         _LLM_OPTIONS,
@@ -538,6 +539,10 @@ def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
 #: Ronda de las promesas del texto (incidente del 2026-10-09): una history sin
 #: el marcador re-juega el turno viejo (el texto salía con la promesa rota).
 PROMISED_ACTIONS_PATCH = "promised-actions-round-v1"
+
+#: Una tool que falla tras sus reintentos (incidente del 2026-10-15): el
+#: modelo lee `tool_failed` en vez de que el `ActivityError` tumbe el workflow.
+TOOL_FAILURE_PATCH = "tool-failure-to-model-v1"
 
 
 def _kept_by_tool(payload: dict[str, Any] | None) -> bool:
@@ -1527,18 +1532,35 @@ async def _run_agent_turn_impl(
                         v for v in tc.arguments.values() if isinstance(v, str)
                     )
                 tool_started_ms = _now_ms()
-                result = await workflow.execute_activity(
-                    execute_tool,
-                    ExecuteToolInput(
-                        name=tc.name,
-                        params=tc.arguments,
-                        session_id=session.session_id,
-                        channel=session.channel,
-                        chat_id=session.chat_id,
-                        workspace=session.workspace,
-                    ),
-                    **_TOOL_OPTIONS,  # type: ignore[arg-type]
-                )
+                try:
+                    result = await workflow.execute_activity(
+                        execute_tool,
+                        ExecuteToolInput(
+                            name=tc.name,
+                            params=tc.arguments,
+                            session_id=session.session_id,
+                            channel=session.channel,
+                            chat_id=session.chat_id,
+                            workspace=session.workspace,
+                        ),
+                        **_TOOL_OPTIONS,  # type: ignore[arg-type]
+                    )
+                except ActivityError as exc:
+                    # Incidente 2026-10-15: agotados los reintentos, el
+                    # `ActivityError` tumbaba el workflow con el mensaje del
+                    # cliente. Ahora el modelo lee que la tool falló y responde
+                    # sin ella; el ERROR es la alerta. Una cancelación sigue
+                    # su curso. `patched()` va último: una history vieja con
+                    # la falla re-juega su caída.
+                    if isinstance(exc.cause, CancelledError) or not workflow.patched(
+                        TOOL_FAILURE_PATCH
+                    ):
+                        raise
+                    workflow.logger.error(
+                        f"tool {tc.name} falló tras sus reintentos "
+                        f"(session={session.session_id}): {exc.cause!r}"
+                    )
+                    result = tool_failed_result(tc.name)
                 tool_events.append(
                     {
                         "name": tc.name,

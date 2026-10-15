@@ -1942,3 +1942,31 @@ Sin datos del pedido (Medusa caído o lento), o con el pedido entregado o cancel
 - GIVEN el pedido anterior figura entregado en OrderFacts
 - WHEN el cliente vuelve a escribir
 - THEN la conversación nueva abre como siempre
+
+### Requirement: Una tool mal llamada o que falla no deja al cliente sin respuesta (2026-10-15)
+
+Incidente del 2026-10-15 (Gemini de respaldo con DeepSeek caído): el modelo llamó `present_products` con un argumento que no existe (`intro_title`), la tool lanzó `TypeError`, `execute_tool` falló sus 2 intentos y el workflow de ventas cayó sin responderle a un cliente que venía de un anuncio.
+
+El dispatch de tools (`src/platform/tool_dispatch.py:dispatch_tool`, dentro de la activity `execute_tool`) SHALL:
+
+- descartar todo argumento que el schema de la tool no declare, con un WARNING (tool, argumento, sesión; nunca el valor), y correr la tool con los demás;
+- si falta un argumento obligatorio o un tipo no sirve, no correr la tool y devolverle al modelo el rechazo de las tools outbound (`{"queued": false, "error": "invalid_arguments", "message": …}`). El texto plano MUST NOT usarse: el corte de turno lo toma por «salió» y con una tool que espera al cliente (`present_products`) el bot quedaba callado;
+- si la tool lanza `TypeError` (error de programación), no reintentar: ERROR con traceback como alerta y `{"queued": false, "error": "tool_failed", …}` para el modelo.
+
+Si `execute_tool` agota sus reintentos por cualquier otra falla, `run_agent_turn` SHALL darle al modelo el mismo `tool_failed` en vez de dejar que el `ActivityError` tumbe el workflow, con un ERROR como alerta. Una cancelación sigue su curso. Va detrás del parche `tool-failure-to-model-v1` y aplica a todos los workflows que usan `run_agent_turn` (ventas V1 y V2, remarketing, ETA). Nunca pasa la conversación a humano por una falla técnica.
+
+#### Scenario: El modelo se inventa un argumento (caso de producción del 2026-10-15)
+
+- WHEN el modelo llama `present_products(intro_text="Mira nuestros velones:", intro_title="Velones")`
+- THEN `intro_title` se descarta con un WARNING y el cliente recibe la lista con su `intro_text`
+
+#### Scenario: Falta un argumento obligatorio
+
+- WHEN el modelo llama `present_products(category="velones")` sin `intro_text`
+- THEN la tool no corre, el turno no se corta y el modelo lee que falta `intro_text` y responde en la ronda siguiente
+
+#### Scenario: La tool falla en cada intento
+
+- GIVEN el servicio de una tool está caído
+- WHEN el modelo la llama y `execute_tool` agota sus 2 intentos
+- THEN el workflow sigue, el modelo lee `tool_failed` y le responde al cliente sin ella
