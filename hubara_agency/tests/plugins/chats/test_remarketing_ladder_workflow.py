@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -58,6 +58,8 @@ class Tracker:
         self.prompts: list[str] = []
         self.handoffs: list[str] = []
         self.context_gate: asyncio.Event | None = None
+        #: Lo que llegó a `persist_assistant_message_activity` como 4.º argumento.
+        self.persisted_delivered: list[object] = []
 
 
 def _fakes(
@@ -159,14 +161,18 @@ def _fakes(
         return False
 
     @activity.defn(name="send_whatsapp_message_activity")
-    async def fake_send(session_id: str, message: str) -> None:
+    async def fake_send(session_id: str, message: str) -> list[dict[str, str]]:
         tracker.sends.append(message)
+        return [{"wamid": f"wamid.T{len(tracker.sends)}", "text": message}]
 
     @activity.defn(name="persist_assistant_message_activity")
     async def fake_persist(
-        session_id: str, message: str, tools_used: object = None, delivered: object = None
+        session_id: str,
+        message: str,
+        tools_used: list[str] | None = None,
+        delivered: list[dict[str, str]] | None = None,
     ) -> None:
-        return None
+        tracker.persisted_delivered.append(delivered)
 
     @activity.defn(name="record_remarketing_touch_activity")
     async def fake_record_touch(session_id: str, kind: str) -> None:
@@ -374,3 +380,70 @@ async def test_cliente_escribe_mientras_se_arma_el_toque_siguiente(tmp_path) -> 
     assert all("SYSTEM" not in h for h in tracker.handoffs), (
         "el trigger interno viajó a Sales como texto del cliente"
     )
+
+
+def _persist_before_437(args: list, delivered: object) -> list:
+    """El registro antes del PR #437: sin las burbujas."""
+    return args
+
+
+def _persist_with_437(args: list, delivered: object) -> list:
+    """El registro del PR #437: las burbujas detrás de `workflow.patched`."""
+    if not workflow.patched("persist-wamids-v1"):
+        return args
+    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "old_persist", [_persist_before_437, _persist_with_437], ids=["antes-del-437", "con-el-437"]
+)
+async def test_un_toque_despues_del_deploy_guarda_sus_wamids_aunque_el_run_viniera_de_antes(
+    tmp_path, monkeypatch, old_persist
+) -> None:
+    """Caso 2026-10-15 (el 3.er toque «sin confirmación»): el run arrancó con
+    el código de antes del PR #437 y el toque siguiente salió con el nuevo.
+    Al reproducir la history, `workflow.patched("persist-wamids-v1")` dio
+    False en el toque viejo y Temporal guarda ese resultado para todo el run:
+    el toque nuevo tampoco guardaba sus wamids y el chat no podía unirle el
+    estado que Meta sí mandó. Con el código del #437 (que ya grabó la marca
+    del patch), el run se sigue reproduciendo sin error."""
+    from temporalio.worker import UnsandboxedWorkflowRunner
+
+    from src.plugins.chats.agent.remarketing.workflows import remarketing as module
+
+    tracker = Tracker()
+    fakes = _fakes(
+        tracker,
+        llm_contents=["Primer gancho 🌿", "Otro ángulo: ¿te ayudo a elegir?"],
+        workspace_path=str(tmp_path),
+    )
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        # El código que estaba desplegado cuando arrancó el run.
+        current = module._persist_args_with_wamids
+        monkeypatch.setattr(module, "_persist_args_with_wamids", old_persist)
+        # Sin caché: sin cola «pegajosa», la tarea siguiente la toma el worker nuevo.
+        async with Worker(
+            env.client, task_queue=REMARKETING_QUEUE, workflows=[RemarketingSessionWorkflow],
+            activities=fakes, workflow_runner=UnsandboxedWorkflowRunner(),
+            max_cached_workflows=0,
+        ):
+            handle = await env.client.start_workflow(
+                RemarketingSessionWorkflow.run, _input(),
+                id=f"remarketing-{SID}", task_queue=REMARKETING_QUEUE,
+            )
+            await _wait_for(lambda: len(tracker.touches) == 1)
+        # Deploy: el worker nuevo reproduce la history del run vivo.
+        monkeypatch.setattr(module, "_persist_args_with_wamids", current)
+        async with Worker(
+            env.client, task_queue=REMARKETING_QUEUE, workflows=[RemarketingSessionWorkflow],
+            activities=fakes, workflow_runner=UnsandboxedWorkflowRunner(),
+            max_cached_workflows=0,
+        ):
+            await handle.signal("next_touch", {"session_id": SID, "motivo": "ws"})
+            await _wait_for(lambda: len(tracker.touches) == 2)
+            await handle.result()
+
+    assert tracker.persisted_delivered[-1] == [
+        {"wamid": "wamid.T2", "text": "Otro ángulo: ¿te ayudo a elegir?"}
+    ]
