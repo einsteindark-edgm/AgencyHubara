@@ -1,8 +1,9 @@
 # yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
 #
 # Paquete de decisión de Hubara (velas), ventas, versión 7. PAQUETES_DE_DECISION.md.
-# Es `ventas-6@6` con tres decisiones nuevas y ③ del catálogo, y nada más (una prueba
-# lo exige: test_decisions_ventas_7.py). Caso de producción del 2026-10-13: el cliente
+# Es `ventas-6@6` con decisiones nuevas, ③ del catálogo y dos cambios del turno, y
+# nada más (las pruebas lo exigen: test_decisions_ventas_7.py y
+# test_decisions_ventas_7_senala.py). Caso de producción del 2026-10-13: el cliente
 # armó un carrito con 2 Velas de deseos cuadradas y el bot escribió «vienen en
 # Chanel, Drakar y Ylang Ylang»; Drakar e Ylang Ylang eran de la Plegaria de
 # Luz (salió en la misma búsqueda) y el producto tiene un solo aroma.
@@ -61,6 +62,19 @@
 # (`reply_state.contents`, `with_context`). Sonda con Jev real: botones 0,56 →
 # 0,05 y catálogo completo 0,71 → 0,13 (los dos «falta»); las dos velitas 0,81;
 # los demás asuntos, igual que con ventas-6.
+#
+# Y dos cambios del turno (una prueba lo exige: test_decisions_ventas_7_senala.py).
+# Caso de producción del 2026-10-13 (anuncio de Halloween):
+#   - La fila del saludo en ③ (`verify_decide`): un «hola» con una pregunta a
+#     media conversación hizo mandar, aparte, un «buenas noches» a las 4 p. m.
+#     El saludo nunca pide otra burbuja: en el primer contacto lo pone el
+#     egreso, después la nota de la hora pide no volver a saludar.
+#   - La política `turno-v6` con la pregunta `descubrimiento.senala_producto`
+#     (cuestionario `rafaga-v9`): el cliente citó la línea del set y escribió
+#     «Estás» (= «estas»); la guía decía «ayúdale a escoger un producto» y el
+#     bot volvía a preguntar cuál. Si señala un producto concreto, el paso es
+#     hablarle de ese y preguntarle si se lo lleva (que le guste no es que lo
+#     quiera: el paso pregunta, no anota).
 #
 # ventas-6:
 # Es `ventas-5@5` con la política del turno `turno-v5` y nada más (una prueba lo

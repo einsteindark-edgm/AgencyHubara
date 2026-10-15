@@ -7,7 +7,11 @@
 # («¿le MUESTRA los productos que pidió?») y su complemento (mostrarlos, no un
 # texto), y ③ ve lo que muestran las tarjetas y lo que se habló antes
 # (`reply_state.contents` y `with_context`). Sondas con Jev real en
-# test_decisions_ventas_7_verifica.py. Ver `bundle.yaml`.
+# test_decisions_ventas_7_verifica.py.
+# Y la política `turno-v6`, la pregunta `descubrimiento.senala_producto`
+# (cuestionario `rafaga-v9`) y la fila del saludo en ③: caso de producción del
+# 2026-10-13 (anuncio de Halloween; test_decisions_ventas_7_senala.py). Ver
+# `bundle.yaml`.
 #
 # El turno del paquete `ventas-6`: el de `ventas-5` con la política `turno-v5`,
 # la fila `catalogo` del contrato y el cuestionario `rafaga-v7` (venta del
@@ -59,7 +63,7 @@
 # constantes del código: tests/plugins/chats/sales/decisions/test_decisions_turn_bundle.py).
 # Otro texto, otro umbral u otra fila = otra versión del paquete.
 
-policy: turno-v5
+policy: turno-v6
 
 # `confidence` ya no está: ninguna política del turno la leía (§1 del diseño).
 thresholds:
@@ -69,6 +73,10 @@ thresholds:
   purchase_confirm: 0.85  # un «sí» claro a la pregunta de compra
   purchase_retract: 0.20  # el «sí» respondía otra cosa
   given: 0.85             # evidencia del turno: dio un dato, elige, reclama, ya vio el precio
+  # ventas-7: el cliente señala un producto en descubrimiento (`turno-v6`). Sonda
+  # con Jev real (2026-10-13): «Estás» citando la línea del set 0,74–0,76; lo más
+  # alto que no señala uno («¿La del zorro de qué tamaño es?») 0,38–0,40.
+  pointed: 0.60
 
 # La ráfaga ① (antes `questionnaires/rafaga-v5.yaml`, movido sin cambiar un
 # carácter). Revisión del 2026-09-29 (noche): el de v4 con UNA pregunta más,
@@ -78,7 +86,7 @@ thresholds:
 # el tiempo quedó sin respuesta. Con esta pregunta el contrato pide la tarjeta
 # solo cuando preguntan el costo (el banco de referencia califica por id).
 questionnaire:
-  id: rafaga-v8
+  id: rafaga-v9
 
   topics:
     # rafaga-v8 (2026-10-13): «pide información» y «kit u ocasión», con las
@@ -166,6 +174,16 @@ questionnaire:
       kind: noul
       text: "¿En ESTE TURNO el cliente pregunta cómo huele un aroma concreto (a qué huele, qué esencia o qué notas tiene), lo nombre o cite el mensaje donde aparece, en vez de pedir los aromas que hay o elegir uno?"
       criteria: {"true": "sí, pregunta a qué huele un aroma concreto", "false": "no (pide ver los aromas, elige uno o habla de otra cosa)"}
+    # ventas-7 (rafaga-v9, 2026-10-13, anuncio de Halloween, turno 5): el
+    # cliente citó la línea del set y escribió «Estás» (= «estas»); la guía de
+    # descubrimiento pedía «ayúdale a escoger un producto» y el bot volvía a
+    # preguntar cuál. Lo lee `turno-v6`: si señala uno, el paso es hablarle de
+    # ese y preguntarle si se lo lleva (señalar no es comprar).
+    - id: descubrimiento.senala_producto
+      kind: noul
+      when: {stage: etapa_descubrimiento}
+      text: "¿En ESTE TURNO el cliente señala cuál producto concreto le interesa: lo nombra como el que quiere o el que le gusta, o lo señala con «este», «esta», «estos», «estas», «ese» o «esa» citando el mensaje donde aparece? Si cita un mensaje, «Estás» o «Esté» son «estas» o «este» con la tilde que les puso el teclado."
+      criteria: {"true": "sí, señala un producto concreto (también «Estás» o «Esté» citando un mensaje que nombra un producto: es «estas» o «este» con tilde)", "false": "no (pregunta en general, dice que le gustan todos, pide ver opciones o habla de otra cosa)"}
     - id: envio.costo
       kind: noul
       text: "¿En ESTE TURNO el cliente pregunta cuánto cuesta o cuánto vale el envío o el domicilio?"
@@ -410,6 +428,13 @@ contract:
 # missing → complemento (una burbuja más con lo que faltó); si no, cualquier
 # doubt → pendiente (se envía y el asunto queda pendiente); si no, se envía.
 verify_decide:
+  # ventas-7: el saludo nunca pide otra burbuja ni queda pendiente (2026-10-13:
+  # un «hola» con una pregunta a media conversación hizo mandar, aparte, un
+  # «buenas noches» a las 4 p. m.). En el primer contacto el saludo lo pone el
+  # egreso (capacidad `saludo` y la guarda `first_contact_greeting`); después,
+  # la nota de la hora pide no volver a saludar.
+  - when: "item.topic == 'saludo'"
+    then: covered
   - when: "!('p' in item)"
     then: doubt
   - when: "item.p >= th['covered']"
@@ -473,3 +498,9 @@ examples:
     # bot listó 11 aromas sin recomendar: falta el asunto → una burbuja más.
     - {topics: [aroma, {topic: gusto, msg: 1}], answers: {cover.aroma: 0.95, cover.gusto: 0.1}, expect: {decision: complement, missing: [gusto]}}
     - {topics: [{topic: gusto, msg: 1}], answers: {cover.gusto: 0.9}, expect: {decision: send}}
+    # ventas-7 (2026-10-13, anuncio de Halloween, turno 2): un «hola» con la
+    # pregunta de las medidas a media conversación. El bot respondió las medidas
+    # y ③ pidió una burbuja solo por el saludo (salió «buenas noches» a las 4 p. m.).
+    # El saludo nunca pide otra burbuja ni queda pendiente, lo atienda o no el texto.
+    - {topics: [{topic: medidas, msg: 1}, saludo], answers: {cover.medidas: 0.98, cover.saludo: 0.22}, expect: {decision: send}}
+    - {topics: [saludo], expect: {decision: send}}

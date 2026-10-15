@@ -158,6 +158,28 @@ def _without_catalog_verification(turn: dict[str, Any]) -> dict[str, Any]:
             "examples": examples}
 
 
+def _without_the_pointed_product(turn: dict[str, Any]) -> dict[str, Any]:
+    """El turno sin el producto señalado ni la fila del saludo en ③
+    (test_decisions_ventas_7_senala.py, anuncio de Halloween del 2026-10-13):
+    `turno-v6` → `turno-v5`, sin el umbral `pointed`, `rafaga-v9` → `rafaga-v8`
+    sin la pregunta `descubrimiento.senala_producto`, y `verify_decide` y
+    `examples.verify` sin lo del saludo (ventas-6 no tiene ejemplos con él)."""
+    q = turn["questionnaire"]
+
+    def greeting(example: dict[str, Any]) -> bool:
+        return any((t.get("topic") if isinstance(t, dict) else t) == "saludo" for t in example["topics"])
+
+    return {
+        **turn,
+        "policy": "turno-v5",
+        "thresholds": {k: v for k, v in turn["thresholds"].items() if k != "pointed"},
+        "questionnaire": {**q, "id": "rafaga-v8",
+                          "questions": [x for x in q["questions"] if x.get("id") != "descubrimiento.senala_producto"]},
+        "verify_decide": [r for r in turn["verify_decide"] if r.get("when") != "item.topic == 'saludo'"],
+        "examples": {**turn["examples"], "verify": [e for e in turn["examples"]["verify"] if not greeting(e)]},
+    }
+
+
 #: El dominio de ventas-7 trae además los datos de envío/pago del 2º toque del
 #: remarketing (test_remarketing_catalog_silent.py): exactamente estas llaves.
 REMARKETING_FACTS = ("practical_facts", "hook_examples_practical")
@@ -181,7 +203,8 @@ def test_ventas_7_is_ventas_6_with_the_fact_decisions_and_nothing_else() -> None
     assert v7_files == sorted([*v6_files, *new])
     for rel in v6_files:
         if rel == "turn.yaml":
-            assert _without_catalog_verification(_load(V7 / rel)) == _load(V6 / rel), rel
+            v7_turn = _without_the_pointed_product(_without_catalog_verification(_load(V7 / rel)))
+            assert v7_turn == _load(V6 / rel), rel
         elif rel == "domain.yaml":
             assert {*REMARKETING_FACTS, *CORRECTION_TONE} <= set(_load(V7 / rel)["vocabulary"]), rel
             assert _without_remarketing_facts(_load(V7 / rel)) == _load(V6 / rel), rel
