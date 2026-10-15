@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from temporalio import workflow
+from temporalio.exceptions import ActivityError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.activities.conversation import build_prompt, record_turn
@@ -27,6 +28,7 @@ with workflow.unsafe.imports_passed_through():
         BuildPromptInput,
         ExecuteToolInput,
         LLMChatInput,
+        LLMResponseData,
         RecordTurnInput,
         SessionInput,
     )
@@ -45,6 +47,7 @@ with workflow.unsafe.imports_passed_through():
         sanitize_llm_text,
     )
     from src.platform.temporal.activities import execute_tool
+    from src.platform.tool_dispatch import tool_failed_result
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
         _LLM_OPTIONS,
@@ -188,6 +191,21 @@ class TurnPolicy:
 EgressHook = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+#: Gancho del caller para una caída TOTAL del LLM (incidente 2026-10-15:
+#: DeepSeek se colgó, el respaldo no alcanzó a entrar, `llm_chat` agotó sus
+#: reintentos y el `ActivityError` tumbaba el workflow con los mensajes del
+#: cliente adentro). `on_llm_outage(vuelta, error)`: espera lo que el caller
+#: decida (timer durable) y devuelve True para volver a llamar al modelo con el
+#: MISMO turno, o False para rendirse (el turno termina sin texto:
+#: `TurnResult.llm_unavailable`). Sin gancho, el error sube como siempre (V1,
+#: remarketing y ETA no cambian ni un comando).
+LLMOutageHook = Callable[[int, ActivityError], Awaitable[bool]]
+
+#: Gate del gancho: solo cambia los comandos cuando `llm_chat` ya falló del
+#: todo (antes, ahí terminaba el workflow).
+LLM_OUTAGE_PATCH = "llm-outage-wait-v1"
+
+
 @dataclass
 class InboxMsg:
     """DTO de un inbound en la bandeja durable con watermark (PR burst-inbox).
@@ -307,6 +325,10 @@ class TurnResult:
     # Turno cortado (`interrupted`): lo que ya leyó, para el reinicio. None
     # sin `read_only_tools` o sin lecturas. En memoria (replay-safe).
     carried: CarriedReads | None = None
+    # Caída total del LLM (2026-10-15): el gancho `on_llm_outage` del caller se
+    # rindió y el turno terminó sin texto. Lo que el cliente escribió quedó
+    # grabado en el historial del LLM.
+    llm_unavailable: bool = False
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -542,6 +564,10 @@ def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
 #: Ronda de las promesas del texto (incidente del 2026-10-09): una history sin
 #: el marcador re-juega el turno viejo (el texto salía con la promesa rota).
 PROMISED_ACTIONS_PATCH = "promised-actions-round-v1"
+
+#: Una tool que falla tras sus reintentos (incidente del 2026-10-15): el
+#: modelo lee `tool_failed` en vez de que el `ActivityError` tumbe el workflow.
+TOOL_FAILURE_PATCH = "tool-failure-to-model-v1"
 
 
 def _kept_by_tool(payload: dict[str, Any] | None) -> bool:
@@ -994,8 +1020,14 @@ async def run_agent_turn(
     interrupt_before_record: bool = False,
     read_only_tools: frozenset[str] = frozenset(),
     carried: CarriedReads | None = None,
+    on_llm_outage: LLMOutageHook | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `on_llm_outage` (incidente 2026-10-15): si `llm_chat` agota sus reintentos,
+    el turno le pregunta al caller en vez de caerse; ver `LLMOutageHook`. Si se
+    rinde, el turno termina sin texto (`llm_unavailable`), sin egreso, y graba
+    lo que el cliente escribió. Default None = el turno de hoy.
 
     `read_only_tools` / `carried` (turno 1 de …7392, 2026-10-08): si el turno
     se corta (`interrupted`), devuelve en `carried` las llamadas a esas tools
@@ -1108,6 +1140,7 @@ async def run_agent_turn(
         interrupt_before_record=interrupt_before_record,
         read_only_tools=read_only_tools,
         carried=carried,
+        on_llm_outage=on_llm_outage,
     )
 
 
@@ -1146,6 +1179,54 @@ async def _record_cut_attempt_cost(
             )
 
 
+def _outage_error(exc: ActivityError) -> str:
+    """El error de fondo de una caída del LLM, corto, para la traza."""
+    cause = exc.cause or exc
+    name = getattr(cause, "type", None) or type(cause).__name__
+    return f"{name}: {cause}"[:200]
+
+
+async def _llm_chat_through_outage(
+    chat_input: LLMChatInput,
+    on_llm_outage: LLMOutageHook | None,
+    steps: list[dict[str, Any]],
+) -> LLMResponseData | None:
+    """`llm_chat` con su política de reintentos. Si la agota (DeepSeek y el
+    respaldo caídos) y el caller pasó `on_llm_outage`, el turno no se cae: el
+    gancho espera y dice si se vuelve a llamar al modelo. None = se rindió.
+    Cada vuelta queda en la traza (`llm_outage`). Una cancelación sube."""
+    rounds = 0
+    while True:
+        try:
+            return await workflow.execute_activity(
+                llm_chat,
+                chat_input,
+                **_LLM_OPTIONS,  # type: ignore[arg-type]
+            )
+        except ActivityError as exc:
+            if (
+                on_llm_outage is None
+                or isinstance(exc.cause, CancelledError)
+                or not workflow.patched(LLM_OUTAGE_PATCH)
+            ):
+                raise
+            rounds += 1
+            failed_ms = _now_ms()
+            retry = await on_llm_outage(rounds, exc)
+            steps.append(
+                {
+                    "kind": "llm_outage",
+                    "at_ms": failed_ms,
+                    "round": rounds,
+                    "error": _outage_error(exc),
+                    "waited_ms": _now_ms() - failed_ms,
+                    "retry": retry,
+                }
+            )
+            if not retry:
+                return None
+
+
 async def _run_agent_turn_impl(
     session: SessionInput,
     msg: PendingMessage,
@@ -1162,6 +1243,7 @@ async def _run_agent_turn_impl(
     interrupt_before_record: bool = False,
     read_only_tools: frozenset[str] = frozenset(),
     carried: CarriedReads | None = None,
+    on_llm_outage: LLMOutageHook | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1318,6 +1400,8 @@ async def _run_agent_turn_impl(
         tools_used.extend(carried.names)
         tool_events.extend(dict(e) for e in carried.events)
         steps.append({"kind": "carry", "at_ms": _now_ms(), "tools": carried.names})
+    # El gancho `on_llm_outage` se rindió: el turno termina sin texto.
+    llm_unavailable = False
 
     def _open_closing_round() -> bool:
         """Se agotaron las rondas sin nada para el cliente: UNA ronda más con
@@ -1349,8 +1433,7 @@ async def _run_agent_turn_impl(
         round_sent = round_input(messages, since=sent_until, chat_id=session.chat_id)
         sent_until = len(messages)
         llm_started_ms = _now_ms()
-        response = await workflow.execute_activity(
-            llm_chat,
+        maybe_response = await _llm_chat_through_outage(
             LLMChatInput(
                 messages=messages,
                 llm=session.llm,
@@ -1361,8 +1444,18 @@ async def _run_agent_turn_impl(
                 # propaga baggage workflow→activity, por eso van por el input).
                 baggage=baggage,
             ),
-            **_LLM_OPTIONS,  # type: ignore[arg-type]
+            on_llm_outage,
+            steps,
         )
+        if maybe_response is None:
+            # El caller se rindió (el modelo no volvió a tiempo, o una persona
+            # tomó el chat): sin texto ni egreso. Lo que el cliente escribió (y
+            # lo que el turno alcanzó a hacer) se graba igual, abajo: el turno
+            # siguiente lo ve.
+            llm_unavailable = True
+            final_content = ""
+            break
+        response = maybe_response
         if response.usage:
             turn_prompt_tokens += int(response.usage.get("prompt_tokens", 0) or 0)
             turn_completion_tokens += int(
@@ -1495,18 +1588,35 @@ async def _run_agent_turn_impl(
                         v for v in tc.arguments.values() if isinstance(v, str)
                     )
                 tool_started_ms = _now_ms()
-                result = await workflow.execute_activity(
-                    execute_tool,
-                    ExecuteToolInput(
-                        name=tc.name,
-                        params=tc.arguments,
-                        session_id=session.session_id,
-                        channel=session.channel,
-                        chat_id=session.chat_id,
-                        workspace=session.workspace,
-                    ),
-                    **_TOOL_OPTIONS,  # type: ignore[arg-type]
-                )
+                try:
+                    result = await workflow.execute_activity(
+                        execute_tool,
+                        ExecuteToolInput(
+                            name=tc.name,
+                            params=tc.arguments,
+                            session_id=session.session_id,
+                            channel=session.channel,
+                            chat_id=session.chat_id,
+                            workspace=session.workspace,
+                        ),
+                        **_TOOL_OPTIONS,  # type: ignore[arg-type]
+                    )
+                except ActivityError as exc:
+                    # Incidente 2026-10-15: agotados los reintentos, el
+                    # `ActivityError` tumbaba el workflow con el mensaje del
+                    # cliente. Ahora el modelo lee que la tool falló y responde
+                    # sin ella; el ERROR es la alerta. Una cancelación sigue
+                    # su curso. `patched()` va último: una history vieja con
+                    # la falla re-juega su caída.
+                    if isinstance(exc.cause, CancelledError) or not workflow.patched(
+                        TOOL_FAILURE_PATCH
+                    ):
+                        raise
+                    workflow.logger.error(
+                        f"tool {tc.name} falló tras sus reintentos "
+                        f"(session={session.session_id}): {exc.cause!r}"
+                    )
+                    result = tool_failed_result(tc.name)
                 tool_events.append(
                     {
                         "name": tc.name,
@@ -2170,7 +2280,9 @@ async def _run_agent_turn_impl(
     if withheld_reply_ids:
         recorded = _without_calls(recorded, withheld_reply_ids)
     egress_result: dict[str, Any] | None = None
-    if egress is not None:
+    # Un turno que se rindió ante la caída del LLM no tiene texto que decidir:
+    # sin egreso (que en un primer contacto pediría el saludo).
+    if egress is not None and not llm_unavailable:
         # Motor de decisiones (F4): el caller decide el egreso con su gancho,
         # donde corría el rescate, y lo REEMPLAZA (el workflow de ventas V2 no
         # tiene reglas de texto: le pregunta al motor). El historial guarda lo
@@ -2288,6 +2400,7 @@ async def _run_agent_turn_impl(
     # este marker no debe consultarlo en un lugar nuevo.
     if (
         interrupt_before_record
+        and not llm_unavailable
         and interrupts_enabled
         and not client_touched
         and transfer_decision is None
@@ -2367,4 +2480,5 @@ async def _run_agent_turn_impl(
         salvaged_leak=salvaged_leak,
         steps=steps,
         egress=egress_result,
+        llm_unavailable=llm_unavailable,
     )

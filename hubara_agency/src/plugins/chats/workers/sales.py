@@ -70,6 +70,7 @@ from src.plugins.chats.agent.sales.activities import (
     read_and_clear_pending_handoff_activity,
     read_idle_timeout_seconds_activity,
     read_order_draft_note_activity,
+    read_reply_window_activity,
     transcribe_audio_activity,
 )
 from src.plugins.chats.agent.sales.tools.catalog import (
@@ -532,6 +533,10 @@ SALES_ACTIVITIES = [
     # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
     # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
     read_idle_timeout_seconds_activity,
+    # Caída total del LLM (2026-10-15): el turno del V2 espera a que vuelva
+    # el modelo y lee si el chat sigue siendo del bot y cuándo cierra la
+    # ventana (`llm_outage_v2`).
+    read_reply_window_activity,
     start_or_signal_sales_workflow_activity,
     schedule_remarketing_workflow_activity,
     # ADR-2026-05-20: declarative orchestration activities.

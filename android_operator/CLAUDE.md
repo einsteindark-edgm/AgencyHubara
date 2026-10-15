@@ -270,6 +270,13 @@ cd android_operator && ./gradlew :app:bundleRelease \
     del borde: la lista invertida se ancla al mensaje que ya se veía. `History` baja al más nuevo si el operador
     estaba al final (fila ≤ 2) y no lo mueve si subió a leer (`NewMessageScrollTest`).
 
+34. **La burbuja «Enviar productos» abre un panel, no manda** (2026-10-14): mandaba el catálogo entero de una vez. A una
+    app con `?features=open_screen` el backend le pone `opens: "enviar_productos"` (`mobile_rules._OPENS`; el color
+    va aparte en `_TONES`, solo «Crear pedido» es verde) y la app abre `enviar_productos.json`: el MISMO panel de
+    «+ Más» (categoría, búsqueda o un producto). Una app vieja la sigue mandando como la acción. El panel está dos
+    veces (en `acciones.json` para no apilar dos hojas: «volver» cierra solo la de arriba) y
+    `RealScreensTest.el_panel_de_la_burbuja_es_el_mismo_de_mas` exige que sean iguales. S31–S33 en el emulador.
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,

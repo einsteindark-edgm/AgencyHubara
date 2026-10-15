@@ -109,9 +109,3 @@ Tu línea al cliente va en `customer_message`: UNA, breve, sin prometer tiempos.
 | Post-`register_order` exitoso (SIEMPRE, con tag `CONFIRMADO_PAGO_PENDIENTE`) | `PAYMENT_VERIFICATION_PENDING` |
 
 **Regla de oro**: en duda, escalar es mejor que cerrar mal una venta complicada. Pero NO escales preguntas básicas que resuelves con tools.
-
-## Lo que NO va aquí
-
-- Schemas y uso detallado de cada tool → la `description` de la tool.
-- Guion turn-by-turn de la etapa → Active Skill `etapa_*` (auto-inyectado).
-- Decisiones de negocio → viven dentro de las tools (Python).

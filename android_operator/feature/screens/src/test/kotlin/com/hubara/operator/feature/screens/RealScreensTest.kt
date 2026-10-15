@@ -32,6 +32,9 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -338,6 +341,46 @@ class RealScreensTest {
         // Los colores, los aromas y el formulario vuelven a leer el catálogo entero.
         compose.runOnIdle { assertThat(data.paths().last()).isEqualTo("/api/chats/catalog") }
         node("Medios de pago").assertExists()
+    }
+
+    /**
+     * 2026-10-14: la burbuja «Enviar productos» del chat mandaba el catálogo entero. Ahora el backend le pone
+     * `opens: "enviar_productos"` y la app abre esta pantalla: el mismo panel de «+ Más», sin pasar por el menú.
+     */
+    @Test fun la_burbuja_enviar_productos_abre_el_panel_y_manda_lo_que_se_elige() {
+        assertThat(File(dir, "enviar_productos.json").exists()).isTrue()
+        data.ok("/api/chats/catalog", productos(""))
+        data.ok("/api/chats/catalog?category=velas-religiosas", productos("Velas Religiosas", "san-miguel", "virgen-guadalupe"))
+        open("enviar_productos", mapOf("session" to "wa_000000000101"))
+        node("Enviar todo el catálogo").assertExists()
+        node("Velas Religiosas · 2").performScrollTo().performClick()
+        compose.onNodeWithText("Difusor Lavanda").assertDoesNotExist()
+        node("Enviar 2 productos").performClick()
+        compose.runOnIdle {
+            assertThat(natives.single()).isEqualTo(
+                "send_tool" to json("""{"session": "wa_000000000101", "tool": "present_products",
+                  "label": "Enviar productos · Velas Religiosas", "args": {"category": "velas-religiosas", "q": ""}}"""),
+            )
+            assertThat(effects).contains(ScreenEffect.Back)
+        }
+    }
+
+    /** Las dos copias del panel (la de «+ Más» y la que abre la burbuja) son la misma: cambiar una sin la otra no pasa. */
+    @Test fun el_panel_de_la_burbuja_es_el_mismo_de_mas() {
+        assertThat(File(dir, "enviar_productos.json").exists()).isTrue()
+        val acciones = json(File(dir, "acciones.json").readText()).jsonObject
+        val panel = json(File(dir, "enviar_productos.json").readText()).jsonObject
+        val section = acciones.getValue("body").jsonArray.map { it.jsonObject }
+            .single { it["title"]?.jsonPrimitive?.content == "Enviar productos" }
+        assertThat(panel["title"]).isEqualTo(section["title"])
+        assertThat(panel["subtitle"]).isEqualTo(section["subtitle"])
+        assertThat(panel["body"]).isEqualTo(section["children"])
+        assertThat(panel.getValue("params")).isEqualTo(acciones.getValue("params"))
+        assertThat(panel.getValue("data").jsonObject["catalogo"]).isEqualTo(acciones.getValue("data").jsonObject["catalogo"])
+        assertThat(panel.getValue("computed").jsonObject["filtrado"]).isEqualTo(acciones.getValue("computed").jsonObject["filtrado"])
+        for (key in listOf("categoria", "buscar")) {
+            assertThat(panel.getValue("state").jsonObject[key]).isEqualTo(acciones.getValue("state").jsonObject[key])
+        }
     }
 
     @Test fun volver_a_las_acciones_deja_el_menu_como_estaba() {

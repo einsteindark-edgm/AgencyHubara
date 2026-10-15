@@ -34,7 +34,7 @@ from src.plugins.chats.agent.sales_eval.evals.composition import (
     get_eval_history_dir,
     get_vault_dir,
 )
-from src.plugins.chats.agent.sales_eval.evals.judge import (
+from src.plugins.chats.agent.sales_eval.evals.judge_switch import (
     LLM_JUDGE_DISABLED_MSG,
     llm_judge_enabled,
 )

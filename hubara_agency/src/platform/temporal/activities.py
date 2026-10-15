@@ -18,6 +18,7 @@ from exoclaw_temporal.config import ExecuteToolInput
 from src.platform.constants import ROUTE_HUMANO, ROUTE_VENTAS
 from src.platform.contracts import RemarketingEligibility
 from src.platform.registries import get_base_tools_registry
+from src.platform.tool_dispatch import dispatch_tool
 from src.platform.tool_extensions import apply_tool_extensions
 from src.platform.temporal.heartbeat import with_heartbeat
 from src.platform.config import WORKSPACE_VAULT_DIR
@@ -60,7 +61,9 @@ async def execute_tool(input: ExecuteToolInput) -> str:
     # JSON-serializable.
     if input.params is None:
         input.params = {}
-    return await registry.execute(input.name, input.params, ctx)
+    # Incidente 2026-10-15: lo que el LLM manda mal (un argumento inventado,
+    # uno obligatorio que falta) nunca tumba la activity: `dispatch_tool`.
+    return await dispatch_tool(registry, input.name, input.params, ctx)
 
 @activity.defn(name="claim_conversation_routing")
 async def claim_conversation_routing(session_id: str, new_route: str) -> None:

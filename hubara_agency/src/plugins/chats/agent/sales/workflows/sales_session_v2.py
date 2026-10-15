@@ -43,7 +43,13 @@ Diferencias con el V1, a propósito (cada una con su test en
      solo con lo que llegó antes de la primera salida del turno). Gates
      `burst-time-budget-v1` (`bursts_v2.py`, helpers solo del V2),
      `turn-interrupt-before-record-v1` y `turn-interrupt-cost-v1` (el turno
-     compartido).
+     compartido);
+  7. una caída total del LLM no tumba la sesión (incidente 2026-10-15): si
+     `llm_chat` agota sus reintentos, el turno espera con timers durables y
+     vuelve a llamar al modelo hasta que una persona tome el chat o la ventana
+     de 24 h esté por cerrar; si se rinde, no envía nada y la traza lo dice
+     (`llm_outage_v2.py`, gate `llm-outage-wait-v1` en el turno compartido;
+     tests en `tests/test_sales_workflow_v2_llm_outage.py`).
 
 Ramas del V1 que no pasan (solo existían para re-jugar historias viejas): el
 turno de a un mensaje sin debounce, las notas de ráfaga v1 y previas, el
@@ -123,6 +129,8 @@ with workflow.unsafe.imports_passed_through():
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
     # Las tools que solo leen: el reinicio conserva su resultado (…7392).
     from src.plugins.chats.agent.sales.read_only_tools import READ_ONLY_TOOLS
+    # Caída total del LLM (2026-10-15): Temporal espera y reintenta el turno.
+    from src.plugins.chats.agent.sales.workflows.llm_outage_v2 import LLMOutageWait
 
     # Funciones puras del V1 (sin copiar): traza, capas ①③, debounce y CAPI.
     from src.plugins.chats.agent.sales.workflows.sales_session import (
@@ -545,6 +553,9 @@ class HubaraSalesSessionWorkflowV2:
                             ),
                             **_PERCEPTION_OPTIONS,
                         )
+                # Caída total del LLM (2026-10-15): el turno espera y reintenta
+                # en vez de tumbar la sesión; `gave_up` dice por qué se rindió.
+                outage = LLMOutageWait(session.session_id)
                 while True:
                     if layers and turn_mode in _ACTING_MODES:
                         burst = _burst_messages(raw_batch)
@@ -599,6 +610,7 @@ class HubaraSalesSessionWorkflowV2:
                         interrupt_before_record=True,
                         read_only_tools=READ_ONLY_TOOLS,
                         carried=carried,
+                        on_llm_outage=outage,
                     )
                     trace_steps.extend(result.steps or [])
                     if result.interrupted:
@@ -651,6 +663,15 @@ class HubaraSalesSessionWorkflowV2:
                 verdicts: dict[str, Any] = result.egress or {}
                 final_text = str(verdicts.get("final_text") or "")
                 text_out = str(verdicts.get("text") or "")
+                # El turno se rindió ante la caída del LLM (la ventana por
+                # cerrar, o una persona tomó el chat): no sale nada, tampoco
+                # componentes ni la verificación ③. La traza dice por qué.
+                gave_up = result.llm_unavailable
+                if gave_up:
+                    trace_steps.append(
+                        {"kind": "guard", "at_ms": _now_ms(), "name": "llm_unavailable", "reason": outage.gave_up}
+                    )
+                    trace_suppressed = "llm_unavailable"
 
                 # Abstención explícita (NO_MESSAGE): no se envía ni se persiste.
                 abstained = is_no_message_abstention(result.final_content)
@@ -841,6 +862,7 @@ class HubaraSalesSessionWorkflowV2:
                     and decided.topics
                     and not self._force_shutdown
                     and not admin_no_send
+                    and not gave_up
                 ):
                     verify_reply = _reply_as_sent(
                         trace_sent_texts,
@@ -914,7 +936,7 @@ class HubaraSalesSessionWorkflowV2:
                         )
 
                 # UI intents que encolaron las tools (HU-002), después del texto.
-                if not self._force_shutdown and not admin_no_send:
+                if not self._force_shutdown and not admin_no_send and not gave_up:
                     pending_at_flush = len(self._pending)
                     flush_report = await workflow.execute_activity(
                         flush_pending_ui_intents_activity,

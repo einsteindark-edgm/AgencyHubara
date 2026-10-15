@@ -91,8 +91,12 @@ _ACTION_UI: dict[str, tuple[str, bool]] = {
 }
 
 #: Burbujas que no le mandan nada al cliente: abren una pantalla del servidor
-#: (`opens`) y van con otro color (`tone`) para que el operador las vea.
-_OPENS: dict[str, str] = {"create_order": "crear_pedido"}
+#: (`opens`), solo en una app que sabe abrirla. «Enviar productos» abre el
+#: panel de «+ Más» (categoría, búsqueda o un producto, 2026-10-14); una app
+#: vieja la manda como la acción de siempre.
+_OPENS: dict[str, str] = {"create_order": "crear_pedido", "present_products": "enviar_productos"}
+#: Las que van con otro color (`tone`) para que el operador las vea.
+_TONES: dict[str, str] = {"create_order": "order"}
 #: La app sabe abrir una pantalla desde una burbuja.
 OPEN_SCREEN = "open_screen"
 
@@ -117,14 +121,18 @@ def _label(name: str, args: dict[str, Any]) -> str:
     return _ACTION_UI[name][0]
 
 
-def _suggestion(name: str, args: dict[str, Any], *, primary: bool) -> dict[str, Any]:
+def _suggestion(
+    name: str, args: dict[str, Any], *, primary: bool, features: frozenset[str] = frozenset()
+) -> dict[str, Any]:
     label, editable = _label(name, args), _ACTION_UI[name][1]
-    opens = {"tone": "order", "opens": _OPENS[name]} if name in _OPENS else {}
+    tone = {"tone": _TONES[name]} if name in _TONES else {}
+    opens = {"opens": _OPENS[name]} if name in _OPENS and OPEN_SCREEN in features else {}
     return {
         "id": name,
         "label": label,
         "prominence": "primary" if primary else "normal",
         "editable": editable,
+        **tone,
         **opens,
         "action": {"name": name, "args": args},
     }
@@ -264,7 +272,7 @@ def suggest_actions(facts: SuggestionFacts) -> dict[str, Any]:
         "window_open": facts.window_open,
         "in_control": facts.in_control,
         "suggestions": [
-            _suggestion(n, args, primary=i == 0) for i, (n, args) in enumerate(legal)
+            _suggestion(n, args, primary=i == 0, features=facts.app_features) for i, (n, args) in enumerate(legal)
         ],
     }
 
