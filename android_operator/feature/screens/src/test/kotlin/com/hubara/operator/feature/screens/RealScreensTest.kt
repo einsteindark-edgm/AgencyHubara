@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -84,16 +85,29 @@ class RealScreensTest {
           {"session_id": "wa_000000000101", "title": "Laura Prueba", "name": "Laura Prueba", "detail": "000000000101 · Bot · Interesado",
            "preview": "¿y qué aromas tienen?", "unseen": 2, "unseen_label": "2 mensajes sin leer", "unread": true, "human": false, "has_order": false, "all": true, "time_ms": 1789999000000},
           {"session_id": "wa_000000000102", "title": "Sofía Prueba", "name": "Sofía Prueba", "detail": "000000000102 · Humano",
-           "preview": "hola", "unseen": 0, "unseen_label": "", "unread": false, "human": true, "has_order": false, "all": true, "time_ms": 1789999000000}]"""))
+           "preview": "hola", "unseen": 0, "unseen_label": "", "unread": false, "human": true, "has_order": false, "all": true, "time_ms": 1789999000000},
+          {"session_id": "wa_000000000104", "title": "Andrés Prueba", "name": "Andrés Prueba", "detail": "000000000104 · Bot · Pedido #41",
+           "preview": "¿ya salió?", "unseen": 0, "unseen_label": "", "unread": false, "human": false, "has_order": true, "all": true, "time_ms": 1789998000000}]"""))
         sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
         open("chats")
-        compose.onNodeWithText("Laura Prueba").assertExists()
+        // «Todos» son todos, y el que atiende una persona lleva su etiqueta «Humano» (caso del operador, 2026-10-15).
+        listOf("Laura Prueba", "Sofía Prueba", "Andrés Prueba").forEach { compose.onNodeWithText(it).assertExists() }
+        compose.onNode(hasText("Sofía Prueba") and hasText("Humano")).assertExists()
+        compose.onNode(hasText("Laura Prueba") and hasText("Humano")).assertDoesNotExist()
+        compose.onNode(hasText("Andrés Prueba") and hasText("Humano")).assertDoesNotExist()
         compose.onNode(hasContentDescription("2 mensajes sin leer")).assertExists()
         compose.onNodeWithText("No leídos").performClick()
+        compose.onNodeWithText("Laura Prueba").assertExists()
         compose.onNodeWithText("Sofía Prueba").assertDoesNotExist()
-        compose.onNodeWithText("Humano").performClick()
+        compose.onNodeWithText("Andrés Prueba").assertDoesNotExist()
+        compose.onNode(hasText("Humano") and isSelectable()).performClick()
         compose.onNodeWithText("Laura Prueba").assertDoesNotExist()
+        compose.onNodeWithText("Andrés Prueba").assertDoesNotExist()
         compose.onNodeWithText("Sofía Prueba").assertExists()
+        compose.onNodeWithText("Con pedido").performClick()
+        compose.onNodeWithText("Andrés Prueba").assertExists()
+        compose.onNodeWithText("Laura Prueba").assertDoesNotExist()
+        compose.onNodeWithText("Sofía Prueba").assertDoesNotExist()
 
         compose.onNode(hasContentDescription("Más opciones")).performClick()
         compose.onNodeWithText("Política de privacidad").performClick()

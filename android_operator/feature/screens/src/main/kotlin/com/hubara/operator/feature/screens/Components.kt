@@ -485,10 +485,17 @@ private fun SduiListItem(node: Node, scope: Scope, modifier: Modifier, tap: (() 
                 val tone = textTone(node.text("overline_tone", scope))
                 Text(it, style = t.labelSmallEmphasized, color = if (tone == Color.Unspecified) muted else tone, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(
-                node.text("title", scope), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = if (emphasis || node.template("emphasis") == null) t.titleMediumEmphasized else t.titleMedium,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Text(
+                    node.text("title", scope), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                    style = if (emphasis || node.template("emphasis") == null) t.titleMediumEmphasized else t.titleMedium,
+                )
+                // La píldora del título va en la misma línea: la fila no crece (en la bandeja, «Humano»).
+                node.text("title_tag", scope).takeIf { it.isNotBlank() }?.let {
+                    val (bg, fg) = toneColors(node.text("title_tag_tone", scope))
+                    StatusPill(it, bg, fg)
+                }
+            }
             node.text("subtitle", scope).takeIf { it.isNotBlank() }?.let {
                 Text(
                     it, maxLines = 2, overflow = TextOverflow.Ellipsis,

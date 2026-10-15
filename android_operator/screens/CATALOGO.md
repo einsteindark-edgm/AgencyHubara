@@ -163,6 +163,8 @@ _Se puede tocar (`action`)._
 | `avatar_seed` | texto | Valor estable para el color del avatar (por defecto el nombre). |
 | `tag` | texto | Píldora debajo del título. |
 | `tag_tone` | `neutral` · `primary` · `secondary` · `bot` · `success` · `warning` · `danger` | Color de la píldora. |
+| `title_tag` | texto | Píldora chica al lado del título, sin agregar una línea (quién atiende: «Humano»). |
+| `title_tag_tone` | `neutral` · `primary` · `secondary` · `bot` · `success` · `warning` · `danger` | Color de la píldora del título. |
 | `trailing` | texto | Valor a la derecha (un total, una cifra). |
 | `trailing_caption` | texto | Línea chica debajo del valor (una hora). |
 | `trailing_tone` | `default` · `muted` · `primary` · `bot` · `success` · `warning` · `danger` | Color del valor y su línea chica. |

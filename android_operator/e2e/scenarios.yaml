@@ -828,3 +828,67 @@ scenarios:
       - sent_contains: ['"to": "000000000102"', "Plegaria de Luz"]
       - sent_nothing_matching: ['"to": "000000000102"', "Zodiacal"]
       - screen_has: "Tú atiendes"
+
+  - id: S34_bandeja_grande_y_filtros
+    title: Con más de mil chats la bandeja se guarda y cada filtro muestra lo suyo
+    resumen: "Con 1 200 conversaciones, como producción, el Motorola (Android 11) no podía guardar la bandeja («too many SQL variables») y la lista quedaba congelada: chats nuevos que no salían en «Todos» y filtros con datos viejos. Ahora la bandeja carga, el chat nuevo de Tomás llega solo con su etiqueta «Humano», «Humano» muestra solo los que atiende el equipo, «Con pedido» solo los que tienen pedido, y al leer a Tomás sale de «No leídos»."
+    # Caso del operador (2026-10-15). Primer rojo: la bandeja decía «No se pudieron cargar los datos» y logcat
+    # «too many SQL variables in "DELETE FROM conversations WHERE sessionId NOT IN (?,?,…)"».
+    setup: [reset, {inject: "crowd --count 1200"}, clear_app, launch, {expect: {text: "000000000101", timeout: 60}},
+            {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"}]
+    script:
+      - {inject: "fire --name 'Tomás Prueba' --session wa_000000000112"}
+      - {expect: {text: "Tomás Prueba", timeout: 30}}
+      - {wait: 2}
+      - {expect_gone: "· GRAVE"}
+      - {shot: todos-con-etiqueta}
+      - {tap: "=Humano"}
+      - {expect: "Tomás Prueba"}
+      - {expect_gone: "000000000101"}
+      - {tap: "=Con pedido"}
+      - {expect: "000000000104"}
+      - {expect_gone: "Tomás Prueba"}
+      - {tap: "=No leídos"}
+      - {expect: "Tomás Prueba"}
+      - {tap: "Tomás Prueba"}
+      - {expect: "Tú atiendes"}
+      - back
+      - {expect: "Estás al día"}
+    goal: |
+      Estás en la bandeja de Chats, con más de mil conversaciones.
+      1. Espera a que llegue un chat nuevo de Tomás Prueba. Di si lleva una etiqueta «Humano».
+      2. Toca el filtro «Humano»: di si sale Tomás y si sale el chat 000000000101.
+      3. Toca «Con pedido»: di qué chats salen.
+      4. Toca «No leídos», abre el chat de Tomás, vuelve atrás y di qué queda en «No leídos».
+      Reporta lo que viste en cada paso.
+    checks:
+      - screen_has: "Estás al día"
+      - screen_lacks: "No se pudieron cargar"
+
+  - id: S35_gracias_o_reaccion_no_es_incendio
+    title: Un «gracias» o una reacción no es incendio; una pregunta sí
+    resumen: "El equipo ya les respondió a tres clientes y 15 min después Paula dice «Muchas gracias 🙏», Rosa reacciona con 👍 e Inés pregunta «¿Me confirmas el valor del envío?». Antes los tres eran incendio grave con aviso; ahora en Incendios solo está Inés, y los tres siguen en «Humano»."
+    # Caso del operador (2026-10-15): reacciones, «gracias» y cierres como «ok perfecto» quedaban como incendio.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {inject: "answered wa_000000000113 'Paula Prueba' 'Muchas gracias 🙏'"},
+            {inject: "answered wa_000000000114 'Rosa Prueba' '[el cliente reaccionó con 👍]'"},
+            {inject: "answered wa_000000000115 'Inés Prueba' '¿Me confirmas el valor del envío?'"}]
+    script:
+      - {expect: {text: "Inés Prueba", timeout: 30}}
+      - {wait: 2}
+      - {expect_gone: "· GRAVE"}
+      - {tap: "=Incendios"}
+      - {expect: "Inés espera respuesta"}
+      - {shot: solo-la-pregunta}
+      - {assert: {screen_lacks: "Paula"}}
+      - {assert: {screen_lacks: "Rosa"}}
+      - {tap: "=Chats"}
+      - {tap: "=Humano"}
+      - {expect_all: ["Paula Prueba", "Rosa Prueba", "Inés Prueba"]}
+    goal: |
+      Estás en la bandeja de Chats. Llegaron mensajes de Paula, Rosa e Inés, a quienes el equipo ya había respondido.
+      1. Abre la pestaña Incendios y di qué clientes aparecen.
+      2. Vuelve a Chats, toca el filtro «Humano» y di si están Paula, Rosa e Inés.
+      Reporta lo que viste.
+    checks:
+      - screen_has: "Rosa Prueba"

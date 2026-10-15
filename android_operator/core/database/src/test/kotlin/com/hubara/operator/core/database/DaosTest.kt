@@ -35,6 +35,22 @@ class DaosTest {
         assertThat(rows.first { it.sessionId == "wa_a" }.windowExpiresAtMs).isEqualTo(99)
     }
 
+    /**
+     * Caso 2026-10-15: con más de 999 chats el Motorola (Android 11, SQLite 3.28) no guardaba la bandeja: el borrado
+     * de las que ya no están ligaba un parámetro por chat («too many SQL variables») y la lista quedaba congelada
+     * (chats nuevos que no salían en «Todos», rutas y pedidos viejos en «Humano» y «Con pedido»). Robolectric trae un
+     * SQLite nuevo (32 766 parámetros): el caso se reproduce por encima de ese tope; el de 999 lo cuida S34.
+     */
+    @Test fun la_bandeja_se_guarda_aunque_lleguen_mas_chats_de_los_que_sqlite_liga_en_una_consulta() = runTest {
+        val dao = db.conversations()
+        dao.upsert(listOf(conv("wa_viejo", 1, window = 7), conv("wa_que_ya_no_esta", 1)))
+        dao.replaceAll((0 until 33_000).map { conv("wa_$it", it.toLong()) } + conv("wa_viejo", 2))
+        val rows = dao.observeAll().first()
+        assertThat(rows).hasSize(33_001)
+        assertThat(rows.map { it.sessionId }).doesNotContain("wa_que_ya_no_esta")
+        assertThat(rows.first { it.sessionId == "wa_viejo" }.windowExpiresAtMs).isEqualTo(7)
+    }
+
     @Test fun el_historial_se_reemplaza_por_sesion() = runTest {
         val dao = db.messages()
         dao.replaceSession("wa_a", listOf(MessageEntity("wa_a", "k1", 0, "CUSTOMER", "hola", null, 1)))

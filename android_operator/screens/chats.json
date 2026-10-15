@@ -45,6 +45,7 @@
         "avatar": "{{c.name}}", "avatar_seed": "{{c.session_id}}",
         "title": "{{c.title}}", "emphasis": "{{c.unread}}",
         "subtitle": "{{c.preview}}",
+        "title_tag": "{{c.human | if:'Humano'}}", "title_tag_tone": "primary",
         "trailing_caption": "{{c.time_ms | list_time}}", "trailing_tone": "{{c.unread | if:'primary':'muted'}}",
         "badge": "{{c.unseen}}", "badge_label": "{{c.unseen_label}}",
         "caption": "{{c.detail}}", "caption_icon": "{{c.human | if:'person':'bot'}}", "caption_icon_tone": "{{c.human | if:'primary':'bot'}}",

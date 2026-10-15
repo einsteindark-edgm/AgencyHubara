@@ -156,6 +156,8 @@ object Catalog {
                 icon("icon", "Ícono a la izquierda."), tone("icon_tone", "Color del ícono."), text("avatar", "Nombre para un avatar a la izquierda (en vez de ícono)."),
                 text("avatar_seed", "Valor estable para el color del avatar (por defecto el nombre)."),
                 text("tag", "Píldora debajo del título."), tone("tag_tone", "Color de la píldora."),
+                text("title_tag", "Píldora chica al lado del título, sin agregar una línea (quién atiende: «Humano»)."),
+                tone("title_tag_tone", "Color de la píldora del título."),
                 text("trailing", "Valor a la derecha (un total, una cifra)."), text("trailing_caption", "Línea chica debajo del valor (una hora)."),
                 enum("trailing_tone", "Color del valor y su línea chica.", TEXT_TONES),
                 bool("chevron", "Flecha a la derecha (lleva a otra pantalla)."),

@@ -157,5 +157,7 @@ firmado `sender: human`), intervenir / devolver / mensajes / plantillas, el SSE 
 
 `python3 sandbox/inject.py fire` crea a Mateo (`wa_000000000107`) pidiendo un humano: un incendio grave
 nuevo que llega por SSE en 1–2 s (`--name "Lucía Prueba" --session wa_000000000108` para otro cliente).
-`inject.py reply <sesión> "<texto>"` agrega un mensaje del cliente. Hay una campaña de WhatsApp sintética ya enviada
+`inject.py reply <sesión> "<texto>"` agrega un mensaje del cliente. `inject.py crowd --count 1200` agrega conversaciones
+viejas del bot (una bandeja del tamaño de producción, S34) y `inject.py answered <sesión> "<nombre>" "<texto>"` un chat
+que el equipo respondió hace 30 min y al que el cliente le escribió `<texto>` 15 min después (S35). Hay una campaña de WhatsApp sintética ya enviada
 («Velas de octubre (prueba)», `<vault>/_campaigns/`) para la pantalla «Campañas».

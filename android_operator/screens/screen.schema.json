@@ -1625,6 +1625,34 @@
                 ],
                 "description": "Color de la píldora."
               },
+              "title_tag": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Píldora chica al lado del título, sin agregar una línea (quién atiende: «Humano»)."
+              },
+              "title_tag_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color de la píldora del título."
+              },
               "trailing": {
                 "type": [
                   "string",
