@@ -304,3 +304,50 @@ def test_append_user_event_omits_late_marks_when_absent(tmp_path):
     parsed = json.loads(log.read_text(encoding="utf-8").strip())
     assert "sent_at" not in parsed
     assert "arrived_after_window" not in parsed
+
+
+# --- Doble check de WhatsApp: el texto guarda los wamids de sus burbujas -------
+
+
+def _last_event(tmp_path, session_id="wa_1"):
+    log = tmp_path / session_id / "sessions" / f"{session_id}.jsonl"
+    return json.loads(log.read_text(encoding="utf-8").strip().splitlines()[-1])
+
+
+def test_persist_activity_keeps_the_wamid_of_each_bubble_that_went_out(tmp_path, monkeypatch):
+    """Un texto del bot sale como N burbujas: el evento guarda sus N wamids
+    (los que Meta aceptó) para unirle los estados de WhatsApp."""
+    import asyncio
+
+    from src.platform.session_history import activities
+
+    monkeypatch.setattr(activities, "WORKSPACE_VAULT_DIR", tmp_path)
+    delivered = [{"wamid": "wamid.A", "text": "¡Hola!"}, {"wamid": "wamid.B", "text": "¿Qué buscas?"}]
+
+    asyncio.run(
+        activities.persist_assistant_message_activity("wa_1", "¡Hola!\n\n¿Qué buscas?", None, delivered)
+    )
+
+    assert _last_event(tmp_path)["wamids"] == ["wamid.A", "wamid.B"]
+
+
+def test_persist_activity_without_bubbles_writes_no_wamids(tmp_path, monkeypatch):
+    """Histories de antes (o un reintento sin wamid): sin `wamids` → el chat
+    dirá «sin confirmación», nunca un check inventado."""
+    import asyncio
+
+    from src.platform.session_history import activities
+
+    monkeypatch.setattr(activities, "WORKSPACE_VAULT_DIR", tmp_path)
+
+    asyncio.run(activities.persist_assistant_message_activity("wa_1", "hola", None, [{"wamid": "", "text": "hola"}]))
+
+    assert "wamids" not in _last_event(tmp_path)
+
+
+def test_human_event_keeps_the_wamids_of_the_operator_text(tmp_path):
+    store = FilesystemMessageHistoryStore(tmp_path)
+
+    store.append_human_event("wa_1", "Ya te ayudo", wamids=["wamid.H1"])
+
+    assert _last_event(tmp_path)["wamids"] == ["wamid.H1"]

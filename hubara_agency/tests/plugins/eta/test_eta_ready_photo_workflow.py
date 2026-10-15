@@ -75,7 +75,9 @@ def _fakes(t: Tracker):
         t.status_sends.append(template)
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def persist(session_id: str, message: str) -> None:
+    async def persist(
+        session_id: str, message: str, tools_used: object = None, delivered: object = None
+    ) -> None:
         return None
 
     @activity.defn(name="record_eta_notification_activity")

@@ -117,7 +117,14 @@ fun MessageCard.reachable(mediaUrl: (String?) -> String?): MessageCard = copy(
 
 /** El cuerpo de la tarjeta, dentro de la burbuja del autor ([fg] es el color del texto sobre ella). */
 @Composable
-internal fun CardContent(card: MessageCard, fg: Color, time: String?, modifier: Modifier = Modifier) {
+internal fun CardContent(
+    card: MessageCard,
+    fg: Color,
+    time: String?,
+    modifier: Modifier = Modifier,
+    /** El doble check de WhatsApp, junto a la hora (2026-10-15). */
+    check: (@Composable () -> Unit)? = null,
+) {
     Column(modifier.widthIn(min = 240.dp, max = 320.dp)) {
         CardHeader(card, fg)
         card.images.forEach { CardPhoto(it, fg) }
@@ -131,11 +138,14 @@ internal fun CardContent(card: MessageCard, fg: Color, time: String?, modifier: 
         if (card.buttons.isNotEmpty()) Column(Modifier.padding(top = Spacing.sm)) { card.buttons.forEach { CardButtonRow(it, fg) } }
         card.action?.let { CardAction(it, fg) }
         card.link?.let { CardLinkRow(it, fg) }
-        time?.let {
-            Text(
-                it, style = MaterialTheme.typography.labelSmall, color = fg.copy(alpha = 0.7f),
-                modifier = Modifier.align(Alignment.End).padding(horizontal = CardPadding, vertical = Spacing.xs),
-            )
+        if (time != null || check != null) {
+            Row(
+                Modifier.align(Alignment.End).padding(horizontal = CardPadding, vertical = Spacing.xs),
+                horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
+            ) {
+                time?.let { Text(it, style = MaterialTheme.typography.labelSmall, color = fg.copy(alpha = 0.7f)) }
+                check?.invoke()
+            }
         }
     }
 }

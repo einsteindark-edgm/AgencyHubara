@@ -202,7 +202,7 @@ def test_send_message_blocks_when_service_window_closed(client_and_vault):
         {"active_route": "humano", "service_window_expires_at_ms": 1},  # cerrada
     )
 
-    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=AsyncMock()):
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=AsyncMock(return_value=(True, []))):
         res = client.post(
             "/api/dashboard/sessions/wa_7/messages",
             json={"text": "hola tardío"},
@@ -217,7 +217,7 @@ def test_send_message_allowed_when_window_field_absent(client_and_vault):
     client, vault = client_and_vault
     _write_metadata(vault, "wa_8", {"active_route": "humano"})
 
-    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=AsyncMock()):
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=AsyncMock(return_value=(True, []))):
         res = client.post(
             "/api/dashboard/sessions/wa_8/messages",
             json={"text": "hola"},
@@ -234,8 +234,8 @@ def test_send_message_is_idempotent_by_client_message_id(client_and_vault):
         {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
     )
 
-    send_mock = AsyncMock()
-    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=send_mock):
+    send_mock = AsyncMock(return_value=(True, []))
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=send_mock):
         r1 = client.post(
             "/api/dashboard/sessions/wa_9/messages",
             json={"text": "hola", "client_message_id": "dup-1"},
@@ -421,10 +421,10 @@ def test_send_does_not_clobber_concurrent_metadata_writes(client_and_vault):
         data = _read_metadata(vault, session_id)
         data["concurrent_marker"] = "escrito-durante-el-send"
         _write_metadata(vault, session_id, data)
-        return True  # PM2-B3: el send ahora devuelve ok=True/False
+        return True, []  # PM2-B3: ok=True/False (+ las burbujas que salieron)
 
     with patch(
-        "src.plugins.chats.api.handoff.send_message_to_session",
+        "src.plugins.chats.api.handoff.send_text_to_session",
         new=AsyncMock(side_effect=_concurrent_writer),
     ):
         res = client.post(
@@ -448,8 +448,8 @@ def test_send_message_text_only_still_works(client_and_vault):
         {"active_route": "humano", "service_window_expires_at_ms": _FUTURE_MS},
     )
 
-    send_mock = AsyncMock(return_value=True)
-    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=send_mock):
+    send_mock = AsyncMock(return_value=(True, []))
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=send_mock):
         res = client.post(
             "/api/dashboard/sessions/wa_11/messages",
             json={"text": "hola equipo"},
@@ -480,8 +480,8 @@ def test_text_send_failure_returns_502(client_and_vault):
     )
 
     with patch(
-        "src.plugins.chats.api.handoff.send_message_to_session",
-        new=AsyncMock(return_value=False),
+        "src.plugins.chats.api.handoff.send_text_to_session",
+        new=AsyncMock(return_value=(False, [])),
     ):
         res = client.post(
             "/api/dashboard/sessions/wa_b3/messages",

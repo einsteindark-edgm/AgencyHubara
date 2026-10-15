@@ -828,3 +828,33 @@ scenarios:
       - sent_contains: ['"to": "000000000102"', "Plegaria de Luz"]
       - sent_nothing_matching: ['"to": "000000000102"', "Zodiacal"]
       - screen_has: "Tú atiendes"
+
+  - id: S34_doble_check_de_whatsapp
+    title: Cada mensaje del bot dice si WhatsApp lo entregó, lo leyó o no llegó
+    resumen: "Caso 2026-10-15: con DeepSeek caído el bot respondió un rato con Gemini y el operador no podía saber si esos mensajes llegaron; los estados de WhatsApp existían pero no estaban en la conversación. Ahora cada burbuja del bot o del operador lleva su doble check con lo que informó WhatsApp por webhook: ✓ enviado, ✓✓ entregado, ✓✓ en otro color leído y «No llegó» en rojo con el código de Meta. Sin dato dice «sin confirmación». El escenario manda los webhooks de verdad al backend (desordenados, como llegan) y la burbuja cambia sola, con el chat abierto."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "000000000101"}, {expect: {text: "¿Cuántos te gustaría llevar?", timeout: 30}}]
+    script:
+      - {expect: "sin confirmación"}
+      # El último texto: leído (llega antes que «enviado», como en prod; el check no retrocede).
+      - {inject: "wa-status wa_000000000101 read"}
+      - {inject: "wa-status wa_000000000101 sent"}
+      # La foto del producto: no llegó (error de Meta al subir la foto).
+      - {inject: "wa-status wa_000000000101 failed --back 1 --code 131053 --title 'Media upload error'"}
+      # El primer texto: entregado (queda arriba, fuera de la pantalla).
+      - {inject: "wa-status wa_000000000101 delivered --back 2"}
+      - {expect: {text: "No llegó · 131053", timeout: 30}}
+      - {expect_all: ["Leído por WhatsApp", "No llegó · 131053"]}
+      - {shot: doble-check}
+      - {swipe: {at: "Dúo Zodiacal · $89.900", dx: 0, dy: 900}}
+      - {expect: "Entregado por WhatsApp"}
+    goal: |
+      Abre el chat 000000000101 (Laura Prueba) y mira la hora de cada mensaje que envió el bot.
+      1. Di qué marca tiene cada mensaje del bot junto a su hora (¿un check, dos, de qué color, algún texto?).
+      2. ¿Hay algún mensaje que diga que no llegó? ¿Qué código muestra?
+      3. Desliza hacia arriba hasta el primer mensaje del bot: ¿qué marca tiene? ¿Alguno dice «sin confirmación»?
+      Reporta lo que viste en cada paso.
+    checks:
+      - screen_has: "Entregado por WhatsApp"
+      - screen_lacks: "Enviado por WhatsApp"
+      - screen_lacks: "sin confirmación"

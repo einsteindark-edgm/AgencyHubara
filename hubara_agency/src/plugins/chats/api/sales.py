@@ -332,11 +332,15 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
 def _status_execute(use_case: Any, status_update: Any) -> Callable[..., Awaitable[None]]:
     """`execute` del use case con la hora y el código de error del estado:
     entregado/leído/fallido de un mensaje de campaña quedan con su hora
-    (Ads, 2026-09-25). Sin hora de Meta, la de llegada."""
+    (Ads, 2026-09-25). Sin hora de Meta, la de llegada. El destinatario ubica
+    la conversación del doble check del chat (caso 2026-10-15)."""
     return functools.partial(
         use_case.execute,
         timestamp_ms=status_update.timestamp_ms or _now_ms(),
         error_code=status_update.error_code,
+        error_title=status_update.error_title,
+        recipient_id=status_update.recipient_id,
+        recipient_user_id=status_update.recipient_user_id,
     )
 
 

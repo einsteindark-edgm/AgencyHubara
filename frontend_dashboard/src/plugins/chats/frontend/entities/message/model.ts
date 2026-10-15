@@ -110,4 +110,16 @@ export interface ChatMessage {
     text?: string;
     image_url?: string;
   };
+  /** Doble check de WhatsApp (solo salientes): lo que Meta informó. */
+  delivery?: MessageDelivery;
+}
+
+/** Lo que WhatsApp informó de un mensaje saliente, por webhook. Un texto que
+ *  salió en varias burbujas muestra la más atrasada. `unconfirmed`: no llegó
+ *  ningún estado (el panel dice «sin confirmación», nunca un check). */
+export interface MessageDelivery {
+  status: "sent" | "delivered" | "read" | "failed" | "unconfirmed";
+  at_ms?: number | null;
+  error_code?: number | null;
+  error_title?: string | null;
 }

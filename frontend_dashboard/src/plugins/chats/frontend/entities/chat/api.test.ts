@@ -207,6 +207,7 @@ interface RawMsg {
   event?: ChatEvent;
   sent_at?: string;
   arrived_after_window?: boolean;
+  delivery?: { status: string; at_ms?: number | null; error_code?: number | null; error_title?: string | null };
 }
 
 function mockSessionDetail(messages: RawMsg[]) {
@@ -890,5 +891,72 @@ describe("useChatMessages — mensaje que Meta entregó tarde", () => {
     expect(bubble?.sentDayIso).toBeUndefined();
     expect(bubble?.sentTime).toBeUndefined();
     expect(bubble?.arrivedAfterWindow).toBeUndefined();
+  });
+});
+
+
+describe("useChatMessages — doble check de WhatsApp", () => {
+  // 02:45 UTC = 21:45 en Bogotá.
+  const AT_MS = Date.parse("2026-10-15T02:45:00+00:00");
+
+  it("el mensaje del bot muestra lo que informó WhatsApp, con su hora", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "agent_message",
+        role: "assistant",
+        content: "¡Hola!",
+        timestamp: "2026-10-15T02:40:00+00:00",
+        delivery: { status: "read", at_ms: AT_MS, error_code: null, error_title: null },
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "out")?.delivery).toEqual({ status: "read", time: "21:45" });
+  });
+
+  it("un fallido trae el código de Meta", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "human_message",
+        role: "assistant",
+        sender: "human",
+        content: "Ya te ayudo",
+        delivery: { status: "failed", at_ms: AT_MS, error_code: 131047, error_title: "Re-engagement message" },
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "out")?.delivery).toEqual({
+      status: "failed",
+      time: "21:45",
+      errorCode: 131047,
+      errorTitle: "Re-engagement message",
+    });
+  });
+
+  it("sin dato de WhatsApp el saliente queda «sin confirmación»: nunca un check inventado", async () => {
+    const data = await runMessages([
+      { ui_type: "agent_message", role: "assistant", content: "Mensaje viejo" },
+      { ui_type: "user_message", role: "user", content: "hola" },
+    ]);
+    expect(data?.find((m) => m.kind === "out")?.delivery).toEqual({ status: "unconfirmed" });
+    expect(data?.find((m) => m.kind === "in")?.delivery).toBeUndefined();
+  });
+
+  it("la tarjeta del bot (catálogo) también lleva su check", async () => {
+    const data = await runMessages([
+      {
+        ui_type: "ui_component_sent",
+        role: "assistant",
+        content: "🛍️ El bot envió el catálogo",
+        event: {
+          kind: "bot_card",
+          component: "products_list",
+          title: null,
+          text: "Para la Noche de Velitas tenemos:",
+          items: [],
+          link: null,
+          images: [],
+        },
+        delivery: { status: "delivered", at_ms: AT_MS, error_code: null, error_title: null },
+      },
+    ]);
+    expect(data?.find((m) => m.kind === "out")?.delivery).toEqual({ status: "delivered", time: "21:45" });
   });
 });
