@@ -769,9 +769,11 @@ class HubaraSalesSessionWorkflowV2:
                         retry_policy=RetryPolicy(maximum_attempts=2),
                     )
                     trace_steps.append(_text_outbound(greeting, greeting_delivered))
+                    # 4.º argumento: las burbujas que salieron, con su wamid
+                    # (el doble check de WhatsApp en el chat se une por ahí).
                     await workflow.execute_activity(
                         persist_assistant_message_activity,
-                        args=[session.session_id, greeting],
+                        args=[session.session_id, greeting, None, greeting_delivered],
                         start_to_close_timeout=timedelta(seconds=10),
                         retry_policy=RetryPolicy(maximum_attempts=2),
                     )
@@ -901,7 +903,7 @@ class HubaraSalesSessionWorkflowV2:
                         # para el juez del eval (caso ep_010).
                         await workflow.execute_activity(
                             persist_assistant_message_activity,
-                            args=[session.session_id, text_out, list(result.tools_used or [])],
+                            args=[session.session_id, text_out, list(result.tools_used or []), final_delivered],
                             start_to_close_timeout=timedelta(seconds=10),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )

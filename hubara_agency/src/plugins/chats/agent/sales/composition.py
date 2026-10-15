@@ -326,8 +326,19 @@ def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:
         event_bus=event_bus,
         vault_dir=WORKSPACE_VAULT_DIR,
         tenant_id=tenant_id,
+        on_delivery_recorded=_publish_session_updated,
     )
     return _DELIVERY_STATUS_USE_CASE
+
+
+def _publish_session_updated(session_id: str) -> None:
+    """El doble check de WhatsApp en vivo: el panel y la App Operador ya
+    recargan el detalle de una conversación con `chats.session_updated` (canal
+    1, SSE). Los estados se ingieren en el proceso de la API, donde vive el bus.
+    Import local: el bus es del proceso API, no de los workers."""
+    from src.sdk.dashboardkit import get_dashboard_event_bus
+
+    get_dashboard_event_bus().publish("chats", "session_updated", id=session_id)
 
 
 def build_ingest_standby_use_case() -> IngestStandby:

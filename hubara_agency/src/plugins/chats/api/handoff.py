@@ -26,7 +26,7 @@ Tres endpoints:
         arranca el workflow proactivamente con un motivo del humano.
 
 Reusan helpers extraídos en este mismo PR:
-  - `send_message_to_session` (`platform/whatsapp/activities.py`)
+  - `send_text_to_session` (`platform/whatsapp/activities.py`)
   - `start_remarketing_for_session`, `terminate_session_workflows`
     (`platform/temporal/dispatcher.py`)
   - `FilesystemMessageHistoryStore.append_human_event`
@@ -77,7 +77,7 @@ from src.platform.temporal.dispatcher import (
 from src.platform.whatsapp.activities import (
     send_document_to_session,
     send_image_to_session,
-    send_message_to_session,
+    send_text_to_session,
 )
 from src.platform.state import FilesystemMetadataStore
 
@@ -743,6 +743,7 @@ async def send_human_message(
         pending.pop(cmid, None)
         return fresh
 
+    text_bubbles: list[dict[str, str]] = []
     if payload.attachment_id:
         # Envío del ADJUNTO (fase B). El media_id ya vive en Meta (fase A).
         # `kind` de la fase A decide el tipo de mensaje WhatsApp.
@@ -778,7 +779,9 @@ async def send_human_message(
     else:
         # Envío de TEXTO. PM2-B3: propagar el rechazo de Meta — antes se
         # tragaba y el operador veía "enviado" con el cliente sin recibir nada.
-        delivered = await send_message_to_session(
+        # Con las burbujas que salieron: el historial guarda sus wamids (el
+        # doble check de WhatsApp del chat se une por ahí).
+        delivered, text_bubbles = await send_text_to_session(
             session_id, payload.text, author="human"
         )
         if not delivered:
@@ -836,7 +839,11 @@ async def send_human_message(
                 wamid=result.wa_message_id,
             )
         else:
-            history_store.append_human_event(session_id, payload.text)
+            history_store.append_human_event(
+                session_id,
+                payload.text,
+                wamids=[b.get("wamid") or "" for b in text_bubbles],
+            )
     except OSError as e:
         # El mensaje SÍ llegó al cliente; perder el rastro en el histórico es
         # malo, pero 500-ear acá haría que el frontend reintente y (sin la

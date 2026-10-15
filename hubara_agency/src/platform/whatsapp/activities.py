@@ -284,6 +284,15 @@ async def send_message_to_session(
     return ok
 
 
+async def send_text_to_session(
+    session_id: str, message: str, *, author: str = "agent"
+) -> tuple[bool, list[dict[str, str]]]:
+    """Como `send_message_to_session`, pero devuelve también las burbujas que
+    Meta aceptó (`[{wamid, text}]`): el historial guarda sus wamids y el chat
+    les une el doble check de WhatsApp (caso 2026-10-15)."""
+    return await _send_freeform(session_id, message, author=author)
+
+
 async def _send_freeform(
     session_id: str, message: str, *, author: str = "agent"
 ) -> tuple[bool, list[dict[str, str]]]:

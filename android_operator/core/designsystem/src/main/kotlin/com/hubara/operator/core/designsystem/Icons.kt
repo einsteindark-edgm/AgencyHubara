@@ -22,6 +22,7 @@ object OperatorIcons {
     val Person: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_person)
     val Schedule: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_schedule)
     val Check: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_check)
+    val DoneAll: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_done_all)
     val Shipping: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_shipping)
     val Payments: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_payments)
     val Inventory: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_inventory)

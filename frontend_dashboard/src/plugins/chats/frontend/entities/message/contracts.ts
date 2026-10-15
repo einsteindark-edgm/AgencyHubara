@@ -85,6 +85,15 @@ export const chatEventSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/** Doble check de WhatsApp: lo que Meta informó por webhook del mensaje
+ *  saliente (`unconfirmed` = no llegó ningún estado; nunca se inventa). */
+export const messageDeliverySchema = z.object({
+  status: z.enum(["sent", "delivered", "read", "failed", "unconfirmed"]),
+  at_ms: z.number().nullable().optional(),
+  error_code: z.number().nullable().optional(),
+  error_title: z.string().nullable().optional(),
+});
+
 export const chatMessageSchema = z.object({
   ui_type: messageUiTypeSchema,
   role: z.string(),
@@ -133,6 +142,9 @@ export const chatMessageSchema = z.object({
       image_url: z.string().optional(),
     })
     .optional(),
+  /** Solo en mensajes salientes (bot u operador). Un valor raro queda sin
+   *  dato y la burbuja dice «sin confirmación»: nunca tumba la sesión (L-10). */
+  delivery: messageDeliverySchema.optional().catch(undefined),
 });
 
 export type ChatMessageDto = z.infer<typeof chatMessageSchema>;

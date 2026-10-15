@@ -139,7 +139,9 @@ def _make_fake_activities(
         tracker.send_whatsapp_calls.append(message)
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def fake_persist(session_id: str, message: str) -> None:
+    async def fake_persist(
+        session_id: str, message: str, tools_used: object = None, delivered: object = None
+    ) -> None:
         tracker.persist_calls.append(message)
 
     # remarketing-ladder-v1: todo intento proactivo consume su peldaño.
