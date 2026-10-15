@@ -406,6 +406,12 @@ scan:
     - "HubaraSalesSessionWorkflow"
     - "hubara-dev"
     - "hubara-api"
+    # Agent Gateway (ADR 2026-10-14): resource server MCP del motor y el plugin
+    # @acktos/dsh-hubara (nombre de paquete, no del cliente). El SSM del secreto
+    # va bajo /hubara/agent-gateway/ y lo reescribe la regla ssm-prefix.
+    - "hubara-mcp"
+    - "dsh-hubara"
+    - "dsh_hubara"
 
   # Marcas de redacción pendiente en el workspace: bloquean apply salvo
   # --allow-todos (para forjar clones de prueba).
