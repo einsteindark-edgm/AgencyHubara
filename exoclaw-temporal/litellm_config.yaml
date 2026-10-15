@@ -32,10 +32,36 @@ model_list:
   # Beijing) hasta que salga V4.1 Pro. Fuente: api-docs.deepseek.com/quick_start/
   # pricing (notas 1 y 2). Guard del id: test_llm_thinking_disabled.py.
   #
+  # TIMEOUT: 30 s (2026-10-15). A las 01:30 UTC DeepSeek se saturó y las
+  # llamadas no dieron 503: se COLGARON. 26 de 28 intentos de llm_chat murieron
+  # a los 5 min (start_to_close de _LLM_OPTIONS), una conversación de anuncio
+  # quedó 12 min sin respuesta y fallaron 7 de 10 toques de remarketing. El
+  # fallback a gemini-backup (router_settings, abajo) sólo entra con un ERROR, y
+  # sin `timeout` litellm espera 600 s: el error nunca llegaba.
+  #
+  # POR QUÉ 30 y no "algo menos de 5 min" — medido contra la API real esa noche:
+  # saturado, DeepSeek manda el 200 a los 0,4 s y después UNA línea vacía cada
+  # 60 s (el JSON llegó a los 806 s). El `timeout` de litellm es POR LECTURA
+  # (aiohttp sock_read): cada línea vacía lo reinicia. Un timeout de 60 s o más
+  # NO vence nunca contra un DeepSeek saturado; uno por debajo vence antes de la
+  # primera línea vacía. Piso: la llamada sana más lenta de un turno de ventas
+  # (prompt de ~29,7k tokens) tardó 9,45 s en 1.323 llamadas (p99,9 4,7 s) →
+  # 30 s le deja 3x de margen y queda a la mitad del tick de 60 s.
+  #
+  # LÍMITE: el arreglo depende de ese intervalo de 60 s, que DeepSeek NO
+  # documenta (lo medimos: 13 de 13 líneas a 60,0 s). Si un día lo baja por
+  # debajo de este timeout, el timeout no vence nunca y vuelve el cuelgue. La
+  # defensa completa sería un tope TOTAL en la activity llm_chat que caiga al
+  # respaldo (seguimiento, no implementado).
+  #
+  # Guard: hubara_agency/tests/platform/test_llm_hang_falls_over.py (los dos
+  # cuelgues — silencio y líneas vacías — contra este YAML montado en un Router,
+  # y el caso límite: una línea más seguido que el timeout NO corta).
   - model_name: deepseek-v4-flash
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
+      timeout: 30
       extra_body:
         thinking:
           type: disabled
@@ -44,10 +70,17 @@ model_list:
   # para dos cosas: el brazo B del golden eval (`scripts/golden_eval.py` con
   # DEFAULT_LLM_MODEL=deepseek/deepseek-v4-flash-thinking) y rollback por env
   # sin tocar el proxy ni redeployar.
+  #
+  # TIMEOUT: 45 s, el más largo que todavía vence con holgura antes de la línea
+  # vacía de los 60 s (ver el alias de arriba). Razonar alarga la llamada y este
+  # alias no se midió: más margen para el brazo B del golden eval (una llamada
+  # cortada la contestaría Gemini y ensuciaría el A/B) sin perder el respaldo si
+  # vuelve a atender clientes por rollback.
   - model_name: deepseek-v4-flash-thinking
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: "os.environ/DEEPSEEK_API_KEY"
+      timeout: 45
 
   # FALLBACK CONVERSACIONAL del agente (router_settings.fallbacks, abajo) y
   # default de CUSTOMER_SUMMARY_MODEL (hubara_agency/src/platform/config.py).
@@ -153,4 +186,10 @@ router_settings:
   # El failover se activa aquí: si falla 'deepseek-v4-flash', salta a 'gemini-backup';
   # si Google niega 2.5 Flash-Lite a 'gemini-multimodal', atiende su sucesor.
   fallbacks: [{"deepseek-v4-flash": ["gemini-backup"]}, {"deepseek-v4-flash-thinking": ["gemini-backup"]}, {"gemini-multimodal": ["gemini-multimodal-successor"]}]
+  # DeepSeek que venció su `timeout` va DIRECTO al respaldo: con num_retries 1
+  # el router lo esperaría dos veces (60 s en vez de 30) para volver a la misma
+  # cola saturada. Un 503 sí se reintenta una vez (cuesta segundos). Sólo los
+  # grupos de DeepSeek: los demás alias no cambian. Guard:
+  # test_llm_hang_falls_over.py (cuenta los intentos que ve el upstream).
+  model_group_retry_policy: {"deepseek-v4-flash": {"TimeoutErrorRetries": 0}, "deepseek-v4-flash-thinking": {"TimeoutErrorRetries": 0}}
   drop_params: True

@@ -123,6 +123,11 @@ Este documento es la **fuente de verdad de dónde se aloja cada componente**. Lo
 
 ### 3.4 LiteLLM proxy — VPS (misma caja)
 - **Config:** `exoclaw-temporal/litellm_config.yaml`, puerto **4000**. Rutea `deepseek-v4-flash` (alias → upstream `deepseek-flash`, DeepSeek-V4.1-Flash; primario) → `gemini-...` (fallback) con `simple-shuffle`.
+- **Timeout de DeepSeek: 30 s** (`deepseek-v4-flash`; 45 s el alias `-thinking`), y un DeepSeek vencido va **directo** a `gemini-backup` (`model_group_retry_policy: TimeoutErrorRetries: 0`). Existe por el incidente del **2026-10-15 01:30 UTC**: DeepSeek saturado no dio 503, **colgó** las llamadas; 26 de 28 intentos de `llm_chat` murieron a los 5 min (`start_to_close` de `_LLM_OPTIONS`), una conversación de anuncio quedó 12 min sin respuesta y fallaron 7 de 10 toques de remarketing. El fallback solo entra con un error, y sin `timeout` litellm espera 600 s.
+  - **Por qué menos de 60 s:** saturado, DeepSeek manda el `200` enseguida y después **una línea vacía cada 60 s** (medido esa noche: el JSON llegó a los 806 s). El `timeout` de litellm es **por lectura** (aiohttp `sock_read`): cada línea vacía lo reinicia, así que un timeout ≥ 60 s nunca vence. Probado igual con litellm 1.82.6 (`uv.lock`) y 1.86.2 (proxy de prod).
+  - **Por qué no menos de 30 s:** la llamada sana más lenta de un turno de ventas (prompt de ~29,7k tokens) tardó 9,45 s entre 1.323 `llm_chat` contra DeepSeek real (p99,9 4,7 s). Un turno sano no se corta; uno colgado pasa a Gemini a los ~30 s en vez de esperar 5–15 min.
+  - **Límite:** el arreglo depende de ese intervalo de 60 s, que DeepSeek **no documenta** (medido: 13 de 13). Si lo baja por debajo del timeout, el timeout no vence nunca y vuelve el cuelgue. La defensa completa sería un tope **total** en la activity `llm_chat` que caiga al respaldo (seguimiento, no implementado).
+  - **Guard:** `hubara_agency/tests/platform/test_llm_hang_falls_over.py` monta este YAML en un `litellm.Router` y prueba los dos cuelgues (silencio y líneas vacías), el turno sano lento y el caso límite (una línea más seguido que el timeout no corta).
 - **Réplicas:** **1** en prod (los manifiestos k8s ponen 2 para HA; innecesario a esta escala).
 - **Stateless** — no necesita storage.
 
