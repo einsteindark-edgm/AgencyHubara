@@ -120,7 +120,7 @@ def test_log_appends_per_conversation_and_reads_back_folded(tmp_path: Path) -> N
     assert folded["wamid.X"].status == "delivered"
     assert folded["wamid.Y"].error_code == 131049
     assert (tmp_path / _SESSION / "delivery_statuses.jsonl").exists()
-    assert log.read("wa_573009999999") == {}
+    assert log.read("wa_000000000102") == {}
 
 
 def test_log_never_writes_outside_a_customer_conversation(tmp_path: Path) -> None:
