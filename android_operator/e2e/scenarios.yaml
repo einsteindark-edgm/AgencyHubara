@@ -659,7 +659,9 @@ scenarios:
     resumen: "Caso 2026-10-09: Meta re-entregó días después un mensaje perdido y, con la hora de llegada, parecía la respuesta a la plantilla recién enviada. En el chat de Mariana la burbuja dice «Escrito el …» y, como llegó con la ventana de 24 h cerrada, una nota explica que el bot no respondió y que solo un mensaje nuevo del cliente la abre."
     setup: *fresh
     script:
-      # Al fondo de la bandeja: el número queda bajo el borde, el nombre se ve.
+      # Al fondo de la bandeja: con los filtros en dos filas (cada uno con su bolita) queda bajo el borde; se desliza
+      # la bandeja hasta verla.
+      - {swipe: {at: "Camilo Prueba", dx: 0, dy: -900}}
       - {tap: "Mariana Prueba"}
       - {expect: "Le gusta la lavanda"}
       - {expect: "Escrito el"}
