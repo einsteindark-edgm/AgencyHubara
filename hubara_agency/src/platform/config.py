@@ -216,6 +216,24 @@ CUSTOMER_SUMMARY_MODEL = os.getenv(
 # el master key del proxy. Local: cualquier string sirve.
 LITELLM_API_KEY = os.getenv("LITELLM_API_KEY", "sk-litellm-proxy-local")
 
+# Tope y respaldo de `llm_chat` (2026-10-15). A las 01:30 UTC DeepSeek saturado
+# COLGÓ las llamadas: 26 de 28 intentos murieron a los 5 min. El proxy ya corta a
+# DeepSeek a los 30 s (`timeout` en litellm_config.yaml), pero ese timeout es por
+# lectura y alcanza solo porque DeepSeek manda su línea vacía cada 60 s, un
+# intervalo que NO documenta. Esto es el tope TOTAL de la activity: si la llamada
+# vence o falla, `llm_chat` la corta y repite la petición con el respaldo.
+#   * 60 s: deja que el proxy corte a DeepSeek (30 s; 45 el alias -thinking) y
+#     conteste su propio respaldo primero. La llamada sana más lenta de PROD tardó
+#     7,4 s (966 llm_chat del 10-10 al 10-15; p99 2,9 s; ninguna pasó de 20 s).
+#   * Respaldo: el MISMO alias al que cae el router del proxy, por el proxy
+#     (`litellm_proxy/`), sin reasoning_effort, con su propio tope de 45 s.
+#   * 60 + 45 = 105 s: menos de la mitad del intento (start_to_close de 5 min).
+# Constantes de código, no env: no son knobs por tenant (regla Terraform).
+# Guard: tests/platform/test_llm_fallback_wiring.py.
+LLM_CALL_DEADLINE_S = 60.0
+LLM_FALLBACK_MODEL = "litellm_proxy/gemini-backup"
+LLM_FALLBACK_DEADLINE_S = 45.0
+
 # Workspace Configurations
 WORKSPACE_VAULT_DIR = Path(os.getenv("WORKSPACE_VAULT_DIR", "./hubara_vault")).resolve()
 
