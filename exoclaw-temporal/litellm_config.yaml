@@ -48,11 +48,12 @@ model_list:
   # (prompt de ~29,7k tokens) tardó 9,45 s en 1.323 llamadas (p99,9 4,7 s) →
   # 30 s le deja 3x de margen y queda a la mitad del tick de 60 s.
   #
-  # LÍMITE: el arreglo depende de ese intervalo de 60 s, que DeepSeek NO
+  # LÍMITE: este timeout depende de ese intervalo de 60 s, que DeepSeek NO
   # documenta (lo medimos: 13 de 13 líneas a 60,0 s). Si un día lo baja por
-  # debajo de este timeout, el timeout no vence nunca y vuelve el cuelgue. La
-  # defensa completa sería un tope TOTAL en la activity llm_chat que caiga al
-  # respaldo (seguimiento, no implementado).
+  # debajo de este timeout, el proxy no corta nunca. Para eso está la segunda
+  # capa: un tope TOTAL de 60 s en la activity llm_chat que, al vencer, pide el
+  # mismo turno a gemini-backup por el proxy (LLM_CALL_DEADLINE_S en
+  # hubara_agency/src/platform/config.py; guard test_llm_chat_deadline_fallback.py).
   #
   # Guard: hubara_agency/tests/platform/test_llm_hang_falls_over.py (los dos
   # cuelgues — silencio y líneas vacías — contra este YAML montado en un Router,

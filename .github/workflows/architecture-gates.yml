@@ -267,6 +267,8 @@ jobs:
           tests/platform/test_litellm_model_ids_stable.py
           tests/platform/test_llm_thinking_disabled.py
           tests/platform/test_llm_hang_falls_over.py
+          tests/platform/test_llm_chat_deadline_fallback.py
+          tests/platform/test_llm_fallback_wiring.py
           tests/platform/test_multimodal_via_proxy.py
           tests/platform/customer_scoring/test_llm_summary.py
           tests/platform/perception

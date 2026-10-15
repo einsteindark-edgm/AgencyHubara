@@ -23,7 +23,8 @@ la primera línea vacía. Por eso este guard prueba los dos cuelgues:
 
 Y el LÍMITE (``test_the_limit_a_keepalive_faster_than_the_timeout_is_never_cut``):
 DeepSeek no documenta los 60 s; si los baja por debajo del tope, el tope no
-vence nunca. La defensa completa sería un tope total en ``llm_chat`` (seguimiento).
+vence nunca. Lo cubre la segunda capa: el tope total de ``llm_chat``
+(``test_llm_chat_deadline_fallback.py``).
 
 Mismo patrón que ``test_llm_thinking_disabled.py``: el proxy litellm ES un
 Router, así que se monta el ``model_list`` y el ``router_settings`` REALES del
@@ -320,9 +321,10 @@ async def test_the_limit_a_keepalive_faster_than_the_timeout_is_never_cut() -> N
     manda la línea vacía cada 60 s y el tope es de 30 s. Ese intervalo DeepSeek NO
     lo documenta (lo medimos: 13 de 13, 2026-10-15). Si un día lo baja por debajo
     del tope (acá: cada 15 s reales), el tope nunca vence y vuelve el cuelgue del
-    2026-10-15. La defensa completa sería un tope TOTAL en la activity ``llm_chat``
-    que caiga al respaldo (seguimiento, no implementado). Si este caso se pone
-    rojo, litellm empezó a cortar por tiempo total: revisar si el seguimiento sobra.
+    2026-10-15 en el proxy. Lo cubre la segunda capa: el tope TOTAL de la activity
+    ``llm_chat`` que cae al respaldo (``test_llm_chat_deadline_fallback.py``). Si
+    este caso se pone rojo, litellm empezó a cortar por tiempo total: revisar si
+    la segunda capa sigue haciendo falta.
     """
     config = _config()
     alias = "deepseek-v4-flash"
@@ -345,7 +347,7 @@ async def test_the_limit_a_keepalive_faster_than_the_timeout_is_never_cut() -> N
     assert not done, (
         "con una línea vacía cada medio tope, la llamada terminó: el timeout de "
         "litellm ya no es solo por lectura. Revisar si el tope total en llm_chat "
-        "(seguimiento) sigue haciendo falta."
+        "(test_llm_chat_deadline_fallback.py) sigue haciendo falta."
     )
     assert gemini.requests == 0
 

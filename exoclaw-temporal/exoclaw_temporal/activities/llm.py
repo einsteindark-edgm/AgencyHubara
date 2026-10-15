@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import litellm
 import structlog
 from exoclaw_provider_litellm.provider import LiteLLMProvider
@@ -83,6 +85,76 @@ def _detach_baggage(token) -> None:
         pass
 
 
+async def _chat(
+    provider: LiteLLMProvider,
+    input: LLMChatInput,
+    *,
+    model: str,
+    reasoning_effort: str | None,
+    deadline_s: float | None,
+):
+    """Una llamada al modelo; con ``deadline_s`` es un tope TOTAL.
+
+    ``asyncio.wait_for`` cancela la llamada al vencer: el cliente HTTP cierra la
+    conexión. El ``timeout`` de litellm, en cambio, es por lectura y un servidor
+    que manda bytes de relleno (DeepSeek saturado: una línea vacía por minuto)
+    lo reinicia para siempre.
+    """
+    tool_defs = input.tool_definitions()
+    call = provider.chat(
+        messages=input.messages,
+        tools=tool_defs if tool_defs else None,
+        model=model,
+        temperature=input.llm.temperature,
+        max_tokens=input.llm.max_tokens,
+        reasoning_effort=reasoning_effort,
+    )
+    if deadline_s is None:
+        return await call
+    return await asyncio.wait_for(call, timeout=deadline_s)
+
+
+async def _chat_with_fallback(provider: LiteLLMProvider, input: LLMChatInput):
+    """La llamada con su tope; si vence o falla, la misma petición al respaldo.
+
+    El respaldo va sin ``reasoning_effort`` (es del modelo principal) y con su
+    propio tope: un respaldo colgado no repite el problema. Si también falla,
+    el error sube y Temporal reintenta el intento. Un intento CANCELADO
+    (``CancelledError``, que no es ``Exception``) se cancela: no cae al respaldo.
+    """
+    llm = input.llm
+    try:
+        return await _chat(
+            provider,
+            input,
+            model=llm.model,
+            reasoning_effort=llm.reasoning_effort,
+            deadline_s=llm.call_deadline_s,
+        )
+    except Exception as exc:  # noqa: BLE001 — cualquier falla del principal va al respaldo
+        if not llm.fallback_model:
+            raise
+        baggage = input.baggage or {}
+        # Falla técnica = se recupera sola y avisa: nunca en silencio.
+        logger.warning(
+            "llm_fallback",
+            cause="timeout" if isinstance(exc, (TimeoutError, litellm.Timeout)) else "error",
+            primary_model=llm.model,
+            fallback_model=llm.fallback_model,
+            deadline_s=llm.call_deadline_s,
+            session_id=baggage.get("session.id"),
+            episode_id=baggage.get("episode.id"),
+            error=f"{type(exc).__name__}: {str(exc)[:300]}",
+        )
+        return await _chat(
+            provider,
+            input,
+            model=llm.fallback_model,
+            reasoning_effort=None,
+            deadline_s=llm.fallback_deadline_s,
+        )
+
+
 @activity.defn
 async def llm_chat(input: LLMChatInput) -> LLMResponseData:
     """Call the LLM. Runs as a Temporal activity so it's retried on failure."""
@@ -99,15 +171,7 @@ async def llm_chat(input: LLMChatInput) -> LLMResponseData:
             extra_headers=input.llm.extra_headers or None,
         )
 
-        tool_defs = input.tool_definitions()
-        response = await provider.chat(
-            messages=input.messages,
-            tools=tool_defs if tool_defs else None,
-            model=input.llm.model,
-            temperature=input.llm.temperature,
-            max_tokens=input.llm.max_tokens,
-            reasoning_effort=input.llm.reasoning_effort,
-        )
+        response = await _chat_with_fallback(provider, input)
 
         return LLMResponseData(
             content=response.content,
