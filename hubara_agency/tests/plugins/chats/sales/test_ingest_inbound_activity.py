@@ -124,3 +124,15 @@ async def test_a_cancelled_ingest_is_not_ledgered_as_ingested(monkeypatch, ledge
         await run
 
     assert [r["stage"] for r in ledger.records] == ["ingest_failed"]
+
+
+@pytest.mark.asyncio
+async def test_a_message_queued_by_another_version_still_ingests(monkeypatch, ledger) -> None:
+    """Un mensaje que quedó en Temporal durante un deploy puede traer un campo
+    que esta versión ya no conoce: se ignora, el mensaje entra igual."""
+    ingest = _Ingest()
+    monkeypatch.setattr(composition, "build_ingest_use_case", lambda: ingest)
+    inp = InboundMessageInput(message={**asdict(_MESSAGE), "campo_de_otra_version": "x"})
+
+    assert await ActivityEnvironment().run(ingest_inbound_message_activity, inp) == "ingested"
+    assert ingest.received == [_MESSAGE]

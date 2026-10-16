@@ -3201,8 +3201,10 @@ def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:
     Acá envolvemos la coro en un wrapper que catchea todo, loguea
     estructurado (con label + session_id para correlación), y descarta.
 
-    Pattern usado en HTTP layer del ingest (no en activities Temporal —
-    las activities ya tienen su propio retry policy + logging).
+    Pattern usado por el ingest para la visión y el audio. Desde la entrada
+    durable (ADR 2026-10-15) el ingest corre en una activity del worker
+    `sales`: estas tasks siguen fuera de Temporal (si el proceso muere, se
+    pierden, como antes en la API). La fase 2 las vuelve activities.
     """
     import asyncio
 

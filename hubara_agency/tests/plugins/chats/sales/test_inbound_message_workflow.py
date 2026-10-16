@@ -120,11 +120,44 @@ async def test_a_previous_message_that_failed_does_not_hold_the_next(env) -> Non
 
 
 @pytest.mark.asyncio
-async def test_an_ingest_that_keeps_failing_gives_up_after_three_attempts(env) -> None:
+async def test_an_ingest_that_keeps_failing_gives_up_after_five_attempts_spread_over_minutes(env) -> None:
+    """Acotado, pero no de segundos: un vault o un Temporal que tarda un par de
+    minutos en volver no debe dejar el mensaje en Failed (Meta ya tiene su 200
+    y no lo re-entrega). El diario de efectos hace seguro reintentar."""
     ingest = _Ingest(fail={"wamid.A"})
     async with _worker(env, ingest):
         handle = await _start(env, _input("wamid.A"))
         with pytest.raises(WorkflowFailureError):
             await handle.result()
+        history = await handle.fetch_history()
 
-    assert ingest.attempts["wamid.A"] == 3
+    assert ingest.attempts["wamid.A"] == 5
+    elapsed = history.events[-1].event_time.ToSeconds() - history.events[0].event_time.ToSeconds()
+    assert elapsed >= 120
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_previous_message_holds_the_next_only_up_to_the_cap(env, monkeypatch) -> None:
+    """El orden no vale un mensaje perdido: si el anterior se traba, el
+    siguiente sale al vencer el tope de la espera (acá 0,5 s; en prod 2 min)."""
+    from src.plugins.chats.agent.sales.activities import inbound_entry
+
+    monkeypatch.setattr(inbound_entry, "PREDECESSOR_WAIT_S", 0.5)
+    release = asyncio.Event()
+
+    @activity.defn(name="ingest_inbound_message")
+    async def stuck_first(inp: InboundMessageInput) -> str:
+        if inp.message["message_id"] == "wamid.A":
+            await release.wait()
+        return "ingested"
+
+    async with Worker(
+        env.client, task_queue=QUEUE, workflows=[InboundMessageWorkflow],
+        activities=[stuck_first, wait_inbound_predecessor_activity],
+    ):
+        first = await _start(env, _input("wamid.A"))
+        second = await _start(env, _input("wamid.B", after="wamid.A"))
+
+        assert await asyncio.wait_for(second.result(), timeout=30) == "ingested"
+        release.set()
+        assert await first.result() == "ingested"

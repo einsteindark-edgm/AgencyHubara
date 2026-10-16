@@ -19,6 +19,7 @@ arranca por NOMBRE (string), sin importar su clase (ADR-2026-05-19).
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
 from typing import Any
@@ -44,11 +45,14 @@ class InboundEntry:
     async def accept(self, inp: InboundMessageInput) -> bool:
         """``True`` si el mensaje entró ahora; ``False`` si ya estaba (re-entrega)."""
         client = await self._connected()
+        wamid = str(inp.message.get("message_id") or "")
         try:
             await client.start_workflow(
                 INBOUND_WORKFLOW,
                 inp,
-                id=inbound_workflow_id(str(inp.message.get("message_id") or "")),
+                # Sin wamid (el parser lo deja pasar vacío) no hay dedupe posible:
+                # un id propio para que dos mensajes así no se pisen.
+                id=inbound_workflow_id(wamid) if wamid else f"inbound-sin-wamid-{uuid.uuid4().hex}",
                 task_queue=self._task_queue,
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
                 rpc_timeout=_RPC_TIMEOUT,

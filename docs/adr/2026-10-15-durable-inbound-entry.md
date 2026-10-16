@@ -41,7 +41,8 @@ Recién con todos aceptados responde 200.
   la dedupe por `wamid` que faltaba.
 - **Temporal falla** (sin conexión, timeout de 8 s): `enqueue_failed` en el ledger
   y respuesta **503**. Meta reintenta el POST entero; lo que ya había entrado lo
-  frena la dedupe.
+  frena la dedupe. Los statuses y los `BackgroundTasks` de ese POST no corren con
+  el 503 (FastAPI los descarta); se procesan con el reintento.
 - **Los statuses (✓/✓✓) y los campos `standby` y `messaging_handovers`** siguen
   como hoy: `BackgroundTasks` de la API.
 - **El cliente de Temporal** se conecta una vez por proceso y se reusa
@@ -125,9 +126,11 @@ reintentos de esta fase se miden en minutos.
 ### 6 · Reintentos acotados y envíos con su fingerprint
 
 - **La activity del ingest:** `start_to_close` 5 min, heartbeat cada 10 s,
-  `heartbeat_timeout` 30 s y `RetryPolicy(maximum_attempts=3)` con backoff de 2 s
-  a 30 s. Un worker que muere a mitad (deploy, OOM) se nota por el heartbeat, y el
-  ingest se repite en el worker nuevo.
+  `heartbeat_timeout` 30 s y `RetryPolicy(maximum_attempts=5)`. Los intentos se
+  reparten en ~3 min (5 s, 15 s, 45 s y 2 min de espera). Es acotado, pero un vault
+  o un Temporal que tarda un par de minutos en volver no deja el mensaje en
+  *Failed*: Meta ya tiene su 200 y no lo re-entrega. Un worker que muere a mitad
+  (deploy, OOM) se nota por el heartbeat, y el ingest se repite en el worker nuevo.
 - **Si se agotan los intentos,** el workflow queda *Failed* en Temporal, a la vista
   y reseteable desde la UI. En el ledger queda `ingest_failed`, como hoy.
 - **Lo que un reintento no puede repetir** pasa por un diario por `wamid`
@@ -144,7 +147,16 @@ reintentos de esta fase se miden en minutos.
   El resto del ingest (lecturas, metadata con merge de tres vías, cupón ya marcado
   en la sesión) se puede repetir sin daño. Entre un efecto y su marca queda una
   ventana de milisegundos: en el peor caso se repite una línea, nunca se pierde
-  el mensaje.
+  el mensaje. Un disco que falla al escribir la marca deja pasar el efecto
+  (*fail-open*, como el ledger).
+
+  **Límite conocido:** un reintento no es un replay. Lo que el intento anterior ya
+  dejó en la metadata (el episodio abierto, el referral visto, el cupón aplicado) lo
+  ve el nuevo intento como ya hecho. Si el worker murió justo entre abrir el
+  episodio y avisar a la sesión, el turno puede salir sin la nota de primer
+  contacto. Los eventos del watchdog y de analytics se pueden emitir dos veces. Es
+  la ventana de una caída a mitad de un ingest de segundos; lo cierra la fase 2
+  (cada paso, su activity).
 
 ### 7 · El ledger de entrada sigue como verificación cruzada
 

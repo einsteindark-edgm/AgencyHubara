@@ -73,3 +73,16 @@ async def test_the_client_is_reused_and_rebuilt_after_a_failure(env) -> None:
     await entry.accept(_input("wamid.C"))
 
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_messages_without_wamid_do_not_collide(env) -> None:
+    """El parser exige un `id` de texto, pero no que tenga algo: sin wamid no
+    hay dedupe posible, y dos mensajes así no pueden pisarse en `inbound-`."""
+    async def factory():
+        return env.client
+
+    entry = InboundEntry(factory, task_queue=QUEUE)
+
+    assert await entry.accept(_input("")) is True
+    assert await entry.accept(_input("")) is True

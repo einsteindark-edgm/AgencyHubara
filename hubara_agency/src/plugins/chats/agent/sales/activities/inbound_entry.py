@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import fields
 from typing import Any
 
 import structlog
@@ -36,7 +37,7 @@ async def ingest_inbound_message_activity(inp: InboundMessageInput) -> str:
     evita repetir lo que el intento anterior ya hizo."""
     from src.plugins.chats.agent.sales import composition
 
-    parsed = WhatsAppMessage(**inp.message)
+    parsed = _message(inp.message)
     try:
         await composition.build_ingest_use_case().execute(parsed)
     except BaseException as exc:
@@ -54,6 +55,14 @@ async def ingest_inbound_message_activity(inp: InboundMessageInput) -> str:
         waited_ms=int(time.time() * 1000) - inp.received_at_ms if inp.received_at_ms else None,
     )
     return "ingested"
+
+
+def _message(raw: dict[str, Any]) -> WhatsAppMessage:
+    """El mensaje del input, tolerante a la versión que lo encoló: un campo que
+    esta versión no conoce se ignora (un mensaje queda en Temporal durante un
+    deploy); uno nuevo con default lo completa el dataclass."""
+    known = {f.name for f in fields(WhatsAppMessage)}
+    return WhatsAppMessage(**{k: v for k, v in raw.items() if k in known})
 
 
 def _attempt() -> int:

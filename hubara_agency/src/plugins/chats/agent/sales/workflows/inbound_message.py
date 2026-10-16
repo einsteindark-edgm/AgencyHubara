@@ -35,15 +35,19 @@ with workflow.unsafe.imports_passed_through():
 
 #: El ingest tarda de 1 a 10 s (Jev espera hasta 10 s, una foto anterior hasta
 #: 10 s más); 5 min es el techo de un intento. Un worker que muere a mitad se
-#: nota por el heartbeat (la activity late cada 10 s) y el intento se repite.
+#: nota por el heartbeat (la activity late cada 10 s) y el intento se repite
+#: cuando vuelve un worker. Ante un error, 5 intentos repartidos en ~3 min
+#: (5 s, 15 s, 45 s, 2 min): acotado, pero un vault o un Temporal que tarda un
+#: par de minutos en volver no deja el mensaje en Failed — Meta ya tiene su 200
+#: y no lo re-entrega. El diario de efectos del ingest hace seguro reintentar.
 _INGEST = {
     "start_to_close_timeout": timedelta(minutes=5),
     "heartbeat_timeout": timedelta(seconds=30),
     "retry_policy": RetryPolicy(
-        initial_interval=timedelta(seconds=2),
-        backoff_coefficient=2.0,
-        maximum_interval=timedelta(seconds=30),
-        maximum_attempts=3,
+        initial_interval=timedelta(seconds=5),
+        backoff_coefficient=3.0,
+        maximum_interval=timedelta(minutes=2),
+        maximum_attempts=5,
     ),
 }
 

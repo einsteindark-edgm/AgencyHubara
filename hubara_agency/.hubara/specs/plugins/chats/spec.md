@@ -32,7 +32,7 @@ El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 - THEN parsea con `parse_whatsapp_inbound_all` (el POST ENTERO)
 - AND arranca `InboundMessageWorkflow` con id `inbound-<wamid>` y `REJECT_DUPLICATE` en la cola del worker `sales`, con el mensaje parseado y ya en la dirección de su conversación
 - AND recién entonces devuelve `{status: "ok"}` con HTTP 200
-- AND el workflow corre `IngestInboundMessage.execute(parsed)` en una activity (heartbeat, 3 intentos) que eventualmente arranca/signalea el workflow apropiado (sales o remarketing)
+- AND el workflow corre `IngestInboundMessage.execute(parsed)` en una activity (heartbeat, 5 intentos repartidos en ~3 min) que eventualmente arranca/signalea el workflow apropiado (sales o remarketing)
 
 #### Scenario: Temporal no acepta el mensaje
 
@@ -50,7 +50,8 @@ El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 #### Scenario: Un reintento del ingest no repite efectos
 
 - GIVEN la activity del ingest se reintenta tras ingerir parte del mensaje (el worker murió a mitad)
-- THEN la línea del cliente en el historial, el mensaje a la sesión de ventas y cada envío directo al cliente salen UNA vez por `wamid` (diario `InboundEffects` en `<vault>/_ledger/inbound_effects/`)
+- THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
+- AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: entre el efecto y su marca queda una ventana de milisegundos)
 
 #### Scenario: POST batcheado (varios mensajes en un mismo webhook)
 
@@ -630,7 +631,7 @@ MUST NOT afectar la respuesta al webhook.
 - GIVEN un mensaje entregado a `IngestInboundMessage` (activity del worker `sales`) / `IngestStandby` (background task de la API)
 - WHEN el ingest termina
 - THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error`
-- AND en la activity la excepción se re-lanza (Temporal reintenta, 3 intentos); en `standby` NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción
+- AND en la activity la excepción se re-lanza (Temporal reintenta, 5 intentos); en `standby` NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción
 - AND un ítem que el parser rechaza queda `stage=rejected` con el motivo en `error` (el reporte lo cuenta como `failed`)
 - AND un `seen` sin desenlace se reporta como `lost`, salvo que haya entrado a Temporal (`queued`/`duplicate`): entonces es `pending`
 
