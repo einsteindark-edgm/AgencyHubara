@@ -60,6 +60,8 @@ class Tracker:
         self.context_gate: asyncio.Event | None = None
         #: Lo que llegó a `persist_assistant_message_activity` como 4.º argumento.
         self.persisted_delivered: list[object] = []
+        #: …y como 5.º: el agente que escribió el mensaje (caso 2026-10-16).
+        self.persisted_agents: list[object] = []
 
 
 def _fakes(
@@ -171,8 +173,10 @@ def _fakes(
         message: str,
         tools_used: list[str] | None = None,
         delivered: list[dict[str, str]] | None = None,
+        agent: str | None = None,
     ) -> None:
         tracker.persisted_delivered.append(delivered)
+        tracker.persisted_agents.append(agent)
 
     @activity.defn(name="record_remarketing_touch_activity")
     async def fake_record_touch(session_id: str, kind: str) -> None:
@@ -234,6 +238,27 @@ async def test_gancho_enviado_registra_el_toque(tmp_path) -> None:
     assert tracker.sends == ["¡Hola de nuevo! 🌿"]
     assert tracker.touches == ["free_form"]
     assert tracker.trigger_touch_numbers == [1]
+
+
+@pytest.mark.asyncio
+async def test_el_gancho_queda_en_el_chat_como_mensaje_de_remarketing(tmp_path) -> None:
+    """Caso 2026-10-16: el gancho se guardaba igual que un mensaje de Ventas, y
+    Ventas (que nunca lo vio) no se enteraba de él al retomar el chat."""
+    tracker = Tracker()
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client, task_queue=REMARKETING_QUEUE,
+            workflows=[RemarketingSessionWorkflow],
+            activities=_fakes(tracker, llm_contents=["¡Hola de nuevo! 🌿"],
+                              workspace_path=str(tmp_path)),
+        ):
+            handle = await env.client.start_workflow(
+                RemarketingSessionWorkflow.run, _input(),
+                id=f"remarketing-{SID}", task_queue=REMARKETING_QUEUE,
+            )
+            await handle.result()
+    assert tracker.sends == ["¡Hola de nuevo! 🌿"]
+    assert tracker.persisted_agents == ["remarketing"]
 
 
 @pytest.mark.asyncio
