@@ -50,3 +50,17 @@ def test_terraform_defaults_match_the_code_and_test_mode_needs_numbers() -> None
     assert re.search(rf'google_review_url\s*=\s*optional\(string,\s*"{re.escape(DEFAULT_GOOGLE_REVIEW_URL)}"\)', text)
     assert "t.reviews.test_sessions" in text, "falta validar las sesiones de prueba"
     assert 't.reviews.mode != "test" || length(t.reviews.test_sessions) > 0' in text
+
+
+def test_test_numbers_can_be_written_like_the_other_tfvars_lists() -> None:
+    """Los números de prueba del operador ya viven en tfvars como «+57…»
+    (`customer_allowlist`, `internal_numbers`): el de reseñas acepta lo mismo
+    (y `wa_…`); el código los normaliza a la conversación `wa_<dígitos>`."""
+    text = (_TERRAFORM / "variables.tf").read_text(encoding="utf-8")
+    match = re.search(r'for s in t\.reviews\.test_sessions : can\(regex\("([^"]+)", s\)\)', text)
+    assert match, "falta la validación de las sesiones de prueba"
+    pattern = match.group(1).replace("\\\\", "\\")
+    for ok in ("+573001234567", "573001234567", "wa_573001234567"):
+        assert re.fullmatch(pattern, ok), ok
+    for bad in ("3001234567 ", "wa_", "+57 300"):
+        assert not re.fullmatch(pattern, bad), bad

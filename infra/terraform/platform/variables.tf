@@ -91,7 +91,7 @@ variable "tenants" {
     # Nace APAGADA; se enciende por PR (test → on). modules/review-config.
     reviews = optional(object({
       mode                   = optional(string, "off")       # off | test (solo test_sessions) | on (todos)
-      test_sessions          = optional(list(string), [])    # sesiones del vault (wa_57…) para el modo test
+      test_sessions          = optional(list(string), [])    # números de prueba (+57… como internal_numbers, o wa_57…)
       min_delay_minutes      = optional(number, 120)         # mínimo tras la entrega (abrir y oler la vela)
       window_margin_minutes  = optional(number, 60)          # el formulario sale a más tardar esto antes de que cierre la ventana
       template_after_minutes = optional(number, 1200)        # con la ventana cerrada, la plantilla de marketing desde aquí (20 h)
@@ -114,9 +114,9 @@ variable "tenants" {
     # Modo prueba sin números (o mal escritos) invitaba a nadie sin avisar.
     condition = alltrue([for t in values(var.tenants) :
       (t.reviews.mode != "test" || length(t.reviews.test_sessions) > 0)
-      && alltrue([for s in t.reviews.test_sessions : can(regex("^wa_[A-Za-z0-9]{6,40}$", s))])
+      && alltrue([for s in t.reviews.test_sessions : can(regex("^(wa_[A-Za-z0-9]{6,40}|\\+?[0-9]{10,15})$", s))])
     ])
-    error_message = "tenants.*.reviews.test_sessions: sesiones wa_<número> (p. ej. wa_57300…); obligatorias con mode = \"test\"."
+    error_message = "tenants.*.reviews.test_sessions: números como en internal_numbers (+57300…) o sesiones wa_57300…; obligatorios con mode = \"test\"."
   }
 
   validation {
