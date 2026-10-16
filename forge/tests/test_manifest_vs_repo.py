@@ -79,6 +79,29 @@ def test_el_paquete_del_clon_es_el_que_corre_la_tienda_madre():
         assert (bundles / b / "bundle.yaml").is_file(), f"no existe el paquete {b}"
 
 
+def test_cada_campo_del_dominio_lo_siembra_init_o_es_de_la_tienda_madre():
+    """El motor declara el dominio de una tienda en `builtins.yaml → domain`. Un
+    campo nuevo (aunque sea opcional) que `init` no siembra deja al clon sin esa
+    función y nadie se entera: pasó con ventas-7 (el 2.º toque del remarketing y
+    el tono de las correcciones). Va al template o a `decision_bundles.not_seeded`."""
+    import yaml
+
+    def fields(node: dict, prefix: str = "") -> set[str]:
+        out: set[str] = set()
+        for key, value in node.items():
+            out |= fields(value, f"{prefix}{key}.") if isinstance(value, dict) else {prefix + key}
+        return out
+
+    db = forge.load_manifest()["decision_bundles"]
+    declared = fields(yaml.safe_load((forge.REPO / db["dir"] / "builtins.yaml").read_text(encoding="utf-8"))["domain"])
+    seeded = fields(yaml.safe_load((forge.ROOT / "templates" / "sales_domain.yaml.tpl").read_text(encoding="utf-8")))
+    not_seeded = set(db.get("not_seeded", []))
+
+    assert declared - seeded - not_seeded == set(), "campos del dominio que el clon no recibe"
+    assert not_seeded <= declared, f"not_seeded nombra campos que el motor ya no tiene: {not_seeded - declared}"
+    assert not (not_seeded & seeded), "un campo sembrado no puede estar en not_seeded"
+
+
 def test_las_cifras_de_commerce_literals_son_las_de_la_tienda_madre():
     """`commerce_literals` es la política de la tienda madre tal como la citan
     sus workspaces (premortem 2026-10-09): si una tarifa cambia en el código y

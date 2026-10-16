@@ -961,6 +961,56 @@ def test_el_nombre_de_la_tienda_se_toma_al_forjar_no_al_sembrar(mini_repo, tmp_p
     assert "Café Acme vende" in agent and yaml.safe_load(agent)["business_info"]
 
 
+def _init_with_commerce(mini_repo: Path, tmp_path: Path, commerce: dict | None) -> Path:
+    import yaml
+
+    bundle = forge.run_init("acme", forge.load_manifest(), src=mini_repo, clients_dir=tmp_path / "clients")
+    if commerce is not None:
+        client = yaml.safe_load((bundle / "client.yaml").read_text())
+        client["commerce"] = commerce
+        (bundle / "client.yaml").write_text(yaml.safe_dump(client, allow_unicode=True), encoding="utf-8")
+    dest = tmp_path / "AgencyAcmeDominio"
+    forge.run_apply(src=mini_repo, dest=dest, client_dir=bundle, manifest=forge.load_manifest(), allow_todos=True)
+    return dest
+
+
+def test_lo_practico_y_las_correcciones_del_clon_usan_su_politica(mini_repo, tmp_path):
+    """ventas-7 (2026-10-13/14): el 2.º toque del remarketing cuenta lo práctico
+    desde `vocabulary.practical_facts`, la ÚNICA fuente de cifras de ese gancho, y
+    el bot corrige un precio o una suma con `correction_tone` y sus ejemplos. El
+    dominio que sembraba init no los traía: el clon se quedaba sin las dos cosas
+    (y copiarlos de la madre citaría sus tarifas)."""
+    import yaml
+
+    dest = _init_with_commerce(mini_repo, tmp_path, ACME_CLIENT["commerce"])
+
+    vocab = yaml.safe_load((dest / BUNDLES / STORE_BUNDLE / "domain.yaml").read_text())["vocabulary"]
+    facts = vocab["practical_facts"]
+    assert all(c in facts for c in ("Medellín y el área metropolitana", "$9.000", "$18.500", "$60.000")), facts
+    assert vocab["hook_examples_practical"] and all("$9.000" in ex for ex in vocab["hook_examples_practical"])
+    assert vocab["correction_tone"] and vocab["correction_examples"] and vocab["sum_correction_examples"]
+    assert "{{" not in yaml.safe_dump(vocab, allow_unicode=True)
+
+
+def test_sin_politica_comercial_lo_practico_queda_pendiente_no_con_marcadores(mini_repo, tmp_path):
+    """Un clon de prueba (`--allow-todos`) sin `commerce`: el bot no puede citar
+    `{{shipping_rate_local_cop}}` tal cual; queda TODO y `verify` lo frena."""
+    import yaml
+
+    dest = _init_with_commerce(mini_repo, tmp_path, None)
+
+    facts = yaml.safe_load((dest / BUNDLES / STORE_BUNDLE / "domain.yaml").read_text())["vocabulary"]["practical_facts"]
+    assert "{{" not in facts and "TODO-BRAND" in facts
+
+
+def test_un_marcador_mal_escrito_en_el_dominio_no_forja(mini_repo, acme_bundle, tmp_path):
+    """Lo que quede como `{{…}}` en domain.yaml lo diría el bot tal cual (es lo que
+    ve en sus herramientas y en el gancho de remarketing)."""
+    _overlay_file(acme_bundle, "domain.yaml", ACME_DOMAIN + 'tagline: "Bienvenido a {{compnay}}"\n')
+    with pytest.raises(forge.ForgeError, match="compnay"):
+        _apply(mini_repo, acme_bundle, tmp_path)
+
+
 def test_un_marcador_mal_escrito_en_la_voz_no_forja(mini_repo, acme_bundle, tmp_path):
     """Lo que quede como `{{…}}` en el workspace instalado lo diría el bot tal cual."""
     _overlay_file(acme_bundle, "workspace/sales/USER.md", "Bienvenido a {{compnay}}.\n")

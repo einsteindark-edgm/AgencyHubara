@@ -636,6 +636,13 @@ decision_bundles:
   dir: "hubara_agency/src/plugins/chats/shared/decisions/bundles"
   default: ventas
   store: ventas-7
+  # Campos del dominio (`builtins.yaml → domain`) que `init` NO siembra en el
+  # domain.yaml del cliente: son de la tienda madre o ella tampoco los usa.
+  # Opcionales en el motor (sin ellos, esa función no corre). Un campo nuevo del
+  # dominio va a templates/sales_domain.yaml.tpl o aquí (test_manifest_vs_repo).
+  not_seeded:
+    - sold_by_box                        # las velas de deseos de Hubara, que se cobran por caja
+    - vocabulary.hook_examples_explain   # la tienda madre tampoco lo usa: el gancho de siempre
 
 # Archivos REGENERADOS desde forge/templates/ (no editados).
 templates:

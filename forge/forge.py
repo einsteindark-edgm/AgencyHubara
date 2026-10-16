@@ -545,11 +545,15 @@ def _as_in_clone(text: str, rel: str, manifest: dict, vars_: dict) -> str:
     return text
 
 
-def stage_bundles(dest: Path, client_dir: Path, manifest: dict, vars_: dict | None = None) -> dict:
+def stage_bundles(
+    dest: Path, client_dir: Path, manifest: dict, vars_: dict | None = None, commerce: dict | None = None
+) -> dict:
     """Paquetes de decisión: viajan el del código y el que corre la tienda madre
     (la inteligencia del motor); cada uno recibe el `domain.yaml` del cliente
-    (el concepto de la tienda), con `{{company}}`/`{{currency}}` de HOY. Las demás
-    versiones no viajan.
+    (el concepto de la tienda), con `{{company}}`/`{{currency}}` de HOY y su
+    política comercial (`{{shipping_rate_local_cop}}`…, lo que el 2.º toque del
+    remarketing puede citar). Lo que falta de `commerce` (clon de prueba) queda
+    TODO-BRAND, que `verify` frena. Las demás versiones no viajan.
 
     Un campo del dominio que un ejemplo del paquete espera palabra por palabra
     (la despedida de `portavelas`) no se puede cambiar: si no, `decisions check`
@@ -566,6 +570,12 @@ def stage_bundles(dest: Path, client_dir: Path, manifest: dict, vars_: dict | No
             shutil.rmtree(d)
             pruned.append(d.name)
     domain = _render((Path(client_dir) / DOMAIN_FILE).read_text(encoding="utf-8"), vars_ or {})
+    domain = _render(domain, {name: commerce_text(value) for name, value in (commerce or {}).items()})
+    todo = manifest["scan"].get("todo_marker", "TODO-BRAND")
+    domain = _render(domain, {name: todo for name in COMMERCE_FIELDS})
+    leftover = PLACEHOLDER_RE.search(domain)
+    if leftover:
+        raise ForgeError(f"{DOMAIN_FILE}: el marcador {leftover.group(0)} no existe — usa {{{{company}}}} o el texto")
     client_domain = yaml.safe_load(domain) or {}
     for b in sorted(keep):
         mother = yaml.safe_load((root / b / "domain.yaml").read_text(encoding="utf-8")) or {}
@@ -752,7 +762,7 @@ def run_apply(
     report: dict = {"engine_sha": vars_["engine_sha"], "stages": {}}
     report["stages"]["pruned"] = stage_prune(dest, manifest)
     report["stages"]["overlay"] = stage_overlay(dest, client_dir, manifest, vars_, allow_todos, commerce)
-    report["stages"]["bundles"] = stage_bundles(dest, client_dir, manifest, vars_)
+    report["stages"]["bundles"] = stage_bundles(dest, client_dir, manifest, vars_, commerce)
     report["stages"]["templates"] = stage_templates(dest, manifest, vars_)
     report["stages"]["replacements"] = stage_replacements(dest, manifest, vars_)
     report["stages"]["renames"] = stage_renames(dest, manifest, vars_)
