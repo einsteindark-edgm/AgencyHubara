@@ -160,6 +160,10 @@ async def test_each_customer_message_gets_its_own_check(tmp_path: Path, ctx: Too
 async def test_with_a_bundle_older_than_the_decision_nothing_is_checked(tmp_path: Path, ctx: ToolContext,
                                                                         monkeypatch) -> None:
     """Hasta que la tienda promueva `ventas-7` (Terraform), el bot sigue igual."""
+    from src.plugins.chats.shared.store_pack import BUNDLES_DIR
+
+    if not (BUNDLES_DIR / "ventas-6" / "bundle.yaml").is_file():
+        pytest.skip("clon de forge: ventas-6 (experimento de esta tienda) no viaja")
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-6")
     registry.reset()
 
@@ -880,6 +884,10 @@ def _asked(text: str):
 
 
 async def test_promising_a_colleague_for_loose_candles_goes_back_with_the_boxes(tmp_path: Path, ctx: ToolContext) -> None:
+    from src.plugins.chats.shared.store_pack import store_domain
+
+    if not store_domain().get("sold_by_box"):
+        pytest.skip("clon de forge: las cajas (las velas de deseos) son de la tienda madre")
     tool = _tool(tmp_path, products=(), history_reader=_asked(LOOSE_CANDLES))
 
     first = await _send(tool, ctx, HANDOFF)
