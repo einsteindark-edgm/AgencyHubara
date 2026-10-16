@@ -13,7 +13,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.plugins.chats.agent.sales.card_texts import card_texts, envelope_card_text
+from src.plugins.chats.agent.sales.card_texts import card_contents, card_texts, envelope_card_text
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES as PERCEPTION_ACTIVITIES,
     perceive_burst_activity as perceive_burst_activity,
@@ -159,6 +159,21 @@ def delivered_components(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
         if _refused(event.get("result")):
             continue
         out.append(name)
+    return out
+
+
+def delivered_card_contents(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
+    """③ Lo que MUESTRAN las tarjetas del turno (`card_contents`), de las que
+    no se negaron y en su orden. Viaja a la verificación aparte del texto: el
+    paquete decide si Jev lo ve (`reply_state.contents`). Puro."""
+    out: list[str] = []
+    for event in tool_events:
+        if _refused(event.get("result")):
+            continue
+        args = event.get("args")
+        shown = card_contents(str(event.get("name") or ""), args if isinstance(args, Mapping) else {}, event.get("result"))
+        if shown:
+            out.append(shown)
     return out
 
 

@@ -72,6 +72,9 @@ class Tracker:
         self.send_decided_by_engine: list[bool] = []
         self.typing_calls: list[str] = []
         self.persist_calls: list[tuple[str, str]] = []
+        # Por persistencia: los wamids de las burbujas que salieron (doble
+        # check de WhatsApp en el chat). None = el workflow no los pasó.
+        self.persisted_wamids: list[list[str] | None] = []
         self.record_turn_calls: int = 0
         self.record_turn_new_messages: list[list[dict]] = []
         self.ghosting_calls: int = 0
@@ -273,9 +276,15 @@ def _make_fake_activities(
 
     @activity.defn(name="persist_assistant_message_activity")
     async def fake_persist(
-        session_id: str, message: str, tools_used: list[str] | None = None
+        session_id: str,
+        message: str,
+        tools_used: list[str] | None = None,
+        delivered: list[dict] | None = None,
     ) -> None:
         tracker.persist_calls.append((session_id, message))
+        tracker.persisted_wamids.append(
+            None if delivered is None else [b.get("wamid", "") for b in delivered]
+        )
 
     @activity.defn(name="decide_ghosting_action")
     async def fake_ghosting(session_id: str = "") -> str:
@@ -3727,3 +3736,36 @@ async def test_cached_prompt_tokens_reach_the_episode_cost(tmp_path: Path) -> No
     turn = [r for r in tracker.usage_records if r.prompt_tokens == 28000]
     assert len(turn) == 1
     assert getattr(turn[0], "cached_prompt_tokens", None) == 27800
+
+
+
+async def test_the_reply_is_persisted_with_the_wamid_of_each_bubble_it_sent(tmp_path: Path) -> None:
+    """Doble check de WhatsApp: el texto del bot queda en el historial con los
+    wamids que Meta le dio a sus burbujas; ahí se le unen los estados."""
+    tracker = Tracker()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=SALES_QUEUE,
+            workflows=[HubaraSalesSessionWorkflow],
+            activities=_make_fake_activities(
+                tracker,
+                workspace_path=str(workspace),
+                llm_responses=[_final_resp("Claro, te ayudo")],
+            ),
+        ):
+            handle = await env.client.start_workflow(
+                HubaraSalesSessionWorkflow.run,
+                SalesSessionInput(session_id="wa_1", runtime_workspace_path=str(workspace)),
+                id="session-wa_1",
+                task_queue=SALES_QUEUE,
+            )
+            await handle.signal(HubaraSalesSessionWorkflow.send_message, args=["hola", None, None])
+            await handle.result()
+
+    # Primer contacto: el saludo y la respuesta, cada uno con el wamid que el
+    # envío devolvió (`wamid.out<n>` del fake de send).
+    assert [m for (_s, m) in tracker.persist_calls][-1] == "Claro, te ayudo"
+    assert tracker.persisted_wamids == [["wamid.out1"], ["wamid.out2"]]

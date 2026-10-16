@@ -270,6 +270,35 @@ cd android_operator && ./gradlew :app:bundleRelease \
     del borde: la lista invertida se ancla al mensaje que ya se veía. `History` baja al más nuevo si el operador
     estaba al final (fila ≤ 2) y no lo mueve si subió a leer (`NewMessageScrollTest`).
 
+34. **La burbuja «Enviar productos» abre un panel, no manda** (2026-10-14): mandaba el catálogo entero de una vez. A una
+    app con `?features=open_screen` el backend le pone `opens: "enviar_productos"` (`mobile_rules._OPENS`; el color
+    va aparte en `_TONES`, solo «Crear pedido» es verde) y la app abre `enviar_productos.json`: el MISMO panel de
+    «+ Más» (categoría, búsqueda o un producto). Una app vieja la sigue mandando como la acción. El panel está dos
+    veces (en `acciones.json` para no apilar dos hojas: «volver» cierra solo la de arriba) y
+    `RealScreensTest.el_panel_de_la_burbuja_es_el_mismo_de_mas` exige que sean iguales. S31–S33 en el emulador.
+
+35. **Android 11 no liga más de 999 parámetros en una consulta** (SQLite 3.28; desde Android 12 son 32 766). Caso
+    2026-10-15: con más de 999 chats `DELETE … NOT IN (:keep)` fallaba («too many SQL variables»), la bandeja no se
+    guardaba y quedaba congelada: chats nuevos que no salían en «Todos», «Humano» y «Con pedido» con rutas y pedidos
+    viejos, «No leídos» con contadores viejos. Nunca una lista de tamaño libre en un `IN (:…)`: se lee lo guardado y se
+    borra en tandas (`ConversationDao.replaceAll`, `MAX_BOUND_ARGS`). Robolectric trae un SQLite nuevo: el test unitario
+    usa 33 000 chats y el tope de 999 lo cuida S35 (`inject.py crowd`). En «Todos» el chat que atiende una persona
+    lleva la etiqueta «Humano» al lado del nombre (`title_tag` del `list_item` en `chats.json`). Con `tag` (debajo
+    del título) cada chat del humano crecía una línea, Laura (101) quedaba bajo el borde y se caían los escenarios
+    que arrancan con `fresh`. Una propiedad nueva no pide `requires`: una app vieja la ignora y pinta lo demás.
+
+36. **Un «gracias», un 👍 o un sticker no son incendio** (caso 2026-10-15): `unanswered_since` no cuenta reacciones ni
+    stickers (las marcas de `translate.py`) ni el texto que la ruta lee como acuse con `is_closing_ack`; si antes hubo
+    una pregunta, se espera desde la pregunta. Vale para la bandeja de Incendios, el aviso push y el «sin responder»
+    del widget. El paquete `operador-2` no podía arreglarlo solo: el veredicto de Jev cambia gravedad y tipo, nunca
+    quita la tarjeta. S36 en el emulador (`inject.py answered`).
+
+37. **Cada filtro con su bolita** (pedido del operador, 2026-10-15): una opción de `chips` puede traer `badge`
+    (`"{{chats | where:'unread' | count | number}}"`) y se pinta con la misma bolita de los no leídos (`Badge`); vacío o 0
+    no la lleva. Sale con frontend-deploy (una app vieja ignora `badge` y deja el texto). Con bolitas los chips bajan de
+    línea (`FlowRow`): en una línea del teléfono «Con pedido» quedaba escondido a la derecha. **Trampa:** Robolectric mide
+    el texto muy angosto y ahí siempre caben; lo que depende del ancho real del texto se cuida en el emulador (S35).
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,

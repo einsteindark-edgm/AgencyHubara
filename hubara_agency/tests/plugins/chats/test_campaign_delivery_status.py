@@ -139,7 +139,14 @@ def test_the_webhook_hands_the_status_time_and_error_to_the_use_case(monkeypatch
     assert r.status_code == 200
     [(args, kwargs)] = calls
     assert args[:2] == ("wamid.KO", "failed")
-    assert kwargs == {"timestamp_ms": 1_789_992_060_000, "error_code": 131049}
+    assert kwargs == {
+        "timestamp_ms": 1_789_992_060_000,
+        "error_code": 131049,
+        # El doble check del chat: el título del error y a quién iba.
+        "error_title": None,
+        "recipient_id": "573001234567",
+        "recipient_user_id": None,
+    }
 
 
 # --- Use case -------------------------------------------------------------------

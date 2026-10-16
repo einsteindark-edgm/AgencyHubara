@@ -91,6 +91,23 @@ def test_the_domain_must_be_the_declared_one(tmp_path: Path, domain: dict[str, A
     assert any(c.startswith("DB014") and where in c for c in codes), codes
 
 
+def test_a_nullable_field_may_be_missing_but_not_of_another_type(tmp_path: Path) -> None:
+    # Remarketing del cliente que se calló tras el catálogo (2026-10-13): los
+    # datos de envío/pago y los ejemplos nuevos los trae el paquete que los
+    # tiene; los paquetes viejos siguen certificando sin ellos.
+    catalog = {**CATALOG5, "domain": {**CATALOG5["domain"], "vocabulary": {
+        **CATALOG5["domain"]["vocabulary"], "practical_facts": "string?",
+    }}}
+    bundle_dir, catalog_path = _write(tmp_path, {"despedida": DESPEDIDA}, catalog=catalog)
+    (bundle_dir / "domain.yaml").write_text(yaml.safe_dump(DOMAIN, allow_unicode=True), encoding="utf-8")
+    assert check_bundle(bundle_dir, catalog_path) == []
+
+    wrong = {**DOMAIN, "vocabulary": {**DOMAIN["vocabulary"], "practical_facts": 3}}
+    (bundle_dir / "domain.yaml").write_text(yaml.safe_dump(wrong, allow_unicode=True), encoding="utf-8")
+    codes = [str(d) for d in check_bundle(bundle_dir, catalog_path)]
+    assert any(c.startswith("DB014") and "practical_facts" in c for c in codes), codes
+
+
 def test_a_condition_reads_only_declared_domain_fields(tmp_path: Path) -> None:
     rows = [{"when": "!('baja.pide' in p)", "then": "doubt"}, {"otherwise": {"expr": "dom.despedida"}}]
 

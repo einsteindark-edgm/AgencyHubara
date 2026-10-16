@@ -88,3 +88,24 @@ def test_split_multi_label_variants():
     assert split_multi_label("Drakar") == ["Drakar"]
     # "y" SOLO como separador con espacios (no parte "Ylan ylang")
     assert split_multi_label("Ylan ylang") == ["Ylan ylang"]
+
+
+def test_stem_word_drops_gender_and_number():
+    """Una sola regla para comparar palabras del catálogo sin género ni número
+    (antes había tres copias distintas: familias de color, colores por variante
+    y el scorecard de envío)."""
+    from src.platform.catalog.variant_attrs import stem_word
+
+    assert {stem_word(w) for w in ("rojo", "roja", "rojos", "rojas")} == {"roj"}
+    assert stem_word("azules") == stem_word("azul") == "azul"
+    assert stem_word("celestes") == stem_word("celeste") == "celest"
+    assert stem_word("velones") == stem_word("velon") == "velon"
+    assert stem_word("moradas") == stem_word("morado") == "morad"
+    assert (stem_word("mar"), stem_word("oro")) == ("mar", "oro")  # cortas: intactas
+
+
+def test_catalogkit_reexports_stem_word():
+    from src.platform.catalog import variant_attrs
+    from src.sdk import catalogkit
+
+    assert catalogkit.stem_word is variant_attrs.stem_word

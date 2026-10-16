@@ -659,7 +659,9 @@ scenarios:
     resumen: "Caso 2026-10-09: Meta re-entregó días después un mensaje perdido y, con la hora de llegada, parecía la respuesta a la plantilla recién enviada. En el chat de Mariana la burbuja dice «Escrito el …» y, como llegó con la ventana de 24 h cerrada, una nota explica que el bot no respondió y que solo un mensaje nuevo del cliente la abre."
     setup: *fresh
     script:
-      # Al fondo de la bandeja: el número queda bajo el borde, el nombre se ve.
+      # Al fondo de la bandeja: con los filtros en dos filas (cada uno con su bolita) queda bajo el borde; se desliza
+      # la bandeja hasta verla.
+      - {swipe: {at: "Camilo Prueba", dx: 0, dy: -900}}
       - {tap: "Mariana Prueba"}
       - {expect: "Le gusta la lavanda"}
       - {expect: "Escrito el"}
@@ -803,3 +805,124 @@ scenarios:
       - sent_contains: ['"to": "000000000101"', "Plegaria de Luz"]
       - sent_nothing_matching: ['"to": "000000000101"', "Luz Serena"]
       - screen_has: "Tú atiendes"
+
+  - id: S33_burbuja_enviar_productos_abre_el_panel
+    title: La burbuja «Enviar productos» abre el panel y manda solo lo que se elige
+    resumen: "La burbuja «Enviar productos» del chat mandaba el catálogo entero de una vez (2026-10-14). Sofía está con el equipo y no ha elegido nada: la burbuja abre el mismo panel de «+ Más»; el operador elige «Velas Religiosas» y a Sofía le llega solo la Plegaria de Luz; la hoja se cierra sola."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "000000000102"}, {expect: "Tú atiendes"}]
+    script:
+      - {tap: {text: "=Enviar productos", above: "Escribe un mensaje…"}}
+      - {expect: "Enviar todo el catálogo"}
+      - {tap: "Velas Religiosas · 1"}
+      - {expect: "Enviar 1 producto"}
+      - {shot: panel-desde-la-burbuja}
+      - {tap: "Enviar 1 producto"}
+      - {expect: "Enviando «Enviar productos · Velas Religiosas»"}
+      - {expect_gone: {text: "Enviando", timeout: 30}}
+    goal: |
+      Estás en el chat 000000000102 (Sofía), que atiende el equipo.
+      1. Toca la burbuja «Enviar productos» (encima del campo «Escribe un mensaje…»). Di qué se abre.
+      2. Elige la categoría «Velas Religiosas». Di qué productos quedan y qué dice el botón de enviar.
+      3. Toca ese botón. Di qué barra aparece abajo y espera unos 8 segundos.
+      Reporta lo que viste en cada paso.
+    checks:
+      - sent_contains: ['"to": "000000000102"', "Plegaria de Luz"]
+      - sent_nothing_matching: ['"to": "000000000102"', "Zodiacal"]
+      - screen_has: "Tú atiendes"
+
+  - id: S34_doble_check_de_whatsapp
+    title: Cada mensaje del bot dice si WhatsApp lo entregó, lo leyó o no llegó
+    resumen: "Caso 2026-10-15: con DeepSeek caído el bot respondió un rato con Gemini y el operador no podía saber si esos mensajes llegaron; los estados de WhatsApp existían pero no estaban en la conversación. Ahora cada burbuja del bot o del operador lleva su doble check con lo que informó WhatsApp por webhook: ✓ enviado, ✓✓ entregado, ✓✓ en otro color leído y «No llegó» en rojo con el código de Meta. Sin dato dice «sin confirmación». El escenario manda los webhooks de verdad al backend (desordenados, como llegan) y la burbuja cambia sola, con el chat abierto."
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {tap: "000000000101"}, {expect: {text: "¿Cuántos te gustaría llevar?", timeout: 30}}]
+    script:
+      - {expect: "sin confirmación"}
+      # El último texto: leído (llega antes que «enviado», como en prod; el check no retrocede).
+      - {inject: "wa-status wa_000000000101 read"}
+      - {inject: "wa-status wa_000000000101 sent"}
+      # La foto del producto: no llegó (error de Meta al subir la foto).
+      - {inject: "wa-status wa_000000000101 failed --back 1 --code 131053 --title 'Media upload error'"}
+      # El primer texto: entregado (queda arriba, fuera de la pantalla).
+      - {inject: "wa-status wa_000000000101 delivered --back 2"}
+      - {expect: {text: "No llegó · 131053", timeout: 30}}
+      - {expect_all: ["Leído por WhatsApp", "No llegó · 131053"]}
+      - {shot: doble-check}
+      - {swipe: {at: "Dúo Zodiacal · $89.900", dx: 0, dy: 900}}
+      - {expect: "Entregado por WhatsApp"}
+    goal: |
+      Abre el chat 000000000101 (Laura Prueba) y mira la hora de cada mensaje que envió el bot.
+      1. Di qué marca tiene cada mensaje del bot junto a su hora (¿un check, dos, de qué color, algún texto?).
+      2. ¿Hay algún mensaje que diga que no llegó? ¿Qué código muestra?
+      3. Desliza hacia arriba hasta el primer mensaje del bot: ¿qué marca tiene? ¿Alguno dice «sin confirmación»?
+      Reporta lo que viste en cada paso.
+    checks:
+      - screen_has: "Entregado por WhatsApp"
+      - screen_lacks: "Enviado por WhatsApp"
+      - screen_lacks: "sin confirmación"
+
+  - id: S35_bandeja_grande_y_filtros
+    title: Con más de mil chats la bandeja se guarda y cada filtro muestra lo suyo
+    resumen: "Con 1 200 conversaciones, como producción, el Motorola (Android 11) no podía guardar la bandeja («too many SQL variables») y la lista quedaba congelada: chats nuevos que no salían en «Todos» y filtros con datos viejos. Ahora la bandeja carga, el chat nuevo de Tomás llega solo con su etiqueta «Humano», cada filtro lleva una bolita con cuántas conversaciones tiene («Todos» 1.208), «Humano» muestra solo los que atiende el equipo, «Con pedido» solo los que tienen pedido, y al leer a Tomás sale de «No leídos»."
+    # Caso del operador (2026-10-15). Primer rojo: la bandeja decía «No se pudieron cargar los datos» y logcat
+    # «too many SQL variables in "DELETE FROM conversations WHERE sessionId NOT IN (?,?,…)"».
+    setup: [reset, {inject: "crowd --count 1200"}, clear_app, launch, {expect: {text: "000000000101", timeout: 60}},
+            {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"}]
+    script:
+      - {inject: "fire --name 'Tomás Prueba' --session wa_000000000112"}
+      - {expect: {text: "Tomás Prueba", timeout: 30}}
+      - {wait: 2}
+      - {expect_gone: "· GRAVE"}
+      # La bolita de «Todos» cuenta los 1 208 chats (7 del seed + 1 200 + Tomás), con punto de miles.
+      - {expect: "=1.208"}
+      - {shot: todos-con-etiqueta}
+      - {tap: "=Humano"}
+      - {expect: "Tomás Prueba"}
+      - {expect_gone: "000000000101"}
+      - {tap: "=Con pedido"}
+      - {expect: "000000000104"}
+      - {expect_gone: "Tomás Prueba"}
+      - {tap: "=No leídos"}
+      - {expect: "Tomás Prueba"}
+      - {tap: "Tomás Prueba"}
+      - {expect: "Tú atiendes"}
+      - back
+      - {expect: "Estás al día"}
+    goal: |
+      Estás en la bandeja de Chats, con más de mil conversaciones.
+      1. Espera a que llegue un chat nuevo de Tomás Prueba. Di si lleva una etiqueta «Humano» y qué número tiene la bolita de cada filtro.
+      2. Toca el filtro «Humano»: di si sale Tomás y si sale el chat 000000000101.
+      3. Toca «Con pedido»: di qué chats salen.
+      4. Toca «No leídos», abre el chat de Tomás, vuelve atrás y di qué queda en «No leídos».
+      Reporta lo que viste en cada paso.
+    checks:
+      - screen_has: "Estás al día"
+      - screen_lacks: "No se pudieron cargar"
+
+  - id: S36_gracias_o_reaccion_no_es_incendio
+    title: Un «gracias» o una reacción no es incendio; una pregunta sí
+    resumen: "El equipo ya les respondió a tres clientes y 15 min después Paula dice «Muchas gracias 🙏», Rosa reacciona con 👍 e Inés pregunta «¿Me confirmas el valor del envío?». Antes los tres eran incendio grave con aviso; ahora en Incendios solo está Inés, y los tres siguen en «Humano»."
+    # Caso del operador (2026-10-15): reacciones, «gracias» y cierres como «ok perfecto» quedaban como incendio.
+    setup: [reset, clear_app, launch, {expect: "000000000101"}, {expect: "incendios graves"}, {wait: 1}, {expect_gone: "· GRAVE"},
+            {inject: "answered wa_000000000113 'Paula Prueba' 'Muchas gracias 🙏'"},
+            {inject: "answered wa_000000000114 'Rosa Prueba' '[el cliente reaccionó con 👍]'"},
+            {inject: "answered wa_000000000115 'Inés Prueba' '¿Me confirmas el valor del envío?'"}]
+    script:
+      - {expect: {text: "Inés Prueba", timeout: 30}}
+      - {wait: 2}
+      - {expect_gone: "· GRAVE"}
+      - {tap: "=Incendios"}
+      - {expect: "Inés espera respuesta"}
+      - {shot: solo-la-pregunta}
+      - {assert: {screen_lacks: "Paula"}}
+      - {assert: {screen_lacks: "Rosa"}}
+      - {tap: "=Chats"}
+      - {tap: "=Humano"}
+      - {expect_all: ["Paula Prueba", "Rosa Prueba", "Inés Prueba"]}
+    goal: |
+      Estás en la bandeja de Chats. Llegaron mensajes de Paula, Rosa e Inés, a quienes el equipo ya había respondido.
+      1. Abre la pestaña Incendios y di qué clientes aparecen.
+      2. Vuelve a Chats, toca el filtro «Humano» y di si están Paula, Rosa e Inés.
+      Reporta lo que viste.
+    checks:
+      - screen_has: "Rosa Prueba"

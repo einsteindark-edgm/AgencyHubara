@@ -246,7 +246,7 @@ jobs:
           tests/sdk/test_decisions_cli.py
           tests/plugins/chats/test_store_domain.py
 
-      - name: Guards del proxy LLM (ids upstream revisados + thinking + multimodal + resumen)
+      - name: Guards del proxy LLM (ids upstream revisados + thinking + DeepSeek colgado + multimodal + resumen)
         # `tests/platform/` NO corre completo acá (cuelga con los dummies de Medusa),
         # así que los guards que cargan el `litellm_config.yaml` REAL se nombran uno
         # por uno: sin este step solo valían en la máquina de quien corriera la suite.
@@ -266,6 +266,9 @@ jobs:
           uv run pytest
           tests/platform/test_litellm_model_ids_stable.py
           tests/platform/test_llm_thinking_disabled.py
+          tests/platform/test_llm_hang_falls_over.py
+          tests/platform/test_llm_chat_deadline_fallback.py
+          tests/platform/test_llm_fallback_wiring.py
           tests/platform/test_multimodal_via_proxy.py
           tests/platform/customer_scoring/test_llm_summary.py
           tests/platform/perception

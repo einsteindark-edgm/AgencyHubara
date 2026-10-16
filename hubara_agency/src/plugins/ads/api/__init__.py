@@ -36,6 +36,7 @@ que solo se mira al leer crece sin límite (incidente 2026-09-25).
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from dataclasses import asdict
 from pathlib import Path as FsPath
@@ -102,6 +103,12 @@ _SCAN_MAX_ENTRIES = 4
 _scan_cache: BoundedTTLCache[str, list[tuple[FsPath, dict[str, Any]]]] = BoundedTTLCache(
     ttl_s=_SCAN_TTL_S, max_entries=_SCAN_MAX_ENTRIES
 )
+# Incidente 2026-10-14: los endpoints son sync (threadpool) y el tablero pide
+# ~12 a la vez; con el cache vencido cada uno escaneaba el vault en paralelo
+# (~19 MB por scan con los 6,4 MB de metadata de prod → +138 MB de RSS que el
+# proceso no devuelve). Un solo scan a la vez: el resto espera y reusa el
+# resultado (medido: 10 en paralelo +215 MB de pico; con candado, +18 MB).
+_scan_lock = threading.Lock()
 
 # Cache del enrichment de nombres Meta (fix 2026-07-01). Los nombres de
 # ads/campañas cambian casi nunca — TTL largo (10 min) para no pegarle a
@@ -361,9 +368,13 @@ def _cached_sessions(since_ms: int | None) -> list[tuple[FsPath, dict[str, Any]]
     hit = _scan_cache.get(key)
     if hit is not None:
         return hit
-    data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=since_ms)
-    _scan_cache.put(key, data)
-    return data
+    with _scan_lock:
+        hit = _scan_cache.get(key)  # otro request lo escaneó mientras esperábamos
+        if hit is not None:
+            return hit
+        data = scan_ad_sessions(WORKSPACE_VAULT_DIR, since_ms=since_ms)
+        _scan_cache.put(key, data)
+        return data
 
 
 def get_order_facts_port():

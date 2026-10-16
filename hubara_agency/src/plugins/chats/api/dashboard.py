@@ -17,6 +17,7 @@ from src.plugins.chats.shared.chat_events import (
     detect_chat_event,
 )
 from src.plugins.chats.shared import turn_traces
+from src.plugins.chats.shared.delivery_status import DeliveryStatusLog, annotate_delivery
 from src.plugins.chats.shared.origin import session_origin, with_ad_names
 from src.plugins.chats.shared.turn_view import annotate_turn_keys
 from src.sdk.connectorkit import fetch_meta_ad_names, meta_marketing_token
@@ -888,6 +889,9 @@ async def get_session_history(session_id: str):
     data: dict = FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(session_id)
 
     _resolve_reply_quotes(messages, data.get("outbound_text_index"))
+    # El doble check de WhatsApp: lo que Meta informó de cada mensaje saliente
+    # (por wamid), o «sin confirmación». Lo leen el panel y la App Operador.
+    annotate_delivery(messages, DeliveryStatusLog(WORKSPACE_VAULT_DIR).read(session_id))
     # Cada burbuja con el turno del bot que la produjo: el panel pone un botón
     # por turno que abre su hilo (plan del laboratorio PR 17). Fuera del loop
     # de eventos (la traza de un chat largo pesa MB) y nunca a costa del chat:

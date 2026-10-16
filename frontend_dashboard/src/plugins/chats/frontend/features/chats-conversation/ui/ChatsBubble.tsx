@@ -5,6 +5,7 @@ import type {
 } from "@plugins/chats/frontend/entities/chat";
 import { Icon } from "@/shared/ui";
 import { fmtMoney, formatDayLabelEs } from "@/shared/lib";
+import { DeliveryCheck } from "./DeliveryCheck";
 import { WaText } from "./waText";
 
 interface Props {
@@ -123,17 +124,22 @@ function ButtonsMessage({
   event,
   time,
   author,
+  delivery,
 }: {
   event: Extract<ChatEvent, { kind: "bot_buttons" }>;
   time?: string;
   author?: ChatMessageItem["author"];
+  delivery?: ChatMessageItem["delivery"];
 }) {
   return (
     <Labeled side="out" label={`${senderLabel(author)} · Botones de respuesta`}>
       <div className={"bubble b-out wa-buttons" + (author === "human" ? " b-human" : "")}>
         {event.body && <div className="wa-buttons-body wa-card-text"><WaText text={event.body} /></div>}
         <ButtonRows buttons={event.buttons} />
-        <div className="meta">{time}</div>
+        <div className="meta">
+          {time}
+          <DeliveryCheck delivery={delivery} />
+        </div>
       </div>
     </Labeled>
   );
@@ -165,10 +171,12 @@ function CardMessage({
   event,
   time,
   author,
+  delivery,
 }: {
   event: Extract<ChatEvent, { kind: "bot_card" }>;
   time?: string;
   author?: ChatMessageItem["author"];
+  delivery?: ChatMessageItem["delivery"];
 }) {
   const what = event.label ?? CARD_LABEL[event.component] ?? "Mensaje interactivo";
   const buttons = event.buttons ?? [];
@@ -225,7 +233,10 @@ function CardMessage({
           ) : (
             <span className="wa-card-link">{event.link.label}</span>
           ))}
-        <div className="meta">{time}</div>
+        <div className="meta">
+          {time}
+          <DeliveryCheck delivery={delivery} />
+        </div>
       </div>
     </Labeled>
   );
@@ -373,9 +384,9 @@ export function ChatsBubble({ message: m }: Props) {
   if (m.event?.kind === "reaction")
     return <ReactionChip event={m.event} time={m.time} />;
   if (m.event?.kind === "bot_buttons")
-    return <ButtonsMessage event={m.event} time={m.time} author={m.author} />;
+    return <ButtonsMessage event={m.event} time={m.time} author={m.author} delivery={m.delivery} />;
   if (m.event?.kind === "bot_card")
-    return <CardMessage event={m.event} time={m.time} author={m.author} />;
+    return <CardMessage event={m.event} time={m.time} author={m.author} delivery={m.delivery} />;
   if (m.event?.kind === "shipping_form")
     return <ShippingFormCard event={m.event} time={m.time} />;
   if (m.kind === "system")
@@ -476,7 +487,7 @@ export function ChatsBubble({ message: m }: Props) {
         {m.sentDayIso && m.sentTime
           ? `${writtenLabel(m.sentDayIso, m.sentTime)} · llegó ${m.time ?? ""}`
           : m.time}
-        {m.kind === "out" && m.status === "read" && <Icon.check />}
+        {m.kind === "out" && <DeliveryCheck delivery={m.delivery} />}
       </div>
     </div>
   );

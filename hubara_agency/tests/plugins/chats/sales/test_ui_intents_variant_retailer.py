@@ -128,6 +128,14 @@ async def test_products_list_uses_variant_retailer_for_option_products(
 
 @pytest.mark.asyncio
 async def test_order_confirmation_uses_variant_retailer(tmp_path: Path):
+    # El signo escogido en el borrador: sin él la confirmación no sale
+    # (test_closing_variant_choice.py, 2026-10-14).
+    meta = tmp_path / "isolated_vault" / "s_test" / "metadata.json"
+    meta.parent.mkdir(parents=True, exist_ok=True)
+    meta.write_text(json.dumps({"episodes": [{
+        "episode_id": "ep_001", "started_at_ms": 1, "closed_at_ms": None,
+        "order_draft": {"items": [{"producto": "Duo Zodiacal", "diseno": "Leo", "cantidad": "1"}]},
+    }]}), encoding="utf-8")
     tool = PresentOrderConfirmationTool(
         workspace=str(tmp_path),
         catalog=_FakeCatalog([_DUO_V2, _LEGACY]),

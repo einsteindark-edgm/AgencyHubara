@@ -19,6 +19,8 @@ import com.hubara.operator.core.model.DeliveryState
 import com.hubara.operator.core.model.MessageCard
 import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.SessionId
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
 import com.hubara.operator.core.network.OperatorJson
 import com.hubara.operator.core.network.api.OperatorService
 import com.hubara.operator.core.network.dto.ChatMessageDto
@@ -112,6 +114,33 @@ class ChatAndOutboxTest {
             ),
         )
         assertThat(tap.tap).isEqualTo("Ver catálogo")
+    }
+
+    // Caso 2026-10-15: el operador no sabía si sus mensajes llegaron. El chat se pinta desde Room: si el doble
+    // check de WhatsApp no se guarda, la burbuja vuelve a no decir nada.
+    @Test fun el_doble_check_de_whatsapp_se_guarda() = runTest {
+        api.details["wa_test_laura"] = api.details["wa_test_laura"]!!.copy(
+            messages = listOf(
+                ChatMessageDto(
+                    "agent_message", "assistant", "¡Hola!",
+                    delivery = OperatorJson.parseToJsonElement("""{"status":"read","at_ms":1760496300000}"""),
+                ),
+                ChatMessageDto(
+                    "human_message", "assistant", "Ya te ayudo", sender = "human",
+                    delivery = OperatorJson.parseToJsonElement(
+                        """{"status":"failed","at_ms":1760496400000,"error_code":131047,"error_title":"Re-engagement message"}""",
+                    ),
+                ),
+                ChatMessageDto("agent_message", "assistant", "viejo"),
+            ),
+        )
+        chats.refresh(laura)
+        val messages = chats.observeChat(laura).first().messages
+        assertThat(messages.map { it.whatsapp }).containsExactly(
+            WhatsAppDelivery(WhatsAppStatus.READ, atMs = 1760496300000),
+            WhatsAppDelivery(WhatsAppStatus.FAILED, 1760496400000, 131047, "Re-engagement message"),
+            WhatsAppDelivery.UNCONFIRMED,
+        ).inOrder()
     }
 
     @Test fun el_texto_aparece_como_pendiente_y_desaparece_al_confirmar() = runTest {

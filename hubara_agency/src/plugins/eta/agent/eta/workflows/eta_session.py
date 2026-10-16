@@ -383,15 +383,21 @@ class HubaraEtaSessionWorkflow:
             return  # stage desconocido → nada que enviar
 
         self._last_response = message
-        await workflow.execute_activity(
+        delivered = await workflow.execute_activity(
             send_whatsapp_message_activity,
             args=[session_id, message],
             start_to_close_timeout=timedelta(seconds=90),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
+        # Las burbujas que salieron, con su wamid: el doble check de WhatsApp
+        # del chat se une por ahí (caso 2026-10-15). Siempre: es solo el
+        # contenido de la activity (L-22). Con `workflow.patched`, un run de
+        # antes del deploy (un pedido vive días) guardaba sin wamids todo lo
+        # nuevo: el patch recuerda su primer resultado en el run.
+        workflow.deprecate_patch("persist-wamids-v1")
         await workflow.execute_activity(
             persist_assistant_message_activity,
-            args=[session_id, message],
+            args=[session_id, message, None, delivered if isinstance(delivered, list) else None],
             **_FAST,
         )
         await workflow.execute_activity(

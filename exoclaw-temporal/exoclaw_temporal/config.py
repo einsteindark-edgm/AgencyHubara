@@ -24,6 +24,14 @@ class LLMConfig:
     api_base: str | None = None
     extra_headers: dict[str, str] = field(default_factory=dict)
     memory_window: int = 100
+    # Tope TOTAL de cada llamada de `llm_chat` y modelo de respaldo. Si la
+    # llamada vence el tope o falla, `llm_chat` corta (cierra la conexión) y
+    # repite la MISMA petición con `fallback_model` (mismo api_base/api_key, sin
+    # `reasoning_effort`), con su propio tope. None = sin tope / sin respaldo,
+    # como antes: inputs en vuelo y llamadores que no los fijan no cambian.
+    call_deadline_s: float | None = None
+    fallback_model: str | None = None
+    fallback_deadline_s: float | None = None
 
 
 @dataclass

@@ -791,6 +791,37 @@ conversación abierta, esa conversación MUST seguir materializando su costo
 - WHEN llega `failed` con `errors[0].code = 131049`
 - THEN el touch queda `status: failed` con ese código
 
+### Requirement: Doble check de WhatsApp en cada mensaje saliente (2026-10-15)
+
+Cada estado del webhook (`statuses[]`) MUST quedar en la conversación de su
+destinatario (`recipient_id`, o `recipient_user_id` para clientes con nombre de
+usuario; si no vino, la conversación que registró el mensaje), unido al
+mensaje por su wamid, aunque el episodio no tenga `outbound_messages`. Vive en
+`<vault>/<sid>/delivery_statuses.jsonl` (append-only) y MUST NOT tocar el costo
+por episodio ni los touches de campaña. Los textos del bot y del operador MUST
+guardar el wamid de cada burbuja (`wamids`). `/api/dashboard/sessions/{id}`
+(panel y App Operador) MUST anotar `delivery` en cada mensaje saliente con lo
+que informó WhatsApp —sin retroceder: read > delivered > failed > sent; un
+texto partido en burbujas muestra la más atrasada; `failed` con el código y el
+título de Meta— o `unconfirmed` si no llegó ningún estado: nunca un check
+inventado. Cada estado anotado MUST publicar `chats.session_updated` (SSE).
+
+#### Scenario: Conversación sin outbound registrado (caso 2026-10-15)
+
+- GIVEN el episodio de la conversación no tiene `outbound_messages` y el texto del bot guardó `wamids: [wamid.E1]`
+- WHEN llegan `delivered`, `sent` y `read` de `wamid.E1` (desordenados) con `recipient_id` de esa conversación
+- THEN el mensaje del bot sale con `delivery.status = read` y su hora, y el panel y la app lo pintan en vivo
+
+#### Scenario: Mensaje que no llegó
+
+- WHEN llega `failed` con `errors[0] = {code: 131047, title: "Re-engagement message"}`
+- THEN el mensaje sale con `delivery = {status: failed, error_code: 131047, error_title: "Re-engagement message"}` y la burbuja dice «No llegó · 131047»
+
+#### Scenario: Sin dato de WhatsApp
+
+- GIVEN un mensaje saliente sin wamids (historial anterior) o cuyos wamids no tienen estado
+- THEN sale con `delivery.status = unconfirmed` y la burbuja dice «sin confirmación»
+
 ### Requirement: La respuesta que cita el mensaje de una campaña es de esa campaña
 
 Si el cliente responde CITANDO el mensaje de una campaña (`context.id` = el
@@ -1038,6 +1069,26 @@ sugerido con `GET /api/chats/order-intake/{id}/form` (sin registrar nada) y regi
 - WHEN el operador lo crea
 - THEN el pedido queda registrado como con `/order` y la respuesta trae `success: true`; con un dato mal llenado o un
   producto que ya no existe, `success: false` y qué revisar (nunca un 422 crudo)
+
+### Requirement: Incendio de chat solo si el cliente espera respuesta (App Operador)
+
+Un chat con un humano al mando SHALL ser incendio (`GET /api/chats/mobile/fires`, su aviso push y el «sin responder» de
+la página «Humano» del widget) solo si, después de la última respuesta que el cliente vio, escribió algo que pide
+respuesta. No la piden una reacción (o quitarla), un sticker ni un acuse que cumpla la regla del acuse del ingest
+(`is_closing_ack`: «gracias», «ok perfecto», «listo», solo emojis; nunca con `?`). La espera se cuenta desde el primer
+mensaje que sí pide respuesta. Caso del operador 2026-10-15: un 👍 o un «gracias» era incendio grave a los 10 min.
+
+#### Scenario: Un «gracias» después de la respuesta
+
+- GIVEN el operador respondió y el cliente escribió «Muchas gracias 🙏» (o reaccionó con 👍) hace 30 min
+- WHEN la app pide los incendios
+- THEN ese chat no está, y en la página «Humano» tiene 0 sin responder
+
+#### Scenario: Una pregunta y después una reacción
+
+- GIVEN el cliente preguntó «¿y el de lavanda tiene descuento?» hace 15 min y reaccionó con 👍 hace 14
+- WHEN la app pide los incendios
+- THEN el chat es incendio grave: «15 min sin respuesta · 1 mensaje»
 
 ## Out of scope
 

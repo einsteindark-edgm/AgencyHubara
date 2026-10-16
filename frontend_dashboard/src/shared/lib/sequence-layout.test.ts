@@ -168,6 +168,24 @@ describe("layoutSequence", () => {
     ]);
   });
 
+  it("la ronda de cierre al agotar las rondas se nombra en palabras", () => {
+    // Laboratorio del 2026-10-14: «velas con números» agotó las rondas.
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "closing_round", before: null, after: "Ya usaste todas las herramientas…", tools: ["search_products"] },
+    ]);
+
+    expect(rows[0].short).toBe("se acabaron las rondas: una más solo para responderle al cliente");
+  });
+
+  it("la ronda de una respuesta que volvió junto a una tarjeta se nombra en palabras", () => {
+    // Premortem del PR #426: la tarjeta salió y el texto volvió al modelo.
+    const { rows } = layoutSequence([
+      { i: 0, at_ms: 0, kind: "guard", name: "held_reply_round", before: null, after: null, tools: ["send_reply", "present_variant_picker"] },
+    ]);
+
+    expect(rows[0].short).toBe("otra ronda: la respuesta volvió al modelo y la tarjeta del mismo paso ya había salido");
+  });
+
   it("la red del relevo prometido se nombra en palabras y deja el texto como estaba", () => {
     // Laboratorio caso-cortesia-1001 (2026-09-30): el bot dijo «un colega del
     // equipo coordina contigo la entrega» sin escalar; la red escala y el

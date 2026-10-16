@@ -59,6 +59,7 @@ from src.platform.catalog.variant_attrs import (
     match_option,
     normalize_label,
     parse_variant_tags,
+    split_choices,
     split_multi_label,
 )
 from src.platform.catalog.variant_colors import (
@@ -116,6 +117,7 @@ __all__ = [
     "primary_colors",
     "product_includes_portavelas",
     "resolve_category",
+    "split_choices",
     "split_multi_label",
     "values_for_color",
 ]
