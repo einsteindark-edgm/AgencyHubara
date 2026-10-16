@@ -33,6 +33,11 @@ class SalesSessionInput:
         para `WorkspaceConfig(path=...)` y falla fast si esta vacio. PR-D:
         `shared_brain/` ya no existe en Sales — esta ruta es la unica fuente
         de identidad / tono / catalogo del agente.
+      * `pending_topics`, `perception_mode`, `perception_profile`,
+        `photos_reading`: lo que el run lleva del turno y el continue-as-new
+        le pasa al siguiente (auditoría de Temporal, 2026-10-15): el asunto que
+        la verificación dejó pendiente, el modo y el perfil del clasificador y
+        las fotos que el ingest sigue leyendo. Una sesión nueva no los trae.
 
     El primer mensaje del usuario NO viaja por este DTO: el caller arranca el
     workflow y luego dispara `signal(send_message, ...)` con el texto. Asi el
@@ -42,6 +47,10 @@ class SalesSessionInput:
     session_id: str
     turn_count: int = 0
     runtime_workspace_path: str | None = None
+    pending_topics: list[str] | None = None
+    perception_mode: str | None = None
+    perception_profile: str | None = None
+    photos_reading: list[str] | None = None
 
 
 @dataclass(frozen=True)

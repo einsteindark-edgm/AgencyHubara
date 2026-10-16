@@ -89,6 +89,18 @@ def reply_summary(message: object) -> str:
     return "Usuario respondió: " + str(message)[:500]
 
 
+# Lecturas y escrituras del vault (elegibilidad, política, ruta, memoria): con
+# tope. Sin `retry_policy` Temporal reintentaba sin fin y una lectura rota
+# dejaba el workflow colgado en silencio (auditoría de Temporal, 2026-10-15);
+# ahora, tras ~1 min de reintentos, la activity falla a la vista. Solo opciones
+# de la activity: replay seguro.
+_VAULT_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=2.0,
+    maximum_interval=timedelta(seconds=30),
+    maximum_attempts=5,
+)
+
 @workflow.defn(name="RemarketingWorkflow")
 class RemarketingSessionWorkflow:
     """Long-running session workflow for Remarketing."""
@@ -232,6 +244,7 @@ class RemarketingSessionWorkflow:
                 claim_conversation_routing,
                 args=[session_id, ROUTE_VENTAS],
                 start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=_VAULT_RETRY,
             )
 
     async def _build_trigger(
@@ -358,6 +371,7 @@ class RemarketingSessionWorkflow:
             check_remarketing_eligibility,
             args=[session_id],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
         if not eligibility.eligible:
             return
@@ -365,6 +379,7 @@ class RemarketingSessionWorkflow:
             check_reengagement_policy_activity,
             args=[session_id],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
         if not policy.allowed:
             workflow.logger.info(
@@ -410,6 +425,7 @@ class RemarketingSessionWorkflow:
                 check_remarketing_eligibility,
                 args=[session_id],
                 start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=_VAULT_RETRY,
             )
             if not eligibility.eligible:
                 workflow.logger.warning(
@@ -443,6 +459,7 @@ class RemarketingSessionWorkflow:
                 check_reengagement_policy_activity,
                 args=[session_id],
                 start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=_VAULT_RETRY,
             )
             if not policy.allowed:
                 workflow.logger.warning(
@@ -473,12 +490,14 @@ class RemarketingSessionWorkflow:
             claim_conversation_routing,
             args=[session_id, ROUTE_REMARKETING],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
 
         memory_context = await workflow.execute_activity(
             read_workspace_memory_activity,
             args=[session_id],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
 
         # Contexto REAL del gancho (incidente run dc32f7fe, 2026-09-10): el
@@ -505,6 +524,7 @@ class RemarketingSessionWorkflow:
                     claim_conversation_routing,
                     args=[session_id, ROUTE_VENTAS],
                     start_to_close_timeout=timedelta(seconds=15),
+                    retry_policy=_VAULT_RETRY,
                 )
                 return
             # La plantilla cuenta como el mensaje proactivo: la PRIMERA
@@ -553,6 +573,7 @@ class RemarketingSessionWorkflow:
                     claim_conversation_routing,
                     args=[session_id, ROUTE_VENTAS],
                     start_to_close_timeout=timedelta(seconds=15),
+                    retry_policy=_VAULT_RETRY,
                 )
                 return
 

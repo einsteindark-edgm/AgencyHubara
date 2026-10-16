@@ -187,6 +187,22 @@ jobs:
           tests/plugins/reengagement/test_unresponsive_tag.py::test_a_session_that_cannot_be_written_does_not_stop_the_cycle
           tests/scripts/test_scripts_write_metadata_with_the_store.py
 
+      - name: Replay de workflows con historias congeladas (L-9)
+        # La única guarda contra un deploy que rompe runs vivos: el
+        # nondeterminism lo esconde el sticky cache hasta que el worker se
+        # reinicia, horas después del cambio. Cada `test_replay_*.py` reproduce
+        # historias congeladas (con su control negativo) contra el código del
+        # PR; no necesitan servidor de Temporal (Replayer). Auditoría de
+        # Temporal 2026-10-15: no corrían en CI. Guarda:
+        # tests/infra/test_ci_runs_replay_tests.py.
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: uv run pytest tests/test_replay_*.py -q
+
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
         # Complementa el modo `strict: false` de la branch protection. Dos PRs de
         # plugins distintos igual regeneran docker-compose.local.yml (se genera de

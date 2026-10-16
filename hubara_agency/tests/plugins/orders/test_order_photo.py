@@ -73,6 +73,32 @@ async def test_emitter_dispatches_the_request_event_for_the_session(monkeypatch)
     assert (envelope.source_plugin, envelope.source_worker) == ("orders", "reconcile")
 
 
+async def test_emitter_dispatches_with_the_workers_client(monkeypatch) -> None:
+    """En el worker la activity despacha con `activity.client()` (el cliente con
+    el que el worker la corre), no con otro del proceso."""
+    from temporalio.testing import ActivityEnvironment
+
+    from src.plugins.orders.agent.activities import emit_stage
+
+    used_clients = []
+    worker_client, process_client = object(), object()
+
+    async def _dispatch(envelope, client):
+        used_clients.append(client)
+
+    async def _client():
+        return process_client
+
+    monkeypatch.setattr("src.platform.orchestration.dispatch_envelope_with_client", _dispatch)
+    monkeypatch.setattr("src.platform.temporal.client.get_temporal_client", _client)
+
+    await ActivityEnvironment(client=worker_client).run(  # type: ignore[arg-type]
+        emit_stage.emit_ready_photo_request_activity, BACKEND_ID, SID
+    )
+
+    assert used_clients == [worker_client], "debe despachar con el cliente del worker"
+
+
 # ---------- API ----------
 
 

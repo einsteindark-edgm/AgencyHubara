@@ -3,7 +3,7 @@
 Al marcar "en camino" el operador puede escribir el valor del envío. Ese
 valor (COP entero, sin decimales):
 
-  * viaja a la cascada ETA (`_spawn_emit(..., shipping_cost=)`) → input del
+  * viaja a la cascada ETA (`_start_durable_emit(..., shipping_cost=)`) → input del
     `EmitOrderStageWorkflow` → `OrderStageChangedEvent.shipping_cost` →
     manifest (`$.shipping_cost`) → signal del ETA → mensaje de WhatsApp;
   * queda en la nota del stage history (auditoría);
@@ -41,12 +41,10 @@ def harness(monkeypatch):
     monkeypatch.setattr(
         "src.plugins.orders.api.get_order_command_port", lambda: fake_port
     )
-    monkeypatch.setattr(
-        "src.plugins.orders.api._spawn_emit",
-        lambda order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None: (
-            spawn_emit_calls.append((order_id, to_stage, tracking_url, shipping_cost))
-        ),
-    )
+    async def _start_emit(order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None):
+        spawn_emit_calls.append((order_id, to_stage, tracking_url, shipping_cost))
+
+    monkeypatch.setattr("src.plugins.orders.api._start_durable_emit", _start_emit)
     monkeypatch.setattr(
         "src.plugins.orders.api._publish_orders_changed", lambda order_id=None: None
     )

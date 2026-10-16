@@ -18,6 +18,14 @@ x-app: &app
   working_dir: /app/hubara_agency
   env_file: .env
   restart: unless-stopped
+  # Apagado ordenado (auditoría de Temporal, 2026-10-15): la imagen corre
+  # `python` como PID 1, que no recibe el SIGTERM de `docker stop` sin un init.
+  # Con tini la señal llega a `run_worker`, que deja de pedir tareas y espera
+  # 30 s (`WORKER_GRACEFUL_SHUTDOWN`) a las activities en curso; el grace
+  # period le da ese tiempo antes del SIGKILL.
+  # Guarda: hubara_agency/tests/infra/test_prod_compose_graceful_stop.py.
+  init: true
+  stop_grace_period: 45s
   depends_on:
     litellm:
       condition: service_healthy

@@ -78,6 +78,10 @@ class _FakeClient:
         self.started: list[dict[str, Any]] = []
         self.signaled: list[dict[str, Any]] = []
         self.terminated: list[str] = []
+        self.described: list[str] = []
+        # Lo que devuelve `start_workflow` (un handle real con la respuesta del
+        # server, para los tests que leen si arrancó o reusó).
+        self.start_returns: Any = None
 
     def get_workflow_handle(self, workflow_id: str) -> Any:
         client = self
@@ -85,6 +89,7 @@ class _FakeClient:
 
         class _Handle:
             async def describe(self):
+                client.described.append(workflow_id)
                 if existing_status is None:
                     raise RPCError("not found", None, None)  # type: ignore[arg-type]
                 m = MagicMock()
@@ -107,7 +112,8 @@ class _FakeClient:
         id: str,
         task_queue: str,
         start_delay: timedelta | None = None,
-    ) -> None:
+        id_conflict_policy: Any = None,
+    ) -> Any:
         self.started.append(
             {
                 "workflow": workflow_name,
@@ -115,8 +121,10 @@ class _FakeClient:
                 "id": id,
                 "task_queue": task_queue,
                 "start_delay": start_delay,
+                "id_conflict_policy": id_conflict_policy,
             }
         )
+        return self.start_returns
 
 
 @pytest.fixture
@@ -420,7 +428,12 @@ class TestStartWorkflowVerb:
 
 class TestEnsureRunningVerb:
     async def test_noop_when_running(self, fake_client_factory, patch_manifest):
+        """Target RUNNING: UN start con USE_EXISTING — el server devuelve la
+        ejecución que corre sin crear otra (`started=False`) → noop."""
+        from temporalio.common import WorkflowIDConflictPolicy
+
         client = _FakeClient(existing_status=WorkflowExecutionStatus.RUNNING)
+        client.start_returns = _handle_from_server(started=False)
         fake_client_factory(client)
         patch_manifest([_make_transition(via="ensure_running")])
 
@@ -431,7 +444,8 @@ class TestEnsureRunningVerb:
         )
         result = await dispatch_event_activity(envelope)
 
-        assert client.started == []
+        assert [s["id_conflict_policy"] for s in client.started] == [WorkflowIDConflictPolicy.USE_EXISTING]
+        assert client.described == [], "sin describe previo: el start decide atómicamente"
         assert result.matches[0].outcome == "noop_already_running"
 
     async def test_starts_when_not_running(self, fake_client_factory, patch_manifest):
@@ -454,6 +468,10 @@ class TestStartWorkflowWithReplace:
     async def test_terminates_existing_before_starting(
         self, fake_client_factory, patch_manifest
     ):
+        """El reemplazo lo hace el server en el mismo start (TERMINATE_EXISTING):
+        sin describe ni terminate del lado del cliente."""
+        from temporalio.common import WorkflowIDConflictPolicy
+
         client = _FakeClient(existing_status=WorkflowExecutionStatus.RUNNING)
         fake_client_factory(client)
         patch_manifest([_make_transition(via="start_workflow_with_replace")])
@@ -465,8 +483,8 @@ class TestStartWorkflowWithReplace:
         )
         await dispatch_event_activity(envelope)
 
-        assert client.terminated == ["remarketing-x"]
-        assert len(client.started) == 1
+        assert [s["id_conflict_policy"] for s in client.started] == [WorkflowIDConflictPolicy.TERMINATE_EXISTING]
+        assert client.terminated == [] and client.described == []
 
 
 class _SignalRaisingClient(_FakeClient):
@@ -686,3 +704,92 @@ class TestWorkflowRouting:
         await dispatch_event_activity(envelope_for(_Event(session_id="wa_1"), source_plugin="chats", source_worker="sales"))
 
         assert [s["workflow"] for s in client.started] == ["TargetWorkflowV2", "TargetWorkflow"]
+
+
+class TestWorkerClient:
+    """Dentro de un worker la activity usa `activity.client()` (el cliente con el
+    que el worker la corre), no pide otro al proceso."""
+
+    async def test_dispatch_activity_uses_the_workers_client(self, fake_client_factory, patch_manifest):
+        from temporalio.testing import ActivityEnvironment
+
+        worker_client = _FakeClient()
+        process_client = _FakeClient()
+        fake_client_factory(process_client)
+        patch_manifest([_make_transition(via="start_workflow")])
+
+        envelope = envelope_for(_Event(session_id="abc"), source_plugin="chats", source_worker="sales")
+        await ActivityEnvironment(client=worker_client).run(dispatch_event_activity, envelope)  # type: ignore[arg-type]
+
+        assert [s["id"] for s in worker_client.started] == ["remarketing-abc"], (
+            "el dispatch debe arrancar el target con el cliente del worker"
+        )
+        assert process_client.started == []
+
+
+def _handle_from_server(*, started: bool) -> Any:
+    """Handle REAL de temporalio con la respuesta del server: `started` dice si
+    el start creó una ejecución nueva (False = USE_EXISTING reusó la que corre)."""
+    from temporalio.api.workflowservice.v1 import StartWorkflowExecutionResponse
+    from temporalio.client import WorkflowHandle
+
+    return WorkflowHandle(
+        MagicMock(),
+        "wf-id",
+        result_run_id="run-1",
+        start_workflow_response=StartWorkflowExecutionResponse(run_id="run-1", started=started),
+    )
+
+
+class TestIdConflictPolicy:
+    """Auditoría Temporal (Ola 0): «¿corre? → arrancar» y «terminar → arrancar»
+    eran dos/tres RPCs con carrera en el medio. Temporal lo resuelve atómico en
+    el start con `id_conflict_policy`: UNA llamada, sin describe ni terminate."""
+
+    async def test_ensure_running_reports_started_when_server_created_it(self, fake_client_factory, patch_manifest):
+        client = _FakeClient(existing_status=None)
+        client.start_returns = _handle_from_server(started=True)
+        fake_client_factory(client)
+        patch_manifest([_make_transition(via="ensure_running")])
+
+        result = await dispatch_event_activity(
+            envelope_for(_Event(session_id="x"), source_plugin="chats", source_worker="sales")
+        )
+
+        assert result.matches[0].outcome == "started"
+
+    async def test_replace_keeps_its_start_delay(self, fake_client_factory, patch_manifest):
+        """TERMINATE_EXISTING + start_delay: la vieja se termina ya, la nueva
+        espera su delay (el server los acepta juntos)."""
+        from temporalio.common import WorkflowIDConflictPolicy
+
+        client = _FakeClient(existing_status=WorkflowExecutionStatus.RUNNING)
+        fake_client_factory(client)
+        patch_manifest([_make_transition(via="start_workflow_with_replace", start_delay_field="delay_seconds")])
+
+        result = await dispatch_event_activity(
+            envelope_for(_Event(session_id="x", delay_seconds=60), source_plugin="chats", source_worker="sales")
+        )
+
+        [call] = client.started
+        assert call["id_conflict_policy"] == WorkflowIDConflictPolicy.TERMINATE_EXISTING
+        assert call["start_delay"] == timedelta(seconds=60), "el reemplazo conserva su start_delay"
+        assert client.described == [] and client.terminated == [], (
+            "el reemplazo lo hace el server en el start, no describe+terminate"
+        )
+        assert result.matches[0].outcome == "started"
+
+    async def test_plain_start_keeps_failing_on_running_target(self, fake_client_factory, patch_manifest):
+        """`start_workflow` pelado NO reusa ni reemplaza: si ya corre, el server
+        rechaza y queda `raced_already_started` como siempre."""
+        from temporalio.common import WorkflowIDConflictPolicy
+
+        client = _FakeClient()
+        fake_client_factory(client)
+        patch_manifest([_make_transition(via="start_workflow")])
+
+        await dispatch_event_activity(
+            envelope_for(_Event(session_id="x"), source_plugin="chats", source_worker="sales")
+        )
+
+        assert [s["id_conflict_policy"] for s in client.started] == [WorkflowIDConflictPolicy.FAIL]

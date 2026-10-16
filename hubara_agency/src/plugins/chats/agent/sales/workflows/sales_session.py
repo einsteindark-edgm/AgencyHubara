@@ -23,6 +23,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.sdk.agentkit import (
+    continue_as_new_due,
     is_no_message_abstention,
     looks_like_admin_leak,
     salvage_customer_text,
@@ -352,6 +353,35 @@ def _perception_settings(raw: object) -> tuple[str | None, str | None]:
     return mode, (profile if valid_profile else None)
 
 
+def _continue_as_new_input(wf: Any, input: SalesSessionInput, session_id: str, turn_count: int) -> SalesSessionInput:
+    """El input del run siguiente (V1 y V2): el contador acumulado y lo que el
+    run lleva del turno (auditoría de Temporal, 2026-10-15). Solo payload del
+    continue-as-new: no cambia comandos."""
+    return SalesSessionInput(
+        session_id=session_id,
+        turn_count=turn_count,
+        runtime_workspace_path=input.runtime_workspace_path,
+        pending_topics=list(wf._pending_topics) or None,
+        perception_mode=wf._perception_mode,
+        perception_profile=wf._perception_profile,
+        photos_reading=sorted(wf._photos_reading) or None,
+    )
+
+
+def _restore_carried(wf: Any, input: SalesSessionInput) -> None:
+    """Lo que el run anterior pasó por el continue-as-new; una sesión nueva no
+    trae nada. Corre en el `@workflow.init`, antes de cualquier señal."""
+    mode, profile = _perception_settings(
+        {"perception_mode": input.perception_mode, "perception_profile": input.perception_profile}
+    )
+    if mode is not None:
+        wf._perception_mode = mode
+    if profile is not None:
+        wf._perception_profile = profile
+    wf._pending_topics = [t for t in input.pending_topics or [] if isinstance(t, str)]
+    wf._photos_reading.update(w for w in input.photos_reading or [] if isinstance(w, str))
+
+
 def _burst_messages(batch: list[PendingMessage]) -> list[dict[str, Any]]:
     """Los mensajes del cliente del turno para el clasificador (sin triggers):
     el texto crudo del cliente si viajó, si no el mensaje del turno."""
@@ -464,7 +494,8 @@ async def _system_turn_clock() -> list[str]:
 class HubaraSalesSessionWorkflow:
     """Long-running session workflow with ghosting injection mechanism."""
 
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, input: SalesSessionInput) -> None:
         self._pending: list[PendingMessage] = []
         self._last_response: str | None = None
         self._processing = False
@@ -477,6 +508,7 @@ class HubaraSalesSessionWorkflow:
         # Fotos del cliente que el ingest está leyendo (wamid): la ráfaga las
         # espera (texto antes de la foto, 2026-09-30).
         self._photos_reading: set[str] = set()
+        _restore_carried(self, input)
 
     @workflow.signal
     async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
@@ -616,7 +648,10 @@ class HubaraSalesSessionWorkflow:
             input,
             **_LLM_OPTIONS,
         )
+        # `turn_count` es el acumulado (claves de los turnos); el tope de
+        # continue-as-new cuenta los de este run (`run_turns`).
         turn_count = input.turn_count
+        run_turns = 0
 
         # Handoff Remarketing→Sales (Fix 3, gated): el dispatcher escribio
         # `pending_handoff_summary` en metadata.json al transferir. Lo leemos +
@@ -1053,6 +1088,7 @@ class HubaraSalesSessionWorkflow:
                         break
                     self._last_response = result.final_content
                     turn_count += 1
+                    run_turns += 1
                     # Id determinista del turno (traza v2): no depende del
                     # contador de la activity de la traza, que puede correrse.
                     turn_key = f"run:{workflow.info().run_id}/t:{turn_count}"
@@ -2011,16 +2047,11 @@ class HubaraSalesSessionWorkflow:
                     self._processing = False
 
             # continue_as_new to keep history bounded
-            if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:
+            if not self._pending and continue_as_new_due(
+                run_turns=run_turns, total_turns=turn_count, limit=_CONTINUE_AS_NEW_AFTER_TURNS
+            ):
                 # F-string: stdlib logging usa `%s`, no `{}`; el formato previo
                 # `"Reached {} turns", N` lanzaba TypeError al disparar (bug
                 # latente que solo se activaba al pasar 50 turnos).
-                workflow.logger.info(
-                    f"Reached {_CONTINUE_AS_NEW_AFTER_TURNS} turns, continuing as new"
-                )
-                workflow.continue_as_new(
-                    SalesSessionInput(
-                        session_id=session.session_id,
-                        turn_count=turn_count,
-                    )
-                )
+                workflow.logger.info(f"Continue-as-new tras {run_turns} turnos del run ({turn_count} en total)")
+                workflow.continue_as_new(_continue_as_new_input(self, input, session.session_id, turn_count))

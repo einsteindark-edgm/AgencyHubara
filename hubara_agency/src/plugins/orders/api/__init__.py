@@ -369,6 +369,8 @@ async def schedule_order(
       * HTTP 200 con success=True → frontend invalidate query list+detail.
       * HTTP 200 con success=False → frontend muestra el error_detail.
       * HTTP 4xx solo si validación del body falla.
+      * HTTP 503 si la etapa cambió pero Temporal no aceptó el aviso
+        (`EmitOrderStageWorkflow`): reintentar la misma etapa lo arranca.
     """
     delivery_iso = body.get("delivery_iso")
     if not isinstance(delivery_iso, str) or not delivery_iso:
@@ -388,11 +390,11 @@ async def schedule_order(
     )
     port = get_order_command_port()
     result = await port.schedule_delivery(cmd)
-    # new → preparing: arranca el seguimiento del Agente ETA (primera notificación).
-    if result.success and result.current_stage:
-        _spawn_emit(order_id, result.current_stage)
     if result.success:
         _publish_orders_changed(order_id)
+    # new → preparing: arranca el seguimiento del Agente ETA (primera notificación).
+    if result.success and result.current_stage:
+        await _start_durable_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -473,16 +475,16 @@ async def transition_order_stage(
     # dispatcher matchea por `to_stage`; stages sin transición declarada (ej.
     # `new`) caen en no-match → no-op. Dedup vive en el workflow ETA.
     # `notify_customer=false` emite igual (CAPI) pero sin WhatsApp al cliente.
+    if result.success:
+        _publish_orders_changed(order_id)
     if result.success and result.current_stage:
-        _spawn_emit(
+        await _start_durable_emit(
             order_id,
             result.current_stage,
             tracking_url,
             notify_customer=body.get("notify_customer", True) is not False,
             shipping_cost=shipping_cost,
         )
-    if result.success:
-        _publish_orders_changed(order_id)
     return _serialize_command_result(result)
 
 
@@ -549,7 +551,8 @@ async def cancel_order_endpoint(
     Body opcional `{"reason": "texto"}` — persiste como
     `hubara_cancelled_reason` y aparece en el inspector + timeline.
 
-    Idempotente si ya estaba cancelada (devuelve success=True).
+    Idempotente si ya estaba cancelada (devuelve success=True). 503 si se
+    canceló pero Temporal no aceptó el aviso (como `/schedule`).
     """
     reason = (
         body.get("reason")
@@ -559,11 +562,11 @@ async def cancel_order_endpoint(
     cmd = CancelOrderCommand(order_id=order_id, reason=reason)
     port = get_order_command_port()
     result = await port.cancel_order(cmd)
-    # Cancelación: el Agente ETA avisa al cliente (si la sesión sigue en ruta eta).
-    if result.success and result.current_stage:
-        _spawn_emit(order_id, result.current_stage)
     if result.success:
         _publish_orders_changed(order_id)
+    # Cancelación: el Agente ETA avisa al cliente (si la sesión sigue en ruta eta).
+    if result.success and result.current_stage:
+        await _start_durable_emit(order_id, result.current_stage)
     return _serialize_command_result(result)
 
 
@@ -600,14 +603,6 @@ def _serialize_command_result(result) -> dict[str, Any]:
         "error_detail": result.error_detail,
         "audit_id": result.audit_id,
     }
-
-
-# Referencias fuertes a las tasks fire-and-forget del emit (L-7): sin esto,
-# asyncio puede GC-recolectar una task PENDIENTE mientras espera I/O largo
-# (Medusa@Railway tarda 30s+ por GET) — muere sin log, sin warning, y la
-# notificación ETA simplemente no sale. Patrón estándar de los docs de
-# asyncio: set global + done_callback(discard).
-_emit_tasks: set[asyncio.Task] = set()
 
 
 _TRACKING_URL_MAX_LEN = 500
@@ -680,10 +675,15 @@ async def _start_durable_emit(
 ) -> None:
     """L-8b: la emisión es un workflow Temporal (EmitOrderStageWorkflow en
     queue-orders-reconcile) — durable, con retries y visible en la UI :8233.
-    Reemplaza el create_task best-effort (L-7). El start tarda ~ms; si el
-    MISMO (order, stage) ya está en vuelo, Temporal lo dedupea por id.
-    `tracking_url` y `shipping_cost` (solo "en camino") viajan en el input
-    del workflow."""
+    El start tarda ~ms; si el MISMO (order, stage) ya está en vuelo, Temporal
+    lo dedupea por id. `tracking_url` y `shipping_cost` (solo "en camino")
+    viajan en el input del workflow.
+
+    Se ESPERA el start (antes iba en un `create_task` que solo logueaba: el
+    operador veía 200 y el aviso se perdía). Si Temporal no lo acepta → 503,
+    como `_start_ready_photo_request`. La transición YA quedó en Medusa (el
+    caller publica el refresco antes): reintentar la misma etapa es un no-op
+    allá y vuelve a arrancar el aviso."""
     from temporalio.exceptions import WorkflowAlreadyStartedError
 
     from src.platform.plugin_manifest import get_task_queue
@@ -705,25 +705,15 @@ async def _start_durable_emit(
         )
     except WorkflowAlreadyStartedError:
         log.info("eta_emit: emisión ya en vuelo order=%s stage=%s", order_id, to_stage)
-    except Exception:  # noqa: BLE001 — la transición YA se aplicó; no romper el 200
+    except Exception as exc:  # noqa: BLE001 — el operador tiene que enterarse
         log.warning(
             "eta_emit: no pude ARRANCAR la emisión durable order=%s stage=%s",
             order_id, to_stage, exc_info=True,
         )
-
-
-def _spawn_emit(
-    order_id: str,
-    to_stage: str,
-    tracking_url: str | None = None,
-    notify_customer: bool = True,
-    shipping_cost: int | None = None,
-) -> None:
-    task = asyncio.create_task(
-        _start_durable_emit(order_id, to_stage, tracking_url, notify_customer, shipping_cost)
-    )
-    _emit_tasks.add(task)
-    task.add_done_callback(_emit_tasks.discard)
+        raise HTTPException(
+            status_code=503,
+            detail="La etapa quedó guardada, pero no se pudo programar el aviso; reintenta.",
+        ) from exc
 
 
 # ── Foto del pedido (panel derecho de Órdenes → la manda el ETA) ─────────

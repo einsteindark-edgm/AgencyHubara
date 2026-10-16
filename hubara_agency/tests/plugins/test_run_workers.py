@@ -246,3 +246,63 @@ def test_shutdown_timeout_invalid_value_falls_back_to_default(
     import src.run_workers as mod
 
     assert mod._SHUTDOWN_TIMEOUT_S == 15.0
+
+
+# ---------------------------------------------------------------------------
+# Apagado ordenado (auditoría de Temporal, 2026-10-15)
+# ---------------------------------------------------------------------------
+
+_GRACEFUL_WORKER = '''
+import asyncio
+
+from src.platform.temporal.worker_lifecycle import run_worker
+
+EVENTS = []
+
+
+class _Worker:
+    def __init__(self):
+        self._stopped = asyncio.Event()
+
+    async def run(self):
+        await self._stopped.wait()
+
+    async def shutdown(self):
+        EVENTS.append("shutdown")
+        await asyncio.sleep({drain})  # espera a las activities en curso
+        EVENTS.append("drained")
+        self._stopped.set()
+
+
+async def main():
+    await run_worker(_Worker())
+'''
+
+
+async def test_sigterm_lets_every_worker_drain_instead_of_cancelling_it(
+    ephemeral_module, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cada worker se apaga solo con SIGTERM (`run_worker`): el launcher no
+    cancela al que todavía espera sus activities cuando otro ya terminó."""
+    import asyncio
+    import os
+    import signal
+
+    fast = ephemeral_module("_fake_graceful_fast", _GRACEFUL_WORKER.format(drain=0.05))
+    slow = ephemeral_module("_fake_graceful_slow", _GRACEFUL_WORKER.format(drain=0.4))
+    if "src.run_workers" in sys.modules:
+        del sys.modules["src.run_workers"]
+    import src.run_workers as mod
+
+    monkeypatch.setattr(mod, "_discover_workers", lambda: [("alpha", "fast", fast), ("alpha", "slow", slow)])
+    previous = signal.signal(signal.SIGTERM, lambda *_: None)  # red: nunca matar a pytest
+    try:
+        launcher = asyncio.create_task(mod.main())
+        await asyncio.sleep(0.2)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(launcher, timeout=5)
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+    assert sys.modules[fast].EVENTS == ["shutdown", "drained"]
+    assert sys.modules[slow].EVENTS == ["shutdown", "drained"], "el launcher canceló al worker a mitad del apagado"

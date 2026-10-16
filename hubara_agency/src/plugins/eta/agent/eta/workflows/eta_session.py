@@ -77,6 +77,7 @@ with workflow.unsafe.imports_passed_through():
         start_eta_tracking_activity,
     )
     from src.plugins.eta.agent.eta.contracts import EtaSessionInput
+    from src.sdk.agentkit import continue_as_new_due
     from src.plugins.eta.agent.eta.prompts import (
         build_status_template_variables,
         render_stage_notification,
@@ -89,8 +90,28 @@ with workflow.unsafe.imports_passed_through():
 _IDLE_TIMEOUT = timedelta(days=7)
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
-_FAST = {"start_to_close_timeout": timedelta(seconds=10), "retry_policy": RetryPolicy(maximum_attempts=3)}
-_ORDER = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": RetryPolicy(maximum_attempts=3)}
+# Reintentos (auditoría de Temporal, 2026-10-15): con 3 intentos el ETA se
+# rendía en ~3 s y el loop se tragaba el error: un Medusa o un WhatsApp caídos
+# un par de minutos y el cliente nunca se enteraba de su pedido. Ahora reintenta
+# con espera creciente (tope de 5 min entre intentos) hasta 6 horas; un error
+# que Meta marca como definitivo (`non_retryable`) corta en el primer intento.
+# Solo opciones de las activities: replay seguro.
+_PATIENT = RetryPolicy(
+    initial_interval=timedelta(seconds=2),
+    backoff_coefficient=2.0,
+    maximum_interval=timedelta(minutes=5),
+)
+_WINDOW = timedelta(hours=6)
+_FAST = {"start_to_close_timeout": timedelta(seconds=10), "schedule_to_close_timeout": _WINDOW, "retry_policy": _PATIENT}
+_ORDER = {"start_to_close_timeout": timedelta(seconds=30), "schedule_to_close_timeout": _WINDOW, "retry_policy": _PATIENT}
+# Los envíos laten (`@with_heartbeat`): si el worker muere a mitad, el
+# reintento sale a los 30 s y no al vencer los 90 s.
+_SEND = {
+    "start_to_close_timeout": timedelta(seconds=90),
+    "heartbeat_timeout": timedelta(seconds=30),
+    "schedule_to_close_timeout": _WINDOW,
+    "retry_policy": _PATIENT,
+}
 
 # Template de utilidad aprobado (catalog.yaml) para notificaciones de estado
 # FUERA de la ventana de servicio 24h — la única vía que Meta permite para un
@@ -185,7 +206,10 @@ class HubaraEtaSessionWorkflow:
                 {"to_stage": input.to_stage, "order_id": input.order_id}
             )
 
+        # `turn_count` es el acumulado; el tope de continue-as-new cuenta los
+        # avisos de este run (`run_turns`, auditoría de Temporal 2026-10-15).
         turn_count = input.turn_count
+        run_turns = 0
         saw_terminal_stage = False
 
         while True:
@@ -210,6 +234,7 @@ class HubaraEtaSessionWorkflow:
                 if not stage:
                     continue
                 turn_count += 1
+                run_turns += 1
                 try:
                     await self._notify_stage(
                         session_id, order_id, stage, tracking_url, shipping_cost
@@ -227,6 +252,7 @@ class HubaraEtaSessionWorkflow:
                 req = self._pending_photos.pop(0)
                 order_id = str(req.get("order_id") or input.order_id)
                 turn_count += 1
+                run_turns += 1
                 try:
                     await workflow.execute_activity(
                         send_ready_photo_activity,
@@ -269,8 +295,8 @@ class HubaraEtaSessionWorkflow:
                     return
             saw_terminal_stage = False
 
-            if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not (
-                self._pending_stages or self._pending_photos
+            if not (self._pending_stages or self._pending_photos) and continue_as_new_due(
+                run_turns=run_turns, total_turns=turn_count, limit=_CONTINUE_AS_NEW_AFTER_TURNS
             ):
                 workflow.continue_as_new(
                     EtaSessionInput(
@@ -386,8 +412,7 @@ class HubaraEtaSessionWorkflow:
         delivered = await workflow.execute_activity(
             send_whatsapp_message_activity,
             args=[session_id, message],
-            start_to_close_timeout=timedelta(seconds=90),
-            retry_policy=RetryPolicy(maximum_attempts=2),
+            **_SEND,
         )
         persist_args: list = [session_id, message]
         if workflow.patched("persist-wamids-v1"):
@@ -433,8 +458,7 @@ class HubaraEtaSessionWorkflow:
         await workflow.execute_activity(
             send_whatsapp_template_activity,
             args=[session_id, _ORDER_STATUS_TEMPLATE, variables],
-            start_to_close_timeout=timedelta(seconds=90),
-            retry_policy=RetryPolicy(maximum_attempts=3),
+            **_SEND,
         )
         await workflow.execute_activity(
             record_eta_notification_activity,

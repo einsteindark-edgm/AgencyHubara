@@ -28,17 +28,17 @@ Si el plugin sólo tiene un worker, también acepta el atajo:
   agent:
     worker_module: src.plugins.<id>.workers.default
 
-Shutdown: SIGINT/SIGTERM cancela todas las tasks. Cada worker tiene su propio
-manejo de cancel (Temporal Worker hace flush graceful). Esperamos a que
-todas terminen antes de salir — si alguna no responde, el proceso muere
-después de 15s (timeout duro).
+Shutdown: cada worker corre con ``run_worker`` y SIGINT/SIGTERM lo apaga en
+orden (deja de pedir tareas y espera a sus activities en curso, auditoría de
+Temporal 2026-10-15). El launcher comparte esa señal (``stop_signal``): espera
+a que todos terminen solos y solo cancela a los que pasen el timeout duro
+(15 s por defecto). Si un worker se cae, cancela a los demás.
 """
 from __future__ import annotations
 
 import asyncio
 import importlib
 import os
-import signal
 from pathlib import Path
 
 import yaml
@@ -46,6 +46,7 @@ from loguru import logger
 
 from src.platform.plugin_loader import validate_enabled
 from src.platform.plugin_manifest import enabled_plugins
+from src.platform.temporal.worker_lifecycle import stop_signal
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -187,22 +188,6 @@ async def _run_worker(plugin_id: str, worker_name: str, module_path: str) -> Non
         raise
 
 
-def _install_signal_handlers(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
-    """SIGINT/SIGTERM → setea `stop` para que el supervisor cancele las tasks."""
-    def _request_stop(signame: str) -> None:
-        if not stop.is_set():
-            logger.info("[run_workers] received {} — requesting shutdown", signame)
-            stop.set()
-
-    for signame in ("SIGINT", "SIGTERM"):
-        try:
-            loop.add_signal_handler(getattr(signal, signame), _request_stop, signame)
-        except NotImplementedError:
-            # Windows: add_signal_handler no implementado. SIGINT funciona
-            # via KeyboardInterrupt en el `await stop.wait()` igual.
-            pass
-
-
 async def main() -> None:
     workers = _discover_workers()
     if not workers:
@@ -218,9 +203,11 @@ async def main() -> None:
         [f"{p}/{n}" for p, n, _ in workers],
     )
 
-    stop = asyncio.Event()
-    _install_signal_handlers(asyncio.get_running_loop(), stop)
+    async with stop_signal() as stop:
+        await _supervise(workers, stop)
 
+
+async def _supervise(workers: list[tuple[str, str, str]], stop: asyncio.Event) -> None:
     tasks: list[asyncio.Task[None]] = [
         asyncio.create_task(_run_worker(p, n, m), name=f"{p}/{n}")
         for p, n, m in workers
@@ -233,11 +220,19 @@ async def main() -> None:
         return_when=asyncio.FIRST_COMPLETED,
     )
 
-    # Diagnóstico — qué disparó el shutdown.
+    if waiter in done:
+        # SIGTERM/SIGINT: cada worker se está apagando solo (`run_worker`); se
+        # espera a que drenen y solo se cancela a los que pasen el timeout.
+        logger.info("[run_workers] shutdown via signal — waiting for workers to drain")
+        _, stragglers = await asyncio.wait(tasks, timeout=_SHUTDOWN_TIMEOUT_S)
+        for t in stragglers:
+            logger.error("[run_workers] worker {!r} did not drain in {}s — cancelling", t.get_name(), _SHUTDOWN_TIMEOUT_S)
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return
+
+    # Diagnóstico — un worker terminó o se cayó: se baja a los demás.
     for d in done:
-        if d is waiter:
-            logger.info("[run_workers] shutdown via signal — cancelling workers")
-            continue
         try:
             d.result()
             logger.warning(
@@ -249,14 +244,14 @@ async def main() -> None:
                 d.get_name(),
             )
 
-    # Cancelar todos los workers todavía vivos + el waiter si no disparó.
+    # Cancelar todos los workers todavía vivos + el waiter.
     for t in pending:
         t.cancel()
 
     # Esperar shutdown ordenado (timeout duro para no colgar el proceso).
     try:
         await asyncio.wait_for(
-            asyncio.gather(*tasks, *([waiter] if waiter in pending else []), return_exceptions=True),
+            asyncio.gather(*tasks, waiter, return_exceptions=True),
             timeout=_SHUTDOWN_TIMEOUT_S,
         )
     except asyncio.TimeoutError:

@@ -3,7 +3,7 @@
 Cuando el operador mueve el pedido a "en camino" puede adjuntar el link de
 la guía. El link:
 
-  * viaja a la cascada ETA (`_spawn_emit(order_id, stage, tracking_url)`)
+  * viaja a la cascada ETA (`_start_durable_emit(order_id, stage, tracking_url)`)
     para que el mensaje de WhatsApp que anuncia el cambio lo incluya;
   * queda en la nota del stage history (auditoría: qué guía se mandó);
   * se valida: solo http(s), sin espacios, ≤ 500 chars → si no, 422 y la
@@ -44,12 +44,10 @@ def harness(monkeypatch):
     monkeypatch.setattr(
         "src.plugins.orders.api.get_order_command_port", lambda: fake_port
     )
-    monkeypatch.setattr(
-        "src.plugins.orders.api._spawn_emit",
-        lambda order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None: (
-            spawn_emit_calls.append((order_id, to_stage, tracking_url))
-        ),
-    )
+    async def _start_emit(order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None):
+        spawn_emit_calls.append((order_id, to_stage, tracking_url))
+
+    monkeypatch.setattr("src.plugins.orders.api._start_durable_emit", _start_emit)
     monkeypatch.setattr(
         "src.plugins.orders.api._publish_orders_changed", lambda order_id=None: None
     )
