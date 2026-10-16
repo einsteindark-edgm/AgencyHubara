@@ -26,10 +26,12 @@ from src.plugins.chats.agent.sales.variant_enumeration import (
 from src.plugins.chats.agent.sales.price_quotes import find_unexplained_amounts
 from src.plugins.chats.agent.sales.pricing import format_cop
 from src.plugins.chats.agent.sales.use_cases.fact_rules import (
+    BoxWords,
     CouponWords,
     DenialWords,
     PaymentWords,
     StatusWords,
+    box_unit_claims,
     coupon_claims,
     customer_figures,
     denial_claims,
@@ -170,6 +172,15 @@ def coupon_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
 
 def denial_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
     return _claim_items(_denial(inp, words))
+
+
+def box_unit_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    """Lo que se cobra por caja dicho con un precio por unidad (`caja_por_unidad`):
+    un ítem por producto por caja en foco, si una cláusula dice un precio por
+    unidad sin nombrar la caja (frases del paquete); `precios` en 0 = sin precio."""
+    return _claim_items(box_unit_claims(
+        inp.text, products=inp.productos, units=inp.por_caja, prices=inp.precios, words=BoxWords(**words)
+    ))
 
 
 def foreign_label_items(inp: Any) -> list[dict[str, Any]]:

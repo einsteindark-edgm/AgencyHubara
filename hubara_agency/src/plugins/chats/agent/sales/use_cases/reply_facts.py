@@ -73,6 +73,10 @@ class ReplyFacts:
     customer_text: str = ""
     order_figures: tuple[int, ...] = ()
     figure_truth: str | None = None
+    #: Lo que se cobra por caja entre los productos en foco (`domain.yaml:
+    #: sold_by_box`): (título, unidades por caja, precio de la caja; None = sin
+    #: precio). Caso del 2026-10-16: «cada velita vale $25.000» por una caja de 12.
+    boxes: tuple[tuple[str, int, int | None], ...] = ()
 
     @property
     def price_lines(self) -> tuple[str, ...]:
@@ -123,6 +127,8 @@ class Findings:
     denials: tuple[tuple[str, str], ...] = ()
     #: (la cifra del cliente a la que el texto le da la razón, lo cierto de su pedido).
     figures: tuple[tuple[str, str], ...] = ()
+    #: (el precio de la caja dicho por unidad, lo cierto de la caja).
+    boxes: tuple[tuple[str, str], ...] = ()
 
     def __bool__(self) -> bool:
         return any(getattr(self, f.name) for f in fields(self))
@@ -130,7 +136,7 @@ class Findings:
     @property
     def terms(self) -> tuple[str, ...]:
         """Todo lo que no coincide, como texto (lo que se le dijo al modelo)."""
-        pairs = (*self.payments, *self.states, *self.coupons, *self.denials, *self.figures)
+        pairs = (*self.payments, *self.states, *self.coupons, *self.denials, *self.figures, *self.boxes)
         return (*self.aromas, *self.colors, *(("presentación",) if self.variant else ()), *self.prices,
                 *(term for term, _fact in pairs))
 
@@ -141,6 +147,7 @@ class Findings:
             "aroma_ajeno": self.aromas, "color_ajeno": self.colors, "variante_ajena": self.variant,
             "precio_ajeno": self.prices, "pago_ajeno": self.payments, "estado_ajeno": self.states,
             "cupon_ajeno": self.coupons, "negacion_falsa": self.denials, "cifra_del_cliente": self.figures,
+            "caja_por_unidad": self.boxes,
         }
         return tuple(name for name, value in found.items() if value)
 
@@ -174,6 +181,18 @@ def _price_problem(found: tuple[str, ...], facts: ReplyFacts) -> str:
     return (
         f"Le dijiste {said} como precio, y {real}. No empieces con «así es» ni con «sí» como si fuera "
         "correcto: dale el valor del catálogo y, si antes le habías dado otro valor, cuéntale que fue un "
+        "error tuyo."
+    )
+
+
+def _box_problem(pairs: tuple[tuple[str, str], ...]) -> str:
+    """Caso del 2026-10-16: el cliente preguntó si cada vela valía el precio de
+    la caja y el bot le contestó «Así es, $25.000 cada una»; en el turno
+    siguiente lo repitió («el precio es por unidad»)."""
+    return (
+        f"Le dijiste que {' y '.join(term for term, _fact in pairs)}, y lo cierto es que "
+        f"{_truth(pairs)}. No empieces con «así es» ni con «sí» como si fuera correcto: dile que ese es el precio "
+        "de la caja y cuántas unidades trae y, si antes le habías dicho que era por unidad, cuéntale que fue un "
         "error tuyo."
     )
 
@@ -235,12 +254,14 @@ def fact_message(
             f"Le dijiste que no tenemos {_said(findings.denials)}, y lo cierto es que {_truth(findings.denials)}. "
             "Si de verdad está agotado hoy, déjalo como está."
         )
+    if findings.boxes:
+        problems.append(_box_problem(findings.boxes))
     if findings.figures:
         known = facts.subtotal is not None and bool(facts.order_breakdown)
         problems.append(_figure_problem(findings.figures, known=known, examples=sum_examples, tool=tool))
     if tone:
         problems.append(tone.strip())
-    if findings.prices and price_examples:
+    if (findings.prices or findings.boxes) and price_examples:
         problems.append("Por ejemplo: " + " / ".join(f"«{e}»" for e in price_examples) + ".")
     return f"No se envió: {' '.join(problems)} {correction_tail(tool)}"
 

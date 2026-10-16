@@ -47,6 +47,7 @@ inputs:
   CuponDelTexto: {text: string, known: "tuple<string>", valid: "tuple<string>", valid_lines: "tuple<string>", valid_percents: "tuple<int>"}
   NegacionDelTexto: {text: string, titles: "tuple<string>", own: "tuple<string>", products: "tuple<string>"}
   CifraDelCliente: {text: string, customer: string, figures: "tuple<int>", order: "string?"}
+  CajaDelTexto: {text: string, productos: "tuple<string>", por_caja: "tuple<int>", precios: "tuple<int>"}
   CajasDelPedido: {producto: string, cantidad: int, por_caja: int, precio: "int?", charla: string}
   PedidoPorMayor: {charla: string, cifras: "tuple<int>", productos: "tuple<string>", por_caja: "tuple<int>"}
   CajaNombrada: {producto: string, por_caja: int, otro: string, otro_por_caja: int, charla: string}
@@ -445,6 +446,12 @@ builtins:
     input: CifraDelCliente
     fields: {term: string, fact: string}
     doc: "Las cifras de dinero que escribió el cliente («$45.000», «45 mil») y no son ninguna de las de su pedido (precios, líneas, subtotal, con envío, el total registrado): la cifra (term) y lo que suma su pedido (fact). Sin lo que suma su pedido, ninguna (fact_rules.customer_figures)."
+  box_unit_claim_items:
+    kind: items
+    input: CajaDelTexto
+    params: {por_unidad: str, habla_de_caja: str}
+    fields: {term: string, fact: string}
+    doc: "Lo que se cobra por caja dicho con un precio por unidad: un ítem por producto por caja en foco si una cláusula dice una frase de `por_unidad` (y no la niega) sin una de `habla_de_caja`; lo que dice el texto (term) y lo cierto de la caja (fact). Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
   foreign_label_items:
     kind: items
     input: OpcionesDelTexto
@@ -590,6 +597,9 @@ capabilities_since:
   # `escalate_to_human` con BULK_ORDER).
   caja_nombrada: 7
   por_mayor: 7
+  # Caso del 2026-10-16 (bot V2, ventas-7): «el precio es por unidad, cada
+  # velita vale $25.000» por una caja de 12. La pide `send_reply` con las demás.
+  caja_por_unidad: 8
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -895,6 +905,15 @@ about:
       Jev lee su mensaje y la respuesta y dice si el bot le da la razón
       («así es», «sí» o repitiéndola). Si se la da, el bot corrige con cariño
       y con la cuenta real. La regla solo propone: decide Jev.
+  caja_por_unidad:
+    name: Precio de la caja dicho por unidad
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, si el bot habla de un producto que se cobra por caja
+      (las velas de deseos) y dice un precio por unidad («cada una», «por
+      unidad», «cada velita»), Jev lee el texto con el precio de la caja y dice
+      si le pone a cada vela el precio de toda la caja. Si es así, el bot
+      corrige: el precio es el de la caja. La regla solo propone: decide Jev.
   variante_ajena:
     name: Presentación que no existe
     where: [herramientas]

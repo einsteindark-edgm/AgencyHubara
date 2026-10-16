@@ -237,6 +237,20 @@ class CifraDelCliente:
 
 
 @dataclass(frozen=True)
+class CajaDelTexto:
+    """Un texto para el cliente y los productos en foco que se cobran por caja
+    (`domain.yaml: sold_by_box`): sus títulos (`productos`), cuántas unidades
+    trae cada caja (`por_caja`) y el precio de la caja (`precios`, 0 = sin
+    precio), en el mismo orden. Capacidad `caja_por_unidad` (caso del
+    2026-10-16: «cada velita vale $25.000» por una caja de 12)."""
+
+    text: str
+    productos: tuple[str, ...]
+    por_caja: tuple[int, ...]
+    precios: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class NegacionDelTexto:
     """Un texto para el cliente, los títulos del catálogo (`titles`), lo que
     tienen los productos de los que habla (`own`: aromas, colores y

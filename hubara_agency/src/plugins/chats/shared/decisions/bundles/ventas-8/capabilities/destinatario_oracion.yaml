@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# El mismo «¿qué es?» del destinatario, oración por oración, para el filtro
+# de las tools de cierre y de escalación: la misma decisión con el mismo
+# interruptor (`control: destinatario`). Valor: los índices de las oraciones
+# que NO son para el cliente; si Jev duda de una, decide la regla para esa.
+capability: destinatario_oracion
+control: destinatario
+value: "tuple<int>"
+input: OracionesCheck
+items:
+  builtin: items_of
+  with: {field: parts}
+rule: {builtin: admin_leak_per_part}
+state:
+  builtin: numbered_items
+  with: {header: "Texto que el asesor de ventas escribió para el cliente, oración por oración:", max: 8}
+each:
+  id: "egreso.oracion.{n}"
+  kind: choice
+  text: "¿Qué es la oración [{n}]?"
+  criteria:
+    "mensaje_al_cliente": "un mensaje para el cliente (le responde, le pregunta, le informa o se despide)"
+    "razonamiento": "el razonamiento del asesor sobre qué responder o qué hacer"
+    "reporte_interno": "un reporte interno: etiquetas, estados, sistemas o datos para el equipo"
+    "acuse_al_sistema": "un acuse de recibo a una herramienta o al sistema"
+    "deliberacion": "la deliberación de si responder o no"
+thresholds: {"choice": 0.8}
+decide:
+  - when: "!items.exists(i, has(i.choice))"
+    then: doubt
+  # Se cae: Jev, con certeza, dice que no es para el cliente; si duda, la regla.
+  - otherwise: {expr: "items.filter(i, has(i.choice) && i.conf >= th['choice'] ? i.choice != 'mensaje_al_cliente' : i.index in rule).map(i, i.index)"}
+floor: {builtin: jev}
+same: {builtin: sorted_eq}
+examples:
+  - {items: [{text: "Hola", choice: mensaje_al_cliente, conf: 0.9}, {text: "ESTADO", choice: reporte_interno, conf: 0.8}], expect: [1]}
+  - {items: [{text: "Hola", choice: razonamiento, conf: 0.79}, {text: "ESTADO", choice: mensaje_al_cliente, conf: 0.9}], rule: [0], expect: [0]}
+  - {items: [{text: "Hola"}], expect: doubt}

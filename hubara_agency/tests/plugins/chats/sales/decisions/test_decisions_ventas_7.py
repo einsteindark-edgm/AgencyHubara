@@ -221,8 +221,9 @@ def test_the_catalog_asks_for_it_from_version_7_and_the_published_versions_run_w
     _need_v7()
     catalog = _load(CATALOG_PATH)
 
-    assert catalog["capabilities_since"] == dict.fromkeys(NEW, 7)
-    assert all(catalog["about"][n]["where"] == ["herramientas"] for n in catalog["capabilities_since"])
+    since_7 = {n: v for n, v in catalog["capabilities_since"].items() if v == 7}
+    assert since_7 == dict.fromkeys(NEW, 7)
+    assert all(catalog["about"][n]["where"] == ["herramientas"] for n in since_7)
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-6")
     registry.reset()
     assert registry.capability_if_present("aroma_ajeno") is None

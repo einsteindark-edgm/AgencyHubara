@@ -42,6 +42,8 @@ PUBLISHED = {
     # `caja_nombrada` y `por_mayor` (2026-10-14), y el producto señalado (`turno-v6`,
     # `rafaga-v9`) con la fila del saludo en ③ (anuncio de Halloween, 2026-10-13).
     "ventas-7@7": "49c5348d51cb568212b4b3b976fe323b58f8bdfc41a633fbfb45d196eaf80092",
+    # `caja_por_unidad`: el precio de la caja dicho por unidad (caso del 2026-10-16).
+    "ventas-8@8": "d614769005d4dcdce27debc2f39df0e9698a15def001205810476abb2de47acb",
     "centinela@1": "59200ee02051d7867a113259a44b396be8ae448c7cec88c2dd61e0f7767285ef",
     "operador@1": "136c79489136666aa6632bfee8c86329d2f04b5e29929e2cdaace15bd4434f26",
     "operador-2@2": "a48b58350cda620ec8f5db0b8b6676d80174cb429f5f8ed2cebcdd3d164d413b",

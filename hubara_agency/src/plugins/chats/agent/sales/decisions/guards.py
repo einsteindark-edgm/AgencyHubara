@@ -184,6 +184,8 @@ async def option_list(
 FACT_CAPABILITIES: tuple[str, ...] = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
     "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
+    # El precio de la caja dicho por unidad (ventas-8, 2026-10-16).
+    "caja_por_unidad",
 )
 
 
@@ -210,6 +212,7 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
     import asyncio
 
     from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
+        CajaDelTexto,
         CifraDelCliente,
         CuponDelTexto,
         EstadoDelTexto,
@@ -257,7 +260,11 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
     figure = CifraDelCliente(
         text=text, customer=facts.customer_text, figures=tuple(facts.order_figures), order=facts.figure_truth
     )
-    (aromas, colors, variant, wrong_prices, payments, states, coupons, denials, figures) = await asyncio.gather(
+    box = CajaDelTexto(
+        text=text, productos=tuple(title for title, _n, _p in facts.boxes),
+        por_caja=tuple(n for _t, n, _p in facts.boxes), precios=tuple(price or 0 for _t, _n, price in facts.boxes),
+    )
+    (aromas, colors, variant, wrong_prices, payments, states, coupons, denials, figures, boxes) = await asyncio.gather(
         ask("aroma_ajeno", labels(facts.own_aromas, facts.aromas, facts.colors), ()),
         ask("color_ajeno", labels(facts.own_colors, facts.colors, facts.aromas), ()),
         ask("variante_ajena", VariantesDelTexto(text=text, sheets=tuple(facts.sheets), single=tuple(facts.single)), False),
@@ -268,6 +275,8 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         ask("cupon_ajeno", coupon, ()) if facts.coupons_checked else _nothing(),
         ask("negacion_falsa", denial, ()),
         ask("cifra_del_cliente", figure, ()),
+        # Sin un producto por caja en foco no hay nada que revisar (ni que preguntar).
+        ask("caja_por_unidad", box, ()) if facts.boxes else _nothing(),
     )
 
     def pairs(name: str, terms: Sequence[str], inp: Any) -> tuple[tuple[str, str], ...]:
@@ -280,7 +289,7 @@ async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path
         aromas=tuple(aromas), colors=tuple(colors), variant=bool(variant), prices=tuple(wrong_prices),
         payments=pairs("pago_ajeno", payments, payment), states=pairs("estado_ajeno", states, status),
         coupons=pairs("cupon_ajeno", coupons, coupon), denials=pairs("negacion_falsa", denials, denial),
-        figures=pairs("cifra_del_cliente", figures, figure),
+        figures=pairs("cifra_del_cliente", figures, figure), boxes=pairs("caja_por_unidad", boxes, box),
     )
 
 
