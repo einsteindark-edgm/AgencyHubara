@@ -169,3 +169,61 @@ async def test_with_the_catalog_down_the_cart_still_arrives_as_before() -> None:
     await _ingest(_Catalog(fails=True), history, loader).execute(_cart(ITEMS))
 
     assert loader.calls[-1]["message"] == "[el cliente armó un carrito con: 2× HUB-TRILOGIA, 1× variant_leo]"
+
+
+# --- lo que se cobra por caja (caso del 2026-10-16) ---------------------------
+#
+# El carrito de una caja de Velas de deseos cuadradas ($25.000 la caja de 12)
+# le llegaba al bot como «1× Velas de deseos cuadradas · Multicolor a $25.000
+# c/u», y el bot le confirmó al cliente que cada vela valía $25.000. Lo que la
+# tienda cobra por caja (`domain.yaml: sold_by_box`) llega con su caja.
+
+DESEOS = CatalogProductDTO(
+    id="prod_deseos", handle="velas-de-deseos-cuadradas", title="Velas de deseos cuadradas", status="published",
+    options={"Color": ["Rojo y verde", "Multicolor"]},
+    variants=[
+        CatalogVariantDTO(id="variant_multi", title="Multicolor", sku="HUB-DESEOS-MULTICOLOR",
+                          prices=[CatalogPriceDTO(amount="25000", currency_code="cop")]),
+        CatalogVariantDTO(id="variant_rv", title="Rojo y verde", sku="HUB-DESEOS-RV",
+                          prices=[CatalogPriceDTO(amount="25000", currency_code="cop")]),
+    ],
+)
+BOX_ITEMS = [{"product_retailer_id": "HUB-DESEOS-MULTICOLOR", "quantity": 1, "item_price": 25000, "currency": "COP"}]
+SOLD_BY_BOX = [{"producto": "velas-de-deseos-cuadradas", "por_caja": 12}]
+
+
+async def test_what_is_sold_by_box_arrives_with_its_box_not_per_unit() -> None:
+    lines = lines_from_products([*BOX_ITEMS, ITEMS[0]], [DESEOS, TRILOGIA], boxes=SOLD_BY_BOX)
+
+    effective = await translate_to_effective_text(_cart([*BOX_ITEMS, ITEMS[0]]), cart_lines=lines)
+
+    assert effective.text == (
+        "[el cliente armó un carrito con: 1× Velas de deseos cuadradas · Multicolor a $25.000 la caja de 12 "
+        "unidades (HUB-DESEOS-MULTICOLOR); 2× Trilogía del Terror a $95.900 c/u (HUB-TRILOGIA)]"
+    )
+
+
+def test_the_note_says_the_quantity_is_boxes() -> None:
+    note = build_cart_note(BOX_ITEMS, lines_from_products(BOX_ITEMS, [DESEOS], boxes=SOLD_BY_BOX))
+
+    assert note is not None
+    assert (
+        "1× «Velas de deseos cuadradas», variante «Multicolor» (handle velas-de-deseos-cuadradas): se cobra por "
+        "caja de 12 unidades, el precio es el de la caja y la cantidad son cajas"
+    ) in note
+
+
+@pytest.mark.asyncio
+async def test_the_ingest_reads_what_the_store_sells_by_box(monkeypatch) -> None:
+    from src.plugins.chats.shared import store_pack
+
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")
+    store_pack.reset()
+    history, loader = _History(), _Loader()
+    try:
+        await _ingest(_Catalog([DESEOS]), history, loader).execute(_cart(BOX_ITEMS))
+    finally:
+        store_pack.reset()
+
+    assert "1× Velas de deseos cuadradas · Multicolor a $25.000 la caja de 12 unidades" in loader.calls[-1]["message"]
+    assert "c/u" not in loader.calls[-1]["message"]
