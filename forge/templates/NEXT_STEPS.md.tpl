@@ -22,6 +22,10 @@ Lo que forge instaló desde `forge/clients/{{slug}}/`:
 - [ ] Dominio de la tienda para el motor de decisiones:
       `hubara_agency/src/plugins/chats/shared/decisions/bundles/{ventas,{{store_bundle}}}/domain.yaml`.
       El clon corre `{{store_bundle}}` (la misma inteligencia que la tienda madre).
+      `vocabulary.practical_facts` (lo que el 2.º toque del remarketing puede decir de envío
+      y pago) lo llenó forge con `commerce`; súmale los tiempos de entrega de la tienda si
+      los quieres en ese mensaje. `sold_by_box` (productos que se cobran por caja) no viaja:
+      si {{company}} vende algo por caja, agrégalo ahí en una versión nueva del paquete.
       Certificar: `cd hubara_agency && uv run python -m src.sdk.cli decisions check`
 
 - [ ] Política comercial (de `client.yaml → commerce`): tarifas de envío y zona local,
@@ -30,8 +34,9 @@ Lo que forge instaló desde `forge/clients/{{slug}}/`:
       catálogo (handles de Medusa; los productos sin colección entran siempre). Viven en
       `infra/terraform/platform/tenants.auto.tfvars → store` (→ SSM → `.env`, módulo
       `store-config`); cambiarlas = PR + `terraform apply` de platform + Backend deploy.
-      forge también las escribió en la VOZ de los agentes (skills, SOUL/USER, el agente MBA):
-      si una cambia después, cámbiala también en esos textos (o el agente cita la vieja).
+      forge también las escribió en la VOZ de los agentes (skills, SOUL/USER, el agente MBA)
+      y en `domain.yaml → vocabulary.practical_facts`: si una cambia después, cámbiala
+      también en esos textos (o el agente cita la vieja).
 - [ ] Lo que corre SIN el `.env` del servidor (el laboratorio, el docker local, los tests)
       usa la política por defecto del código, que es la de la tienda madre: para medir el
       bot de {{company}} en el laboratorio, exporta sus variables de `store` en ese entorno.
