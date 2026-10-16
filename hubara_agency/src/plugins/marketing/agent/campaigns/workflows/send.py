@@ -4,6 +4,12 @@ Determinista: cero I/O acá — plan, sends, touches y resultado son activities.
 Un destinatario que falla se contabiliza y NO tumba la campaña (el operador
 ve `failed` en el resultado). "Programar" = arrancar este workflow con
 `start_delay` (Temporal nativo) desde la API.
+
+CONGELADO desde 2026-10-15: los envíos nuevos usan `CampaignSendWorkflowV2`
+(`send_v2.py`). Este queda registrado, sin cambios, para que las campañas
+programadas con este tipo antes del deploy terminen; su historia está fijada
+en `tests/fixtures/history_campaign_send_v1.json` (replay). Se borra cuando
+ya no quede ninguna programada con el tipo viejo.
 """
 from __future__ import annotations
 

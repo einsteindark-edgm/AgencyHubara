@@ -6,8 +6,9 @@
  * es UI state local seed desde la campaña (`key={campaign.id}` en el Page
  * resetea al cambiar de selección). Guardado EXPLÍCITO: PUT al blur de cada
  * campo de texto / al click en acciones discretas / al botón Guardar — sin
- * autosave por tecla. Con status sent/sending/failed todo queda read-only
- * (el backend igual responde 409).
+ * autosave por tecla. Fuera de draft/scheduled todo queda read-only (el
+ * backend igual responde 409); enviándose o pausada, `SendControls` muestra
+ * el avance y los controles del envío.
  */
 
 import { useRef, useState } from "react";
@@ -34,6 +35,7 @@ import { AudienceStep } from "./AudienceStep";
 import { GoalStep } from "./GoalStep";
 import { MessageStep } from "./MessageStep";
 import { OfferStep } from "./OfferStep";
+import { SendControls } from "./SendControls";
 import { SendStep } from "./SendStep";
 import { StepShell } from "./StepShell";
 import { TestSendStep } from "./TestSendStep";
@@ -158,6 +160,9 @@ export function CampaignBuilder({ campaign, onCreateCoupon }: Props) {
         <div className="shrink-0 border-b border-line bg-warn-soft px-5 py-2 text-[11.5px] font-medium text-warn">
           Campaña {meta.label.toLowerCase()} — solo lectura
         </div>
+      ) : null}
+      {campaign.status === "sending" || campaign.status === "paused" ? (
+        <SendControls campaign={campaign} />
       ) : null}
       {update.error ? (
         <div className="shrink-0 border-b border-line bg-danger-soft px-5 py-2 text-[11.5px] text-danger">

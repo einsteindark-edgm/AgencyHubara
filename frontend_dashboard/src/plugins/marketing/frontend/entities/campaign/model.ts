@@ -12,8 +12,24 @@ export type CampaignStatus =
   | "draft"
   | "scheduled"
   | "sending"
+  /** El operador frenó el envío por lotes; sigue con «Reanudar». */
+  | "paused"
   | "sent"
+  /** Cancelada a mitad de envío: lo que salió, salió; no sale más. */
+  | "cancelled"
   | "failed";
+
+/** Por dónde va el envío por lotes (lo escribe el workflow en cada lote). */
+export interface CampaignProgress {
+  total: number;
+  processed: number;
+  sent: number;
+  failed: number;
+  optedOut: number;
+  skipped: number;
+  /** "sending" | "paused" | "cancelling" (y el desenlace al cerrar). */
+  state: string;
+}
 
 export type CampaignGoal = "" | "discount_general" | "discount_product" | "launch";
 
@@ -78,6 +94,8 @@ export interface Campaign {
   /** Por qué NO salió una campaña fallida (p. ej. el cupón ya no servía al
    *  dispararse el envío programado). */
   failureReason?: string | null;
+  /** Avance del envío por lotes; null si no hay (sin enviar / workflow viejo). */
+  progress?: CampaignProgress | null;
   testSends: CampaignTestSend[];
   /** Curaduría manual: sesiones quitadas a mano de la audiencia. */
   excludedSessionIds: string[];
@@ -142,7 +160,9 @@ export const CAMPAIGN_STATUS_META: Record<
   draft: { label: "Borrador", tone: "neutral" },
   scheduled: { label: "Programada", tone: "info" },
   sending: { label: "Enviando", tone: "warn" },
+  paused: { label: "Pausada", tone: "warn" },
   sent: { label: "Enviada", tone: "ok" },
+  cancelled: { label: "Cancelada", tone: "neutral" },
   failed: { label: "Fallida", tone: "danger" },
 };
 

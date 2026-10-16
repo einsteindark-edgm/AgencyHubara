@@ -392,3 +392,236 @@ async def test_send_time_recheck_reads_medusa_fresh_not_the_process_cache(
     plan = await ActivityEnvironment().run(load_campaign_send_plan_activity, "mkt-1")
 
     assert plan.blocked_reason is not None and "pausado" in plan.blocked_reason
+
+
+# --- Envío por lotes (CampaignSendWorkflowV2) --------------------------------
+
+
+def _send_store(vault: Path):
+    from src.plugins.marketing.campaign_send_store import CampaignSendStore
+
+    return CampaignSendStore(vault)
+
+
+@pytest.mark.asyncio
+async def test_prepare_send_keeps_the_plan_in_the_vault_and_returns_only_the_count(
+    _isolate_vault_dir: Path,
+) -> None:
+    """El plan de miles de contactos no viaja por Temporal (2 MB): queda en
+    el vault y el workflow recibe el conteo."""
+    from src.plugins.marketing.agent.campaigns.activities import (
+        prepare_campaign_send_activity,
+    )
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    for n in (1, 2, 3):
+        _seed_session(vault, f"wa_+57{n}", {"tag": "COMPRA_EXITOSA"})
+    _seed_session(vault, "wa_+579", {"tag": "HUMANO"})
+
+    start = await ActivityEnvironment().run(prepare_campaign_send_activity, "mkt-1")
+
+    assert (start.total, start.template_name, start.carousel, start.blocked_reason) == (
+        3,
+        "campaign_promo_marketing_v1",
+        False,
+        None,
+    )
+    plan = _send_store(vault).plan("mkt-1")
+    assert sorted(r.session_id for r in plan.recipients) == ["wa_+571", "wa_+572", "wa_+573"]
+    assert [(s.session_id, s.reason) for s in plan.skipped] == [("wa_+579", "excluido")]
+    assert plan.unit_cost_usd_micros == 12500
+
+
+@pytest.mark.asyncio
+async def test_prepare_send_with_a_paused_coupon_comes_back_blocked(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    monkeypatch.setattr(
+        acts, "get_promotions_port", lambda: FakePromotionsPort([_promo(status="inactive")])
+    )
+
+    start = await ActivityEnvironment().run(acts.prepare_campaign_send_activity, "mkt-1")
+
+    assert start.total == 0
+    assert "pausado" in start.blocked_reason
+    assert CampaignStore(vault).get("mkt-1")["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_load_batch_rechecks_opt_outs_and_quiet_hours_at_send_time(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    for n in (1, 2, 3, 4):
+        _seed_session(vault, f"wa_+57{n}", {"tag": "COMPRA_EXITOSA"})
+    await ActivityEnvironment().run(acts.prepare_campaign_send_activity, "mkt-1")
+    # Entre el plan y el lote: uno se da de baja, otro entra en su horario de
+    # silencio.
+    _seed_session(
+        vault,
+        "wa_+572",
+        {"tag": "COMPRA_EXITOSA", "marketing_opt_out": True, "marketing_opt_out_source": "texto"},
+    )
+    monkeypatch.setattr(
+        acts, "is_quiet_hours_for_session", lambda session_id, now_utc: session_id == "wa_+573"
+    )
+    plan_ids = [r.session_id for r in _send_store(vault).plan("mkt-1").recipients]
+
+    batch = await ActivityEnvironment().run(acts.load_campaign_batch_activity, "mkt-1", 0, 3)
+
+    first_three = plan_ids[:3]
+    expected_skips = {"wa_+572": "dado_de_baja", "wa_+573": "quiet_hours"}
+    assert [r.session_id for r in batch.recipients] == [
+        s for s in first_three if s not in expected_skips
+    ]
+    assert {s.session_id: s.reason for s in batch.skipped} == {
+        s: expected_skips[s] for s in first_three if s in expected_skips
+    }
+
+
+@pytest.mark.asyncio
+async def test_record_progress_shows_the_advance_and_keeps_the_batch(
+    _isolate_vault_dir: Path,
+) -> None:
+    from src.plugins.marketing.agent.campaigns.activities import (
+        record_campaign_progress_activity,
+    )
+    from src.plugins.marketing.domain.campaign_send import (
+        CampaignBatchResult,
+        CampaignSendProgress,
+    )
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    batch = CampaignBatchResult(start=0, end=100, sent=97, failed=["wa_5"], opted_out=["wa_6"])
+    progress = CampaignSendProgress(total=300, processed=100, sent=97, failed=1, opted_out=1, skipped=1)
+
+    await ActivityEnvironment().run(record_campaign_progress_activity, "mkt-1", progress, batch)
+    saved = CampaignStore(vault).get("mkt-1")
+    assert saved["status"] == "sending"
+    assert saved["progress"]["processed"] == 100
+    assert saved["progress"]["total"] == 300
+    assert _send_store(vault).batches("mkt-1") == [batch]
+
+    await ActivityEnvironment().run(
+        record_campaign_progress_activity,
+        "mkt-1",
+        CampaignSendProgress(total=300, processed=100, state="paused"),
+        None,
+    )
+    assert CampaignStore(vault).get("mkt-1")["status"] == "paused"
+
+
+async def _sent_two_batches(vault: Path) -> None:
+    from src.plugins.marketing.domain.campaign_send import CampaignBatchResult
+    from src.plugins.marketing.domain.campaigns import (
+        CampaignSendPlan,
+        RecipientSendPlan,
+        SkippedRecipient,
+    )
+
+    store = _send_store(vault)
+    store.save_plan(
+        CampaignSendPlan(
+            campaign_id="mkt-1",
+            template_name="campaign_promo_marketing_v1",
+            recipients=[RecipientSendPlan(f"wa_{i}", {}) for i in range(300)],
+            skipped=[SkippedRecipient("wa_z", "excluido")],
+            unit_cost_usd_micros=12_500,
+            total_cost_usd_micros=12_500 * 300,
+        )
+    )
+    store.save_batch(
+        "mkt-1",
+        CampaignBatchResult(
+            start=0, end=100, sent=97, failed=["wa_5"], opted_out=["wa_6"],
+            skipped=[SkippedRecipient("wa_7", "quiet_hours")],
+        ),
+    )
+    store.save_batch("mkt-1", CampaignBatchResult(start=100, end=200, sent=100))
+
+
+@pytest.mark.asyncio
+async def test_finish_writes_the_whole_result_from_the_batches(_isolate_vault_dir: Path) -> None:
+    from src.plugins.marketing.agent.campaigns.activities import finish_campaign_send_activity
+    from src.plugins.marketing.domain.campaign_send import CampaignSendProgress
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, status="sending")
+    await _sent_two_batches(vault)
+    progress = CampaignSendProgress(total=300, processed=200, sent=197, failed=1, opted_out=1, skipped=1)
+
+    await ActivityEnvironment().run(finish_campaign_send_activity, "mkt-1", progress, "cancelled", None)
+
+    saved = CampaignStore(vault).get("mkt-1")
+    assert saved["status"] == "cancelled"
+    assert saved["sent_at_ms"] is not None
+    assert saved["send_result"] == {
+        "planned": 300,
+        "processed": 200,
+        "sent": 197,
+        "failed": ["wa_5"],
+        "opted_out": ["wa_6"],
+        "skipped": [
+            {"session_id": "wa_z", "reason": "excluido"},
+            {"session_id": "wa_7", "reason": "quiet_hours"},
+        ],
+        "unit_cost_usd_micros": 12_500,
+        "spent_usd_micros": 12_500 * 197,
+    }
+    assert saved["progress"]["state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_finish_after_a_failure_leaves_the_campaign_failed_with_the_reason(
+    _isolate_vault_dir: Path,
+) -> None:
+    from src.plugins.marketing.agent.campaigns.activities import finish_campaign_send_activity
+    from src.plugins.marketing.domain.campaign_send import CampaignSendProgress
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, status="sending")
+    await _sent_two_batches(vault)
+    reason = "El envío se detuvo con 200 de 300 destinatarios procesados: el vault no responde"
+
+    await ActivityEnvironment().run(
+        finish_campaign_send_activity,
+        "mkt-1",
+        CampaignSendProgress(total=300, processed=200, sent=197),
+        "failed",
+        reason,
+    )
+
+    saved = CampaignStore(vault).get("mkt-1")
+    assert saved["status"] == "failed"
+    assert saved["failure_reason"] == reason
+    assert saved["send_result"]["sent"] == 197
+
+
+@pytest.mark.asyncio
+async def test_finish_without_a_plan_still_closes_the_campaign(_isolate_vault_dir: Path) -> None:
+    """El plan nunca se guardó (falló antes de armarlo): igual queda fallida
+    con el motivo, sin reventar por el plan que no está."""
+    from src.plugins.marketing.agent.campaigns.activities import finish_campaign_send_activity
+    from src.plugins.marketing.domain.campaign_send import CampaignSendProgress
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+
+    await ActivityEnvironment().run(
+        finish_campaign_send_activity, "mkt-1", CampaignSendProgress(total=0), "failed", "Medusa caída"
+    )
+
+    saved = CampaignStore(vault).get("mkt-1")
+    assert (saved["status"], saved["failure_reason"]) == ("failed", "Medusa caída")
+    assert saved["send_result"]["planned"] == 0
