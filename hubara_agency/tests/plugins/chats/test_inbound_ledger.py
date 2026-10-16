@@ -136,10 +136,10 @@ def test_summary_tells_arrived_vs_lost_inside_per_bogota_day_and_ad() -> None:
 
     assert summary["requests"] == {"accepted": 1, "signature_rejected": 1}
     assert summary["by_day_ad"] == {
-        "2026-09-17": {_AD: {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0}},
+        "2026-09-17": {_AD: {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0, "pending": 0}},
         "2026-09-18": {
-            _AD: {"sessions": 3, "ingested": 1, "failed": 1, "lost": 1},
-            "sin_referral": {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0},
+            _AD: {"sessions": 3, "ingested": 1, "failed": 1, "lost": 1, "pending": 0},
+            "sin_referral": {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0, "pending": 0},
         },
     }
     assert summary["lost"] == [{"wa_message_id": "wamid.B", "session_id": "wa_573000000001", "at_ms": t + 2, "source_id": _AD}]
@@ -157,6 +157,31 @@ def test_summary_counts_a_parser_rejection_as_failed_with_its_reason() -> None:
 
     summary = summarize_ledger(records)
 
-    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 1, "ingested": 0, "failed": 1, "lost": 0}
+    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 1, "ingested": 0, "failed": 1, "lost": 0, "pending": 0}
     assert summary["failed"][0]["error"] == "text message missing 'text.body'"
     assert summary["lost"] == []
+
+
+def test_a_message_waiting_in_temporal_counts_as_pending_not_as_lost_or_failed() -> None:
+    """Entrada durable (ADR 2026-10-15): el webhook deja `queued` (o `duplicate`,
+    una re-entrega de algo que ya estaba) y la activity, `ingested`. Un `queued`
+    sin desenlace está en Temporal —esperando worker o reintentando—, no
+    perdido. Un `enqueue_failed` no es desenlace: Meta reintenta el POST."""
+    t = _SEP_18_0710_BOG
+    records = [
+        _seen("wamid.Q", "wa_573001234567", t, _AD),
+        _stage("queued", "wamid.Q", "wa_573001234567", t + 1),
+        _seen("wamid.E", "wa_573000000001", t + 2, _AD),
+        _stage("queued", "wamid.E", "wa_573000000001", t + 3),
+        _stage("ingested", "wamid.E", "wa_573000000001", t + 4),
+        _seen("wamid.G", "wa_573000000002", t + 5, _AD),
+        _stage("duplicate", "wamid.G", "wa_573000000002", t + 6),
+        _seen("wamid.F", "wa_573000000003", t + 7, _AD),
+        _stage("enqueue_failed", "wamid.F", "wa_573000000003", t + 8, "RPCError: unavailable"),
+    ]
+
+    summary = summarize_ledger(records)
+
+    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 4, "ingested": 1, "failed": 0, "lost": 1, "pending": 2}
+    assert [row["wa_message_id"] for row in summary["pending"]] == ["wamid.Q", "wamid.G"]
+    assert [row["wa_message_id"] for row in summary["lost"]] == ["wamid.F"]

@@ -25,6 +25,7 @@ isinstance check).
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
@@ -320,6 +321,19 @@ async def catalog_gap_note_for(
     return catalog_gap_note(verdict.value)
 
 
+class InboundEffectsPort(Protocol):
+    """Lo que un reintento del ingest no repite, por `wamid` (ADR 2026-10-15
+    §6, `inbound_effects_store.py`): se `claim`-ea antes de un envío al
+    cliente y se `mark`-ea después de escribir el historial o avisar a la
+    sesión."""
+
+    def claim(self, wamid: str, effect: str) -> bool: ...
+
+    def done(self, wamid: str, effect: str) -> bool: ...
+
+    def mark(self, wamid: str, effect: str) -> None: ...
+
+
 class PhotoIdentifierPort(Protocol):
     """Qué producto nuestro es la foto (``use_cases/photo_product``)."""
 
@@ -355,8 +369,13 @@ class IngestInboundMessage:
         photo_wait_s: float = PHOTO_WAIT_MAX_S,
         photo_notifier: PhotoNotifier | None = None,
         order_facts: OrderFactsReader | None = None,
+        effects: InboundEffectsPort | None = None,
     ) -> None:
         self._history_store = history_store
+        # Entrada durable (ADR 2026-10-15): el ingest corre en una activity con
+        # reintentos; lo que un reintento no puede repetir queda marcado por
+        # `wamid`. Sin él (tests, laboratorio), todo sale como siempre.
+        self._effects = effects
         # Los datos reales de un pedido (OrderFacts): el cliente que escribe
         # justo después de comprar abre el episodio en post-venta, con la etapa
         # y el pago del pedido (caso pedido #64). Sin él, la nota de siempre.
@@ -1083,11 +1102,11 @@ class IngestInboundMessage:
                 "voice": (parsed.audio or {}).get("voice", False),
             }
             self._safe_write_metadata(session_id, metadata, base)
-            # HU-002 / A.5: spawn background transcription task. El HTTP layer
-            # tiene permiso de I/O (ya llama Temporal client), así que la
-            # transcripción puede correr ahí — más simple que un workflow
-            # dedicado, y el media URL de Meta expira a los 5min así que no
-            # podemos demorar.
+            # HU-002 / A.5: spawn background transcription task (en el proceso
+            # que corre el ingest: el worker `sales` desde la entrada durable).
+            # Los 5 min de Meta son de la URL firmada, no del `media_id`: cada
+            # descarga lo vuelve a resolver (ADR 2026-10-15 §5). La fase 2 la
+            # vuelve una activity.
             #
             # PREMORTEM #2: spawn safe — captura excepciones y las loguea.
             _spawn_safe(
@@ -1235,11 +1254,8 @@ class IngestInboundMessage:
             # no, nadie tendría el caso (octava revisión).
             if notify_client:
                 try:
-                    from src.platform.whatsapp import client as wa_client
-
-                    await wa_client.send_message(
-                        parsed.phone_number_id,
-                        parsed.from_number,
+                    await self._send_once(
+                        parsed,
                         "Recibí tu documento 🤍. Un colega del equipo lo "
                         "revisa y te confirma enseguida.",
                     )
@@ -1274,7 +1290,10 @@ class IngestInboundMessage:
             **_build_reply_kwargs(parsed, metadata, events_before),
             **_late_delivery_kwargs(sent_ms, now_ms, arrived_after_window),
         }
-        if persisted_document_url:
+        # Un reintento de la entrada no duplica la línea del cliente en el panel.
+        if self._effect_done(parsed, "history"):
+            logger.info("inbound_history_already_written", session=session_id, wamid=parsed.message_id)
+        elif persisted_document_url:
             self._history_store.append_user_event(
                 session_id,
                 effective.text,
@@ -1283,6 +1302,7 @@ class IngestInboundMessage:
                 document_filename=effective.document_filename,
                 **reply_kwargs,
             )
+            self._mark_effect(parsed, "history")
         else:
             self._history_store.append_user_event(
                 session_id,
@@ -1290,6 +1310,7 @@ class IngestInboundMessage:
                 image_url=persisted_image_url,
                 **reply_kwargs,
             )
+            self._mark_effect(parsed, "history")
 
         # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
         # Solo la respuesta del formulario (`nfm_reply`) termina la espera de
@@ -1442,6 +1463,10 @@ class IngestInboundMessage:
             turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
         if previous_episode is not None:
             turn_message = with_previous_episode(previous_episode, turn_message)
+        # Un reintento de la entrada no hace que el bot conteste dos veces.
+        if self._effect_done(parsed, "turn"):
+            logger.info("inbound_turn_already_delivered", session=session_id, wamid=parsed.message_id)
+            return
         await self._load_session.execute(
             session_id=session_id,
             message=turn_message,
@@ -1472,10 +1497,32 @@ class IngestInboundMessage:
             ]
             or None,
         )
+        self._mark_effect(parsed, "turn")
 
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    def _effect_done(self, parsed: WhatsAppMessage, effect: str) -> bool:
+        """¿Un intento anterior de la entrada ya hizo este efecto con este mensaje?"""
+        return self._effects is not None and self._effects.done(parsed.message_id, effect)
+
+    def _mark_effect(self, parsed: WhatsAppMessage, effect: str) -> None:
+        if self._effects is not None:
+            self._effects.mark(parsed.message_id, effect)
+
+    async def _send_once(self, parsed: WhatsAppMessage, text: str) -> None:
+        """Un envío directo al cliente, una vez por mensaje y texto. Se reclama
+        ANTES de enviar: un reintento de la entrada no lo repite, y si el
+        proceso muere entre el reclamo y el envío el cliente se queda sin esa
+        cortesía (nunca la recibe dos veces)."""
+        fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+        if self._effects is not None and not self._effects.claim(parsed.message_id, f"send:{fingerprint}"):
+            logger.info("inbound_send_already_done", wamid=parsed.message_id, fingerprint=fingerprint)
+            return
+        from src.platform.whatsapp import client as wa_client
+
+        await wa_client.send_message(parsed.phone_number_id, parsed.from_number, text)
 
     async def _read_inbound(self, inbound: Inbound) -> Any:
         """Las lecturas del cliente con el proveedor inyectado o el del motor.
@@ -2184,7 +2231,6 @@ class IngestInboundMessage:
         """
         from src.platform.audio.composition import get_audio_transcription_port
         from src.platform.audio.dtos import TranscriptionRequest
-        from src.platform.whatsapp import client as wa_client
 
         audio_info = parsed.audio or {}
         media_id = audio_info.get("id")
@@ -2277,11 +2323,7 @@ class IngestInboundMessage:
                         "Recibí tu audio pero no logré entenderlo bien. "
                         "¿Me lo escribes en un mensaje? 🤍"
                     )
-                await wa_client.send_message(
-                    parsed.phone_number_id,
-                    parsed.from_number,
-                    fallback,
-                )
+                await self._send_once(parsed, fallback)
             except Exception:  # noqa: BLE001
                 pass
             return
@@ -2346,7 +2388,6 @@ class IngestInboundMessage:
         """
         from src.platform.vision.composition import get_image_vision_port
         from src.platform.vision.dtos import VisionRequest
-        from src.platform.whatsapp import client as wa_client
 
         media = parsed.media or {}
         media_id = media.get("id")
@@ -2482,9 +2523,8 @@ class IngestInboundMessage:
                 reason_category="PAYMENT_VERIFICATION_PENDING",
             )
             try:
-                await wa_client.send_message(
-                    parsed.phone_number_id,
-                    parsed.from_number,
+                await self._send_once(
+                    parsed,
                     "¡Perfecto! Recibimos tu comprobante 🤍. Tu pedido pasa a "
                     "elaboración y cuando lo tengamos listo te informamos el "
                     "despacho.",

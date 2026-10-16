@@ -36,10 +36,12 @@ locals {
 
   # Nombre del proceso en CloudWatch → regex sobre la cmdline completa (procstat
   # `pattern`). Anclados con $ donde un nombre es prefijo de otro (sales vs
-  # sales_eval). La API corre uvicorn en un hijo `multiprocessing.spawn`.
+  # sales_eval). La API es `python run_api.py`: sin `reload` (ADR 2026-10-15)
+  # uvicorn atiende en ese mismo proceso; con `UVICORN_RELOAD=1` el patrón
+  # toma al supervisor (antes se medía el hijo `multiprocessing.spawn`).
   cw_processes = {
     litellm                = "bin/litellm "
-    api                    = "multiprocessing\\.spawn import spawn_main"
+    api                    = "run_api\\.py$"
     chats-sales            = "chats\\.workers\\.sales$"
     chats-sales_eval       = "chats\\.workers\\.sales_eval$"
     chats-remarketing      = "chats\\.workers\\.remarketing$"

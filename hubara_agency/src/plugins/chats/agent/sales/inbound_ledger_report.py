@@ -11,6 +11,8 @@ personas escribieron (`sessions` — lo comparable con "conversaciones
 iniciadas" de Meta), y cuántos mensajes se ingirieron / fallaron / se
 perdieron adentro. Si Meta cuenta más que `sessions`, esos webhooks NUNCA
 entraron; si `lost`/`failed` > 0, entraron y los perdimos nosotros.
+`pending` = están en Temporal sin desenlace todavía (entrada durable,
+ADR 2026-10-15): buscá su `inbound-<wamid>` en la UI de Temporal.
 """
 from __future__ import annotations
 
@@ -53,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         since_ms=_day_start_ms(lo), until_ms=_day_start_ms(hi + timedelta(days=1))
     )
     summary = summarize_ledger(records)
-    for key in ("lost", "failed"):
+    for key in ("lost", "failed", "pending"):
         summary[key] = [_present(row, full=args.full) for row in summary[key]]
     json.dump(summary, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")

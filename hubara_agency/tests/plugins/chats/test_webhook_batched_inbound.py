@@ -14,6 +14,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.plugins.chats.inbound_entry_fakes import InlineInboundEntry
+
 _PHONE_ID = "100000000000001"
 _ANA = "573001234567"
 _BETO = "573000000001"
@@ -65,7 +67,7 @@ def harness(monkeypatch):
     monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
     monkeypatch.setattr(config, "HUBARA_ENV", "dev")
     ingest = _Ingest()
-    monkeypatch.setattr(api, "build_ingest_use_case", lambda: ingest)
+    monkeypatch.setattr(api, "build_inbound_entry", lambda: InlineInboundEntry(ingest))
     return TestClient(app), ingest
 
 
@@ -108,28 +110,10 @@ def test_a_change_with_a_broken_envelope_does_not_take_down_its_siblings(harness
     assert ingest.received() == [("wamid.B", _BETO)]
 
 
-def test_an_ingest_that_blows_up_does_not_starve_the_next_message(monkeypatch) -> None:
-    """Starlette corre los background tasks en serie y CORTA en la primera
-    excepción: sin aislar cada ingest, un fallo en A dejaría a B sin ingerir."""
-    from src.main import app
-    from src.platform import config
-    from src.plugins.chats.api import sales as api
-
-    class _FailsOnAna(_Ingest):
-        async def execute(self, parsed: Any, **kwargs: Any) -> None:
-            await super().execute(parsed)
-            if parsed.from_number == _ANA:
-                raise RuntimeError("temporal unreachable")
-
-    monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
-    monkeypatch.setattr(config, "HUBARA_ENV", "dev")
-    ingest = _FailsOnAna()
-    monkeypatch.setattr(api, "build_ingest_use_case", lambda: ingest)
-
-    r = TestClient(app, raise_server_exceptions=False).post("/api/webhook", json=BATCH_SHAPES["varios_changes"])
-
-    assert r.status_code == 200
-    assert ingest.received() == [("wamid.A", _ANA), ("wamid.B", _BETO)]
+# Un ingest que revienta ya no puede dejar sin ingerir al siguiente mensaje:
+# cada uno es su propio workflow en Temporal (entrada durable, ADR 2026-10-15).
+# Lo cubre `sales/test_inbound_message_workflow.py`
+# (`test_a_previous_message_that_failed_does_not_hold_the_next`).
 
 
 def test_a_delivery_status_that_blows_up_does_not_starve_the_inbound_messages(harness, monkeypatch) -> None:

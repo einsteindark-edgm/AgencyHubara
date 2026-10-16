@@ -18,7 +18,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import Any
 
 import structlog
@@ -28,15 +28,16 @@ import src.platform.config as cfg
 from src.platform.observability.tracing import add_traced_background_task
 from src.platform.whatsapp.webhook_security import verify_meta_signature
 from src.plugins.chats.agent.sales.composition import (
+    build_inbound_entry,
     build_inbound_ledger,
     build_ingest_delivery_status_use_case,
     build_ingest_handover_use_case,
     build_ingest_standby_use_case,
-    build_ingest_use_case,
     build_phone_identity,
     build_sender_identity,
     has_phone_conversation,
 )
+from src.plugins.chats.agent.sales.contracts import InboundMessageInput
 from src.plugins.chats.agent.sales.parsers import (
     HANDOVERS_FIELD,
     STANDBY_FIELD,
@@ -104,13 +105,16 @@ async def verify_webhook(request: Request):
 
 @router.post("/webhook")
 async def handle_whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
-    """Receives JSON body directly and frees connection to prevent Timeout.
+    """Recibe el webhook de WhatsApp Cloud.
 
     Dos clases de eventos pueden venir en el mismo body (Meta los puede
     mezclar pero típicamente un body trae UNO):
 
-    * `entry[*].changes[*].value.messages[]` — inbound del cliente.
-      Delegado a `IngestInboundMessage` (legacy path).
+    * `entry[*].changes[*].value.messages[]` — inbound del cliente. Cada
+      mensaje queda en Temporal (`InboundMessageWorkflow`, id
+      `inbound-<wamid>`) ANTES del 200; lo ingiere el worker `sales`
+      (`IngestInboundMessage`). Sin Temporal, 503 y Meta reintenta
+      (entrada durable, ADR 2026-10-15).
     * `entry[*].changes[*].value.statuses[]` — delivery status de un
       outbound nuestro (HU-WA24H-001 F1.10). Delegado a
       `IngestDeliveryStatus` para materializar cost + summary.
@@ -124,8 +128,9 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
       `control_owner` en la sesión. Misma flag y misma lista cerrada que
       `standby`.
 
-    Ambos handlers corren como background tasks — devolvemos 200 al toque
-    para evitar timeout de Meta.
+    Statuses, `standby` y `messaging_handovers` corren como background tasks
+    tras el 200 (como siempre); los mensajes del cliente solo esperan el RPC a
+    Temporal que los deja a salvo.
 
     HU-WA24H-001 pre-mortem F9.2: verifica X-Hub-Signature-256 vía HMAC
     SHA256 antes de procesar. Bloquea inyección de fake statuses/messages
@@ -194,7 +199,7 @@ async def handle_whatsapp_webhook(request: Request, background_tasks: Background
         if handler is None:
             logger.info("webhook_field_ignored", field=field_name)
             continue
-        handler(part, background_tasks)
+        await handler(part, background_tasks)
     return {"status": "ok"}
 
 
@@ -216,7 +221,9 @@ async def _ingest_ledgered(
     field_name: str,
     messages: Sequence[Any],
 ) -> None:
-    """Corre UN ingest, deja su desenlace por mensaje en el ledger (`ingested`
+    """Corre UN ingest en la API (hoy solo el de `standby`: los mensajes del
+    cliente van por la entrada durable y su desenlace lo escribe la activity),
+    deja su desenlace por mensaje en el ledger (`ingested`
     o `ingest_failed` con el error) y AÍSLA su fallo: Starlette corta el loop de
     background tasks en la primera excepción, así que re-lanzar dejaría sin
     ingerir a los mensajes encolados detrás (POST batcheado). El traceback va al
@@ -270,8 +277,8 @@ def _in_their_conversation(parsed: Any) -> Any:
 
 # ── handlers por `field` ───────────────────────────────────────────────────────
 
-def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
-    """El path productivo de siempre (inbound del cliente + statuses)."""
+async def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
+    """Inbound del cliente (entrada durable a Temporal) + statuses (como siempre)."""
     # Statuses primero — no requieren ser mutuamente excluyentes con
     # messages (Meta podría enviarlos juntos).
     for status_update in parse_whatsapp_statuses(body):
@@ -318,15 +325,45 @@ def _handle_messages(body: dict, background_tasks: BackgroundTasks) -> None:
         _ledger_request(None, outcome="malformed")
         raise HTTPException(status_code=400, detail=f"malformed payload: {batch.rejected[0].reason}")
 
-    # Un background task por mensaje, en el orden de Meta. Starlette los corre
-    # SECUENCIALMENTE (await uno tras otro), así que dos mensajes del mismo
-    # cliente se ingieren en orden; statuses arriba ya quedaron encolados.
-    use_case = build_ingest_use_case()
-    for parsed in batch.messages:
-        parsed = _in_their_conversation(parsed)
-        add_traced_background_task(
-            background_tasks, _ingest_ledgered, use_case.execute, parsed, "messages", (parsed,)
+    # Entrada durable (ADR 2026-10-15): cada mensaje queda en Temporal ANTES
+    # del 200 —un deploy o un OOM ya no lo pierden— y lo ingiere el worker
+    # `sales`. En el orden de Meta, y cada uno encadenado al anterior del mismo
+    # cliente en este POST (`after`): el workflow espera a que ese termine, el
+    # orden que antes daban los background tasks en serie. Si Temporal falla,
+    # 503: Meta reintenta el POST y lo que ya entró lo frena la dedupe por wamid.
+    await _enter_durably([_in_their_conversation(parsed) for parsed in batch.messages])
+
+
+async def _enter_durably(messages: Sequence[Any]) -> None:
+    entry = build_inbound_entry()
+    previous: dict[str, str] = {}
+    for parsed in messages:
+        inp = InboundMessageInput(
+            message=asdict(parsed), after=previous.get(parsed.from_number), received_at_ms=_now_ms()
         )
+        try:
+            accepted = await entry.accept(inp)
+        except Exception as exc:  # noqa: BLE001 — sin Temporal no hay 200: Meta reintenta
+            logger.exception("inbound_enqueue_failed", wa_message_id=parsed.message_id)
+            _ledger_stage("enqueue_failed", parsed, error=f"{type(exc).__name__}: {exc}")
+            raise HTTPException(status_code=503, detail="inbound queue unavailable") from exc
+        _ledger_stage("queued" if accepted else "duplicate", parsed)
+        previous[parsed.from_number] = parsed.message_id
+
+
+def _ledger_stage(stage: str, parsed: Any, *, error: str | None = None) -> None:
+    build_inbound_ledger().append(
+        [
+            message_stage_record(
+                stage=stage,
+                at_ms=_now_ms(),
+                field="messages",
+                wa_message_id=parsed.message_id,
+                from_number=parsed.from_number,
+                error=error,
+            )
+        ]
+    )
 
 
 def _status_execute(use_case: Any, status_update: Any) -> Callable[..., Awaitable[None]]:
@@ -351,7 +388,7 @@ async def _isolated(
     detrás: Starlette los ejecuta en serie y CORTA el loop en la primera
     excepción, así que un status roto dejaba sin ingerir a los mensajes
     encolados después (en un POST batcheado: clientes perdidos). El fallo queda
-    en el log con traceback. Los ingests de mensajes usan `_ingest_ledgered`,
+    en el log con traceback. El ingest de `standby` usa `_ingest_ledgered`,
     que además de aislar deja el desenlace en el ledger."""
     try:
         await execute(*args)
@@ -359,7 +396,7 @@ async def _isolated(
         logger.exception(event, **log_fields)
 
 
-def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
+async def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
     """D1.4: Meta Business Agent controla el hilo. Detrás de la flag
     `MBA_STANDBY_ENABLED` (default OFF: se acepta y se descarta, como hasta
     hoy); la lista cerrada de clientes la aplica `IngestStandby`."""
@@ -397,7 +434,7 @@ def _handle_standby(body: dict, background_tasks: BackgroundTasks) -> None:
         )
 
 
-def _handle_messaging_handovers(body: dict, background_tasks: BackgroundTasks) -> None:
+async def _handle_messaging_handovers(body: dict, background_tasks: BackgroundTasks) -> None:
     """D1.5: quién controla el hilo. Detrás de la misma flag que `standby`
     (default OFF: se acepta y se descarta); la lista cerrada la aplica
     `IngestHandover`. Un ítem con shape desconocido se loguea con el body

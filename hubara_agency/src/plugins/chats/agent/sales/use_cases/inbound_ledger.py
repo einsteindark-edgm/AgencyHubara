@@ -89,6 +89,9 @@ def message_stage_record(
 
 
 NO_REFERRAL_BUCKET = "sin_referral"
+#: Etapas del webhook con la entrada durable: el mensaje quedó en Temporal.
+_IN_TEMPORAL = frozenset({"queued", "duplicate"})
+_ENQUEUE_FAILED = "enqueue_failed"
 _BOGOTA = ZoneInfo("America/Bogota")
 
 
@@ -98,13 +101,17 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     Por bucket: ``sessions`` = personas distintas que escribieron (lo comparable
     con "conversaciones iniciadas" de Meta); ``ingested`` / ``failed`` / ``lost``
-    cuentan mensajes únicos (un reintento de Meta repite el wamid y no suma).
-    ``lost`` = visto en el body y sin desenlace: lo descartó el parser o el
-    proceso murió antes de ingerirlo.
+    / ``pending`` cuentan mensajes únicos (un reintento de Meta repite el wamid
+    y no suma). ``lost`` = visto en el body y sin desenlace: lo descartó el
+    parser o nunca entró a Temporal. ``pending`` = entró a Temporal (``queued``,
+    o ``duplicate`` si ya estaba) y todavía no tiene desenlace: espera worker o
+    reintenta (entrada durable, ADR 2026-10-15). ``enqueue_failed`` no es
+    desenlace: el webhook respondió 503 y Meta reintenta el POST.
     """
     requests: dict[str, int] = {}
     seen: dict[str, dict[str, Any]] = {}
     outcome: dict[str, dict[str, Any]] = {}
+    in_temporal: set[str] = set()
     for record in records:
         if record.get("kind") == "request":
             key = str(record.get("outcome"))
@@ -115,18 +122,23 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if record.get("stage") == "seen":
             seen.setdefault(wamid, record)
+        elif record.get("stage") in _IN_TEMPORAL:
+            in_temporal.add(wamid)
+        elif record.get("stage") == _ENQUEUE_FAILED:
+            continue
         elif record.get("stage") == "ingested" or wamid not in outcome:
             outcome[wamid] = record  # un `ingested` (reintento exitoso) gana sobre el fallo
 
     by_day_ad: dict[str, dict[str, dict[str, Any]]] = {}
     lost: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
     for wamid, record in sorted(seen.items(), key=lambda kv: kv[1]["at_ms"]):
         source_id = (record.get("referral") or {}).get("source_id")
         day = datetime.fromtimestamp(record["at_ms"] / 1000, _BOGOTA).strftime("%Y-%m-%d")
         bucket = by_day_ad.setdefault(day, {}).setdefault(
             source_id or NO_REFERRAL_BUCKET,
-            {"sessions": set(), "ingested": 0, "failed": 0, "lost": 0},
+            {"sessions": set(), "ingested": 0, "failed": 0, "lost": 0, "pending": 0},
         )
         bucket["sessions"].add(record.get("session_id"))
         row = {
@@ -136,7 +148,10 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
             "source_id": source_id,
         }
         final = outcome.get(wamid)
-        if final is None:
+        if final is None and wamid in in_temporal:
+            bucket["pending"] += 1
+            pending.append(row)
+        elif final is None:
             bucket["lost"] += 1
             lost.append(row)
         elif final.get("stage") == "ingested":
@@ -153,6 +168,7 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
         "by_day_ad": dict(sorted(by_day_ad.items())),
         "lost": lost,
         "failed": failed,
+        "pending": pending,
     }
 
 
