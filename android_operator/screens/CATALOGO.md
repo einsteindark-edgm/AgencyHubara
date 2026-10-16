@@ -163,6 +163,8 @@ _Se puede tocar (`action`)._
 | `avatar_seed` | texto | Valor estable para el color del avatar (por defecto el nombre). |
 | `tag` | texto | Píldora debajo del título. |
 | `tag_tone` | `neutral` · `primary` · `secondary` · `bot` · `success` · `warning` · `danger` | Color de la píldora. |
+| `title_tag` | texto | Píldora chica al lado del título, sin agregar una línea (quién atiende: «Humano»). |
+| `title_tag_tone` | `neutral` · `primary` · `secondary` · `bot` · `success` · `warning` · `danger` | Color de la píldora del título. |
 | `trailing` | texto | Valor a la derecha (un total, una cifra). |
 | `trailing_caption` | texto | Línea chica debajo del valor (una hora). |
 | `trailing_tone` | `default` · `muted` · `primary` · `bot` · `success` · `warning` · `danger` | Color del valor y su línea chica. |
@@ -263,7 +265,7 @@ Elige UNA opción. Guarda el valor en `bind` (`state.x` vuelve a pedir los datos
 | Propiedad | Tipo | Qué es |
 |---|---|---|
 | `bind` **(obligatoria)** | `state.x` / `form.x` | Dónde se guarda: `state.<clave>`. |
-| `options` **(obligatoria)** | opciones | `[{ "value": "…", "label": "…" }]`. |
+| `options` **(obligatoria)** | opciones | `[{ "value": "…", "label": "…", "badge": "{{…}}" }]`. `badge` (opcional): un número en una bolita al lado del texto, como los no leídos de la bandeja (vacío o 0: sin bolita). Con bolitas los chips bajan de línea en vez de deslizarse: se ven todos. |
 | `style` | `chips` · `segmented` | Chips (por defecto) o botones segmentados. |
 
 ### `text_field`
