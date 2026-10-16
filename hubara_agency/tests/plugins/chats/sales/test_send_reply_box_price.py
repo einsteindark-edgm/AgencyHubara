@@ -1,5 +1,6 @@
 """`send_reply` no deja salir, sin avisar, que el precio de lo que se cobra por
-caja es el de cada vela (`caja_por_unidad`, paquete `ventas-8`).
+caja es el de cada vela (`caja_por_unidad`, en `ventas-7` desde el 2026-10-16,
+editado en el lugar por decisión del operador: emergencia).
 
 Caso de producción del 2026-10-16 (bot V2, ventas-7, run de Ventas 738c9ca9,
 turnos 4 y 5): el cliente armó un carrito con 1 caja de Velas de deseos
@@ -61,7 +62,7 @@ class _Catalog:
 
 @pytest.fixture(autouse=True)
 def _bundle(monkeypatch):
-    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-8")
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")
     monkeypatch.delenv("DECISIONS_BOT", raising=False)
     registry.reset()
     yield
@@ -152,9 +153,9 @@ async def test_without_jev_it_never_holds(tmp_path: Path, ctx: ToolContext) -> N
     assert (await _send(_tool(tmp_path), ctx, PER_UNIT)).get("reply") == {"text": PER_UNIT}
 
 
-async def test_ventas_7_does_not_check_it(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
-    """El paquete publicado no se edita: con ventas-7 (el del caso) el texto sale."""
-    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")
+async def test_ventas_6_does_not_check_it(tmp_path: Path, ctx: ToolContext, monkeypatch) -> None:
+    """Un paquete anterior a las decisiones de los hechos no revisa nada: el texto sale."""
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-6")
     registry.reset()
     _jev(monkeypatch, {"caja_por_unidad.termino_1": 0.95})
 

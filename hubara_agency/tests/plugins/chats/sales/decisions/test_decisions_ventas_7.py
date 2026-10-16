@@ -1,8 +1,9 @@
 """`ventas-7`: `ventas-6` con las decisiones nuevas de los hechos (`NEW`: aromas,
 colores y presentaciones de otro producto, precio, pago, estado, cupón, lo que
 niega, darle la razón al cliente en una cuenta equivocada, y lo que se cobra
-por caja: cajas o velas, la caja que nombró y el «por mayor» que son velas
-sueltas) y ③ del catálogo
+por caja: cajas o velas, la caja que nombró, el «por mayor» que son velas
+sueltas y, editado en el lugar el 2026-10-16, el precio de la caja dicho por
+unidad: `test_decisions_ventas_7_caja_por_unidad.py`) y ③ del catálogo
 en el turno (`test_decisions_ventas_7_verifica.py`), y nada más (esta prueba lo
 exige, como `test_decisions_ventas_6.py`).
 
@@ -57,7 +58,7 @@ SID = "wa_573001111111"
 NEW = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
     "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente", "cajas",
-    "caja_nombrada", "por_mayor",
+    "caja_nombrada", "por_mayor", "caja_por_unidad",
 )
 AROMAS = (
     "Caballero de la noche", "Limoncillo", "Lavanda", "Café", "Sándalo", "Ylan ylang",
@@ -221,9 +222,8 @@ def test_the_catalog_asks_for_it_from_version_7_and_the_published_versions_run_w
     _need_v7()
     catalog = _load(CATALOG_PATH)
 
-    since_7 = {n: v for n, v in catalog["capabilities_since"].items() if v == 7}
-    assert since_7 == dict.fromkeys(NEW, 7)
-    assert all(catalog["about"][n]["where"] == ["herramientas"] for n in since_7)
+    assert catalog["capabilities_since"] == dict.fromkeys(NEW, 7)
+    assert all(catalog["about"][n]["where"] == ["herramientas"] for n in catalog["capabilities_since"])
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-6")
     registry.reset()
     assert registry.capability_if_present("aroma_ajeno") is None

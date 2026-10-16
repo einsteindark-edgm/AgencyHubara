@@ -1,14 +1,15 @@
 # yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
 #
 # «¿El texto le pone a cada vela el precio de toda la caja?» (caso de producción
-# del 2026-10-16, bot V2, ventas-7: el cliente armó un carrito con una caja de
+# del 2026-10-16, bot V2: el cliente armó un carrito con una caja de
 # Velas de deseos cuadradas, $25.000 la caja de 12, y el bot le dijo «el precio
 # es por unidad, cada velita vale $25.000»; un colega tuvo que corregirlo).
 # `precio_ajeno` no lo ve: el monto es el del catálogo, lo falso es a qué se lo
 # pone. Con un producto que se cobra por caja en foco (`domain.yaml:
 # sold_by_box`), la regla propone si una cláusula dice un precio por unidad sin
 # nombrar la caja; Jev, con lo que dice el sistema de la caja, decide. Lo pide
-# `send_reply` (y las tarjetas) antes de enviar.
+# `send_reply` (y las tarjetas) antes de enviar. Va en `ventas-7`, editado en el
+# lugar el mismo día (decisión del operador: emergencia).
 capability: caja_por_unidad
 value: "list<string>"
 input: CajaDelTexto

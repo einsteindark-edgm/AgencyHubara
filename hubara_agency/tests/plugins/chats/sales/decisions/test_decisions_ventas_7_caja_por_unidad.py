@@ -1,5 +1,6 @@
-"""`ventas-8`: `ventas-7` con UNA decisión nueva de los hechos, `caja_por_unidad`,
-y nada más (esta prueba lo exige, como `test_decisions_ventas_7.py`).
+"""`caja_por_unidad`: la decisión de los hechos que `ventas-7` trae desde el
+2026-10-16, editado en el lugar (decisión del operador: emergencia, sin un
+paquete nuevo ni Terraform).
 
 Caso de producción del 2026-10-16 (bot V2, ventas-7): el cliente armó un
 carrito con una caja de Velas de deseos cuadradas ($25.000 la caja de 12) y el
@@ -14,7 +15,7 @@ caja, decide si el texto le pone a cada vela el precio de la caja; lo que Jev
 no contestó no se retiene (las frases son anchas: «cada una» habla también de
 cajas). Sin Jev no revisa.
 
-En un clon de forge `ventas-8` no viaja (experimento de esta tienda): se salta.
+En un clon de forge `ventas-7` no viaja (experimento de esta tienda): se salta.
 """
 from __future__ import annotations
 
@@ -31,10 +32,9 @@ from src.plugins.chats.agent.sales.decisions.guards import decide_for_session
 from src.plugins.chats.shared.store_pack import BUNDLES_DIR, CATALOG_PATH
 from src.sdk.connectorkit import TypedAnswer
 
-V7, V8 = BUNDLES_DIR / "ventas-7", BUNDLES_DIR / "ventas-8"
+V7 = BUNDLES_DIR / "ventas-7"
 IN_FORGE_CLONE = not (Path(__file__).resolve().parents[6] / "forge").is_dir()
 SID = "wa_573001111111"
-NEW = ("caja_por_unidad",)
 #: El turno 5 del caso (texto del bot).
 INCIDENT = CajaDelTexto(
     text="Claro, te cuento: el precio es por unidad, cada velita vale *$25.000*.",
@@ -44,10 +44,10 @@ INCIDENT = CajaDelTexto(
 )
 
 
-def _need_v8() -> None:
+def _need_v7() -> None:
     if IN_FORGE_CLONE:
         pytest.skip("clon de forge: los paquetes de prueba de esta tienda no viajan")
-    assert (V8 / "bundle.yaml").is_file(), "falta el paquete ventas-8"
+    assert (V7 / "bundle.yaml").is_file(), "falta el paquete ventas-7"
 
 
 def _load(path: Path) -> Any:
@@ -55,8 +55,8 @@ def _load(path: Path) -> Any:
 
 
 @pytest.fixture(autouse=True)
-def _ventas_8(monkeypatch):
-    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-8")
+def _ventas_7(monkeypatch):
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")
     registry.reset()
     yield
     registry.reset()
@@ -91,45 +91,24 @@ def _with(text: str, **kw: Any) -> CajaDelTexto:
     return CajaDelTexto(**{**INCIDENT.__dict__, "text": text, **kw})
 
 
-def test_ventas_8_is_certified() -> None:
-    from src.sdk.decisionkit import check_bundle, load_bundle
+def test_ventas_7_brings_it_and_ventas_6_runs_without_it(monkeypatch) -> None:
+    from src.sdk.decisionkit import check_bundle
 
-    _need_v8()
-
-    assert check_bundle(V8, CATALOG_PATH) == []
-    assert load_bundle(V8, CATALOG_PATH).ref == "ventas-8@8"
-
-
-def test_ventas_8_is_ventas_7_with_the_box_price_and_nothing_else() -> None:
-    _need_v8()
-
-    v7_files = sorted(str(p.relative_to(V7)) for p in V7.rglob("*.yaml"))
-    v8_files = sorted(str(p.relative_to(V8)) for p in V8.rglob("*.yaml"))
-    assert v8_files == sorted([*v7_files, *(f"capabilities/{name}.yaml" for name in NEW)])
-    for rel in v7_files:
-        if rel != "bundle.yaml":
-            assert _load(V8 / rel) == _load(V7 / rel), rel
-    head, before = _load(V8 / "bundle.yaml"), _load(V7 / "bundle.yaml")
-    assert {**head, "id": "ventas-7", "version": 7, "capabilities": before["capabilities"]} == before
-    assert head["capabilities"] == sorted([*before["capabilities"], *NEW])
-
-
-def test_the_catalog_asks_for_it_from_version_8_and_ventas_7_runs_without_it(monkeypatch) -> None:
-    _need_v8()
+    _need_v7()
     catalog = _load(CATALOG_PATH)
 
-    assert {n: v for n, v in catalog["capabilities_since"].items() if v == 8} == dict.fromkeys(NEW, 8)
+    assert check_bundle(V7, CATALOG_PATH) == []
+    assert "caja_por_unidad" in _load(V7 / "bundle.yaml")["capabilities"]
+    assert catalog["capabilities_since"]["caja_por_unidad"] == 7
     assert catalog["about"]["caja_por_unidad"]["where"] == ["herramientas"]
-    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")
+    assert registry.capability_if_present("caja_por_unidad").bundle == "ventas-7@7"
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-6")
     registry.reset()
     assert registry.capability_if_present("caja_por_unidad") is None
-    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-8")
-    registry.reset()
-    assert registry.capability_if_present("caja_por_unidad").bundle == "ventas-8@8"
 
 
 def test_the_rule_proposes_the_box_products_of_a_clause_that_says_a_price_per_unit() -> None:
-    _need_v8()
+    _need_v7()
     cap = registry.capability_if_present("caja_por_unidad")
 
     [item] = cap.items(INCIDENT)
@@ -151,7 +130,7 @@ def test_the_rule_proposes_the_box_products_of_a_clause_that_says_a_price_per_un
     ],
 )
 def test_the_rule_reads_the_ways_of_saying_per_unit(text: str) -> None:
-    _need_v8()
+    _need_v7()
 
     assert [i["term"] for i in registry.capability_if_present("caja_por_unidad").items(_with(text))] == [
         "el precio de Velas de deseos cuadradas es por unidad"
@@ -168,13 +147,13 @@ def test_the_rule_reads_the_ways_of_saying_per_unit(text: str) -> None:
     ],
 )
 def test_the_rule_does_not_propose_the_box_or_a_denial(text: str) -> None:
-    _need_v8()
+    _need_v7()
 
     assert registry.capability_if_present("caja_por_unidad").items(_with(text)) == []
 
 
 def test_without_a_product_sold_by_box_nothing_is_proposed() -> None:
-    _need_v8()
+    _need_v7()
 
     inp = _with(INCIDENT.text, productos=(), por_caja=(), precios=())
 
@@ -182,7 +161,7 @@ def test_without_a_product_sold_by_box_nothing_is_proposed() -> None:
 
 
 async def test_without_jev_it_never_holds(tmp_path: Path, oracle) -> None:
-    _need_v8()
+    _need_v7()
 
     verdict = await _decide(INCIDENT, tmp_path)
 
@@ -193,7 +172,7 @@ async def test_without_jev_it_never_holds(tmp_path: Path, oracle) -> None:
 async def test_jev_says_if_the_text_puts_the_box_price_on_each_candle(
     tmp_path: Path, oracle, jev, p: float, expected: list[str]
 ) -> None:
-    _need_v8()
+    _need_v7()
     qid = "caja_por_unidad.termino_1"
     oracle["fake"] = FakePerceptionAdapter({qid: TypedAnswer(id=qid, kind="noul", p=p)})
 
@@ -206,7 +185,7 @@ async def test_jev_says_if_the_text_puts_the_box_price_on_each_candle(
 
 
 async def test_jev_is_not_asked_without_a_proposal(tmp_path: Path, oracle, jev) -> None:
-    _need_v8()
+    _need_v7()
 
     verdict = await _decide(_with("Cada caja trae 12 velitas y vale $25.000."), tmp_path)
 

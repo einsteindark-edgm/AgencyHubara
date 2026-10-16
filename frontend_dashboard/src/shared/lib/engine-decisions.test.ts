@@ -149,7 +149,7 @@ describe("aromas de otro producto", () => {
     );
   });
 
-  it("el precio de la caja dicho por unidad se lee en palabras (ventas-8, 2026-10-16)", () => {
+  it("el precio de la caja dicho por unidad se lee en palabras (ventas-7, 2026-10-16)", () => {
     const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_por_unidad", rule: [] });
 
     expect(capabilityLabel("caja_por_unidad")).toBe("Precio de la caja dicho por unidad");

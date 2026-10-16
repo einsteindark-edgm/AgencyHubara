@@ -271,7 +271,7 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
       : value === "duda"
         ? warn("No se sabe si es al por mayor: vuelve al bot una vez con las cuentas")
         : plain("Es al por mayor: pasa a un colega"),
-  // Lo que se cobra por caja con un precio por unidad («cada velita vale $25.000», ventas-8, 2026-10-16).
+  // Lo que se cobra por caja con un precio por unidad («cada velita vale $25.000», ventas-7, 2026-10-16).
   caja_por_unidad: (value) =>
     claimSentence(value, "ese es el precio de la caja", "No le pone a cada unidad el precio de la caja"),
   // El cliente afirma una suma que no es la de su pedido y el texto le daba la razón (2026-10-14).

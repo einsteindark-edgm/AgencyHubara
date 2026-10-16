@@ -150,7 +150,7 @@ describe("DecisionsControlPanel", () => {
     expect(within(figure).getByText("¿le da la razón al cliente en una cuenta que no es la de su pedido? (solo con Jev)")).toBeInTheDocument();
   });
 
-  it("nombra el precio de la caja dicho por unidad (ventas-8)", async () => {
+  it("nombra el precio de la caja dicho por unidad (ventas-7, 2026-10-16)", async () => {
     state = payload({ caja_por_unidad: "off" });
     renderPanel();
 

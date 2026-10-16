@@ -597,9 +597,10 @@ capabilities_since:
   # `escalate_to_human` con BULK_ORDER).
   caja_nombrada: 7
   por_mayor: 7
-  # Caso del 2026-10-16 (bot V2, ventas-7): «el precio es por unidad, cada
-  # velita vale $25.000» por una caja de 12. La pide `send_reply` con las demás.
-  caja_por_unidad: 8
+  # Caso del 2026-10-16: «el precio es por unidad, cada velita vale $25.000» por
+  # una caja de 12. La pide `send_reply` con las demás. En ventas-7, editado en el
+  # lugar (decisión del operador: emergencia).
+  caja_por_unidad: 7
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.

@@ -184,7 +184,7 @@ async def option_list(
 FACT_CAPABILITIES: tuple[str, ...] = (
     "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
     "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
-    # El precio de la caja dicho por unidad (ventas-8, 2026-10-16).
+    # El precio de la caja dicho por unidad (ventas-7 editado en el lugar, 2026-10-16).
     "caja_por_unidad",
 )
 

@@ -1691,7 +1691,7 @@ texto final suelto por `send_reply`.
 - THEN el texto sale (Jev: 0,13–0,18 en la sonda)
 - AND «más el envío de $7.900» no se le pregunta a Jev: la tarifa es una cifra cierta
 
-### Requirement: Lo que se cobra por caja no se cotiza por unidad (`ventas-8`, 2026-10-16)
+### Requirement: Lo que se cobra por caja no se cotiza por unidad (`ventas-7`, 2026-10-16)
 
 En la misma revisión de los hechos (y la misma retención única), con un producto
 que la tienda cobra por caja en foco (`domain.yaml: sold_by_box`, hoy las velas
