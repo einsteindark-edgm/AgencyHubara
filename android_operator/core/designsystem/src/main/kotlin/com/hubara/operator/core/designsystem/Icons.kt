@@ -22,6 +22,7 @@ object OperatorIcons {
     val Person: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_person)
     val Schedule: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_schedule)
     val Check: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_check)
+    val DoneAll: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_done_all)
     val Shipping: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_shipping)
     val Payments: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_payments)
     val Inventory: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_inventory)
@@ -33,6 +34,7 @@ object OperatorIcons {
     val Storefront: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_storefront)
     val Call: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_call)
     val Undo: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_undo)
+    val Image: ImageVector @Composable get() = ImageVector.vectorResource(R.drawable.ds_ic_image)
 
     /**
      * Los íconos por nombre, para las pantallas que define el servidor (`"icon": "campaign"`). Los nombres son los del
@@ -45,7 +47,8 @@ object OperatorIcons {
         "chat" to R.drawable.ds_ic_chat, "chat_filled" to R.drawable.ds_ic_chat_filled, "check" to R.drawable.ds_ic_check, "check_circle" to R.drawable.ds_ic_check_circle,
         "chevron_right" to R.drawable.ds_ic_chevron_right, "close" to R.drawable.ds_ic_close, "edit" to R.drawable.ds_ic_edit,
         "error" to R.drawable.ds_ic_error, "filter" to R.drawable.ds_ic_filter, "fire" to R.drawable.ds_ic_fire, "fire_filled" to R.drawable.ds_ic_fire_filled,
-        "group" to R.drawable.ds_ic_group, "info" to R.drawable.ds_ic_info, "inventory" to R.drawable.ds_ic_inventory,
+        "group" to R.drawable.ds_ic_group, "image" to R.drawable.ds_ic_image, "info" to R.drawable.ds_ic_info,
+        "inventory" to R.drawable.ds_ic_inventory,
         "link" to R.drawable.ds_ic_link, "location" to R.drawable.ds_ic_location, "mail" to R.drawable.ds_ic_mail,
         "more_vert" to R.drawable.ds_ic_more_vert, "notifications" to R.drawable.ds_ic_notifications,
         "orders" to R.drawable.ds_ic_orders, "orders_filled" to R.drawable.ds_ic_orders_filled, "payments" to R.drawable.ds_ic_payments, "person" to R.drawable.ds_ic_person,

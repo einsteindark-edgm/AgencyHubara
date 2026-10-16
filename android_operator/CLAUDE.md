@@ -257,13 +257,56 @@ cd android_operator && ./gradlew :app:bundleRelease \
     vuelve al inicio cuando cambia la primera (Robolectric no lo reproduce: el guardia es S29). El backend de prueba no
     crea pedidos en su Medusa: S29 llega hasta el formulario prellenado.
 
+34. **Lo que el bot envía y no es texto es una tarjeta que arma el servidor** (caso 2026-10-13: el saludo iba dentro
+    del texto del catálogo y la app solo decía, en gris, «El bot envió el catálogo con 2 productos»). El historial trae
+    `event` (`chats/shared/chat_events.py`): `bot_card` (catálogo, menú, formulario, resumen, enlace, fotos, contacto)
+    y `bot_buttons`; `Mappers.kt` lo lee tolerante (`JsonElement`, L-10) a `MessageCard` y el mensaje pasa de SYSTEM a
+    BOT/HUMAN (`sender`). Room v5 guarda la tarjeta en JSON (`cardJson`) y el toque del cliente (`tap`). La pinta
+    `CardBubble.kt`; **qué fue (`label`) y su ícono (`icon`, lista cerrada → `CardIcon`) los decide el servidor**: un
+    envío nuevo con texto, filas, botones, enlace o fotos se ve bien sin publicar otra versión. Los botones del cliente
+    se ven pero no se tocan; el que tocó lleva «Tocó». Fotos: solo `https://` o rutas del backend (`reachable`).
+    El historial viejo sin tarjeta sigue como nota. S30 en el emulador (`inject.py bot-card`).
+    **Trampa que encontró S30:** con el chat abierto al final, lo que llegaba (del cliente o del bot) quedaba debajo
+    del borde: la lista invertida se ancla al mensaje que ya se veía. `History` baja al más nuevo si el operador
+    estaba al final (fila ≤ 2) y no lo mueve si subió a leer (`NewMessageScrollTest`).
+
+34. **La burbuja «Enviar productos» abre un panel, no manda** (2026-10-14): mandaba el catálogo entero de una vez. A una
+    app con `?features=open_screen` el backend le pone `opens: "enviar_productos"` (`mobile_rules._OPENS`; el color
+    va aparte en `_TONES`, solo «Crear pedido» es verde) y la app abre `enviar_productos.json`: el MISMO panel de
+    «+ Más» (categoría, búsqueda o un producto). Una app vieja la sigue mandando como la acción. El panel está dos
+    veces (en `acciones.json` para no apilar dos hojas: «volver» cierra solo la de arriba) y
+    `RealScreensTest.el_panel_de_la_burbuja_es_el_mismo_de_mas` exige que sean iguales. S31–S33 en el emulador.
+
+35. **Android 11 no liga más de 999 parámetros en una consulta** (SQLite 3.28; desde Android 12 son 32 766). Caso
+    2026-10-15: con más de 999 chats `DELETE … NOT IN (:keep)` fallaba («too many SQL variables»), la bandeja no se
+    guardaba y quedaba congelada: chats nuevos que no salían en «Todos», «Humano» y «Con pedido» con rutas y pedidos
+    viejos, «No leídos» con contadores viejos. Nunca una lista de tamaño libre en un `IN (:…)`: se lee lo guardado y se
+    borra en tandas (`ConversationDao.replaceAll`, `MAX_BOUND_ARGS`). Robolectric trae un SQLite nuevo: el test unitario
+    usa 33 000 chats y el tope de 999 lo cuida S35 (`inject.py crowd`). En «Todos» el chat que atiende una persona
+    lleva la etiqueta «Humano» al lado del nombre (`title_tag` del `list_item` en `chats.json`). Con `tag` (debajo
+    del título) cada chat del humano crecía una línea, Laura (101) quedaba bajo el borde y se caían los escenarios
+    que arrancan con `fresh`. Una propiedad nueva no pide `requires`: una app vieja la ignora y pinta lo demás.
+
+36. **Un «gracias», un 👍 o un sticker no son incendio** (caso 2026-10-15): `unanswered_since` no cuenta reacciones ni
+    stickers (las marcas de `translate.py`) ni el texto que la ruta lee como acuse con `is_closing_ack`; si antes hubo
+    una pregunta, se espera desde la pregunta. Vale para la bandeja de Incendios, el aviso push y el «sin responder»
+    del widget. El paquete `operador-2` no podía arreglarlo solo: el veredicto de Jev cambia gravedad y tipo, nunca
+    quita la tarjeta. S36 en el emulador (`inject.py answered`).
+
+37. **Cada filtro con su bolita** (pedido del operador, 2026-10-15): una opción de `chips` puede traer `badge`
+    (`"{{chats | where:'unread' | count | number}}"`) y se pinta con la misma bolita de los no leídos (`Badge`); vacío o 0
+    no la lleva. Sale con frontend-deploy (una app vieja ignora `badge` y deja el texto). Con bolitas los chips bajan de
+    línea (`FlowRow`): en una línea del teléfono «Con pedido» quedaba escondido a la derecha. **Trampa:** Robolectric mide
+    el texto muy angosto y ahí siempre caben; lo que depende del ancho real del texto se cuida en el emulador (S35).
+
 ## Endpoints
 
 Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
 `/events`, `/api/orders/orders[/{id}]`, `PATCH /api/orders/orders/{id}/stage`.
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
 `GET /api/chats/mobile/hot`, `GET /api/chats/mobile/human` (página «Humano» del widget), `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,
-`DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`,
+`DELETE /api/chats/mobile/devices/{token}`, `POST /api/chats/mobile/devices/test` («Probar avisos»), `GET /api/chats/catalog`
+(`?category=&q=` filtra con la misma regla que «Enviar productos» al mandar: `chats/api/catalog_picker.py`),
 `POST /api/chats/session-actions/{id}/tools/{tool}`, `GET /api/chats/order-intake/{id}/form` y
 `POST /api/chats/session-actions/{id}/order/app` («Crear pedido»).
 Pantallas del servidor (las de `screens/`): `/api/orders/orders`, `PATCH /api/orders/orders/{id}/confirm-payment`,

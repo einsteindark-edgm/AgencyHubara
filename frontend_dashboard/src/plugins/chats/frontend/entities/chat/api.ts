@@ -37,6 +37,7 @@ import type {
   ChatInboxItem,
   ChatOrderBadge,
   ChatPostponedBadge,
+  ChatDeliveryItem,
   ChatMessageItem,
   ChatOverview,
   ChatQuote,
@@ -305,6 +306,19 @@ function adaptQuote(q: ChatMessage["reply_to"]): ChatQuote | undefined {
   };
 }
 
+/** El doble check de un saliente. Sin dato del backend: «sin confirmación»
+ *  (nunca se inventa un check — antes el panel pintaba «leído» fijo). */
+function adaptDelivery(d: ChatMessage["delivery"]): ChatDeliveryItem {
+  if (!d || d.status === "unconfirmed") return { status: "unconfirmed" };
+  const time = typeof d.at_ms === "number" ? formatBogotaHourMinute(Math.floor(d.at_ms / 1000)) : "";
+  return {
+    status: d.status,
+    ...(time ? { time } : {}),
+    ...(typeof d.error_code === "number" ? { errorCode: d.error_code } : {}),
+    ...(d.error_title ? { errorTitle: d.error_title } : {}),
+  };
+}
+
 function adaptMessage(m: ChatMessage): ChatMessageItem {
   const unix = toUnixSeconds(m.timestamp);
   const dayIso = bogotaDayIsoFromUnix(unix) || undefined;
@@ -312,16 +326,17 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
   // persiste un marker human-readable y acá se pinta como nota de sistema —
   // sin esto el operador ve huecos y no puede seguir la conversación.
   if (m.ui_type === "ui_component_sent") {
-    // Los botones SÍ se pueden reconstruir como el mensaje real que recibió el
-    // cliente (cuerpo + botones): dejan de ser una nota y vuelven a ser una
-    // burbuja del bot. El resto de componentes no tiene forma que recuperar.
-    if (m.event?.kind === "bot_buttons") {
+    // Los botones y las tarjetas (catálogo, menú, enlace, fotos con el texto
+    // entero que leyó el cliente) se reconstruyen como el mensaje real: dejan
+    // de ser una nota y vuelven a ser una burbuja del bot — o del operador, si
+    // lo mandó desde la app. El historial viejo sin tarjeta sigue como nota.
+    if (m.event?.kind === "bot_buttons" || m.event?.kind === "bot_card") {
       return {
         kind: "out",
-        author: "bot",
+        author: m.sender === "human" ? "human" : "bot",
         time: formatBogotaHourMinute(unix),
         dayIso,
-        status: "read",
+        delivery: adaptDelivery(m.delivery),
         event: m.event,
         turnKey: m.turn_key,
       };
@@ -349,7 +364,7 @@ function adaptMessage(m: ChatMessage): ChatMessageItem {
     text: m.content ?? "",
     time: formatBogotaHourMinute(unix),
     dayIso,
-    status: isOutbound ? "read" : undefined,
+    delivery: isOutbound ? adaptDelivery(m.delivery) : undefined,
     author: isOutbound ? (sender === "human" ? "human" : "bot") : undefined,
     imageUrl: m.image_url ? toMediaUrl(m.image_url) : undefined,
     documentUrl: m.document_url ? toMediaUrl(m.document_url) : undefined,

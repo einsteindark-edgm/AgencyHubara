@@ -2,8 +2,13 @@ package com.hubara.operator.core.network
 
 import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.model.Author
+import com.hubara.operator.core.model.CardButton
+import com.hubara.operator.core.model.CardIcon
+import com.hubara.operator.core.model.CardImage
+import com.hubara.operator.core.model.CardItem
 import com.hubara.operator.core.model.FireKind
 import com.hubara.operator.core.model.FireSubject
+import com.hubara.operator.core.model.MessageCard
 import com.hubara.operator.core.model.OrderStage
 import com.hubara.operator.core.model.PaymentState
 import com.hubara.operator.core.model.Prominence
@@ -15,6 +20,8 @@ import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SessionsResponse
 import com.hubara.operator.core.network.dto.SuggestionsDto
 import com.hubara.operator.core.model.SuggestionTone
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
 import org.junit.Test
 
 class MappersTest {
@@ -86,6 +93,111 @@ class MappersTest {
         assertThat(detail.messages.map { it.key }.toSet()).hasSize(detail.messages.size)
     }
 
+    // Caso 2026-10-13: el bot saludó DENTRO del texto del catálogo y la app solo decía, en gris,
+    // «El bot envió el catálogo con 2 productos». El servidor manda la tarjeta entera en `event`.
+    @Test fun el_catalogo_del_bot_es_una_tarjeta_con_su_saludo_y_sus_productos() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"ui_component_sent","role":"assistant","content":"🛍️ El bot envió el catálogo con 2 productos",
+               "wamid":"w1","event":{"kind":"bot_card","component":"products_list","label":"Catálogo","icon":"catalog",
+               "title":null,"text":"Buenas tardes, bienvenido a *Hubara*.","items":[
+                 {"title":"Velas de deseos onduladas","detail":"${'$'}22.500 COP"},{"title":"Velas de deseos cuadradas","detail":null}],
+               "buttons":[],"action":null,"link":null,"images":[{"url":"https://cdn.test/v.jpg","caption":"Ondulada"}],
+               "campo_nuevo":"se ignora"}}
+            ]}""",
+        )
+        val message = dto.toDomain()!!.messages.single()
+        assertThat(message.author).isEqualTo(Author.BOT)
+        assertThat(message.card).isEqualTo(
+            MessageCard(
+                component = "products_list", label = "Catálogo", icon = CardIcon.CATALOG,
+                text = "Buenas tardes, bienvenido a *Hubara*.",
+                items = listOf(CardItem("Velas de deseos onduladas", "\$22.500 COP"), CardItem("Velas de deseos cuadradas")),
+                images = listOf(CardImage("https://cdn.test/v.jpg", "Ondulada")),
+            ),
+        )
+    }
+
+    @Test fun el_resumen_del_pedido_trae_sus_botones_y_el_que_toco_el_cliente() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"ui_component_sent","content":"🧾 …","event":{"kind":"bot_card","component":"order_confirmation",
+               "label":"Resumen para confirmar","icon":"order","text":"*Resumen de tu pedido*","items":[],
+               "buttons":[{"title":"✅ Confirmar","touched":true},{"title":"✏️ Modificar"}],"link":null,"images":[]}}
+            ]}""",
+        )
+        val card = dto.toDomain()!!.messages.single().card!!
+        assertThat(card.icon).isEqualTo(CardIcon.ORDER)
+        assertThat(card.buttons).containsExactly(CardButton("✅ Confirmar", touched = true), CardButton("✏️ Modificar")).inOrder()
+    }
+
+    @Test fun los_botones_del_bot_son_una_tarjeta_con_su_mensaje_entero() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"ui_component_sent","content":"🔘 El bot envió botones: Ver catálogo · Asesoría",
+               "event":{"kind":"bot_buttons","body":"¿Qué te gustaría ver?","buttons":[{"title":"Ver catálogo","touched":true},{"title":"Asesoría"}]}}
+            ]}""",
+        )
+        val message = dto.toDomain()!!.messages.single()
+        assertThat(message.author).isEqualTo(Author.BOT)
+        assertThat(message.card).isEqualTo(
+            MessageCard(
+                component = "quick_replies", label = "Botones de respuesta", icon = CardIcon.BUTTONS,
+                text = "¿Qué te gustaría ver?",
+                buttons = listOf(CardButton("Ver catálogo", touched = true), CardButton("Asesoría")),
+            ),
+        )
+    }
+
+    @Test fun lo_que_mando_el_operador_desde_la_app_sale_como_suyo() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"ui_component_sent","sender":"human","content":"📋 El operador pidió los datos de envío",
+               "event":{"kind":"bot_card","component":"shipping_flow","label":"Formulario de envío","icon":"form",
+               "text":"Necesito unos datos","action":"Completar datos","items":[],"link":null,"images":[]}}
+            ]}""",
+        )
+        val message = dto.toDomain()!!.messages.single()
+        assertThat(message.author).isEqualTo(Author.HUMAN)
+        assertThat(message.card!!.action).isEqualTo("Completar datos")
+    }
+
+    // L-10: un evento que la app no conoce, o mal formado, no tumba el chat: queda la nota de siempre.
+    @Test fun un_evento_raro_no_tumba_el_chat_y_queda_la_nota() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"ui_component_sent","content":"📤 holograma","event":{"kind":"holograma","x":1}},
+              {"ui_type":"ui_component_sent","content":"🛍️ roto","event":{"kind":"bot_card","items":"x","text":5}},
+              {"ui_type":"ui_component_sent","content":"🛍️ a medias","event":{"kind":"bot_card","component":"nuevo",
+               "items":[{"title":"Vela"},{"detail":"sin título"},"x"],"images":[{"caption":"sin url"}]}},
+              {"ui_type":"ui_component_sent","content":"📤 texto","event":"no es un objeto"}
+            ]}""",
+        )
+        val (unknown, broken, partial, notObject) = dto.toDomain()!!.messages
+        assertThat(unknown.author).isEqualTo(Author.SYSTEM)
+        assertThat(unknown.card).isNull()
+        assertThat(broken.author).isEqualTo(Author.SYSTEM)
+        assertThat(broken.card).isNull()
+        assertThat(partial.card).isEqualTo(
+            MessageCard(component = "nuevo", label = "Mensaje interactivo", items = listOf(CardItem("Vela"))),
+        )
+        assertThat(notObject.card).isNull()
+    }
+
+    @Test fun el_toque_del_cliente_a_un_boton_se_lee_como_toque() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"[el cliente tocó el botón: Ver catálogo]",
+               "event":{"kind":"button_tap","title":"Ver catálogo"}},
+              {"ui_type":"user_message","content":"hola"}
+            ]}""",
+        )
+        val (tap, text) = dto.toDomain()!!.messages
+        assertThat(tap.author).isEqualTo(Author.CUSTOMER)
+        assertThat(tap.tap).isEqualTo("Ver catálogo")
+        assertThat(text.tap).isNull()
+    }
+
     // Caso 2026-10-09: Meta re-entregó un mensaje de 3 días antes 19 s después de la plantilla
     // del operador; con la hora de llegada parecía su respuesta.
     @Test fun mensaje_que_llego_tarde_trae_cuando_lo_escribio_el_cliente() {
@@ -130,6 +242,35 @@ class MappersTest {
         assertThat(keys.first()).isEqualTo("fake-text")
         // Estable: el historial solo crece al final, así que la misma respuesta da las mismas claves.
         assertThat(dto.toDomain()!!.messages.map { it.key }).isEqualTo(keys)
+    }
+
+    // Doble check de WhatsApp (caso 2026-10-15): sale de lo que Meta informó por webhook; sin dato, «sin
+    // confirmación». Los mensajes del cliente no lo llevan.
+    @Test fun historial_trae_el_doble_check_de_whatsapp() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"hola","wamid":"w1"},
+              {"ui_type":"agent_message","content":"¡Hola!","delivery":{"status":"read","at_ms":1760496300000,
+               "error_code":null,"error_title":null}},
+              {"ui_type":"human_message","sender":"human","content":"Ya te ayudo","delivery":{"status":"failed",
+               "at_ms":1760496400000,"error_code":131047,"error_title":"Re-engagement message"}},
+              {"ui_type":"agent_message","content":"viejo"},
+              {"ui_type":"ui_component_sent","content":"El bot envió el catálogo","delivery":{"status":"delivered",
+               "at_ms":1760496500000},"event":{"kind":"bot_card","component":"products_list","text":"Tenemos:",
+               "items":[],"images":[],"link":null}},
+              {"ui_type":"agent_message","content":"raro","delivery":{"status":"deleted"}}
+            ]}""",
+        )
+        val messages = dto.toDomain()!!.messages
+        assertThat(messages.map { it.whatsapp }).containsExactly(
+            null,
+            WhatsAppDelivery(WhatsAppStatus.READ, atMs = 1760496300000),
+            WhatsAppDelivery(WhatsAppStatus.FAILED, 1760496400000, 131047, "Re-engagement message"),
+            WhatsAppDelivery.UNCONFIRMED,
+            WhatsAppDelivery(WhatsAppStatus.DELIVERED, atMs = 1760496500000),
+            // Un estado que la app no conoce no tumba el chat (L-10) ni inventa un check.
+            WhatsAppDelivery.UNCONFIRMED,
+        ).inOrder()
     }
 
     @Test fun burbujas_por_reglas() {

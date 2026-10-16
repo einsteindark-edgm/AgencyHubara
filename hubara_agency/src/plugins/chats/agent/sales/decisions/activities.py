@@ -147,7 +147,8 @@ async def perceive_burst_activity(inp: PerceiveInput) -> TurnDecisions:
 @activity.defn(name="verify_coverage")
 async def verify_coverage_activity(inp: VerifyInput) -> VerifyOutput:
     try:
-        out = await engine.verify(inp, redact=_redact_terms(inp.session_id))
+        context = _turn_context(inp.session_id, list(inp.messages)) if engine.verify_needs_context(inp.profile) else None
+        out = await engine.verify(inp, redact=_redact_terms(inp.session_id), context=context)
     except Exception as exc:  # noqa: BLE001 — fail-open
         return VerifyOutput(ok=False, decision="send", error=f"unexpected: {exc!r}"[:300])
     _charge(inp.session_id, out.cost_usd)

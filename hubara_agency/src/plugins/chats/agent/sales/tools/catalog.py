@@ -38,7 +38,8 @@ from src.plugins.chats.agent.sales.decisions.guards import (
     decide_for_session,
 )
 from src.sdk.catalogkit import CategoryResolution
-from src.plugins.chats.shared.store_pack import vocabulary
+from src.plugins.chats.agent.sales.use_cases.product_options import pack_units
+from src.plugins.chats.shared.store_pack import store_domain, vocabulary
 from src.sdk.mediakit import derive_image_label, fold_for_match
 
 #: Los ejemplos de la tienda que el LLM ve en estas tools salen del dominio
@@ -165,7 +166,7 @@ class SearchProductsTool(ToolBase):
             "query": result.query,
             "count": result.count,
             "truncated": result.truncated,
-            "results": [_product_summary(p) for p in result.results],
+            "results": [_with_box(_product_summary(p), p) for p in result.results],
         }
         if result.category is not None:
             envelope["category"] = await self._category_block(result)
@@ -397,13 +398,29 @@ class GetProductByHandleTool(ToolBase):
         return json.dumps(
             {
                 "found": True,
-                "product": _product_full(product),
+                "product": _with_box(_product_full(product), product),
             },
             ensure_ascii=False,
         )
 
 
 # ---------- envelope helpers ----------
+
+
+def _with_box(envelope: dict[str, Any], p: CatalogProductDTO) -> dict[str, Any]:
+    """El producto que la tienda cobra por caja (`domain.yaml: sold_by_box`,
+    hoy solo las velas de deseos) lo dice donde el bot lo lee: cuántas trae y
+    que la cantidad del pedido son cajas (laboratorio de ···0686, 2026-10-14:
+    sin esto negó «las de 12 y las de 10», anotó la ondulada por «cajas de 12»
+    y pasó 36 velitas a un colega como pedido al por mayor)."""
+    units = pack_units(p, store_domain().get("sold_by_box"))
+    if units:
+        envelope["por_caja"] = units
+        envelope["se_vende_por_caja"] = (
+            f"caja de {units} unidades: el precio es el de la caja y la cantidad del pedido es el número "
+            f"de cajas ({3 * units} unidades → cantidad 3); al por mayor se cuenta en cajas (más de 20)"
+        )
+    return envelope
 
 
 def _product_summary(p: CatalogProductDTO) -> dict[str, Any]:

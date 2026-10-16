@@ -120,6 +120,10 @@ fun MessageBubble(
         SystemNote(message.text.orEmpty(), modifier)
         return
     }
+    message.tap?.let { title ->
+        TapChip(title, message.timestampMs?.let { clockLabel(it, zone) }, modifier)
+        return
+    }
     val mine = message.author != Author.CUSTOMER
     val colors = OperatorTheme.colors
     val (bg, fg) = when (message.author) {
@@ -149,7 +153,16 @@ fun MessageBubble(
                 )
             }
         }
-        Column(
+        val card = message.card
+        if (card != null) {
+            // Catálogo, botones, formulario, resumen…: el mensaje que vio el cliente, no una nota gris.
+            Box(Modifier.clip(bubbleShape(position, mine)).background(bg)) {
+                CardContent(
+                    card, fg, time = message.timestampMs?.let { clockLabel(it, zone) },
+                    check = message.whatsapp?.let { delivery -> { WhatsAppCheck(delivery, fg, zone) } },
+                )
+            }
+        } else Column(
             Modifier.widthIn(max = 300.dp).clip(bubbleShape(position, mine)).background(bg)
                 .padding(horizontal = if (message.imageUrl != null) 4.dp else 14.dp, vertical = if (message.imageUrl != null) 4.dp else 9.dp),
         ) {
@@ -169,9 +182,11 @@ fun MessageBubble(
             }
             if (message.imageUrl == null && message.text.isNullOrBlank()) Text("…", style = MaterialTheme.typography.bodyLarge, color = fg)
             // Meta lo entregó tarde: la llegada sola lo hacía parecer una respuesta a lo último que se le mandó
-            // (caso 2026-10-09). Va en toda burbuja tardía, no solo al final del grupo.
+            // (caso 2026-10-09). Va en toda burbuja tardía, no solo al final del grupo. El doble check de WhatsApp
+            // también va en cada saliente: cada burbuja puede haber llegado o no (caso 2026-10-15).
             val sentAtMs = message.sentAtMs
-            if (groupEnd || message.state != DeliveryState.SENT || sentAtMs != null) {
+            val whatsapp = message.whatsapp.takeIf { message.state == DeliveryState.SENT }
+            if (groupEnd || message.state != DeliveryState.SENT || sentAtMs != null || whatsapp != null) {
                 val arrived = message.timestampMs?.let { clockLabel(it, zone) }
                 val meta = when (message.state) {
                     DeliveryState.PENDING -> "enviando…"
@@ -182,12 +197,17 @@ fun MessageBubble(
                         arrived
                     }
                 }
-                meta?.let {
-                    Text(
-                        it, style = MaterialTheme.typography.labelSmall,
-                        color = if (message.state == DeliveryState.FAILED) MaterialTheme.colorScheme.error else fg.copy(alpha = 0.7f),
-                        modifier = Modifier.align(Alignment.End).padding(top = 2.dp).then(textPad),
-                    )
+                Row(
+                    Modifier.align(Alignment.End).padding(top = 2.dp).then(textPad),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    meta?.let {
+                        Text(
+                            it, style = MaterialTheme.typography.labelSmall,
+                            color = if (message.state == DeliveryState.FAILED) MaterialTheme.colorScheme.error else fg.copy(alpha = 0.7f),
+                        )
+                    }
+                    whatsapp?.let { WhatsAppCheck(it, fg, zone) }
                 }
             }
         }

@@ -39,6 +39,17 @@ inputs:
   DatoDelItem: {actual: int}
   ProductosDeLaCharla: {text: string, titles: "tuple<string>", named: "tuple<string>"}
   TextoCatalogo: {text: string, aromas: "tuple<string>", colors: "tuple<string>"}
+  OpcionesDelTexto: {text: string, products: "tuple<string>", own: "tuple<string>", labels: "tuple<string>", others: "tuple<string>"}
+  VariantesDelTexto: {text: string, sheets: "tuple<string>", single: "tuple<string>"}
+  PreciosDelTexto: {text: string, products: "tuple<string>", prices: "tuple<int>", policy: "tuple<int>", surcharges: "tuple<double>"}
+  PagoDelTexto: {text: string, subtotal: "int?", cod_min: int, surcharges: "tuple<string>"}
+  EstadoDelTexto: {text: string, order: "string?", stage: "string?", pay_status: "string?"}
+  CuponDelTexto: {text: string, known: "tuple<string>", valid: "tuple<string>", valid_lines: "tuple<string>", valid_percents: "tuple<int>"}
+  NegacionDelTexto: {text: string, titles: "tuple<string>", own: "tuple<string>", products: "tuple<string>"}
+  CifraDelCliente: {text: string, customer: string, figures: "tuple<int>", order: "string?"}
+  CajasDelPedido: {producto: string, cantidad: int, por_caja: int, precio: "int?", charla: string}
+  PedidoPorMayor: {charla: string, cifras: "tuple<int>", productos: "tuple<string>", por_caja: "tuple<int>"}
+  CajaNombrada: {producto: string, por_caja: int, otro: string, otro_por_caja: int, charla: string}
   TextCheck: {text: string, extended: bool}
   GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
   Frases: {parts: "tuple<string>"}
@@ -63,6 +74,10 @@ constants:
 # el valor en el dominio de cada paquete (DB014).
 domain:
   store_name: string
+  # Los productos que se cobran por caja y cuántas velas trae cada caja
+  # (`set_order_slot`, capacidad `cajas`; 2026-10-14: solo las velas de
+  # deseos). Opcional: sin él, nada se cobra por caja.
+  sold_by_box: "list<{producto: string, por_caja: int}>?"
   # La despedida si todo el texto hablaba del portavelas (el cliente que acaba
   # de dar sus datos nunca recibe silencio). La MISMA del workflow V1.
   farewell_order_registered: string
@@ -83,6 +98,16 @@ domain:
     picker_intro_examples: string             # present_variant_picker.intro_text
     hook_topic_examples: string               # gancho de remarketing: el anclaje al motivo
     hook_examples: "list<string>"             # gancho de remarketing: ejemplos de buen gancho
+    # Remarketing del cliente que pidió, vio el catálogo y se calló (2026-10-13).
+    # Opcionales: sin ellos, el gancho de siempre.
+    hook_examples_explain: "list<string>?"    # 1er toque: le explica lo que vio
+    practical_facts: "string?"                # 2º toque: envío, tiempos y pago (la única fuente)
+    hook_examples_practical: "list<string>?"  # 2º toque: ejemplos
+    # Cómo corrige el bot algo que le dijo mal al cliente (los hechos, 2026-10-14).
+    # Opcionales: sin ellos, la corrección sin tono de la tienda.
+    correction_tone: "string?"                # el tono de la corrección (suave, sin regaño)
+    correction_examples: "list<string>?"      # ejemplos de corregir un precio
+    sum_correction_examples: "list<string>?"  # ejemplos de corregirle una suma al cliente
 
 builtins:
   # ── reglas ──
@@ -179,6 +204,33 @@ builtins:
     value: "list<string>"
     input: PedidoDelCliente
     doc: "Los términos que el cliente pide y no están en el catálogo (unavailable_terms)."
+  unexplained_prices_rule:
+    kind: rule
+    value: "list<string>"
+    input: PreciosDelTexto
+    params: {politica: str}
+    doc: "Los montos del texto que no explica el precio del catálogo de los productos de los que habla (por cantidad, sumas, en vivo, con descuento o con el recargo del link) ni la política en una oración con una frase de `politica` (price_quotes.find_unexplained_amounts). Frases del paquete (fact_rules.phrases)."
+  pack_quantity_rule:
+    kind: rule
+    value: string
+    input: CajasDelPedido
+    doc: "Sin Jev: desde una caja entera (24 de 12) no se sabe si la cantidad es de cajas o de velas → «duda» (el texto vuelve al modelo con las dos cuentas); menos, «cajas» (pack_quantity.needs_reading)."
+  bulk_candles_rule:
+    kind: rule
+    value: string
+    input: PedidoPorMayor
+    doc: "Sin Jev: con una cifra del cliente que pasa de 20 pero, contada en velas, cabe en 20 cajas o menos («36 velitas» = 3 cajas de 12), no se sabe si es al por mayor → «duda» (el bot lo revisa una vez con las cuentas); sin ella, «por_mayor» (pack_quantity.candle_counts)."
+  named_box_rule:
+    kind: rule
+    value: string
+    input: CajaNombrada
+    doc: "Sin Jev no se sabe si el cliente pide el producto que va a anotar el asesor o el de la caja que nombró («Dos cajas de 12» y la ondulada trae 10) → «duda» (el bot lo revisa una vez; pack_quantity.other_box_named)."
+  foreign_labels_rule:
+    kind: rule
+    value: "list<string>"
+    input: OpcionesDelTexto
+    params: {ofrece: str, no_ofrece: str}
+    doc: "La regla sola: las etiquetas del catálogo (aromas o colores) que nombra una oración que ofrece (una frase de `ofrece`, ninguna de `no_ofrece`) y no son del producto del que habla (product_truth.foreign_labels). Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio."
   model_preamble:
     kind: rule
     value: string
@@ -289,6 +341,43 @@ builtins:
     takes_items: true
     input: PedidoDelCliente
     doc: "El mensaje del cliente, si la regla propone algún término."
+  text_and_product_labels:
+    kind: state
+    takes_items: true
+    input: OpcionesDelTexto
+    params: {noun: str}
+    doc: "El texto para el cliente con los productos de los que habla y lo que tienen (`noun`: aromas, colores), si la regla propone algo ajeno."
+  text_and_product_prices:
+    kind: state
+    takes_items: true
+    input: PreciosDelTexto
+    doc: "El texto para el cliente con los productos de los que habla y su precio del catálogo, si la regla propone algún monto."
+  text_and_claim_facts:
+    kind: state
+    takes_items: true
+    doc: "El texto para el cliente con lo que dice el sistema de cada cosa que la regla propone (pago, estado, cupón, negación)."
+  pack_quantity_state:
+    kind: state
+    input: CajasDelPedido
+    doc: "Lo último de la charla (cliente y asesor) y las dos cuentas de la cantidad («24 cajas = 288 velas, $600.000» / «24 velas = 2 cajas, $50.000»); sin una caja entera o sin lo que escribió el cliente, no se pregunta."
+  bulk_candles_state:
+    kind: state
+    input: PedidoPorMayor
+    doc: "Lo último de la charla (con la nota del asesor para el colega), lo que se cobra por caja y las cifras del cliente contadas en velas en cada caja («36 velas = 3 cajas»); sin cifras o sin lo que escribió el cliente, no se pregunta."
+  named_box_state:
+    kind: state
+    input: CajaNombrada
+    doc: "Lo último de la charla, el producto que va a anotar el asesor con su caja y el de la caja que nombró el cliente; sin lo que escribió el cliente, no se pregunta."
+  customer_and_reply_facts:
+    kind: state
+    takes_items: true
+    input: CifraDelCliente
+    doc: "Lo que escribió el cliente, lo que la tienda le va a responder y lo que dice el sistema de su pedido, si la regla propone alguna cifra."
+  text_and_option_sheets:
+    kind: state
+    input: VariantesDelTexto
+    params: {words: str, ofrece: str}
+    doc: "El texto para el cliente con la ficha de cada producto con presentaciones para escoger si el texto ofrece algo (una frase de `ofrece`, fact_rules.phrases) o nombra una de `words` (palabras de presentación de la tienda, separadas por comas), y la de los de una sola presentación solo con una de `words`; sin ninguna ficha, no se pregunta."
   # ── ítems ──
   items_of:
     kind: items
@@ -321,6 +410,46 @@ builtins:
     input: PedidoDelCliente
     fields: {term: string}
     doc: "Un ítem por término que la regla propone."
+  unexplained_price_items:
+    kind: items
+    input: PreciosDelTexto
+    params: {politica: str}
+    fields: {term: string}
+    doc: "Un ítem por monto que la regla propone («$23.000»)."
+  payment_claim_items:
+    kind: items
+    input: PagoDelTexto
+    params: {ofrece_contra_entrega: str, regla_general: str, habla_de_recargo: str, no_es_recargo: str, habla_del_link: str, sin_recargo: str}
+    fields: {term: string, fact: string}
+    doc: "Contra entrega ofrecida a un pedido que no llega al mínimo, o un recargo del link distinto del configurado: lo que dice el texto (term) y lo cierto (fact). Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  status_claim_items:
+    kind: items
+    input: EstadoDelTexto
+    params: {pago_confirmado: str, despachado: str, entregado: str, todavia_no: str}
+    fields: {term: string, fact: string}
+    doc: "El pago dado por confirmado o el pedido dado por despachado o entregado cuando OrderFacts dice otra cosa: lo que dice el texto (term) y lo cierto (fact). Las mismas frases deciden si se consulta el pedido. Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  coupon_claim_items:
+    kind: items
+    input: CuponDelTexto
+    params: {nombra_codigo: str, habla_de_descuento: str, no_es_descuento: str}
+    fields: {term: string, fact: string}
+    doc: "Un código que no está vigente o un porcentaje que ningún cupón vigente da: lo que dice el texto (term) y lo cierto (fact). Las mismas frases deciden si se consultan los cupones. Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  denial_claim_items:
+    kind: items
+    input: NegacionDelTexto
+    params: {niega_tener: str, niega_venir: str, no_es_negacion: str}
+    fields: {term: string, fact: string}
+    doc: "Lo que el texto niega tener y el catálogo sí tiene: lo que dice el texto (term) y lo cierto (fact). Los verbos van detrás de «no», «ya no», «tampoco» o «ni». Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  customer_figure_items:
+    kind: items
+    input: CifraDelCliente
+    fields: {term: string, fact: string}
+    doc: "Las cifras de dinero que escribió el cliente («$45.000», «45 mil») y no son ninguna de las de su pedido (precios, líneas, subtotal, con envío, el total registrado): la cifra (term) y lo que suma su pedido (fact). Sin lo que suma su pedido, ninguna (fact_rules.customer_figures)."
+  foreign_label_items:
+    kind: items
+    input: OpcionesDelTexto
+    fields: {term: string}
+    doc: "Un ítem por etiqueta ajena que el texto nombra (la del catálogo), en cualquier oración: lo que juzga Jev."
   # ── opciones de la entrada ──
   catalog_categories:
     kind: options
@@ -434,6 +563,34 @@ builtins:
 # silencio la clase de Python de la que faltara (la inteligencia de velas).
 capabilities: [acuse, afirmacion, baja, cantidad, categoria, cierre, compra, contactar, cortesia, cupon, datos, destinatario, destinatario_oracion, destinatario_plantilla, enumeracion, familia_de_color, fuera_de_catalogo, item_del_pedido, monto, persona, portavelas, preambulo, producto_nombrado, relevo, rescate, retoma, saludo, selector, zona_de_envio]
 
+# Las que el código pide desde una versión del paquete: las versiones
+# publicadas antes no las traen (no se editan) y siguen certificando; con
+# ellas el código no las corre (`registry.capability_if_present`). Desde esa
+# versión, un paquete sin ella no certifica (DB003).
+capabilities_since:
+  # Incidente 2026-10-13: el bot le ofreció a las Velas de deseos aromas de la
+  # Plegaria de Luz. Las tres las pide `send_reply` antes de enviar.
+  aroma_ajeno: 7
+  color_ajeno: 7
+  variante_ajena: 7
+  precio_ajeno: 7
+  pago_ajeno: 7
+  estado_ajeno: 7
+  cupon_ajeno: 7
+  negacion_falsa: 7
+  # Laboratorio del 2026-10-14: el cliente afirma una suma equivocada y el bot
+  # le da la razón («Así es»). La pide `send_reply` con las demás.
+  cifra_del_cliente: 7
+  # Laboratorio de ···0686 (2026-10-14): «Dos cajas de 12» se anotó 24. La
+  # pide `set_order_slot` al anotar la cantidad de un producto que va por caja.
+  cajas: 7
+  # El mismo día: «Dos cajas de 12» y se anotó la ondulada, que trae 10 (la pide
+  # `set_order_slot` al anotar por primera vez un producto que va por caja), y
+  # «me vendes 36 velitas?» se pasó a un colega como por mayor (la pide
+  # `escalate_to_human` con BULK_ORDER).
+  caja_nombrada: 7
+  por_mayor: 7
+
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
 items_to_state: true
@@ -498,6 +655,21 @@ turn:
         noul: [thread.answers_bot, variantes.elige, etapa.cambia_producto, datos.ciudad, datos.direccion, datos.telefono,
                datos.nombre_recibe, datos.metodo_pago, cierre.confirma_resumen, cierre.pide_cambio,
                postcierre.pregunta_pedido, postcierre.comprobante]
+        choice: [thread.bot_asked, thread.answer]
+      topic_question: "topic.{topic}"
+      message_question: "msg.{k}.topic"
+      verify_question: "cover.{topic}"
+      reading: {asked: thread.bot_asked, answer: thread.answer}
+    # `decisions/policies/turno_v6.py`: la de `turno-v5` con el producto que el
+    # cliente señala en descubrimiento (`descubrimiento.senala_producto`): el paso
+    # es hablarle de ese y preguntarle si se lo lleva, sin volver a preguntar
+    # cuál (anuncio de Halloween, 2026-10-13). Lee lo de `turno-v5` y esa pregunta.
+    turno-v6:
+      thresholds: [detect, covered, answers, purchase_confirm, purchase_retract, given, pointed]
+      reads:
+        noul: [thread.answers_bot, variantes.elige, etapa.cambia_producto, datos.ciudad, datos.direccion, datos.telefono,
+               datos.nombre_recibe, datos.metodo_pago, cierre.confirma_resumen, cierre.pide_cambio,
+               postcierre.pregunta_pedido, postcierre.comprobante, descubrimiento.senala_producto]
         choice: [thread.bot_asked, thread.answer]
       topic_question: "topic.{topic}"
       message_question: "msg.{k}.topic"
@@ -631,6 +803,107 @@ about:
       Revisa los botones que el bot quiere mostrar: los que piden elegir un
       producto o una variante que no corresponde se quitan, para que el
       cliente no elija algo que no existe.
+  aroma_ajeno:
+    name: Aromas de otro producto
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que los aromas que el bot nombra sean del
+      producto del que habla. Si le ofrece a un producto un aroma que es de
+      otro, el bot corrige el mensaje con los aromas reales antes de que
+      salga. Jev quita los avisos falsos (cuando habla de otro producto o dice
+      que no lo tiene).
+  color_ajeno:
+    name: Colores de otro producto
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que los colores que el bot nombra sean del
+      producto del que habla. Si le ofrece a un producto un color que es de
+      otro, el bot corrige el mensaje con los colores reales antes de que
+      salga. Jev quita los avisos falsos (otro producto, el color de la caja).
+  precio_ajeno:
+    name: Precio que no es el del catálogo
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el precio que el bot le dice al cliente sea
+      el del catálogo para el producto del que habla (por unidad o por la
+      cantidad, con el descuento que tenga). Si no, el bot corrige el mensaje
+      con el precio real. Jev quita los avisos falsos (un total con envío, lo
+      que le falta para un mínimo).
+  pago_ajeno:
+    name: Pago que no aplica al pedido
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa lo que el bot dice del pago: no le ofrece
+      contra entrega a un pedido que no llega al mínimo, ni un recargo del
+      link de pago distinto del vigente. La regla solo propone: decide Jev
+      (lo dicho como regla general o que no aplica no cuenta).
+  estado_ajeno:
+    name: Estado del pedido que no es cierto
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que lo que el bot dice del pedido coincida con
+      el sistema: no le dice que el pago quedó confirmado, que ya salió o
+      que ya llegó si no es así. La regla solo propone: decide Jev (lo que
+      le avisan después no cuenta).
+  cupon_ajeno:
+    name: Cupón que no está vigente
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el cupón o el descuento que el bot ofrece
+      esté vigente (no el que ya venció, ni un porcentaje que ningún cupón
+      da). El bot corrige con los cupones vigentes. Solo con Jev.
+  negacion_falsa:
+    name: Negar lo que sí tenemos
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el bot no le diga al cliente que no
+      tenemos un producto, un aroma, un color o una presentación que el
+      catálogo sí tiene. Si de verdad está agotado hoy, el bot puede
+      dejarlo como está. La regla solo propone: decide Jev.
+  cajas:
+    name: Cajas o velas
+    where: [herramientas]
+    solves: >-
+      Al anotar la cantidad de un producto que se cobra por caja (las velas de
+      deseos traen 12 o 10), si el número llega a una caja entera, Jev lee lo
+      que escribió el cliente y dice si pidió cajas o velas: «Dos cajas de 12»
+      son 2 cajas, no 24. Si no está claro, el bot lo revisa o le pregunta.
+  caja_nombrada:
+    name: La caja que nombró el cliente
+    where: [herramientas]
+    solves: >-
+      Al anotar por primera vez un producto que se cobra por caja, si el
+      cliente nombró el tamaño de la caja de otro («Dos cajas de 12» y el bot
+      iba a anotar las onduladas, que traen 10), Jev lee la charla y dice si
+      pide ese producto o el de la otra caja. Si no está claro, el bot lo
+      revisa una vez.
+  por_mayor:
+    name: Por mayor o velas sueltas
+    where: [herramientas]
+    solves: >-
+      Antes de pasar un caso a un colega como pedido al por mayor, si el
+      cliente dio una cifra que contada en velas cabe en 20 cajas o menos
+      («me vendes 36 velitas?» son 3 cajas de 12), Jev lee la charla y dice si
+      cuenta velas sueltas. Si es así, el bot no lo pasa: anota las cajas y
+      sigue la venta.
+  cifra_del_cliente:
+    name: Darle la razón en una cuenta equivocada
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, si el cliente escribió una cifra que no es la de su
+      pedido («1 cuadrada y 1 ondulada me da $45.000, ¿no?»; suma $47.500),
+      Jev lee su mensaje y la respuesta y dice si el bot le da la razón
+      («así es», «sí» o repitiéndola). Si se la da, el bot corrige con cariño
+      y con la cuenta real. La regla solo propone: decide Jev.
+  variante_ajena:
+    name: Presentación que no existe
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, Jev lee la ficha del producto (sus presentaciones,
+      signos o diseños) y avisa si el bot le ofrece una que no tiene, como un
+      signo que no existe o un tamaño inventado. El bot corrige el mensaje
+      con las presentaciones reales. Sin Jev no revisa nada: no hay una lista
+      donde buscar lo inventado.
   monto:
     name: Precios cotizados
     where: [herramientas]

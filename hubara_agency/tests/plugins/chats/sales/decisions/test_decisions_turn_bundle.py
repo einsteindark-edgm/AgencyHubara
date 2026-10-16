@@ -149,7 +149,8 @@ def test_the_catalog_turn_vocabulary_is_the_code_s() -> None:
     assert "escalate_to_human" in vocab["tools"]
     # turno-v4 (ventas-4, 2026-10-07): la de turno-v3 con el producto desde el que escribe el cliente.
     # turno-v5 (ventas-6, 2026-10-09): la de turno-v4 con el paso de post-venta del comprobante.
-    assert set(vocab["policies"]) == {"turno-v3", "turno-v4", "turno-v5"}
+    # turno-v6 (ventas-7, 2026-10-13): la de turno-v5 con el producto que el cliente señala en descubrimiento.
+    assert set(vocab["policies"]) == {"turno-v3", "turno-v4", "turno-v5", "turno-v6"}
 
 
 # ── las tablas ───────────────────────────────────────────────────────────────

@@ -5,11 +5,15 @@ import com.hubara.operator.core.database.MessageEntity
 import com.hubara.operator.core.model.Author
 import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.Message
+import com.hubara.operator.core.model.MessageCard
 import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.OrderRef
 import com.hubara.operator.core.model.PaymentState
 import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.SessionId
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
+import com.hubara.operator.core.network.OperatorJson
 
 fun Conversation.toEntity(windowExpiresAtMs: Long? = null) = ConversationEntity(
     sessionId = sessionId.raw,
@@ -62,6 +66,12 @@ fun Message.toEntity(sessionId: SessionId, position: Int) = MessageEntity(
     timestampMs = timestampMs,
     sentAtMs = sentAtMs,
     arrivedAfterWindow = arrivedAfterWindow,
+    cardJson = card?.let { OperatorJson.encodeToString(MessageCard.serializer(), it) },
+    tap = tap,
+    waStatus = whatsapp?.status?.name,
+    waStatusAtMs = whatsapp?.atMs,
+    waErrorCode = whatsapp?.errorCode,
+    waErrorTitle = whatsapp?.errorTitle,
 )
 
 fun MessageEntity.toDomain() = Message(
@@ -72,4 +82,12 @@ fun MessageEntity.toDomain() = Message(
     timestampMs = timestampMs,
     sentAtMs = sentAtMs,
     arrivedAfterWindow = arrivedAfterWindow,
+    // Una tarjeta guardada por otra versión que no se entiende queda como mensaje sin tarjeta (L-10).
+    card = cardJson?.let { runCatching { OperatorJson.decodeFromString(MessageCard.serializer(), it) }.getOrNull() },
+    tap = tap,
+    // Un estado guardado por otra versión que no se entiende queda «sin confirmación» (L-10).
+    whatsapp = waStatus?.let { raw ->
+        val status = runCatching { WhatsAppStatus.valueOf(raw) }.getOrDefault(WhatsAppStatus.UNCONFIRMED)
+        WhatsAppDelivery(status, waStatusAtMs, waErrorCode, waErrorTitle)
+    },
 )

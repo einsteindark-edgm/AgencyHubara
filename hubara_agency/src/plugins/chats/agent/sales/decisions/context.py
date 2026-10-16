@@ -154,32 +154,34 @@ def real_wamid(wamid: str) -> str:
     return wamid
 
 
-def _burst_start(events: Sequence[Mapping[str, Any]], burst_wamids: Collection[str], burst_size: int) -> int:
-    """Índice donde empieza la ráfaga actual (los eventos de cliente del final)."""
-    end = len(events)
+def _split_burst(
+    events: Sequence[Mapping[str, Any]], burst_wamids: Collection[str], burst_size: int
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    """(lo demás, la ráfaga). Con ids, la ráfaga son los mensajes del cliente
+    con esos ids, estén donde estén: el que escribió mientras el bot respondía
+    queda ANTES de esa respuesta en el historial (caso del 2026-10-13: con la
+    ráfaga buscada solo al final, Jev la leía vacía y perdía la cita). Sin ids,
+    los últimos `burst_size` mensajes del cliente del final."""
     if burst_wamids:
-        while end > 0 and events[end - 1].get("role") == "user" and events[end - 1].get("wamid") in burst_wamids:
-            end -= 1
-        return end
-    removed = 0
-    while end > 0 and removed < burst_size and events[end - 1].get("role") == "user":
+        burst = [e for e in events if e.get("role") == "user" and e.get("wamid") in burst_wamids]
+        return [e for e in events if not any(e is b for b in burst)], burst
+    end = len(events)
+    while end > 0 and len(events) - end < burst_size and events[end - 1].get("role") == "user":
         end -= 1
-        removed += 1
-    return end
+    return list(events[:end]), list(events[end:])
 
 
 def customer_window(
     events: Sequence[Mapping[str, Any]], *, burst_wamids: Collection[str], burst_size: int = 0
 ) -> Window:
     """Lo que el cliente vio antes de este turno (ver el docstring del módulo)."""
-    start = _burst_start(events, {real_wamid(str(w)) for w in burst_wamids}, burst_size)
-    burst = events[start:]
+    earlier, burst = _split_burst(events, {real_wamid(str(w)) for w in burst_wamids}, burst_size)
     quoted = None
     for event in burst:
         reply_to = event.get("reply_to")
         if isinstance(reply_to, Mapping) and str(reply_to.get("text") or "").strip():
             quoted = _clip(str(reply_to["text"]))
-    before = [e for e in events[:start] if _speaker(e) and str(e.get("content") or "").strip()]
+    before = [e for e in earlier if _speaker(e) and str(e.get("content") or "").strip()]
     last_bot = next((e for e in reversed(before) if e.get("role") == "assistant"), None)
     last_component = str(last_bot.get("component_kind")) if last_bot and last_bot.get("kind") == "ui_component" else None
     lines: list[str] = [f"[{_speaker(e)}] {_clip(str(e['content']))}" for e in before[-MAX_EVENTS:]]

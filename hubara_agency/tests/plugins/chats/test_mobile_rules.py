@@ -508,6 +508,27 @@ def test_waiting_count_is_what_the_customer_wrote_since_the_last_reply() -> None
     assert unanswered_since(events)[1] == NOW - 7 * MIN
 
 
+def test_a_reaction_or_a_sticker_asks_for_nothing() -> None:
+    """Una reacción (o quitarla) o un sticker no esperan respuesta: es estructural, la marca que deja `translate.py`.
+    Lo que dice un texto («gracias», «ok perfecto») lo lee `asks_nothing` (la ruta le pasa la regla del acuse)."""
+    from src.plugins.chats.shared.mobile_rules import unanswered_since
+
+    answered = {"role": "assistant", "sender": "human", "content": "Listo", "timestamp": _ts(NOW - 20 * MIN)}
+    for marker in ("[el cliente reaccionó con 👍]", "[el cliente quitó su reacción]",
+                   "[el cliente envió un reaction]", "[el cliente envió un sticker]"):
+        assert unanswered_since([answered, {"role": "user", "content": marker, "timestamp": _ts(NOW)}]) == (0, None)
+
+    events = [
+        answered,
+        {"role": "user", "content": "¿lo puedo recoger?", "timestamp": _ts(NOW - 9 * MIN)},
+        {"role": "user", "content": "gracias", "timestamp": _ts(NOW - 8 * MIN)},
+        {"role": "user", "content": "[el cliente reaccionó con ❤️]", "timestamp": _ts(NOW - 7 * MIN)},
+    ]
+    assert unanswered_since(events) == (2, NOW - 9 * MIN)  # sin la regla del texto, «gracias» cuenta
+    assert unanswered_since(events, asks_nothing=lambda text: text == "gracias") == (1, NOW - 9 * MIN)
+    assert unanswered_since(events[:1] + events[2:], asks_nothing=lambda text: text == "gracias") == (0, None)
+
+
 def test_the_bot_handing_off_is_not_an_answer_the_customer_waits_for_a_person() -> None:
     """Prueba del operador (2026-10-07): «necesito hablar con alguien urgente» → el bot respondió «te comunico…» y
     pasó a humano. Ese mensaje contaba como respuesta: cero sin responder, sin incendio y sin aviso."""
@@ -704,6 +725,26 @@ def test_a_purchase_confirmed_without_shipping_data_also_offers_create_order() -
                                  app_features=_OPENS))
 
     assert _ids(out)[0] == "create_order"
+
+
+def test_send_products_opens_the_products_panel_in_an_app_that_can() -> None:
+    """La burbuja «Enviar productos» mandaba el catálogo entero de una vez
+    (2026-10-14): ahora abre el mismo panel de «+ Más» (categoría, búsqueda o
+    un producto). No le manda nada al cliente hasta que el operador elige.
+    Sin el color de «Crear pedido»: es una burbuja de venta normal."""
+    out = suggest_actions(_facts(stage="etapa_descubrimiento", app_features=_OPENS))
+
+    assert out["suggestions"][0] == {
+        "id": "present_products",
+        "label": "Enviar productos",
+        "prominence": "primary",
+        "editable": True,
+        "opens": "enviar_productos",
+        "action": {"name": "present_products", "args": {}},
+    }
+    # Una app vieja no sabe abrir pantallas: la burbuja manda la acción como siempre.
+    old = suggest_actions(_facts(stage="etapa_descubrimiento"))["suggestions"][0]
+    assert old["id"] == "present_products" and "opens" not in old and "tone" not in old
 
 
 def test_create_order_needs_an_app_that_opens_the_form_a_human_and_no_order_yet() -> None:

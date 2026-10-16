@@ -28,7 +28,33 @@ export type ChatEvent =
       receipt: boolean;
     }
   | { kind: "reaction"; emoji: string | null; author: "user" | "bot" }
-  | ShippingFormEvent;
+  | ShippingFormEvent
+  | BotCardEvent;
+
+/** Un envío no-textual del bot (o del operador desde la app) con el mensaje
+ *  ENTERO que leyó el cliente: el catálogo con su texto y sus productos, el
+ *  menú de categorías, el botón con enlace, las fotos del producto.
+ *  `component` es el `component_kind` del backend (`products_list`,
+ *  `categories`, `cta_url`, `product_detail`, `product_gallery`…). */
+export interface BotCardEvent {
+  kind: "bot_card";
+  component: string;
+  /** Qué fue («Catálogo», «Resumen para confirmar»…) y su ícono (llave de
+   *  una lista cerrada): los decide el servidor. Ausentes en un backend
+   *  anterior: el panel usa los suyos. */
+  label?: string;
+  icon?: string;
+  /** La categoría de un catálogo por categoría, «por texto»…, o null. */
+  title: string | null;
+  text: string | null;
+  items: { title: string; detail: string | null }[];
+  /** Los botones que pudo tocar el cliente (el que tocó, marcado). */
+  buttons?: { title: string; touched?: boolean }[];
+  /** El botón que abre la lista o el formulario en su WhatsApp. */
+  action?: string | null;
+  link: { label: string; url: string } | null;
+  images: { url: string; caption: string | null }[];
+}
 
 /** Respuesta del formulario (Flow) de envío. null = el campo no llegó. */
 export interface ShippingFormEvent {
@@ -84,4 +110,16 @@ export interface ChatMessage {
     text?: string;
     image_url?: string;
   };
+  /** Doble check de WhatsApp (solo salientes): lo que Meta informó. */
+  delivery?: MessageDelivery;
+}
+
+/** Lo que WhatsApp informó de un mensaje saliente, por webhook. Un texto que
+ *  salió en varias burbujas muestra la más atrasada. `unconfirmed`: no llegó
+ *  ningún estado (el panel dice «sin confirmación», nunca un check). */
+export interface MessageDelivery {
+  status: "sent" | "delivered" | "read" | "failed" | "unconfirmed";
+  at_ms?: number | null;
+  error_code?: number | null;
+  error_title?: string | null;
 }

@@ -20,6 +20,7 @@ derivar el estado del lead, y ejecutar el send por un template aprobado.
 | `send_whatsapp_message_activity`, `send_typing_indicator_activity` | el texto al cliente y el "escribiendo…" de un turno conversacional (el workflow de ventas V2 los agenda sin importar platform; se registran en el worker) |
 | `send_capi_event_activity`, `flush_capi_outbox_activity` | el evento de Meta (Lead / Purchase) del cierre del episodio y el flush del outbox de eventos del turno |
 | `ladder_state(..., max_steps=)`, `clamp_max_steps` | la escalera de reactivación (5 toques: +2h/+4h/+8h/+14h/+20h); `max_steps` es el tope de toques del negocio (0..5, `None` = todos) |
+| `NEXT_TOUCH_MORNING` | lo que el workflow le pasa a `record_remarketing_touch_activity` para que el toque agende el siguiente a la **mañana siguiente** del cliente (ver abajo) |
 | `effective_max_touches`, `set_max_touches`, `read_frequency_state`, `frequency_ceiling`, `FrequencyState` | la **frecuencia del remarketing**: cuántos toques máximo hace el bot, configurable desde el dashboard dentro de un techo de Terraform (ver abajo) |
 
 **Cómo se usa (plugin `marketing`, campañas directas).** El worker registra
@@ -100,7 +101,28 @@ max_touches = effective_max_touches(WORKSPACE_VAULT_DIR)
 ladder = ladder_state(now_ms, metadata, max_steps=max_touches)
 ```
 
+### El toque que agenda el siguiente (2026-10-13)
+
+Al cliente que pidió, vio el catálogo y se calló, el 2º toque a +2h del 1º le
+respondía el 4 %. El 1er toque enviado lo agenda para la mañana siguiente:
+
+```python
+from src.sdk.messagingkit import NEXT_TOUCH_MORNING
+
+await workflow.execute_activity(
+    record_remarketing_touch_activity, args=[session_id, "free_form", NEXT_TOUCH_MORNING], ...
+)
+```
+
+La activity guarda `next_at_ms` en el toque (`next_morning_at_ms`, pura: 9:00
+hora local del cliente; si no cabe en su ventana de 24 h con 2 h de margen y la
+ventana cierra después de las 8:15, en ese momento; si no hay mañana dentro de
+la ventana, a las 19:00 del mismo día). `ladder_state` respeta esa hora en vez
+del hueco fijo: la central, el ciclo y la etiqueta `SIN_RESPUESTA` la ven sin
+cambiar nada. Sin el tercer argumento, el hueco de siempre.
+
 **Checks.** `tests/platform/test_reengagement_frequency.py` (el almacén y el
-techo), `tests/platform/test_reengagement_ladder.py` (`max_steps`),
+techo), `tests/platform/test_reengagement_ladder.py` (`max_steps`, la mañana
+siguiente), `tests/platform/test_record_remarketing_touch_activity.py`,
 `tests/infra/test_remarketing_frequency_terraform.py` (el techo nace en
 Terraform) y `infra/terraform/platform/tests/lab_config.tftest.hcl`.

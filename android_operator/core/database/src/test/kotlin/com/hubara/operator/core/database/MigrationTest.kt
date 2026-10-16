@@ -67,6 +67,43 @@ class MigrationTest {
         }
     }
 
+    // 2026-10-13: actualizar la app no puede perder el historial guardado; las columnas nuevas nacen vacías.
+    @Test fun de_la_version_4_a_la_5_conserva_los_mensajes_sin_tarjeta() {
+        helper.createDatabase(DB, 4).use { db ->
+            db.execSQL(
+                "INSERT INTO messages (sessionId, key, position, author, text, imageUrl, timestampMs, arrivedAfterWindow) " +
+                    "VALUES ('wa_000000000101', 'w1', 0, 'SYSTEM', '🛍️ El bot envió el catálogo con 2 productos', NULL, 1, 0)",
+            )
+        }
+
+        helper.runMigrationsAndValidate(DB, 5, true).use { db ->
+            db.query("SELECT text, cardJson, tap FROM messages WHERE key = 'w1'").use { c ->
+                assertThat(c.moveToFirst()).isTrue()
+                assertThat(c.getString(0)).isEqualTo("🛍️ El bot envió el catálogo con 2 productos")
+                assertThat(c.isNull(1)).isTrue()           // columnas nuevas de v5
+                assertThat(c.isNull(2)).isTrue()
+            }
+        }
+    }
+
+    // 2026-10-15: el doble check de WhatsApp; el historial guardado sigue y nace «sin confirmación» (columnas null).
+    @Test fun de_la_version_5_a_la_6_conserva_los_mensajes_sin_check() {
+        helper.createDatabase(DB, 5).use { db ->
+            db.execSQL(
+                "INSERT INTO messages (sessionId, key, position, author, text, imageUrl, timestampMs, arrivedAfterWindow) " +
+                    "VALUES ('wa_000000000101', 'w1', 0, 'BOT', '¡Hola!', NULL, 1, 0)",
+            )
+        }
+
+        helper.runMigrationsAndValidate(DB, 6, true).use { db ->
+            db.query("SELECT text, waStatus, waStatusAtMs, waErrorCode, waErrorTitle FROM messages WHERE key = 'w1'").use { c ->
+                assertThat(c.moveToFirst()).isTrue()
+                assertThat(c.getString(0)).isEqualTo("¡Hola!")
+                assertThat((1..4).all { c.isNull(it) }).isTrue()   // columnas nuevas de v6
+            }
+        }
+    }
+
     private companion object {
         const val DB = "migracion-test.db"
     }

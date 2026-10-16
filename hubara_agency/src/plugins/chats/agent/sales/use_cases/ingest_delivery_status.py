@@ -68,7 +68,9 @@ from src.platform.whatsapp.cost import (
     empty_episode_cost_summary,
     materialize_pending_in_summary,
 )
+from src.plugins.chats.shared.delivery_status import DeliveryStatusLog
 from src.sdk.connectorkit import apply_campaign_delivery, campaign_touch_for_message
+from src.sdk.identitykit import address_from_user_id, is_customer_session_id
 
 
 log = logging.getLogger(__name__)
@@ -114,6 +116,8 @@ class IngestDeliveryStatus:
         tenant_id: str | None = None,
         sleeper: Sleeper | None = None,
         retry_delays: tuple[float, ...] = _RETRY_DELAYS_SECONDS,
+        delivery_log: DeliveryStatusLog | None = None,
+        on_delivery_recorded: Callable[[str], None] | None = None,
     ) -> None:
         if rate_card is None and rate_card_for is None:
             raise ValueError("IngestDeliveryStatus necesita rate_card o rate_card_for")
@@ -142,6 +146,11 @@ class IngestDeliveryStatus:
         self._tenant_id = tenant_id
         self._sleeper = sleeper or asyncio.sleep
         self._retry_delays = retry_delays
+        # El doble check del chat: el estado queda en la conversación, unido al
+        # mensaje por su wamid (caso 2026-10-15). `on_delivery_recorded` avisa
+        # al panel y a la app (evento en vivo) con el id de la conversación.
+        self._delivery_log = delivery_log or DeliveryStatusLog(vault_dir)
+        self._on_delivery_recorded = on_delivery_recorded
 
     async def execute(
         self,
@@ -151,6 +160,9 @@ class IngestDeliveryStatus:
         *,
         timestamp_ms: int | None = None,
         error_code: int | None = None,
+        error_title: str | None = None,
+        recipient_id: str | None = None,
+        recipient_user_id: str | None = None,
     ) -> None:
         """Procesa UN status update.
 
@@ -163,9 +175,25 @@ class IngestDeliveryStatus:
         """
         snapshot = _pricing_snapshot_from_dict(pricing)
 
+        # 0. El doble check del chat. La conversación sale del destinatario que
+        # trae el estado (no hace falta que el episodio haya registrado el
+        # outbound: caso 2026-10-15); si no vino, de la búsqueda del costo.
+        chat_check = {
+            "wamid": wa_message_id,
+            "status": status,
+            "at_ms": timestamp_ms,
+            "error_code": error_code,
+            "error_title": error_title,
+        }
+        chat_session = self._recipient_session(recipient_id, recipient_user_id)
+        if chat_session is not None:
+            self._record_chat_check(chat_session, chat_check)
+
         # 1. Buscar la sesión con retry (race: outbound puede no haber
         # persistido cuando llega el primer webhook 'sent').
         session_id = await self._locate_with_retry(wa_message_id)
+        if chat_session is None and session_id is not None:
+            self._record_chat_check(session_id, chat_check)
 
         if session_id is None:
             self._dead_letter(
@@ -332,6 +360,46 @@ class IngestDeliveryStatus:
             snapshot=snapshot if reason == "materialized" else None,
             cost_usd_micros=outcome.get("cost"),
         )
+
+    # =====================================================================
+    # Doble check del chat
+    # =====================================================================
+
+    def _recipient_session(
+        self, recipient_id: str | None, recipient_user_id: str | None
+    ) -> str | None:
+        """La conversación del destinatario del estado, si existe en el vault:
+        `wa_<teléfono>` (``recipient_id``) o `wa_<BSUID sin punto>`
+        (``recipient_user_id``, clientes con nombre de usuario)."""
+        candidates: list[str] = []
+        if isinstance(recipient_id, str) and recipient_id.strip():
+            candidates.append("wa_" + recipient_id.strip().removeprefix("+"))
+        address = address_from_user_id(recipient_user_id)
+        if address:
+            candidates.append("wa_" + address)
+        for session_id in candidates:
+            if is_customer_session_id(session_id) and (self._vault_dir / session_id).is_dir():
+                return session_id
+        return None
+
+    def _record_chat_check(self, session_id: str, check: dict[str, Any]) -> None:
+        """Anota el estado en el chat. Nunca frena el costo: un fallo se loguea."""
+        try:
+            recorded = self._delivery_log.append(session_id, **check)
+        except OSError as e:
+            log.warning(
+                "delivery_status_chat_check_write_failed",
+                extra={"session_id": session_id, "error": str(e)},
+            )
+            return
+        if recorded and self._on_delivery_recorded is not None:
+            try:
+                self._on_delivery_recorded(session_id)
+            except Exception as e:  # noqa: BLE001 — el aviso en vivo es best-effort
+                log.warning(
+                    "delivery_status_live_event_failed",
+                    extra={"session_id": session_id, "error": str(e)},
+                )
 
     # =====================================================================
     # Lookup with retry

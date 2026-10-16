@@ -109,14 +109,15 @@ def test_ventas_6_is_ventas_5_with_turno_v5_and_the_close_table_and_nothing_else
     assert [r for r in old_turn["contract"] if r["topic"] != "catalogo"] == [
         r for r in new_turn["contract"] if r["topic"] != "catalogo" and "aroma.notas" not in r.get("when", "")
     ]
-    # Del cuestionario: la pista de `gusto` y la pregunta nueva, con otro id.
-    assert (old_turn["questionnaire"]["id"], new_turn["questionnaire"]["id"]) == ("rafaga-v6", "rafaga-v7")
+    # Del cuestionario: las pistas de `gusto` y de `catalogo` (rafaga-v8,
+    # 2026-10-13) y la pregunta nueva, con otro id.
+    assert (old_turn["questionnaire"]["id"], new_turn["questionnaire"]["id"]) == ("rafaga-v6", "rafaga-v8")
     old_q = {q["id"]: q for q in old_turn["questionnaire"]["questions"] if "id" in q}
     new_q = {q["id"]: q for q in new_turn["questionnaire"]["questions"] if "id" in q}
     assert set(new_q) - set(old_q) == {"aroma.notas"}
     assert all(old_q[k] == new_q[k] for k in old_q)
-    assert [t for t in new_turn["questionnaire"]["topics"] if t["id"] != "gusto"] == [
-        t for t in old_turn["questionnaire"]["topics"] if t["id"] != "gusto"
+    assert [t for t in new_turn["questionnaire"]["topics"] if t["id"] not in {"gusto", "catalogo"}] == [
+        t for t in old_turn["questionnaire"]["topics"] if t["id"] not in {"gusto", "catalogo"}
     ]
     assert {k: v for k, v in old_turn["examples"].items() if k != "contract"} == {
         k: v for k, v in new_turn["examples"].items() if k != "contract"
@@ -282,6 +283,40 @@ def test_me_regalas_is_asking_for_something_not_a_gift() -> None:
 
     assert hint.startswith(_gusto_hint(V5).removesuffix(")"))
     assert "NO cuenta «me regalas…» ni «regálame…»" in hint and "es pedir algo, no un regalo" in hint
+
+
+# ── los anuncios de velitas del 2026-10-13: «más información sobre…» ─────────
+
+
+def _catalog_hint(bundle: Path) -> str:
+    return next(t for t in _load(bundle / "turn.yaml")["questionnaire"]["topics"] if t["id"] == "catalogo")["hint"]
+
+
+def test_asking_for_information_about_an_occasion_or_a_kit_is_a_catalog_request() -> None:
+    """«¡Hola! Quiero más información sobre las velitas del 7 de diciembre.»
+    (el mensaje de los dos anuncios de velitas) daba `catalogo` 0,16–0,31 y el
+    bot saludaba con botones sin buscar nada; «…la colección de Halloween» daba
+    0,96 porque Halloween era el ejemplo de la pista. Sonda con Jev real: los
+    dos anuncios 0,19–0,22 → 0,97; «Me interesa el kit de velitas» 0,18 → 0,87;
+    lo que no es catálogo sigue ≤ 0,54 (aromas, colores, envío, pagos, pedido)."""
+    _need_v6()
+
+    hint = _catalog_hint(V6)
+
+    assert hint.startswith("pide ver el catálogo, o pide información o pregunta por")
+    assert "kit u ocasión de velas" in hint and "las velitas del 7 de diciembre" in hint
+    # Pedido del operador (2026-10-13): la fecha sola y la Navidad también.
+    assert "para el 7 de diciembre" in hint and "velas para navidad" in hint
+    assert "de Halloween" in hint and "religiosas" in hint
+
+
+def test_the_catalog_reading_change_is_traced_as_another_questionnaire() -> None:
+    """El cambio va dentro de ventas-6 (decisión del operador, 2026-10-13: es
+    urgente y no espera el Terraform apply de un paquete nuevo); el id del
+    cuestionario cambia para que la traza diga con qué pista leyó Jev."""
+    _need_v6()
+
+    assert _load(V6 / "turn.yaml")["questionnaire"]["id"] == "rafaga-v8"
 
 
 QUOTED = "Si prefieres algo más cálido y envolvente para la noche, el *Caballero de la noche* es el más elegido."

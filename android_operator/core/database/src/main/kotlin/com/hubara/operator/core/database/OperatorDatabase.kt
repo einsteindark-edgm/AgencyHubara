@@ -19,7 +19,7 @@ import javax.inject.Singleton
         ConversationEntity::class, MessageEntity::class, OutboxEntity::class, DraftEntity::class,
         SuggestionSetEntity::class, FireEntity::class, HiddenFireEntity::class,
     ],
-    version = 4,
+    version = 6,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 1, to = 2, spec = OperatorDatabase.InboundCount::class),
@@ -27,6 +27,10 @@ import javax.inject.Singleton
         AutoMigration(from = 2, to = 3),
         // v4: cuándo escribió el cliente un mensaje entregado tarde y si llegó con la ventana cerrada (2026-10-09).
         AutoMigration(from = 3, to = 4),
+        // v5: la tarjeta de los envíos del bot y el toque del cliente a un botón (2026-10-13).
+        AutoMigration(from = 4, to = 5),
+        // v6: el doble check de WhatsApp de los salientes (2026-10-15).
+        AutoMigration(from = 5, to = 6),
     ],
 )
 abstract class OperatorDatabase : RoomDatabase() {

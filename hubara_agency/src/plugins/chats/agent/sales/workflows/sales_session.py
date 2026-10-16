@@ -46,6 +46,7 @@ with workflow.unsafe.imports_passed_through():
         VerifyOutput,
         complement_note_of,
         delivered_card_texts,
+        delivered_card_contents,
         delivered_components,
         perceive_burst_activity,
         plan_of,
@@ -284,6 +285,19 @@ def _note_guard(
     steps.append({"kind": "guard", "at_ms": _now_ms(), "name": name, "before": before, "after": after})
     if v1:
         guards.append(name)
+
+
+def _persist_args_with_wamids(args: list, delivered: object) -> list:
+    """Args de `persist_assistant_message_activity` con las burbujas que
+    salieron (`[{wamid, text}]`, 4.º argumento): el doble check de WhatsApp
+    del chat se une por esos wamids (caso 2026-10-15).
+
+    Siempre, sin depender del patch: es solo el contenido de la activity (L-22).
+    `workflow.patched` recuerda su primer resultado en todo el run: en un run
+    que venía de antes del deploy era False y los mensajes nuevos salían sin
+    wamids. `deprecate_patch` deja reproducir los runs que ya grabaron la marca."""
+    workflow.deprecate_patch("persist-wamids-v1")
+    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
 
 
 def _text_outbound(text: str, delivered: object) -> dict:
@@ -1394,7 +1408,7 @@ class HubaraSalesSessionWorkflow:
                         trace_steps.append(_text_outbound(greeting, greeting_delivered))
                         await workflow.execute_activity(
                             persist_assistant_message_activity,
-                            args=[session.session_id, greeting],
+                            args=_persist_args_with_wamids([session.session_id, greeting], greeting_delivered),
                             start_to_close_timeout=timedelta(seconds=10),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
@@ -1453,7 +1467,7 @@ class HubaraSalesSessionWorkflow:
                             if workflow.patched("persist-assistant-message-v1"):
                                 await workflow.execute_activity(
                                     persist_assistant_message_activity,
-                                    args=[session.session_id, pre_msg],
+                                    args=_persist_args_with_wamids([session.session_id, pre_msg], pre_delivered),
                                     start_to_close_timeout=timedelta(seconds=10),
                                     retry_policy=RetryPolicy(maximum_attempts=2),
                                 )
@@ -1642,6 +1656,7 @@ class HubaraSalesSessionWorkflow:
                                 # Solo las tarjetas que el cliente recibe (ni
                                 # `send_reply` ni las tools que se negaron).
                                 components=delivered_components(result.tool_events),
+                                card_contents=delivered_card_contents(result.tool_events),
                             )
                         )
                         trace_steps.append(_verify_step(verify_out, verified_ms, applied=True))
@@ -1653,6 +1668,9 @@ class HubaraSalesSessionWorkflow:
                         and not leak_blocked
                     ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
+                        # Sin envío (selector de variantes) no hay burbujas: el
+                        # chat lo mostrará «sin confirmación».
+                        final_delivered: object = None
                         if not suppress_text_for_picker:
                             # El texto promete que un colega lo atiende y
                             # nadie escaló: la red escala antes de enviarlo
@@ -1709,6 +1727,7 @@ class HubaraSalesSessionWorkflow:
                             ]
                             if workflow.patched("persist-tools-used-v1"):
                                 _persist_args.append(list(result.tools_used or []))
+                                _persist_args = _persist_args_with_wamids(_persist_args, final_delivered)
                             await workflow.execute_activity(
                                 persist_assistant_message_activity,
                                 args=_persist_args,
@@ -1795,6 +1814,7 @@ class HubaraSalesSessionWorkflow:
                                         trace_sent_texts, None, delivered_card_texts(result.tool_events)
                                     ),
                                     components=delivered_components(result.tool_events),
+                                    card_contents=delivered_card_contents(result.tool_events),
                                 )
                             )
                             trace_steps.append(_verify_step(shadow_verify, shadow_verified_ms, applied=False))

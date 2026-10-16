@@ -16,7 +16,7 @@ Este módulo solo sabe parsear ese documento y matchear contra él.
 
 Reglas de matcheo:
   * Sin acentos, sin mayúsculas, tolerante a género/número ("rojas" = rojo,
-    "azules" = azul) — mismo espíritu que `variant_colors._stem_tokens`.
+    "azules" = azul) — `variant_attrs.stem_word`, la misma regla de `variant_colors`.
   * Un nombre (label o shade) matchea un texto si TODOS sus tokens están en
     el texto ("azul mar" ⊆ "un azul mar bonito").
   * Gana el nombre MÁS ESPECÍFICO (más tokens): "morado clarito" declarado
@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.platform.catalog.variant_attrs import match_option, normalize_label
+from src.platform.catalog.variant_attrs import match_option, normalize_label, stem_word
 
 
 class InvalidColorFamiliesError(ValueError):
@@ -154,24 +154,8 @@ def parse_color_families(doc: Any) -> ColorFamilies:
 # ---------------------------------------------------------------------------
 
 
-def _stem(token: str) -> str:
-    """Stem liviano de género/número castellano.
-
-    "azules" → "azul", "rojas" → "roj", "celeste(s)" → "celest",
-    "clarito"/"clarita" → "clarit". Corta el plural (`es`/`s`) y UNA vocal
-    final (a/o/e). Palabras cortas (≤3) quedan intactas ("mar", "oro").
-    """
-    if len(token) > 4 and token.endswith("es"):
-        token = token[:-2]
-    elif len(token) > 3 and token.endswith("s"):
-        token = token[:-1]
-    if len(token) > 3 and token[-1] in "aoe":
-        token = token[:-1]
-    return token
-
-
 def _stem_tokens(text: str) -> frozenset[str]:
-    return frozenset(_stem(t) for t in normalize_label(text).split())
+    return frozenset(stem_word(t) for t in normalize_label(text).split())
 
 
 def _detect(text: str, families: ColorFamilies) -> list[ColorFamily]:

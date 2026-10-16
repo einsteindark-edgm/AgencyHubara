@@ -57,6 +57,22 @@ class BubbleGroupingTest {
         assertThat(shape(items)).containsExactly("[Hoy]", "B:S", "B:S", "S:S", "B:S").inOrder()
     }
 
+    // Una tarjeta (catálogo, resumen…) es un mensaje entero con su forma: no se pega a la burbuja de texto de al lado.
+    @Test fun una_tarjeta_o_un_toque_no_se_pegan_al_grupo() {
+        val card = com.hubara.operator.core.model.MessageCard(component = "products_list", label = "Catálogo", text = "Hola")
+        val items = chatItems(
+            listOf(
+                msg(Author.BOT, at(30, 9, 0)),
+                msg(Author.BOT, at(30, 9, 1)).copy(card = card),
+                msg(Author.BOT, at(30, 9, 2)),
+                msg(Author.CUSTOMER, at(30, 9, 3)).copy(tap = "Ver catálogo"),
+                msg(Author.CUSTOMER, at(30, 9, 4)),
+            ),
+            now, bogota,
+        )
+        assertThat(shape(items)).containsExactly("[Hoy]", "B:S", "B:S", "B:S", "C:S", "C:S").inOrder()
+    }
+
     @Test fun sin_hora_se_agrupa_con_el_anterior_y_no_abre_dia() {
         val items = chatItems(listOf(msg(Author.HUMAN, at(30, 9, 0)), msg(Author.HUMAN, null)), now, bogota)
         assertThat(shape(items)).containsExactly("[Hoy]", "H:F", "H:L").inOrder()

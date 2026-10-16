@@ -23,6 +23,8 @@ _COLOR_PREFIX = "color:"
 # Separadores aceptados cuando un slot trae varias elecciones en un string
 # ("Drakar, Café" / "Drakar y Café" / "Drakar / Café").
 _MULTI_SPLIT_RE = re.compile(r"\s*(?:,|;|/| y | e )\s*", re.IGNORECASE)
+# El mismo, guardando los separadores para volver a unir una opción partida.
+_MULTI_SPLIT_KEEP_RE = re.compile(r"(\s*(?:,|;|/| y | e )\s*)", re.IGNORECASE)
 
 
 def normalize_label(raw: str) -> str:
@@ -33,6 +35,22 @@ def normalize_label(raw: str) -> str:
     text = unicodedata.normalize("NFKD", str(raw))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return " ".join(text.casefold().split())
+
+
+def stem_word(word: str) -> str:
+    """Una palabra ya normalizada sin género ni número (castellano liviano,
+    sin diccionario): corta el plural (`es`/`s`) y UNA vocal final (a/o/e).
+    «rojas» → «roj», «azules» → «azul», «celestes» → «celest», «velones» →
+    «velon». Las cortas (≤3) quedan intactas («mar», «oro»). La única regla
+    para comparar palabras del catálogo (familias de color, colores por
+    variante, el scorecard de envío y la verdad del producto)."""
+    if len(word) > 4 and word.endswith("es"):
+        word = word[:-2]
+    elif len(word) > 3 and word.endswith("s"):
+        word = word[:-1]
+    if len(word) > 3 and word[-1] in "aoe":
+        word = word[:-1]
+    return word
 
 
 @dataclass(frozen=True)
@@ -75,6 +93,30 @@ def parse_variant_tags(tags: list[str] | None) -> VariantAttrs:
 def split_multi_label(raw: str) -> list[str]:
     """Divide una eleccion multiple en tokens: "Drakar, Café" -> [Drakar, Café]."""
     return [part for part in (_MULTI_SPLIT_RE.split(str(raw))) if part.strip()]
+
+
+def split_choices(raw: str, valid: list[str]) -> list[str]:
+    """Como `split_multi_label`, sin partir una opción del catálogo que trae un
+    separador en el nombre (pedido #78: "Rojo y verde" salía como "Rojo" +
+    "verde" y se rechazaba). En cada punto se toma la opción más larga de
+    `valid` que empiece ahí: "Multicolor y Rojo y verde" → [Multicolor,
+    Rojo y verde]."""
+    pieces = _MULTI_SPLIT_KEEP_RE.split(str(raw))
+    words, seps = pieces[0::2], pieces[1::2]
+    tokens: list[str] = []
+    i = 0
+    while i < len(words):
+        for j in range(len(words) - 1, i, -1):
+            joined = words[i] + "".join(seps[k] + words[k + 1] for k in range(i, j))
+            if match_option(joined, valid) is not None:
+                tokens.append(joined)
+                i = j + 1
+                break
+        else:
+            if words[i].strip():
+                tokens.append(words[i])
+            i += 1
+    return tokens
 
 
 def match_option(raw: str, valid: list[str]) -> str | None:

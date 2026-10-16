@@ -14,6 +14,10 @@
     python3 inject.py screen mas.json --from ../screens/mas.json
                                                    # serve this App Operador screen instead of the repo's one
                                                    #   (what frontend-deploy would publish); reset removes it
+    python3 inject.py wa-status wa_000000000101 read [--back 1] [--code 131047 --title "Re-engagement message"]
+                                                   # WhatsApp reports the status of an outbound message (the last
+                                                   #   one, or --back N before it): the Meta webhook
+                                                   #   `statuses[]` POSTed to the sandbox API (no signature in dev)
 
 Everything goes through files, exactly where the real ingest writes: the
 session JSONL + metadata.json (atomic write, same ``metadata.json.lock`` flock
@@ -34,6 +38,8 @@ import os
 import re
 import shutil
 import sys
+import time
+import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
@@ -48,6 +54,7 @@ from sandbox_common import (  # noqa: E402
     MOBILE_SCREENS,
     NETWORK_RULES,
     PHONE_NUMBER_ID,
+    PORT,
     PUSH_CURSOR,
     PUSH_OUTBOX,
     SANDBOX_DIR,
@@ -200,6 +207,143 @@ def reply(session_id: str, text: str) -> None:
     print(f"reply: {session_id} ← {text!r} (window open until +24 h)")
 
 
+# ── crowd ────────────────────────────────────────────────────────────────────
+
+
+def crowd(count: int) -> None:
+    """`count` conversaciones viejas del bot (un «Hola» hace 30 días): una bandeja con miles de chats, como
+    producción. Android 11 (SQLite 3.28) no acepta más de 999 parámetros en una consulta."""
+    t = now_ms()
+    old = t - 30 * DAY_MS
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
+    for i in range(count):
+        session_id = f"wa_0000009{i:05d}"
+        target = VAULT_DIR / session_id
+        if target.exists():
+            continue
+        staging = VAULT_DIR / f".staging-{session_id}-{uuid.uuid4().hex[:6]}"
+        (staging / "sessions").mkdir(parents=True)
+        append_jsonl(staging / "sessions" / f"{session_id}.jsonl",
+                     {"role": "user", "content": "Hola", "timestamp": iso_utc(old - i * MIN_MS), "wamid": _wamid()})
+        atomic_write_json(staging / "metadata.json", {
+            "phone_number_id": PHONE_NUMBER_ID, "active_route": "ventas", "tag": "SIN_RESPUESTA",
+            "motivo": "Saludó y no volvió a escribir", "last_inbound_at_ms": old - i * MIN_MS,
+        })
+        os.utime(staging / "sessions" / f"{session_id}.jsonl", ((old - i * MIN_MS) / 1000, (old - i * MIN_MS) / 1000))
+        os.rename(staging, target)
+    print(f"crowd: {count} conversaciones viejas del bot (wa_0000009xxxxx)")
+
+
+# ── answered ─────────────────────────────────────────────────────────────────
+
+
+def answered(session_id: str, name: str, text: str) -> None:
+    """Un chat que atiende el equipo: el operador respondió hace 30 min y 15 min después el cliente escribió `text`.
+    Con «gracias» o una reacción nadie espera (caso 2026-10-15: eran incendio grave); con una pregunta, sí."""
+    if not _SESSION_RE.fullmatch(session_id):
+        sys.exit(f"invalid session id {session_id!r}")
+    t = now_ms()
+    last = t - 15 * MIN_MS
+    wamid = _wamid()
+    events = [
+        {"role": "user", "content": "¿Me lo pueden mandar mañana?", "timestamp": iso_utc(t - 31 * MIN_MS), "wamid": _wamid()},
+        {"role": "assistant", "sender": "human", "content": "¡Claro! Sale mañana temprano 🙌",
+         "timestamp": iso_utc(t - 30 * MIN_MS)},
+        {"role": "user", "content": text, "timestamp": iso_utc(last), "wamid": wamid},
+    ]
+    motivo = f"{name.split()[0]} pidió que le mandaran el pedido mañana"
+    metadata = {
+        "phone_number_id": PHONE_NUMBER_ID, "profile": {"name": name}, "active_route": "humano", "tag": "HUMANO",
+        "motivo": motivo, "last_inbound_at_ms": last, "last_inbound_message_id": wamid,
+        "service_window_expires_at_ms": last + DAY_MS,
+        "status_history": [_status("HUMANO", motivo, "humano", t - 31 * MIN_MS)],
+    }
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
+    staging = VAULT_DIR / f".staging-{session_id}-{uuid.uuid4().hex[:6]}"
+    (staging / "sessions").mkdir(parents=True)
+    for ev in events:
+        append_jsonl(staging / "sessions" / f"{session_id}.jsonl", ev)
+    atomic_write_json(staging / "metadata.json", metadata)
+    target = VAULT_DIR / session_id
+    if target.exists():
+        shutil.rmtree(target)
+    os.rename(staging, target)
+    print(f"answered: {name} ({session_id}) answered 30 min ago, then wrote {text!r} 15 min ago")
+
+
+# ── bot-card ─────────────────────────────────────────────────────────────────
+
+#: Envíos del bot con su tarjeta, como los deja el flush (`flush_ui_intents._history_card`). `catalogo` es el caso
+#: 2026-10-13: el saludo iba DENTRO del texto del catálogo.
+BOT_CARDS: dict[str, tuple[str, str, dict[str, Any]]] = {
+    "catalogo": ("products_list", "🛍️ El bot envió el catálogo con 2 productos — con el mensaje: «Buenas tardes…»", {
+        "text": "Buenas tardes, bienvenida a *Hubara*, velas artesanales hechas a mano en Colombia.\n\n"
+                "Para la Noche de Velitas tenemos estas velas de deseos:",
+        "items": [{"title": "Velas de deseos onduladas", "detail": "$22.500 COP"},
+                  {"title": "Velas de deseos cuadradas", "detail": "$25.000 COP"}],
+    }),
+    "resumen": ("order_confirmation", "🧾 El bot envió el resumen del pedido con botones para confirmar", {
+        "text": "*Resumen de tu pedido*\n• 2× Velas de deseos onduladas — $22.500\n\nTotal: $57.000 COP",
+        "buttons": [{"title": "✅ Confirmar"}, {"title": "✏️ Modificar"}, {"title": "❌ Cancelar"}],
+    }),
+}
+
+
+def bot_card(session_id: str, which: str, tap: str | None) -> None:
+    """Agrega al chat un envío del bot con su tarjeta y, si `tap`, el toque del cliente a uno de sus botones."""
+    _require_session(session_id)
+    _meta, jsonl, _media = session_paths(session_id)
+    component, note, card = BOT_CARDS[which]
+    t = now_ms()
+    append_jsonl(jsonl, {"role": "assistant", "kind": "ui_component", "component_kind": component,
+                         "content": note, "card": card, "timestamp": iso_utc(t), "wamid": _wamid()})
+    if tap:
+        append_jsonl(jsonl, {"role": "user", "content": f"[el cliente tocó el botón: {tap}]",
+                             "timestamp": iso_utc(t + 1_000), "wamid": _wamid()})
+    print(f"bot-card: {session_id} ← {which}" + (f" (tocó «{tap}»)" if tap else ""))
+
+
+# ── wa-status ────────────────────────────────────────────────────────────────
+
+
+def _outbound_wamids(jsonl: Path, back: int) -> list[str]:
+    """Los wamids del mensaje saliente (bot u operador) número `back` contando desde el último."""
+    outbound: list[list[str]] = []
+    for line in jsonl.read_text(encoding="utf-8").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("role") != "assistant" or ev.get("tool_calls"):
+            continue
+        wamids = ev.get("wamids") or ([ev["wamid"]] if ev.get("wamid") else [])
+        outbound.append([w for w in wamids if isinstance(w, str) and w])
+    if back >= len(outbound) or not outbound[-1 - back]:
+        sys.exit(f"no outbound message with a wamid at --back {back} in {jsonl}")
+    return outbound[-1 - back]
+
+
+def wa_status(session_id: str, status: str, back: int, code: int | None, title: str | None) -> None:
+    """WhatsApp informa el estado de un mensaje saliente: el webhook `statuses[]` de Meta, al backend de prueba
+    (mismo parser, mismo use case y mismo evento en vivo que en producción; el sandbox corre sin firma, HUBARA_ENV=dev)."""
+    _require_session(session_id)
+    _meta, jsonl, _media = session_paths(session_id)
+    statuses = []
+    for wamid in _outbound_wamids(jsonl, back):
+        st: dict[str, Any] = {"id": wamid, "status": status, "timestamp": str(int(time.time())),
+                              "recipient_id": session_id.removeprefix("wa_")}
+        if status == "failed":
+            st["errors"] = [{"code": code or 131026, "title": title or "Message undeliverable"}]
+        statuses.append(st)
+    body = {"object": "whatsapp_business_account", "entry": [{"id": "WABA-SANDBOX", "changes": [
+        {"field": "messages", "value": {"metadata": {"phone_number_id": PHONE_NUMBER_ID}, "statuses": statuses}}]}]}
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/api/webhook", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=15) as r:
+        r.read()
+    print(f"wa-status: {session_id} ← {status} for {len(statuses)} bubble(s) (--back {back})")
+
+
 # ── reset ────────────────────────────────────────────────────────────────────
 
 
@@ -288,6 +432,16 @@ def main() -> None:
     p_reply = sub.add_parser("reply", help="append a customer message")
     p_reply.add_argument("session")
     p_reply.add_argument("text")
+    p_crowd = sub.add_parser("crowd", help="add N old bot conversations (an inbox as big as production)")
+    p_crowd.add_argument("--count", type=int, default=1200)
+    p_answered = sub.add_parser("answered", help="a human chat the operator answered; then the customer wrote TEXT")
+    p_answered.add_argument("session")
+    p_answered.add_argument("name")
+    p_answered.add_argument("text")
+    p_card = sub.add_parser("bot-card", help="append a bot message with its card (catalog, order summary)")
+    p_card.add_argument("session")
+    p_card.add_argument("which", choices=sorted(BOT_CARDS))
+    p_card.add_argument("--tap", help="the customer then taps this button")
     p_config = sub.add_parser("config", help="change the App Operador server config (mobile/config.json)")
     p_config.add_argument("--min-version", type=int, required=True)
     p_screen = sub.add_parser("screen", help="serve an App Operador screen instead of the repo's one")
@@ -298,6 +452,12 @@ def main() -> None:
     p_net.add_argument("--delay", type=float, default=0.0, help="seconds before answering")
     p_net.add_argument("--fail", action="store_true", help="answer 503 instead of the real response")
     p_net.add_argument("--clear", action="store_true", help="remove every rule")
+    p_status = sub.add_parser("wa-status", help="WhatsApp reports the status of an outbound message (webhook)")
+    p_status.add_argument("session")
+    p_status.add_argument("status", choices=["sent", "delivered", "read", "failed"])
+    p_status.add_argument("--back", type=int, default=0, help="0 = the last outbound message, 1 = the one before…")
+    p_status.add_argument("--code", type=int, help="Meta error code of a failed message")
+    p_status.add_argument("--title", help="Meta error title of a failed message")
     p_device = sub.add_parser("push-device", help="register a phone token for push notices")
     p_device.add_argument("token")
     sub.add_parser("push-relay", help="print the pushes the backend sent since the last call (JSON lines)")
@@ -312,12 +472,20 @@ def main() -> None:
             fire_new(args.session, args.name, args.waiting_min, just_handed_off=args.just_handed_off)
     elif args.cmd == "reply":
         reply(args.session, args.text)
+    elif args.cmd == "crowd":
+        crowd(args.count)
+    elif args.cmd == "answered":
+        answered(args.session, args.name, args.text)
+    elif args.cmd == "bot-card":
+        bot_card(args.session, args.which, args.tap)
     elif args.cmd == "config":
         mobile_config(args.min_version)
     elif args.cmd == "screen":
         mobile_screen(args.name, args.source)
     elif args.cmd == "network":
         network(args.path, args.delay, args.fail, args.clear)
+    elif args.cmd == "wa-status":
+        wa_status(args.session, args.status, args.back, args.code, args.title)
     elif args.cmd == "push-device":
         push_device(args.token)
     elif args.cmd == "push-relay":

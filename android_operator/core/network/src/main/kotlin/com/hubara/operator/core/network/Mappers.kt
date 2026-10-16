@@ -2,6 +2,11 @@ package com.hubara.operator.core.network
 
 import com.hubara.operator.core.model.ActionRef
 import com.hubara.operator.core.model.Author
+import com.hubara.operator.core.model.CardButton
+import com.hubara.operator.core.model.CardIcon
+import com.hubara.operator.core.model.CardImage
+import com.hubara.operator.core.model.CardItem
+import com.hubara.operator.core.model.CardLink
 import com.hubara.operator.core.model.ChatDetail
 import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.Fire
@@ -9,6 +14,7 @@ import com.hubara.operator.core.model.FireId
 import com.hubara.operator.core.model.FireKind
 import com.hubara.operator.core.model.FireSubject
 import com.hubara.operator.core.model.Message
+import com.hubara.operator.core.model.MessageCard
 import com.hubara.operator.core.model.OrderDetail
 import com.hubara.operator.core.model.OrderId
 import com.hubara.operator.core.model.OrderItem
@@ -25,6 +31,8 @@ import com.hubara.operator.core.model.ShippingAddress
 import com.hubara.operator.core.model.Suggestion
 import com.hubara.operator.core.model.SuggestionSet
 import com.hubara.operator.core.model.SuggestionTone
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
 import com.hubara.operator.core.network.dto.ActionRefDto
 import com.hubara.operator.core.network.dto.ChatMessageDto
 import com.hubara.operator.core.network.dto.ChatSessionDto
@@ -37,10 +45,14 @@ import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SuggestionsDto
 import java.time.OffsetDateTime
 import java.time.format.DateTimeParseException
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 
 // Todo lo que llega del backend se valida acá: un id inválido descarta la fila, un enum nuevo cae en
 // su valor por defecto. Ninguna pantalla ve un DTO.
@@ -89,12 +101,81 @@ internal fun parseTimestampMs(raw: JsonElement?): Long? {
     return if (n < 1e12) (n * 1000).toLong() else n.toLong()   // segundos o milisegundos
 }
 
-private fun ChatMessageDto.author(): Author = when (uiType) {
-    "user_message" -> Author.CUSTOMER
-    "human_message" -> Author.HUMAN
-    "agent_message" -> if (sender == "human") Author.HUMAN else Author.BOT
+private fun ChatMessageDto.author(card: MessageCard?): Author = when {
+    uiType == "user_message" -> Author.CUSTOMER
+    uiType == "human_message" -> Author.HUMAN
+    uiType == "agent_message" -> if (sender == "human") Author.HUMAN else Author.BOT
+    // Un envío con su tarjeta es un mensaje del bot (o del operador desde la app), no una nota.
+    card != null -> if (sender == "human") Author.HUMAN else Author.BOT
     else -> Author.SYSTEM
 }
+
+// ── `event` del historial → tarjeta (L-10: lo que no se entiende se ignora, nunca tumba el chat) ───────
+
+private fun JsonElement?.str(): String? =
+    (this as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim()?.takeIf { it.isNotEmpty() }
+
+private fun JsonObject.list(name: String): List<JsonObject> =
+    (this[name] as? JsonArray).orEmpty().mapNotNull { it as? JsonObject }
+
+private fun JsonObject.buttons(): List<CardButton> = list("buttons").mapNotNull { b ->
+    b["title"].str()?.let { CardButton(it, touched = (b["touched"] as? JsonPrimitive)?.booleanOrNull == true) }
+}
+
+/** `bot_card` / `bot_buttons` → la tarjeta que ve el operador; cualquier otra cosa → null (queda la nota). */
+internal fun JsonElement?.toCard(): MessageCard? {
+    val event = this as? JsonObject ?: return null
+    return when (event["kind"].str()) {
+        "bot_buttons" -> event.buttons().takeIf { it.isNotEmpty() }?.let { buttons ->
+            MessageCard(
+                component = "quick_replies", label = "Botones de respuesta", icon = CardIcon.BUTTONS,
+                text = event["body"].str(), buttons = buttons,
+            )
+        }
+        "bot_card" -> {
+            val items = event.list("items").mapNotNull { i -> i["title"].str()?.let { CardItem(it, i["detail"].str()) } }
+            val images = event.list("images").mapNotNull { i -> i["url"].str()?.let { CardImage(it, i["caption"].str()) } }
+            val link = (event["link"] as? JsonObject)?.let { l -> l["url"].str()?.let { CardLink(l["label"].str() ?: it, it) } }
+            val card = MessageCard(
+                component = event["component"].str().orEmpty(),
+                label = event["label"].str() ?: "Mensaje interactivo",
+                icon = CardIcon.fromKey(event["icon"].str()),
+                title = event["title"].str(),
+                text = event["text"].str(),
+                items = items,
+                buttons = event.buttons(),
+                action = event["action"].str(),
+                link = link,
+                images = images,
+            )
+            card.takeIf { it.text != null || items.isNotEmpty() || images.isNotEmpty() || link != null || it.buttons.isNotEmpty() }
+        }
+        else -> null
+    }
+}
+
+/** El doble check de un saliente; sin dato o con un estado que la app no conoce: «sin confirmación» (nunca un
+ *  check inventado). */
+internal fun JsonElement?.toWhatsAppDelivery(): WhatsAppDelivery {
+    val d = this as? JsonObject ?: return WhatsAppDelivery.UNCONFIRMED
+    val status = when (d["status"].str()) {
+        "sent" -> WhatsAppStatus.SENT
+        "delivered" -> WhatsAppStatus.DELIVERED
+        "read" -> WhatsAppStatus.READ
+        "failed" -> WhatsAppStatus.FAILED
+        else -> return WhatsAppDelivery.UNCONFIRMED
+    }
+    return WhatsAppDelivery(
+        status = status,
+        atMs = (d["at_ms"] as? JsonPrimitive)?.longOrNull,
+        errorCode = (d["error_code"] as? JsonPrimitive)?.intOrNull,
+        errorTitle = d["error_title"].str(),
+    )
+}
+
+/** El cliente tocó un botón: su título. */
+private fun JsonElement?.tapTitle(): String? =
+    (this as? JsonObject)?.takeIf { it["kind"].str() == "button_tap" }?.get("title").str()
 
 fun SessionDetailsDto.toDomain(): ChatDetail? {
     val id = SessionId.parse(sessionId) ?: return null
@@ -106,14 +187,19 @@ fun SessionDetailsDto.toDomain(): ChatDetail? {
             // El historial solo crece al final: el índice desde el inicio es estable. Un wamid
             // repetido (FakeSend de desarrollo) lleva el índice para no chocar en Room ni en la lista.
             val base = m.wamid ?: "i$index:${ts ?: 0}"
+            val card = m.event.toCard()
+            val author = m.author(card)
             Message(
                 key = if (usedKeys.add(base)) base else "$base#$index",
-                author = m.author(),
+                author = author,
                 text = m.content,
                 imageUrl = m.imageUrl,
                 timestampMs = ts,
                 sentAtMs = parseTimestampMs(m.sentAt),
                 arrivedAfterWindow = (m.arrivedAfterWindow as? JsonPrimitive)?.booleanOrNull == true,
+                card = card,
+                tap = if (m.uiType == "user_message") m.event.tapTitle() else null,
+                whatsapp = if (author == Author.BOT || author == Author.HUMAN) m.delivery.toWhatsAppDelivery() else null,
             )
         }
     return ChatDetail(

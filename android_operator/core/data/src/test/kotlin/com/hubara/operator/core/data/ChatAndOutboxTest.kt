@@ -13,9 +13,15 @@ import com.hubara.operator.core.data.repo.SuggestionRepository
 import com.hubara.operator.core.database.OperatorDatabase
 import com.hubara.operator.core.model.ActionRef
 import com.hubara.operator.core.model.Author
+import com.hubara.operator.core.model.CardIcon
+import com.hubara.operator.core.model.CardItem
 import com.hubara.operator.core.model.DeliveryState
+import com.hubara.operator.core.model.MessageCard
 import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.SessionId
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
+import com.hubara.operator.core.network.OperatorJson
 import com.hubara.operator.core.network.api.OperatorService
 import com.hubara.operator.core.network.dto.ChatMessageDto
 import com.hubara.operator.core.network.dto.OrderRefDto
@@ -79,6 +85,62 @@ class ChatAndOutboxTest {
         val message = chats.observeChat(laura).first().messages.single()
         assertThat(message.sentAtMs).isEqualTo(1791306124000L)
         assertThat(message.arrivedAfterWindow).isTrue()
+    }
+
+    // Caso 2026-10-13: el chat se pinta desde Room. Si la tarjeta no se guarda, el catálogo vuelve a ser la
+    // nota gris sin el saludo; y el toque del cliente, el marcador crudo.
+    @Test fun la_tarjeta_del_bot_y_el_toque_del_cliente_se_guardan() = runTest {
+        val catalog = OperatorJson.parseToJsonElement(
+            """{"kind":"bot_card","component":"products_list","label":"Catálogo","icon":"catalog",
+            "text":"Buenas tardes, bienvenido a *Hubara*.","items":[{"title":"Vela ondulada","detail":"${'$'}22.500 COP"}],
+            "buttons":[],"link":null,"images":[]}""",
+        )
+        api.details["wa_test_laura"] = api.details["wa_test_laura"]!!.copy(
+            messages = listOf(
+                ChatMessageDto("ui_component_sent", "assistant", "🛍️ El bot envió el catálogo con 1 productos", event = catalog),
+                ChatMessageDto(
+                    "user_message", "user", "[el cliente tocó el botón: Ver catálogo]",
+                    event = OperatorJson.parseToJsonElement("""{"kind":"button_tap","title":"Ver catálogo"}"""),
+                ),
+            ),
+        )
+        chats.refresh(laura)
+        val (card, tap) = chats.observeChat(laura).first().messages
+        assertThat(card.author).isEqualTo(Author.BOT)
+        assertThat(card.card).isEqualTo(
+            MessageCard(
+                component = "products_list", label = "Catálogo", icon = CardIcon.CATALOG,
+                text = "Buenas tardes, bienvenido a *Hubara*.", items = listOf(CardItem("Vela ondulada", "\$22.500 COP")),
+            ),
+        )
+        assertThat(tap.tap).isEqualTo("Ver catálogo")
+    }
+
+    // Caso 2026-10-15: el operador no sabía si sus mensajes llegaron. El chat se pinta desde Room: si el doble
+    // check de WhatsApp no se guarda, la burbuja vuelve a no decir nada.
+    @Test fun el_doble_check_de_whatsapp_se_guarda() = runTest {
+        api.details["wa_test_laura"] = api.details["wa_test_laura"]!!.copy(
+            messages = listOf(
+                ChatMessageDto(
+                    "agent_message", "assistant", "¡Hola!",
+                    delivery = OperatorJson.parseToJsonElement("""{"status":"read","at_ms":1760496300000}"""),
+                ),
+                ChatMessageDto(
+                    "human_message", "assistant", "Ya te ayudo", sender = "human",
+                    delivery = OperatorJson.parseToJsonElement(
+                        """{"status":"failed","at_ms":1760496400000,"error_code":131047,"error_title":"Re-engagement message"}""",
+                    ),
+                ),
+                ChatMessageDto("agent_message", "assistant", "viejo"),
+            ),
+        )
+        chats.refresh(laura)
+        val messages = chats.observeChat(laura).first().messages
+        assertThat(messages.map { it.whatsapp }).containsExactly(
+            WhatsAppDelivery(WhatsAppStatus.READ, atMs = 1760496300000),
+            WhatsAppDelivery(WhatsAppStatus.FAILED, 1760496400000, 131047, "Re-engagement message"),
+            WhatsAppDelivery.UNCONFIRMED,
+        ).inOrder()
     }
 
     @Test fun el_texto_aparece_como_pendiente_y_desaparece_al_confirmar() = runTest {

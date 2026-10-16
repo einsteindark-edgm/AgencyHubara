@@ -14,6 +14,9 @@ cambia su formato, acá truena, no en la UI.
 Se parsea en vez de persistir campos nuevos al escribir porque así el historial
 YA ESCRITO (todas las conversaciones del vault) también se ve con la forma
 nueva, sin migración ni reprocesamiento.
+
+La excepción es la tarjeta (`card`) que el flush guarda con cada envío: el
+mensaje entero que leyó el cliente, que la línea recorta (tests de tarjetas).
 """
 from __future__ import annotations
 
@@ -172,10 +175,116 @@ def test_plain_text_has_no_event():
 
 
 def test_other_ui_components_keep_their_note():
-    """El catálogo y el resto siguen como nota de sistema — no los tocamos."""
+    """Historial viejo: el catálogo sin tarjeta (`card`) sigue como nota."""
     assert detect_chat_event(
         _bot_ui("products_list", "🛍️ El bot envió el catálogo con 24 productos")
     ) is None
+
+
+# --- tarjetas: el mensaje entero que leyó el cliente -----------------------
+#
+# Caso 2026-10-13 (run 2395ffd6): el bot saludó dentro del texto del catálogo y
+# el panel solo decía «El bot envió el catálogo con 2 productos».
+
+
+def test_round_trip_a_catalog_is_a_card_with_its_message_and_products():
+    greeting = "Buenas tardes, bienvenido a *Hubara*.\n\nPara la Noche de Velitas tenemos:"
+    produced = _build_history_event("products_list", {
+        "intro_text": greeting,
+        "sections": [{"title": "Religiosas", "rows": [
+            {"id": "a", "title": "Velas de deseos onduladas", "description": "$22.500 COP"},
+            {"id": "b", "title": "Velas de deseos cuadradas"},
+        ]}],
+    })
+    assert detect_chat_event(produced) == {
+        "kind": "bot_card",
+        "component": "products_list",
+        # Qué fue y su ícono los decide el servidor: la app y el panel los
+        # pintan sin conocer el componente (uno nuevo no pide otra app).
+        "label": "Catálogo",
+        "icon": "catalog",
+        "title": None,
+        "text": greeting,
+        "items": [
+            {"title": "Velas de deseos onduladas", "detail": "$22.500 COP"},
+            {"title": "Velas de deseos cuadradas", "detail": None},
+        ],
+        "buttons": [],
+        "action": None,
+        "link": None,
+        "images": [],
+    }
+
+
+def test_round_trip_a_link_button_and_a_photo_are_cards():
+    link = detect_chat_event(_build_history_event("cta_url", {
+        "url": "https://pago.hubara.co/x", "button_text": "Pagar", "body_text": "Paga aquí",
+    }))
+    assert link["kind"] == "bot_card" and link["text"] == "Paga aquí"
+    assert link["link"] == {"label": "Pagar", "url": "https://pago.hubara.co/x"}
+
+    photo = detect_chat_event(_build_history_event(
+        "product_detail", {"image_url": "https://cdn/x.jpg", "caption": "Vela Cruz"}
+    ))
+    assert photo["kind"] == "bot_card" and photo["component"] == "product_detail"
+    assert photo["images"] == [{"url": "https://cdn/x.jpg", "caption": "Vela Cruz"}]
+
+
+def test_round_trip_long_buttons_message_is_whole():
+    """La línea del historial recorta el cuerpo; los botones muestran el de
+    la tarjeta, entero."""
+    body = "Buenas tardes, bienvenido a Hubara. " + "Te cuento de nuestras velas. " * 12
+    produced = _build_history_event(
+        "quick_replies", {"body": body, "buttons": [{"title": "Ver catálogo"}]}
+    )
+    event = detect_chat_event(produced)
+    assert event["kind"] == "bot_buttons"
+    assert event["body"] == body.strip()
+    assert [b["title"] for b in event["buttons"]] == ["Ver catálogo"]
+
+
+def test_round_trip_form_order_summary_and_contact_say_what_they_are():
+    form = detect_chat_event(_build_history_event(
+        "shipping_flow", {"body": "Necesito unos datos", "flow_cta": "Completar datos"}
+    ))
+    assert (form["label"], form["icon"], form["action"]) == ("Formulario de envío", "form", "Completar datos")
+
+    summary = detect_chat_event(_build_history_event("order_confirmation", {
+        "items": [{"title": "Velón Koala", "quantity": 1, "unit_price_cop": 35000}],
+        "subtotal_cop": 35000, "total_cop": 35000, "payment_method": "transfer",
+    }))
+    assert (summary["label"], summary["icon"]) == ("Resumen para confirmar", "order")
+    assert [b["title"] for b in summary["buttons"]] == ["✅ Confirmar", "✏️ Modificar", "❌ Cancelar"]
+
+
+def test_a_component_the_server_does_not_name_still_shows_as_a_message():
+    event = detect_chat_event({**_bot_ui("holograma", "📤 …"), "card": {"text": "Hola"}})
+    assert (event["label"], event["icon"]) == ("Mensaje interactivo", "message")
+
+
+def test_the_tapped_order_button_is_marked_inside_the_summary():
+    """El cliente tocó «✅ Confirmar» del resumen: queda marcado ahí, como en
+    los botones de respuesta."""
+    messages = [
+        detect_chat_event(_build_history_event("order_confirmation", {"items": [], "total_cop": 0})),
+        detect_chat_event(_user("[el cliente tocó el botón: ✅ Confirmar]")),
+    ]
+    wrapped = [{"event": e} for e in messages]
+    annotate_touched_buttons(wrapped)
+    assert wrapped[0]["event"]["buttons"][0] == {"title": "✅ Confirmar", "touched": True}
+    assert "touched" not in wrapped[0]["event"]["buttons"][1]
+
+
+def test_a_broken_card_falls_back_to_the_note():
+    """Un `card` mal formado (escrito a mano, versión rara) no tumba el chat:
+    lo que no sirve se descarta, y sin nada que mostrar queda la nota."""
+    broken = {**_bot_ui("products_list", "🛍️ El bot envió el catálogo con 2 productos"),
+              "card": {"text": 5, "items": "x", "images": [{"caption": "sin url"}]}}
+    assert detect_chat_event(broken) is None
+
+    partial = {**_bot_ui("products_list", "🛍️ …"),
+               "card": {"items": [{"title": "Vela"}, {"detail": "sin título"}, "x"]}}
+    assert detect_chat_event(partial)["items"] == [{"title": "Vela", "detail": None}]
 
 
 # --- botón tocado ----------------------------------------------------------

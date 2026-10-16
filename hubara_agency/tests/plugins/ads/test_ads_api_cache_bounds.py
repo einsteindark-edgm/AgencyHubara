@@ -9,9 +9,15 @@ se miraba al leer, así que nada se borraba.
 
 Estos tests fijan el contrato de la capa API: requests seguidos comparten un
 scan, y el cache queda acotado por más ventanas distintas que se pidan.
+
+Incidente 2026-10-14: requests SIMULTÁNEOS con el cache vencido escaneaban el
+vault cada uno en paralelo. El contrato suma: una ráfaga comparte un scan, y
+nunca corren dos scans a la vez.
 """
 from __future__ import annotations
 
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -79,6 +85,68 @@ def test_campaigns_requested_twice_in_a_row_scan_the_vault_once(monkeypatch, tmp
     assert len(scans) == 1
     assert len(ads_mod._scan_cache) == 1
     ads_mod._scan_cache.clear()
+
+def _slow_counting_scan(monkeypatch, tmp_path: Path) -> dict[str, int]:
+    """`scan_ad_sessions` falso que tarda y mide cuántos escaneos corren a la vez."""
+    stats = {"scans": 0, "in_flight": 0, "max_in_flight": 0}
+    guard = threading.Lock()
+
+    def fake_scan(vault_dir, *, since_ms=None):
+        with guard:
+            stats["scans"] += 1
+            stats["in_flight"] += 1
+            stats["max_in_flight"] = max(stats["max_in_flight"], stats["in_flight"])
+        time.sleep(0.2)  # un escaneo real del vault de prod tarda ~0,6 s
+        with guard:
+            stats["in_flight"] -= 1
+        return [(tmp_path / "wa_1", {"origin": {"channel": "ad"}})]
+
+    monkeypatch.setattr(ads_mod, "scan_ad_sessions", fake_scan)
+    ads_mod._scan_cache.clear()
+    return stats
+
+
+def _call_at_once(fn, args: list) -> list:
+    start = threading.Barrier(len(args))
+    results: list = [None] * len(args)
+
+    def run(i: int) -> None:
+        start.wait()
+        results[i] = fn(args[i])
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(len(args))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return results
+
+
+def test_burst_of_requests_after_cache_expiry_scans_the_vault_once(monkeypatch, tmp_path: Path):
+    """Incidente 2026-10-14 20:18 UTC: con el cache vencido, el tablero de Ads
+    pidió 12 endpoints en el mismo segundo y cada uno escaneó el vault en
+    paralelo (+138 MB de RSS en la API, que no los devolvió)."""
+    stats = _slow_counting_scan(monkeypatch, tmp_path)
+
+    results = _call_at_once(ads_mod._cached_sessions, [_MINUTE_ALIGNED_MS + 100] * 12)
+
+    assert stats["scans"] == 1
+    assert all(r is results[0] for r in results)
+    ads_mod._scan_cache.clear()
+
+
+def test_scans_of_different_windows_never_run_at_the_same_time(monkeypatch, tmp_path: Path):
+    """La serie diaria pide otra ventana que el listado: aunque no compartan
+    scan, dos lecturas completas del vault nunca se apilan en memoria."""
+    stats = _slow_counting_scan(monkeypatch, tmp_path)
+
+    windows = [_MINUTE_ALIGNED_MS - day * ads_mod._DAY_MS for day in range(3)]
+    _call_at_once(ads_mod._cached_sessions, windows)
+
+    assert stats["scans"] == 3
+    assert stats["max_in_flight"] == 1
+    ads_mod._scan_cache.clear()
+
 
 def test_scan_cache_stays_bounded_across_many_windows(scan_calls):
     # 20 ventanas distintas (una por día) — p. ej. rangos custom del operador.

@@ -31,6 +31,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     _render_payment_instructions_text,
     flush_pending_ui_intents,
 )
+from src.plugins.chats.agent.sales.catalog_menu import category_row_id
 from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
 from src.plugins.chats.agent.sales.tools.coupons import ApplyCouponTool
 from src.plugins.chats.agent.sales.tools.ui_intents import (
@@ -45,6 +46,7 @@ from src.plugins.chats.agent.sales.tools.ui_intents import (
     collect_enqueued_intent_ids,
 )
 from src.plugins.chats.agent.sales.use_cases.quantity_capture import parse_leading_quantity
+from src.plugins.chats.api.catalog_picker import UnknownCategory, pick
 from src.plugins.chats.api.mobile import unit_price_cop
 from src.plugins.chats.api.order_intake import _read_events
 from src.plugins.chats.api.session_actions import (
@@ -365,18 +367,51 @@ _DEFAULT_PRODUCTS_INTRO = "Estos son nuestros productos:"
 
 
 async def _products_args(args: dict[str, Any], deps: OperatorToolsDeps) -> dict[str, Any]:
-    """Sin `handles` → el catálogo visible (hasta 30), con un intro neutro."""
-    problems = _unknown(args, {"intro_text", "group_by"})
+    """Sin `handles` → lo que el operador eligió en «Enviar productos» de la
+    app: una categoría (`category`, el `value` de un chip), un nombre (`q`) o
+    nada (el catálogo visible). Hasta 30, con un intro neutro. Lo elige
+    `catalog_picker.pick`, la misma regla de la lista que ve la app.
+
+    Solo la categoría sale por la fila del menú de la tool (`categoria:<slug>`:
+    el mensaje lleva su nombre de encabezado); con un nombre, los que coinciden."""
+    problems = _unknown(args, {"intro_text", "group_by", "category", "q"})
     if problems:
         raise _InvalidArgs(problems)
+    native = {k: args[k] for k in ("intro_text", "group_by") if k in args}
+    native["intro_text"] = args.get("intro_text") or _DEFAULT_PRODUCTS_INTRO
     products = await _all_products(deps)
     if not products:
         raise _Rejected("catalog_empty", "El catálogo no tiene productos visibles.")
-    return {
-        **args,
-        "handles": [p.handle for p in products[:_MAX_LIST_PRODUCTS]],
-        "intro_text": args.get("intro_text") or _DEFAULT_PRODUCTS_INTRO,
-    }
+    category = str(args.get("category") or "").strip()
+    q = str(args.get("q") or "").strip()
+    if not (category or q):
+        return {**native, "handles": [p.handle for p in products[:_MAX_LIST_PRODUCTS]]}
+    try:
+        picked = pick(products, await _categories(deps), category=category, q=q)
+    except UnknownCategory:
+        raise _InvalidArgs(
+            [f"la categoría «{category}» ya no está en el catálogo"],
+            message="Esa categoría ya no está en el catálogo: vuelve a abrir «Enviar productos».",
+        ) from None
+    if not picked.products and not q:
+        problem = f"la categoría {picked.category} no tiene productos para enviar"
+        raise _InvalidArgs([problem], message=_sentence([problem]))
+    if not picked.products:
+        within = f" de {picked.category}" if picked.category else ""
+        raise _InvalidArgs(
+            [f"ningún producto{within} coincide con «{q}»"],
+            message=f"Ningún producto{within} coincide con «{q}».",
+        )
+    if not q:
+        return {**native, "category": category_row_id(category)}
+    return {**native, "handles": [p.handle for p in picked.products[:_MAX_LIST_PRODUCTS]]}
+
+
+async def _categories(deps: OperatorToolsDeps) -> list[Any]:
+    try:
+        return list(await deps.catalog.list_categories())
+    except Exception as exc:  # noqa: BLE001 — catálogo caído ≠ args malos
+        raise _CatalogUnavailable() from exc
 
 
 async def _confirmation_args(

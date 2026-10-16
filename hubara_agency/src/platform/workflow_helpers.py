@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from temporalio import workflow
+from temporalio.exceptions import ActivityError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.activities.conversation import build_prompt, record_turn
@@ -27,6 +28,7 @@ with workflow.unsafe.imports_passed_through():
         BuildPromptInput,
         ExecuteToolInput,
         LLMChatInput,
+        LLMResponseData,
         RecordTurnInput,
         SessionInput,
     )
@@ -45,6 +47,7 @@ with workflow.unsafe.imports_passed_through():
         sanitize_llm_text,
     )
     from src.platform.temporal.activities import execute_tool
+    from src.platform.tool_dispatch import tool_failed_result
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
         _LLM_OPTIONS,
@@ -188,6 +191,21 @@ class TurnPolicy:
 EgressHook = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
+#: Gancho del caller para una caída TOTAL del LLM (incidente 2026-10-15:
+#: DeepSeek se colgó, el respaldo no alcanzó a entrar, `llm_chat` agotó sus
+#: reintentos y el `ActivityError` tumbaba el workflow con los mensajes del
+#: cliente adentro). `on_llm_outage(vuelta, error)`: espera lo que el caller
+#: decida (timer durable) y devuelve True para volver a llamar al modelo con el
+#: MISMO turno, o False para rendirse (el turno termina sin texto:
+#: `TurnResult.llm_unavailable`). Sin gancho, el error sube como siempre (V1,
+#: remarketing y ETA no cambian ni un comando).
+LLMOutageHook = Callable[[int, ActivityError], Awaitable[bool]]
+
+#: Gate del gancho: solo cambia los comandos cuando `llm_chat` ya falló del
+#: todo (antes, ahí terminaba el workflow).
+LLM_OUTAGE_PATCH = "llm-outage-wait-v1"
+
+
 @dataclass
 class InboxMsg:
     """DTO de un inbound en la bandeja durable con watermark (PR burst-inbox).
@@ -307,6 +325,10 @@ class TurnResult:
     # Turno cortado (`interrupted`): lo que ya leyó, para el reinicio. None
     # sin `read_only_tools` o sin lecturas. En memoria (replay-safe).
     carried: CarriedReads | None = None
+    # Caída total del LLM (2026-10-15): el gancho `on_llm_outage` del caller se
+    # rindió y el turno terminó sin texto. Lo que el cliente escribió quedó
+    # grabado en el historial del LLM.
+    llm_unavailable: bool = False
 
 
 # Tope del resultado de cada tool que viaja en `TurnResult.tool_events`: el
@@ -388,6 +410,31 @@ _OUTBOUND_TOOL_PREFIXES: tuple[str, ...] = ("present_", "send_", "request_")
 def _now_ms() -> int:
     """Reloj del workflow en ms (determinista en replay)."""
     return int(workflow.now().timestamp() * 1000)
+
+
+#: Ronda de cierre (laboratorio del PR #426, 2026-10-14): al agotar las rondas
+#: en un turno que el cliente espera, UNA ronda más con solo `send_reply` en
+#: vez de la disculpa fabricada «se me cortó» (una falla técnica contada como
+#: de una persona; regla del operador: un error interno nunca va al cliente).
+CLOSING_ROUND_PATCH = "closing-round-no-fabricated-apology-v1"
+CLOSING_ROUND_NOTE = (
+    "Ya usaste todas las herramientas de este turno: no vuelvas a buscar. Respóndele AHORA al cliente "
+    "con send_reply, con lo que encontraste; si lo que pide no está en el catálogo, dile en una línea que "
+    "no lo tenemos y ofrécele lo más cercano que sí viste."
+)
+
+
+def _reply_only_tools(tool_definitions_json: str) -> str:
+    """Las definiciones de tools con solo `send_reply` ("" si el agente no la tiene)."""
+    try:
+        tools = json.loads(tool_definitions_json or "[]")
+    except ValueError:
+        return ""
+    kept = [
+        t for t in tools if isinstance(t, dict) and isinstance(t.get("function"), dict)
+        and t["function"].get("name") == "send_reply"
+    ] if isinstance(tools, list) else []
+    return json.dumps(kept) if kept else ""
 
 
 def _ends_turn(tool_names: list[str], *, version: int = 1) -> bool:
@@ -517,6 +564,10 @@ def _rejected_by_tool(payload: dict[str, Any] | None) -> bool:
 #: Ronda de las promesas del texto (incidente del 2026-10-09): una history sin
 #: el marcador re-juega el turno viejo (el texto salía con la promesa rota).
 PROMISED_ACTIONS_PATCH = "promised-actions-round-v1"
+
+#: Una tool que falla tras sus reintentos (incidente del 2026-10-15): el
+#: modelo lee `tool_failed` en vez de que el `ActivityError` tumbe el workflow.
+TOOL_FAILURE_PATCH = "tool-failure-to-model-v1"
 
 
 def _kept_by_tool(payload: dict[str, Any] | None) -> bool:
@@ -969,8 +1020,14 @@ async def run_agent_turn(
     interrupt_before_record: bool = False,
     read_only_tools: frozenset[str] = frozenset(),
     carried: CarriedReads | None = None,
+    on_llm_outage: LLMOutageHook | None = None,
 ) -> TurnResult:
     """Wrapper de atribución de costos (HU-003) sobre `_run_agent_turn_impl`.
+
+    `on_llm_outage` (incidente 2026-10-15): si `llm_chat` agota sus reintentos,
+    el turno le pregunta al caller en vez de caerse; ver `LLMOutageHook`. Si se
+    rinde, el turno termina sin texto (`llm_unavailable`), sin egreso, y graba
+    lo que el cliente escribió. Default None = el turno de hoy.
 
     `read_only_tools` / `carried` (turno 1 de …7392, 2026-10-08): si el turno
     se corta (`interrupted`), devuelve en `carried` las llamadas a esas tools
@@ -1083,6 +1140,7 @@ async def run_agent_turn(
         interrupt_before_record=interrupt_before_record,
         read_only_tools=read_only_tools,
         carried=carried,
+        on_llm_outage=on_llm_outage,
     )
 
 
@@ -1121,6 +1179,54 @@ async def _record_cut_attempt_cost(
             )
 
 
+def _outage_error(exc: ActivityError) -> str:
+    """El error de fondo de una caída del LLM, corto, para la traza."""
+    cause = exc.cause or exc
+    name = getattr(cause, "type", None) or type(cause).__name__
+    return f"{name}: {cause}"[:200]
+
+
+async def _llm_chat_through_outage(
+    chat_input: LLMChatInput,
+    on_llm_outage: LLMOutageHook | None,
+    steps: list[dict[str, Any]],
+) -> LLMResponseData | None:
+    """`llm_chat` con su política de reintentos. Si la agota (DeepSeek y el
+    respaldo caídos) y el caller pasó `on_llm_outage`, el turno no se cae: el
+    gancho espera y dice si se vuelve a llamar al modelo. None = se rindió.
+    Cada vuelta queda en la traza (`llm_outage`). Una cancelación sube."""
+    rounds = 0
+    while True:
+        try:
+            return await workflow.execute_activity(
+                llm_chat,
+                chat_input,
+                **_LLM_OPTIONS,  # type: ignore[arg-type]
+            )
+        except ActivityError as exc:
+            if (
+                on_llm_outage is None
+                or isinstance(exc.cause, CancelledError)
+                or not workflow.patched(LLM_OUTAGE_PATCH)
+            ):
+                raise
+            rounds += 1
+            failed_ms = _now_ms()
+            retry = await on_llm_outage(rounds, exc)
+            steps.append(
+                {
+                    "kind": "llm_outage",
+                    "at_ms": failed_ms,
+                    "round": rounds,
+                    "error": _outage_error(exc),
+                    "waited_ms": _now_ms() - failed_ms,
+                    "retry": retry,
+                }
+            )
+            if not retry:
+                return None
+
+
 async def _run_agent_turn_impl(
     session: SessionInput,
     msg: PendingMessage,
@@ -1137,6 +1243,7 @@ async def _run_agent_turn_impl(
     interrupt_before_record: bool = False,
     read_only_tools: frozenset[str] = frozenset(),
     carried: CarriedReads | None = None,
+    on_llm_outage: LLMOutageHook | None = None,
 ) -> TurnResult:
     """Ejecuta un turno completo de LLM con tool-loop. Es invocado desde `@workflow.run`.
 
@@ -1198,6 +1305,10 @@ async def _run_agent_turn_impl(
 
     iteration = 0
     final_content: str | None = None
+    # Ronda de cierre (`CLOSING_ROUND_PATCH`): cuántas rondas hay y si ya se abrió.
+    max_rounds = session.llm.max_iterations
+    closing_round = False
+    reply_only_tools = _reply_only_tools(session.tool_definitions_json) if fabricate_fallback_on_empty else ""
     # Motor de decisiones (preámbulo): lo que el LLM escribió ANTES del
     # saneador cuando `final_content` sale de él (texto final o despedida del
     # relevo). Solo lo lee el gancho de egreso: sin gancho no se usa.
@@ -1289,8 +1400,32 @@ async def _run_agent_turn_impl(
         tools_used.extend(carried.names)
         tool_events.extend(dict(e) for e in carried.events)
         steps.append({"kind": "carry", "at_ms": _now_ms(), "tools": carried.names})
+    # El gancho `on_llm_outage` se rindió: el turno termina sin texto.
+    llm_unavailable = False
 
-    while iteration < session.llm.max_iterations:
+    def _open_closing_round() -> bool:
+        """Se agotaron las rondas sin nada para el cliente: UNA ronda más con
+        solo `send_reply` y la nota. Solo en un turno que el cliente espera
+        (`fabricate_fallback_on_empty`) y con `send_reply` entre las tools.
+        `patched()` va ÚLTIMO: solo se consulta cuando la regla nueva difiere."""
+        nonlocal max_rounds, closing_round, messages
+        if (
+            closing_round
+            or final_content is not None
+            or not reply_only_tools
+            or not workflow.patched(CLOSING_ROUND_PATCH)
+        ):
+            return False
+        closing_round = True
+        max_rounds += 1
+        messages = [*messages, {"role": "system", "content": CLOSING_ROUND_NOTE}]
+        steps.append(
+            {"kind": "guard", "at_ms": _now_ms(), "name": "closing_round",
+             "before": None, "after": CLOSING_ROUND_NOTE, "tools": list(tools_used)}
+        )
+        return True
+
+    while iteration < max_rounds or _open_closing_round():
         iteration += 1
 
         # Lo que recibe el modelo en esta ronda (el «Paso a paso» lo muestra):
@@ -1298,19 +1433,29 @@ async def _run_agent_turn_impl(
         round_sent = round_input(messages, since=sent_until, chat_id=session.chat_id)
         sent_until = len(messages)
         llm_started_ms = _now_ms()
-        response = await workflow.execute_activity(
-            llm_chat,
+        maybe_response = await _llm_chat_through_outage(
             LLMChatInput(
                 messages=messages,
                 llm=session.llm,
-                tool_definitions_json=session.tool_definitions_json,
+                # En la ronda de cierre, solo `send_reply` (sus controles siguen).
+                tool_definitions_json=reply_only_tools if closing_round else session.tool_definitions_json,
                 # HU-003: IDs de atribución de costo. `llm_chat` los attachea al
                 # contexto → el span gen_ai de OpenLIT los recibe (Temporal no
                 # propaga baggage workflow→activity, por eso van por el input).
                 baggage=baggage,
             ),
-            **_LLM_OPTIONS,  # type: ignore[arg-type]
+            on_llm_outage,
+            steps,
         )
+        if maybe_response is None:
+            # El caller se rindió (el modelo no volvió a tiempo, o una persona
+            # tomó el chat): sin texto ni egreso. Lo que el cliente escribió (y
+            # lo que el turno alcanzó a hacer) se graba igual, abajo: el turno
+            # siguiente lo ve.
+            llm_unavailable = True
+            final_content = ""
+            break
+        response = maybe_response
         if response.usage:
             turn_prompt_tokens += int(response.usage.get("prompt_tokens", 0) or 0)
             turn_completion_tokens += int(
@@ -1390,6 +1535,10 @@ async def _run_agent_turn_impl(
             # Canal único al cliente (run 28a8e407): textos que `send_reply`
             # validó en este batch (`reply.text` del resultado grabado).
             batch_reply_texts: list[str] = []
+            # Un `send_reply` de este batch devolvió el texto al modelo
+            # (`sent: false` + `error`: no coincidía con el catálogo, era nota
+            # interna…): el modelo tiene que leer por qué y reenviarlo.
+            batch_reply_held = False
             # Lo que esos textos prometen y el estado no cumplía al validarlos
             # (`promises` del resultado grabado de `send_reply`).
             batch_promises: list[dict[str, Any]] = []
@@ -1439,18 +1588,35 @@ async def _run_agent_turn_impl(
                         v for v in tc.arguments.values() if isinstance(v, str)
                     )
                 tool_started_ms = _now_ms()
-                result = await workflow.execute_activity(
-                    execute_tool,
-                    ExecuteToolInput(
-                        name=tc.name,
-                        params=tc.arguments,
-                        session_id=session.session_id,
-                        channel=session.channel,
-                        chat_id=session.chat_id,
-                        workspace=session.workspace,
-                    ),
-                    **_TOOL_OPTIONS,  # type: ignore[arg-type]
-                )
+                try:
+                    result = await workflow.execute_activity(
+                        execute_tool,
+                        ExecuteToolInput(
+                            name=tc.name,
+                            params=tc.arguments,
+                            session_id=session.session_id,
+                            channel=session.channel,
+                            chat_id=session.chat_id,
+                            workspace=session.workspace,
+                        ),
+                        **_TOOL_OPTIONS,  # type: ignore[arg-type]
+                    )
+                except ActivityError as exc:
+                    # Incidente 2026-10-15: agotados los reintentos, el
+                    # `ActivityError` tumbaba el workflow con el mensaje del
+                    # cliente. Ahora el modelo lee que la tool falló y responde
+                    # sin ella; el ERROR es la alerta. Una cancelación sigue
+                    # su curso. `patched()` va último: una history vieja con
+                    # la falla re-juega su caída.
+                    if isinstance(exc.cause, CancelledError) or not workflow.patched(
+                        TOOL_FAILURE_PATCH
+                    ):
+                        raise
+                    workflow.logger.error(
+                        f"tool {tc.name} falló tras sus reintentos "
+                        f"(session={session.session_id}): {exc.cause!r}"
+                    )
+                    result = tool_failed_result(tc.name)
                 tool_events.append(
                     {
                         "name": tc.name,
@@ -1489,6 +1655,8 @@ async def _run_agent_turn_impl(
                 if payload is not None:
                     if isinstance(payload.get("error"), str) and payload["error"]:
                         batch_tool_failed = True
+                        if tc.name == "send_reply" and payload.get("sent") is False:
+                            batch_reply_held = True
                     reply = payload.get("reply")
                     if isinstance(reply, dict) and isinstance(reply.get("text"), str):
                         reply_text = reply["text"].strip()
@@ -1763,6 +1931,24 @@ async def _run_agent_turn_impl(
             # con el corte viejo; tras el drain (idle 5min en Sales), eliminar
             # la rama vieja + `deprecate_patch("turn-cut-on-delivery-v1")`.
             if turn_cut_v1 and _ends_turn(batch_tool_names, version=ends_turn_version):
+                # Premortem del PR #426 (2026-10-13): `send_reply` devolvió su
+                # texto al modelo y una tarjeta del MISMO paso salió y cortaba
+                # el turno: el cliente recibía solo la tarjeta y el modelo nunca
+                # leía por qué. UNA ronda más (la tarjeta ya salió; la
+                # retención es una por mensaje del cliente, así que el segundo
+                # `send_reply` sale). `patched()` va ÚLTIMO: solo se consulta
+                # cuando la regla nueva difiere de la vieja.
+                if (
+                    batch_awaits_customer
+                    and batch_reply_held
+                    and not batch_reply_texts
+                    and workflow.patched("held-reply-round-v1")
+                ):
+                    steps.append(
+                        {"kind": "guard", "at_ms": _now_ms(), "name": "held_reply_round",
+                         "before": None, "after": None, "tools": batch_tool_names}
+                    )
+                    continue
                 if batch_awaits_customer or not workflow.patched(
                     "turn-cut-on-delivery-v1"
                 ):
@@ -1996,7 +2182,9 @@ async def _run_agent_turn_impl(
                 # `fabricate_fallback_on_empty=False`: vacío = abstención — un
                 # cliente frío no debe recibir "¿Me repites lo que
                 # necesitabas?" de la nada.
-                if fabricate_fallback_on_empty:
+                # En la ronda de cierre (`CLOSING_ROUND_PATCH`) tampoco: vacío =
+                # nada inventado, queda la alerta.
+                if fabricate_fallback_on_empty and not closing_round:
                     workflow.logger.error(
                         "LLM final response remained empty after recovery attempt — "
                         "using human-sounding fallback line",
@@ -2051,6 +2239,13 @@ async def _run_agent_turn_impl(
             messages = [*messages, msg_dict]
             break
 
+    if final_content is None and closing_round:
+        # Ni la ronda de cierre respondió: no sale nada inventado (queda la alerta).
+        workflow.logger.error(
+            "turno sin respuesta tras la ronda de cierre — no se envía la disculpa fabricada",
+            extra={"session_id": session.session_id, "iteration": iteration},
+        )
+        final_content = ""
     if final_content is None:
         final_content = (
             "¡Perdón! Justo se me cortó un segundito. ¿Me repites lo que necesitabas?"
@@ -2085,7 +2280,9 @@ async def _run_agent_turn_impl(
     if withheld_reply_ids:
         recorded = _without_calls(recorded, withheld_reply_ids)
     egress_result: dict[str, Any] | None = None
-    if egress is not None:
+    # Un turno que se rindió ante la caída del LLM no tiene texto que decidir:
+    # sin egreso (que en un primer contacto pediría el saludo).
+    if egress is not None and not llm_unavailable:
         # Motor de decisiones (F4): el caller decide el egreso con su gancho,
         # donde corría el rescate, y lo REEMPLAZA (el workflow de ventas V2 no
         # tiene reglas de texto: le pregunta al motor). El historial guarda lo
@@ -2203,6 +2400,7 @@ async def _run_agent_turn_impl(
     # este marker no debe consultarlo en un lugar nuevo.
     if (
         interrupt_before_record
+        and not llm_unavailable
         and interrupts_enabled
         and not client_touched
         and transfer_decision is None
@@ -2282,4 +2480,5 @@ async def _run_agent_turn_impl(
         salvaged_leak=salvaged_leak,
         steps=steps,
         egress=egress_result,
+        llm_unavailable=llm_unavailable,
     )

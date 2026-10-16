@@ -69,6 +69,11 @@ class _Catalog:
                             manifest=CatalogManifestDTO(version="v", fetched_at="t", product_count=len(results)),
                             results=results)
 
+    async def list_categories(self):
+        from src.platform.catalog.categories import collect_categories
+
+        return collect_categories(list(self._by.values()))
+
 
 @dataclass
 class _Harness:
@@ -562,6 +567,47 @@ def test_fires_join_waiting_chats_with_late_and_unverified_orders(h: _Harness) -
     assert carla["subtitle"] == "Pedido #40 · $95.000" and carla["updated_ms"] == NOW - 3 * 60 * _MIN
 
 
+def test_a_reaction_a_thanks_or_an_ok_after_the_answer_is_not_a_fire(h: _Harness) -> None:
+    """Caso del operador (2026-10-15): el cliente reaccionaba con 👍, decía «gracias» o cerraba con «ok perfecto» y el
+    chat quedaba como incendio (grave a los 10 min, con aviso push). Esos mensajes no esperan respuesta de nadie."""
+    answered = [
+        {"role": "user", "content": "¿me lo mandan mañana?", "timestamp": _iso(NOW - 41 * _MIN)},
+        {"role": "assistant", "sender": "human", "content": "Sí, sale mañana temprano", "timestamp": _iso(NOW - 40 * _MIN)},
+    ]
+    closers = {
+        "wa_test_reaccion": "[el cliente reaccionó con 👍]",
+        "wa_test_quito": "[el cliente quitó su reacción]",
+        "wa_test_sticker": "[el cliente envió un sticker]",
+        "wa_test_gracias": "Muchas gracias 🙏",
+        "wa_test_ok": "Ok perfecto",
+        "wa_test_despedida": "listo, gracias, feliz tarde",
+        "wa_test_emoji": "❤️",
+    }
+    for sid, text in closers.items():
+        h.seed(sid, {"active_route": "humano", "escalation_reason": "EXPLICIT_REQUEST", "profile": {"name": "Ana"},
+                     "last_inbound_at_ms": NOW - 30 * _MIN},
+               events=[*answered, {"role": "user", "content": text, "timestamp": _iso(NOW - 30 * _MIN)}])
+    # Una pregunta sin responder sigue esperando aunque después reaccione: se cuenta desde la pregunta.
+    h.seed("wa_test_pregunta", {"active_route": "humano", "profile": {"name": "Eva"}, "last_inbound_at_ms": NOW - 14 * _MIN},
+           events=[*answered, {"role": "user", "content": "¿y el de lavanda tiene descuento?", "timestamp": _iso(NOW - 15 * _MIN)},
+                   {"role": "user", "content": "[el cliente reaccionó con 👍]", "timestamp": _iso(NOW - 14 * _MIN)}])
+    # «Ok, ¿y cuándo llega?» pregunta algo: sí espera respuesta.
+    h.seed("wa_test_ok_pregunta", {"active_route": "humano", "profile": {"name": "Luz"}, "last_inbound_at_ms": NOW - 3 * _MIN},
+           events=[*answered, {"role": "user", "content": "Ok, ¿y cuándo llega?", "timestamp": _iso(NOW - 3 * _MIN)}])
+
+    r = h.client.get("/api/chats/mobile/fires")
+
+    assert r.status_code == 200, r.text
+    fires = {f["fire_id"]: f for f in r.json()["fires"]}
+    assert set(fires) == {"chat:wa_test_pregunta", "chat:wa_test_ok_pregunta"}
+    assert fires["chat:wa_test_pregunta"]["subtitle"] == "15 min sin respuesta · 1 mensaje"
+    assert fires["chat:wa_test_ok_pregunta"]["severity"] == "hoy"
+    # La página «Humano» del widget cuenta lo mismo: en los chats cerrados nadie espera.
+    human = {c["session_id"]: c["unanswered"] for c in h.client.get("/api/chats/mobile/human").json()["human"]}
+    assert {human[sid] for sid in closers} == {0}
+    assert human["wa_test_pregunta"] == 1
+
+
 def test_fires_survive_medusa_down_with_the_inbox_legacy_rule(h: _Harness) -> None:
     h.seed("wa_test_carla", {
         "active_route": "humano", "escalation_reason": "PAYMENT_VERIFICATION_PENDING", "tag": "HUMANO",
@@ -708,14 +754,75 @@ def test_catalog_lists_visible_products_with_their_closed_lists(h: _Harness) -> 
     r = h.client.get("/api/chats/catalog")
 
     assert r.status_code == 200, r.text
-    assert r.json() == {"products": [
-        {"handle": "duo-zodiacal", "title": "Dúo Zodiacal", "price_cop": 89_900,
-         "thumbnail_url": "https://cdn.test/duo-leo.jpg", "aromas": ["Lavanda", "Vainilla"],
-         "colors": ["Azul", "Rosa"], "designs": ["Duo leo", "Duo aries"]},
-        {"handle": "luz-serena", "title": "Luz Serena", "price_cop": 29_000,
-         "thumbnail_url": "https://cdn.test/luz.jpg", "aromas": ["Lavanda", "Canela"],
-         "colors": [], "designs": []},
-    ]}
+    assert r.json() == {
+        "products": [
+            {"handle": "duo-zodiacal", "title": "Dúo Zodiacal", "price_cop": 89_900,
+             "thumbnail_url": "https://cdn.test/duo-leo.jpg", "aromas": ["Lavanda", "Vainilla"],
+             "colors": ["Azul", "Rosa"], "designs": ["Duo leo", "Duo aries"], "categories": ["Otros"]},
+            {"handle": "luz-serena", "title": "Luz Serena", "price_cop": 29_000,
+             "thumbnail_url": "https://cdn.test/luz.jpg", "aromas": ["Lavanda", "Canela"],
+             "colors": [], "designs": [], "categories": ["Otros"]},
+        ],
+        "categories": [
+            {"value": "", "name": "Todas", "label": "Todas · 2", "count": 2},
+            {"value": "_sin_categoria", "name": "Otros", "label": "Otros · 2", "count": 2},
+        ],
+        "total": 2,
+        "count": 2,
+        "filter_label": "",
+    }
+
+
+def _candle(handle: str, title: str, *categories: str) -> CatalogProductDTO:
+    labels = {"velas-religiosas": "Velas Religiosas", "difusores": "Difusores"}
+    return CatalogProductDTO(
+        id=f"p_{handle}", handle=handle, title=title, status="published",
+        thumbnail=f"https://cdn.test/{handle}.jpg",
+        variants=[CatalogVariantDTO(id=f"v_{handle}", title="Unico",
+                                    prices=[CatalogPriceDTO(amount="25000", currency_code="cop")])],
+        categories=list(categories), category_labels={c: labels[c] for c in categories},
+    )
+
+
+_SAN_MIGUEL = _candle("san-miguel", "Vela San Miguel Arcángel", "velas-religiosas")
+_GUADALUPE = _candle("virgen-guadalupe", "Vela Virgen de Guadalupe", "velas-religiosas")
+_DIFUSOR = _candle("difusor-lavanda", "Difusor Lavanda", "difusores")
+
+
+def test_catalog_offers_its_categories_and_filters_by_category_and_by_name(h: _Harness) -> None:
+    """«Enviar productos» de la app: el operador elige una categoría o busca un
+    producto y solo eso sale (caso 2026-10-13: mandaba el catálogo entero)."""
+    h.deps.catalog = _Catalog(products=(_SAN_MIGUEL, _DIFUSOR, _GUADALUPE, _LUZ))
+
+    def handles(**query: str) -> list[str]:
+        r = h.client.get("/api/chats/catalog", params=query)
+        assert r.status_code == 200, r.text
+        return [p["handle"] for p in r.json()["products"]]
+
+    whole = h.client.get("/api/chats/catalog").json()
+    assert whole["categories"] == [
+        {"value": "", "name": "Todas", "label": "Todas · 4", "count": 4},
+        {"value": "difusores", "name": "Difusores", "label": "Difusores · 1", "count": 1},
+        {"value": "velas-religiosas", "name": "Velas Religiosas", "label": "Velas Religiosas · 2", "count": 2},
+        {"value": "_sin_categoria", "name": "Otros", "label": "Otros · 1", "count": 1},
+    ]
+    assert [p["categories"] for p in whole["products"]] == [["Velas Religiosas"], ["Difusores"],
+                                                           ["Velas Religiosas"], ["Otros"]]
+    assert handles(category="velas-religiosas") == ["san-miguel", "virgen-guadalupe"]
+    assert handles(category="_sin_categoria") == ["luz-serena"]
+    # El nombre, sin tildes ni mayúsculas, con las palabras en cualquier orden.
+    assert handles(q="ARCANGEL") == ["san-miguel"]
+    assert handles(q="guadalupe virgen") == ["virgen-guadalupe"]
+    assert handles(category="velas-religiosas", q="vela") == ["san-miguel", "virgen-guadalupe"]
+    assert handles(category="difusores", q="miguel") == []
+    # Lo que se elige, en palabras: el botón «Enviar» y lo que queda en «Enviando…» de la app.
+    labels = [h.client.get("/api/chats/catalog", params=f).json()["filter_label"] for f in (
+        {}, {"category": "velas-religiosas"}, {"q": " ARCANGEL "}, {"category": "velas-religiosas", "q": "vela"})]
+    assert labels == ["", "Velas Religiosas", "«ARCANGEL»", "Velas Religiosas · «vela»"]
+    # Una categoría que ya no existe no inventa productos; los chips siguen completos.
+    gone = h.client.get("/api/chats/catalog", params={"category": "ya-no-existe"}).json()
+    assert (gone["products"], gone["count"], gone["total"]) == ([], 0, 4)
+    assert len(gone["categories"]) == 4
 
 
 def test_catalog_is_503_without_a_snapshot(h: _Harness) -> None:

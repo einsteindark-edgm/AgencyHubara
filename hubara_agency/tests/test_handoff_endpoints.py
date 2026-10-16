@@ -11,7 +11,7 @@ Cubren los 3 endpoints:
 
 Mockeamos:
   - `get_temporal_client` para evitar conexión real a Temporal.
-  - `send_message_to_session` para evitar la llamada HTTP a WhatsApp Cloud.
+  - `send_text_to_session` para evitar la llamada HTTP a WhatsApp Cloud.
   - `start_remarketing_for_session` y `terminate_session_workflows` con fakes
     que graban las llamadas.
 """
@@ -257,8 +257,8 @@ def test_send_message_persists_and_returns_when_route_humano(client_and_vault):
     client, vault = client_and_vault
     _write_metadata(vault, "wa_3", {"active_route": "humano", "tag": "HUMANO"})
 
-    send_mock = AsyncMock()
-    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=send_mock):
+    send_mock = AsyncMock(return_value=(True, []))
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=send_mock):
         res = client.post(
             "/api/dashboard/sessions/wa_3/messages",
             json={"text": "Hola, soy del equipo Hubara 🤍"},
@@ -286,13 +286,29 @@ def test_send_message_persists_and_returns_when_route_humano(client_and_vault):
     assert parsed["content"] == "Hola, soy del equipo Hubara 🤍"
 
 
+def test_send_message_keeps_the_wamid_of_each_operator_bubble(client_and_vault):
+    """Doble check de WhatsApp: el texto del operador sale como N burbujas y
+    el evento guarda el wamid de cada una (ahí se le unen los estados)."""
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_3", {"active_route": "humano", "tag": "HUMANO"})
+    bubbles = [{"wamid": "wamid.H1", "text": "Hola"}, {"wamid": "wamid.H2", "text": "Ya te ayudo"}]
+
+    send_mock = AsyncMock(return_value=(True, bubbles))
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=send_mock):
+        res = client.post("/api/dashboard/sessions/wa_3/messages", json={"text": "Hola\n\nYa te ayudo"})
+
+    assert res.status_code == 200
+    log = vault / "wa_3" / "sessions" / "wa_3.jsonl"
+    assert json.loads(log.read_text(encoding="utf-8").strip())["wamids"] == ["wamid.H1", "wamid.H2"]
+
+
 def test_send_message_rejects_when_route_is_not_humano(client_and_vault):
     """Si la sesión está en ventas o remarketing, devolver 409 para evitar
     respuestas concurrentes (humano + bot simultáneos)."""
     client, vault = client_and_vault
     _write_metadata(vault, "wa_4", {"active_route": "ventas"})
 
-    with patch("src.plugins.chats.api.handoff.send_message_to_session", new=AsyncMock()):
+    with patch("src.plugins.chats.api.handoff.send_text_to_session", new=AsyncMock(return_value=(True, []))):
         res = client.post(
             "/api/dashboard/sessions/wa_4/messages",
             json={"text": "no debería poder"},

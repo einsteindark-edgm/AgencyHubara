@@ -70,6 +70,17 @@ class ThemeContrastTest {
         }
     }
 
+    // El ✓✓ de «leído por WhatsApp» (caso 2026-10-15) es un gráfico: 3:1 sobre las burbujas salientes (WCAG 1.4.11).
+    @Test
+    fun the_read_check_shows_on_the_outbound_bubbles_in_light_and_dark() {
+        for ((mode, o) in listOf("claro" to LightOperator, "oscuro" to DarkOperator)) {
+            for ((name, bubble) in listOf("bot" to o.bubbleBot, "operador" to o.bubbleOperator)) {
+                val ratio = contrast(bubble, o.readCheck)
+                assertWithMessage("leído sobre la burbuja del $name en $mode: ${"%.2f".format(ratio)}:1").that(ratio).isAtLeast(3.0)
+            }
+        }
+    }
+
     @Test
     fun the_brand_roles_are_blue_not_the_material_baseline_purple() {
         val brandHue = hue(Color(0xFF0A84FF))

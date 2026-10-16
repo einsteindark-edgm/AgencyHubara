@@ -45,13 +45,18 @@ from src.platform.whatsapp.cost import (
     empty_episode_cost_summary,
 )
 from src.platform.whatsapp.dtos import CarouselCard, OutboundResult
-from src.platform.whatsapp.quiet_hours import is_quiet_hours_for_session
+from src.platform.whatsapp.quiet_hours import allowed_hours, is_quiet_hours_for_session, resolve_local_timezone
 from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
     render_template_body,
 )
 from src.platform.whatsapp.reengagement_frequency import effective_max_touches
-from src.platform.whatsapp.reengagement_ladder import ladder_state, record_touch
+from src.platform.whatsapp.reengagement_ladder import (
+    NEXT_TOUCH_MORNING,
+    ladder_state,
+    next_morning_at_ms,
+    record_touch,
+)
 from src.platform.whatsapp.reengagement_deferral import (
     mark_appointment_touched,
     reengagement_deferred_until,
@@ -201,7 +206,9 @@ async def check_reengagement_policy_activity(session_id: str) -> SendDecision:
 
 
 @activity.defn(name="record_remarketing_touch_activity")
-async def record_remarketing_touch_activity(session_id: str, kind: str) -> None:
+async def record_remarketing_touch_activity(
+    session_id: str, kind: str, next_touch: str = ""
+) -> None:
     """Consume un peldaño de la escalera de reactivación.
 
     `kind`: `free_form` | `template` (enviados), `abstained` (el LLM decidió
@@ -209,6 +216,10 @@ async def record_remarketing_touch_activity(session_id: str, kind: str) -> None:
     rastro: sin él la sesión volvía al seed del ciclo cada 45 min (runs
     `01a0b0da`…`01a0b586`). Read-modify-write sobre lectura FRESCA — el send
     acaba de escribir el outbound en el mismo archivo.
+
+    `next_touch`: `NEXT_TOUCH_MORNING` agenda el siguiente toque para la
+    mañana siguiente del cliente (hora local, dentro de su ventana de 24 h);
+    "" = el hueco normal de la escalera.
     """
     # Bajo el flock del store (hallazgo L-2 de la revisión): se serializa con
     # el dashboard y con el etiquetado SIN_RESPUESTA del ciclo. Import local:
@@ -220,7 +231,7 @@ async def record_remarketing_touch_activity(session_id: str, kind: str) -> None:
     def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
         if not data:
             return None  # sin metadata no se crea una sesión fantasma
-        record_touch(data, now_ms, kind)
+        record_touch(data, now_ms, kind, next_at_ms=_scheduled_next_touch(session_id, data, now_ms, next_touch))
         # La cita del cliente es UN toque: el primero después de la fecha la
         # consume (enviado, abstenido o fallido).
         mark_appointment_touched(data, now_ms)
@@ -228,6 +239,27 @@ async def record_remarketing_touch_activity(session_id: str, kind: str) -> None:
 
     if FilesystemMetadataStore(WORKSPACE_VAULT_DIR).update(session_id, _mutate) is None:
         log.warning("remarketing_touch_not_recorded", session_id=session_id, kind=kind)
+
+
+def _scheduled_next_touch(
+    session_id: str, metadata: dict[str, Any], now_ms: int, next_touch: str
+) -> int | None:
+    """La hora del siguiente toque si este lo agenda; None = hueco normal.
+    La ventana es la de 24 h del cliente (sin ella, 24 h desde su último
+    mensaje)."""
+    if next_touch != NEXT_TOUCH_MORNING:
+        return None
+    expires = metadata.get("service_window_expires_at_ms")
+    if not isinstance(expires, int):
+        last_inbound = metadata.get("last_inbound_at_ms")
+        if not isinstance(last_inbound, int):
+            return None
+        expires = last_inbound + 24 * 3600 * 1000
+    allowed_from, allowed_until = allowed_hours()
+    return next_morning_at_ms(
+        now_ms, expires, resolve_local_timezone(session_id),
+        allowed_from=allowed_from, allowed_until=allowed_until,
+    )
 
 
 def _ladder_suppress(reason: str, why: str) -> SendDecision:
@@ -282,6 +314,15 @@ async def send_message_to_session(
     """Envia `message` al cliente (ver `_send_freeform`). ``True`` si salió todo."""
     ok, _bubbles = await _send_freeform(session_id, message, author=author)
     return ok
+
+
+async def send_text_to_session(
+    session_id: str, message: str, *, author: str = "agent"
+) -> tuple[bool, list[dict[str, str]]]:
+    """Como `send_message_to_session`, pero devuelve también las burbujas que
+    Meta aceptó (`[{wamid, text}]`): el historial guarda sus wamids y el chat
+    les une el doble check de WhatsApp (caso 2026-10-15)."""
+    return await _send_freeform(session_id, message, author=author)
 
 
 async def _send_freeform(

@@ -120,6 +120,29 @@ def test_a_quoted_message_travels_with_the_turn() -> None:
     assert window.quoted == "Vela Cubo Love — $21.000"
 
 
+def test_a_message_written_while_the_bot_answered_keeps_its_quote() -> None:
+    """Caso del 2026-10-13 (anuncio de Halloween): el cliente citó la línea del
+    set y escribió «Estas» mientras el bot respondía su mensaje anterior. Esa
+    respuesta quedó grabada DESPUÉS del mensaje, así que la ráfaga no está al
+    final del historial: Jev la leía vacía (sin la cita) y con el mensaje
+    repetido en el CONTEXTO y en ESTE TURNO."""
+    events = [
+        _bot("El set trae las tres velas juntas."),
+        _user("Todas son muy bonitas", "w1"),
+        _user("Estas", "w2", reply_to={"id": "wx", "author": "agent", "text": "El set trae las tres velas juntas."}),
+        _bot("¿Te inclinas por una sola o por el set?"),
+    ]
+
+    window = customer_window(events, burst_wamids={"w2"})
+
+    assert window.quoted == "El set trae las tres velas juntas."
+    assert window.lines == (
+        "[asesor] El set trae las tres velas juntas.",
+        "[cliente] Todas son muy bonitas",
+        "[asesor] ¿Te inclinas por una sola o por el set?",
+    )
+
+
 def test_a_photo_or_audio_reentry_is_cut_from_the_context_by_its_real_id() -> None:
     """El reentry de visión o de transcripción llega con el id sintético
     (`<wamid>_vision`, `<wamid>_transcribed`), pero el historial guarda el

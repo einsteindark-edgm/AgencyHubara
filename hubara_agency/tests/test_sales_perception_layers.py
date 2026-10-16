@@ -319,6 +319,9 @@ async def test_on_the_verification_counts_only_the_cards_the_customer_gets(tmp_p
                              "present_product_gallery": json.dumps({"queued": True})})
 
     assert classifier.verified and classifier.verified[0].components == ["present_product_gallery"]
+    # Lo que MUESTRA la tarjeta que salió llega a ③ (revisión de producción
+    # del PR #426: ninguna prueba del workflow lo cubría); la negada, no.
+    assert classifier.verified[0].card_contents == ["Fotos del producto: y"]
 
 
 @pytest.mark.asyncio
