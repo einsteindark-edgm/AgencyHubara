@@ -68,6 +68,24 @@ variable "tenants" {
       min_version_code = optional(number, 0)  # versionCode mínimo; una app más vieja pide actualizarse
     }), {})
 
+    # Política comercial PÚBLICA de la tienda (modules/store-config → SSM String
+    # /hubara/<tenant>/<VAR>): lo que el bot le dice al cliente sobre precios de
+    # envío y formas de pago, y cómo reconoce los códigos de su catálogo. Cada
+    # campo en null = no se crea el parámetro y manda el default del código.
+    store = optional(object({
+      payment_nequi_number         = optional(string)       # llave Nequi/Bre-B del pago anticipado (solo dígitos)
+      payment_link_surcharge_local = optional(string)       # recargo del link con Nequi o Bancolombia ("1,5%")
+      payment_link_surcharge_other = optional(string)       # recargo del link con otros bancos ("2,69%")
+      shipping_local_zone          = optional(string)       # cómo se le nombra al cliente la zona local
+      shipping_local_city          = optional(string)       # la ciudad que cae en la zona local
+      shipping_rate_local_cop      = optional(number)       # tarifa mínima de la zona local
+      shipping_rate_national_cop   = optional(number)       # tarifa mínima nacional
+      cash_on_delivery_min_cop     = optional(number)       # contra entrega desde este subtotal de productos (inclusive)
+      sku_prefix                   = optional(string)       # prefijo de los SKU en Medusa ("HUB-")
+      web_domain                   = optional(string)       # dominio de la tienda (enlaces en fotos)
+      catalog_collections          = optional(list(string)) # colecciones de Medusa que entran al catálogo
+    }), {})
+
     # Laboratorio de conversaciones y capas del bot con clasificador
     # (LABORATORIO_CONVERSACIONES_PLAN.md §4.4). Defaults = todo apagado. Se
     # materializa como SSM String en /hubara/<tenant>/<VAR> (modules/lab-config).
@@ -90,6 +108,50 @@ variable "tenants" {
   validation {
     condition     = alltrue([for t in values(var.tenants) : can(regex("^https://[^\\s\"'#]+$", t.api_url))])
     error_message = "tenants.*.api_url: https://… sin espacios, comillas ni '#' (entra al agent.yaml de MBA)."
+  }
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : t.store.payment_nequi_number == null || can(regex("^[0-9]{7,15}$", t.store.payment_nequi_number))])
+    error_message = "tenants.*.store.payment_nequi_number: solo dígitos (p.ej. 3001234567), o sin definir."
+  }
+
+  validation {
+    condition = alltrue(flatten([for t in values(var.tenants) : [
+      for v in [t.store.shipping_rate_local_cop, t.store.shipping_rate_national_cop, t.store.cash_on_delivery_min_cop] :
+      v == null ? true : (v >= 1000 && v == floor(v))
+    ]]))
+    # `9.000` en HCL es el número 9 (no nueve mil): llegaría al bot como «$9».
+    error_message = "tenants.*.store: los montos (shipping_rate_*_cop, cash_on_delivery_min_cop) son pesos enteros desde 1000 y SIN puntos (9000, no 9.000), o sin definir."
+  }
+
+  validation {
+    condition = alltrue([for t in values(var.tenants) :
+      (t.store.shipping_local_city == null || can(regex("^\\p{L}+( \\p{L}+)*$", t.store.shipping_local_city)))
+      && (t.store.shipping_local_zone == null || can(regex("^[^#$\"'\\\\\u0060{}\n\r]+$", t.store.shipping_local_zone)))
+    ])
+    # La ciudad se busca DENTRO de la del cliente (con «Bogotá D.C.», «Bogotá» cae
+    # en la nacional); render-env escribe KEY=valor (un `#` corta el valor).
+    error_message = "tenants.*.store: shipping_local_city es solo el nombre de la ciudad, letras y espacios (\"Bogotá\"); shipping_local_zone sin # $ comillas ni llaves."
+  }
+
+  validation {
+    condition = alltrue(flatten([for t in values(var.tenants) : [
+      for v in [t.store.payment_link_surcharge_local, t.store.payment_link_surcharge_other] :
+      v == null ? true : can(regex("^[0-9]+(,[0-9]+)?%$", v))
+    ]]))
+    error_message = "tenants.*.store.payment_link_surcharge_*: porcentaje como lo lee el cliente (p.ej. \"1,5%\")."
+  }
+
+  validation {
+    condition = alltrue([for t in values(var.tenants) :
+      (t.store.sku_prefix == null || can(regex("^[A-Z0-9]{1,12}-$", t.store.sku_prefix)))
+      && (t.store.web_domain == null || can(regex("^[a-z0-9.-]+$", t.store.web_domain)))
+      && (t.store.catalog_collections == null || (
+        length(coalesce(t.store.catalog_collections, [])) > 0
+        && alltrue([for h in coalesce(t.store.catalog_collections, []) : can(regex("^[a-z0-9][a-z0-9_-]*$", h))])
+      ))
+    ])
+    error_message = "tenants.*.store: sku_prefix en mayúsculas terminado en guion (p.ej. \"HUB-\"); web_domain en minúsculas; catalog_collections no vacía y con HANDLES de Medusa (\"home_banner\", no el título)."
   }
 
   validation {

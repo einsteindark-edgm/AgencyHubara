@@ -17,3 +17,11 @@ tenants = {
     root_volume_gb  = 30
   }
 }
+
+# Laboratorio de conversaciones (caja aparte, apagada). Prenderla: `true` +
+# apply de compute + los 4 secretos /{{slug}}-lab/* (llaves *_LAB NUEVAS y
+# GHCR_PULL_TOKEN) — ver NEXT_STEPS.md. Las corridas también van en local.
+lab = {
+  enabled = false
+  tenants = ["{{slug}}"]
+}
