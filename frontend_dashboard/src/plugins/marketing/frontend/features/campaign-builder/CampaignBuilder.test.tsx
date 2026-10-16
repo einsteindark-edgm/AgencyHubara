@@ -35,6 +35,16 @@ const cancelMock = {
   isPending: false,
   error: null as Error | null,
 };
+const pauseMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+};
+const resumeMock = {
+  mutate: vi.fn(),
+  isPending: false,
+  error: null as Error | null,
+};
 const importMock = {
   mutate: vi.fn(),
   isPending: false,
@@ -54,6 +64,8 @@ vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) 
   useSendCampaign: () => sendMock,
   useTestSend: () => testMock,
   useCancelCampaign: () => cancelMock,
+  usePauseCampaign: () => pauseMock,
+  useResumeCampaign: () => resumeMock,
   useImportContacts: () => importMock,
   useClearContacts: () => clearContactsMock,
 }));
@@ -179,6 +191,10 @@ beforeEach(() => {
   sendMock.mutate.mockClear();
   testMock.mutate.mockClear();
   cancelMock.mutate.mockClear();
+  cancelMock.error = null;
+  pauseMock.mutate.mockClear();
+  pauseMock.error = null;
+  resumeMock.mutate.mockClear();
   importMock.mutate.mockClear();
   clearContactsMock.mutate.mockClear();
   importMock.data = undefined;
@@ -202,6 +218,65 @@ describe("CampaignBuilder — campaña programada", () => {
   it("una campaña draft NO muestra el botón de cancelar", () => {
     const { queryByRole } = render(<CampaignBuilder campaign={makeCampaign()} />);
     expect(queryByRole("button", { name: "Cancelar programación" })).toBeNull();
+  });
+});
+
+describe("CampaignBuilder — envío en curso (pausar / reanudar / cancelar)", () => {
+  const progress = {
+    total: 300,
+    processed: 100,
+    sent: 98,
+    failed: 1,
+    optedOut: 1,
+    skipped: 0,
+    state: "sending",
+  };
+
+  it("muestra el avance y 'Pausar envío' dispara el POST /pause", () => {
+    const { getByRole, getByText } = render(
+      <CampaignBuilder campaign={makeCampaign({ status: "sending", progress })} />,
+    );
+    expect(getByText(/100 de 300/)).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Pausar envío" }));
+    expect(pauseMock.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("una campaña pausada se reanuda con 'Reanudar envío'", () => {
+    const { getByRole, queryByRole } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({ status: "paused", progress: { ...progress, state: "paused" } })}
+      />,
+    );
+    expect(queryByRole("button", { name: "Pausar envío" })).toBeNull();
+    fireEvent.click(getByRole("button", { name: "Reanudar envío" }));
+    expect(resumeMock.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("'Cancelar envío' pide confirmación antes de cancelar (no se deshace)", () => {
+    const { getByRole } = render(
+      <CampaignBuilder campaign={makeCampaign({ status: "sending", progress })} />,
+    );
+    fireEvent.click(getByRole("button", { name: "Cancelar envío" }));
+    expect(cancelMock.mutate).not.toHaveBeenCalled();
+    fireEvent.click(getByRole("button", { name: "Sí, cancelar el envío" }));
+    expect(cancelMock.mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it("superficia el 409 del control con el motivo del backend", () => {
+    pauseMock.error = new ApiError(409, { detail: "El envío ya se está cancelando." });
+    const { getByText } = render(
+      <CampaignBuilder campaign={makeCampaign({ status: "sending", progress })} />,
+    );
+    expect(getByText(/ya se está cancelando/)).toBeTruthy();
+  });
+
+  it("una campaña cancelada queda en solo lectura y sin controles", () => {
+    const { getByText, queryByRole } = render(
+      <CampaignBuilder campaign={makeCampaign({ status: "cancelled" })} />,
+    );
+    expect(getByText(/cancelada — solo lectura/i)).toBeTruthy();
+    expect(queryByRole("button", { name: "Pausar envío" })).toBeNull();
+    expect(queryByRole("button", { name: "Cancelar envío" })).toBeNull();
   });
 });
 

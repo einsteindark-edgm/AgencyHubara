@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import src.plugins.marketing.api as api_mod
 from src.plugins.marketing.campaign_store import CampaignStore
+from src.plugins.marketing.domain.campaign_send import CampaignSendInput
 
 
 @pytest.fixture()
@@ -226,8 +227,9 @@ def test_send_now_arranca_el_workflow(client: TestClient, monkeypatch) -> None:
     assert res.status_code == 200
     assert res.json()["workflow_id"] == f"campaign-send-{campaign_id}"
     call = fake.calls[0]
-    assert call["workflow"] == "CampaignSendWorkflow"
-    assert call["args"][0] == campaign_id
+    # El V2 (por lotes, controlable): recibe solo ids; el plan va al vault.
+    assert call["workflow"] == "CampaignSendWorkflowV2"
+    assert call["args"] == [CampaignSendInput(campaign_id=campaign_id, campaign_name="Promo")]
     assert call["task_queue"] == "queue-marketing-campaigns"
     assert call["start_delay"] is None
 
@@ -495,6 +497,168 @@ def test_cancel_campana_no_programada_es_409(client: TestClient) -> None:
     campaign_id = _ready_campaign(client)
     res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
     assert res.status_code == 409
+
+
+# --- Control del envío en curso (CampaignSendWorkflowV2) --------------------
+
+
+class _SendingHandle:
+    """El workflow de envío según Temporal: su tipo, si sigue corriendo y qué
+    contesta a cada Update."""
+
+    def __init__(
+        self,
+        *,
+        workflow_type: str = "CampaignSendWorkflowV2",
+        running: bool = True,
+        reject: str | None = None,
+        gone: bool = False,
+    ) -> None:
+        self.workflow_type = workflow_type
+        self.running = running
+        self.reject = reject
+        self.gone = gone
+        self.updates: list[str] = []
+
+    async def describe(self):
+        from types import SimpleNamespace
+
+        from temporalio.client import WorkflowExecutionStatus
+        from temporalio.service import RPCError, RPCStatusCode
+
+        if self.gone:
+            raise RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b"")
+        status = WorkflowExecutionStatus.RUNNING if self.running else WorkflowExecutionStatus.FAILED
+        return SimpleNamespace(status=status, workflow_type=self.workflow_type)
+
+    async def execute_update(self, update: str, *args, **kw):
+        from temporalio.client import WorkflowUpdateFailedError
+        from temporalio.exceptions import ApplicationError
+
+        self.updates.append(update)
+        if self.reject:
+            raise WorkflowUpdateFailedError(ApplicationError(self.reject))
+        return {"total": 300, "processed": 100, "sent": 98, "failed": 1, "opted_out": 1,
+                "skipped": 0, "state": {"pause": "paused", "cancel": "cancelling"}.get(update, "sending")}
+
+
+def _sending_campaign(
+    client: TestClient, vault: Path, monkeypatch, handle: _SendingHandle, status: str = "sending"
+) -> str:
+    class _Client:
+        def get_workflow_handle(self, workflow_id):
+            assert workflow_id.startswith("campaign-send-")
+            return handle
+
+    async def _fake_client():
+        return _Client()
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = _ready_campaign(client)
+    store = CampaignStore(vault)
+    campaign = store.get(campaign_id)
+    campaign["status"] = status
+    store.save(campaign)
+    return campaign_id
+
+
+def test_pausing_a_campaign_being_sent_asks_the_workflow(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/pause")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["pause"]
+    assert res.json()["progress"]["state"] == "paused"
+
+
+def test_resuming_a_paused_campaign_asks_the_workflow(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status="paused")
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/resume")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["resume"]
+
+
+def test_cancelling_mid_send_asks_the_workflow_which_closes_the_campaign(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """El lote en vuelo termina y el workflow deja la campaña cancelada: la
+    API no la toca (si la pasara a borrador, se podría volver a enviar)."""
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status="paused")
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["cancel"]
+    assert res.json()["progress"]["state"] == "cancelling"
+    assert CampaignStore(_isolate_vault_dir).get(campaign_id)["status"] == "paused"
+
+
+@pytest.mark.parametrize(("action", "status"), [("pause", "draft"), ("resume", "sending"), ("pause", "sent")])
+def test_controls_out_of_their_state_are_409_without_asking_temporal(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch, action: str, status: str
+) -> None:
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status=status)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/{action}")
+
+    assert res.status_code == 409
+    assert handle.updates == []
+
+
+def test_an_update_the_workflow_rejects_is_409_with_its_reason(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    handle = _SendingHandle(reject="El envío ya se está cancelando.")
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/pause")
+
+    assert res.status_code == 409
+    assert "ya se está cancelando" in res.json()["detail"]
+
+
+def test_a_send_started_by_the_old_workflow_cannot_be_controlled(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """Una campaña programada antes del V2 corre con el tipo viejo: no tiene
+    pausa ni cancelación a mitad de envío; termina sola."""
+    handle = _SendingHandle(workflow_type="CampaignSendWorkflow")
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 409
+    assert "versión anterior" in res.json()["detail"]
+    assert handle.updates == []
+
+
+@pytest.mark.parametrize("handle_kw", [{"gone": True}, {"running": False}])
+def test_cancelling_a_send_that_no_longer_runs_closes_the_stuck_campaign(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch, handle_kw: dict
+) -> None:
+    """Una campaña que quedó en «sending» con su workflow muerto (el bug del
+    V1) se cierra desde el botón: fallida, con el motivo a la vista."""
+    handle = _SendingHandle(**handle_kw)
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == []
+    saved = CampaignStore(_isolate_vault_dir).get(campaign_id)
+    assert saved["status"] == "failed"
+    assert "ya no estaba corriendo" in saved["failure_reason"]
 
 
 def test_get_campaign_stats_agrega_respuestas_y_revenue(

@@ -8,6 +8,7 @@ del OutboundLogEntry con su costo.
 """
 import asyncio
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -15,9 +16,20 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from src.plugins.marketing.campaign_coupon import check_campaign_coupon
+from src.plugins.marketing.campaign_send_store import CampaignSendStore
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
+from src.plugins.marketing.domain.campaign_send import (
+    CampaignBatch,
+    CampaignBatchResult,
+    CampaignSendProgress,
+    CampaignSendStart,
+    campaign_send_result,
+    recheck_batch,
+)
 from src.plugins.marketing.domain.campaigns import (
+    STATUS_FAILED,
+    STATUS_PAUSED,
     STATUS_SENDING,
     STATUS_SENT,
     CampaignSendPlan,
@@ -141,6 +153,10 @@ async def load_campaign_send_plan_activity(campaign_id: str) -> CampaignSendPlan
     quiet hours se evalúa con la hora local del cliente AHORA, y la cadencia
     (48h entre campañas al mismo contacto) contra los touches vigentes.
     """
+    return await _build_send_plan(campaign_id)
+
+
+async def _build_send_plan(campaign_id: str) -> CampaignSendPlan:
     store = _store()
     campaign = _require_campaign(store, campaign_id)
     now_utc = datetime.now(timezone.utc)
@@ -253,7 +269,97 @@ async def record_campaign_send_result_activity(
     store.save(campaign)
 
 
+# --- Envío por lotes (CampaignSendWorkflowV2) --------------------------------
+
+
+def _send_store() -> CampaignSendStore:
+    return CampaignSendStore(WORKSPACE_VAULT_DIR)
+
+
+@activity.defn(name="prepare_campaign_send")
+@with_heartbeat(every=10)
+async def prepare_campaign_send_activity(campaign_id: str) -> CampaignSendStart:
+    """Arma el plan (mismas reglas que el V1, AL DISPARAR) y lo guarda en el
+    vault: el workflow recibe solo el conteo — el plan de miles de contactos
+    no cabe en un payload de Temporal (2 MB)."""
+    plan = await _build_send_plan(campaign_id)
+    if plan.blocked_reason:
+        return CampaignSendStart(
+            total=0, template_name=plan.template_name, blocked_reason=plan.blocked_reason
+        )
+    _send_store().save_plan(plan)
+    return CampaignSendStart(
+        total=len(plan.recipients),
+        template_name=plan.template_name,
+        carousel=bool(plan.carousel_handles),
+    )
+
+
+@activity.defn(name="load_campaign_batch")
+async def load_campaign_batch_activity(campaign_id: str, start: int, end: int) -> CampaignBatch:
+    """Los destinatarios `[start, end)` del plan, re-chequeados AHORA: una
+    baja, un caso que pasó a un humano o el horario de silencio del cliente
+    desde que se armó el plan lo frenan (con su razón)."""
+    try:
+        recipients = _send_store().recipients(campaign_id, start, end)
+    except FileNotFoundError as e:
+        raise ApplicationError(
+            f"El plan del envío de la campaña {campaign_id!r} no está en el vault",
+            non_retryable=True,
+            type="CampaignSendPlanMissing",
+        ) from e
+    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    now_utc = datetime.now(timezone.utc)
+    return recheck_batch(
+        recipients,
+        {r.session_id: metadata_store.read(r.session_id) for r in recipients},
+        is_quiet_hours=lambda session_id: is_quiet_hours_for_session(session_id, now_utc),
+    )
+
+
+@activity.defn(name="record_campaign_progress")
+async def record_campaign_progress_activity(
+    campaign_id: str, progress: CampaignSendProgress, batch: CampaignBatchResult | None = None
+) -> None:
+    """El avance a la vista del operador (estado + conteos), y el resultado
+    del lote para el resumen final. Idempotente: reintentar pisa lo mismo."""
+    if batch is not None:
+        _send_store().save_batch(campaign_id, batch)
+    store = _store()
+    campaign = _require_campaign(store, campaign_id)
+    campaign["status"] = STATUS_PAUSED if progress.paused else STATUS_SENDING
+    campaign["progress"] = asdict(progress)
+    campaign["updated_at_ms"] = _now_ms()
+    store.save(campaign)
+
+
+@activity.defn(name="finish_campaign_send")
+async def finish_campaign_send_activity(
+    campaign_id: str, progress: CampaignSendProgress, outcome: str, reason: str | None = None
+) -> None:
+    """Cierra la campaña: enviada, cancelada (con lo que alcanzó a salir) o
+    fallida con el motivo. El resultado completo sale de los lotes guardados."""
+    send_store = _send_store()
+    store = _store()
+    campaign = _require_campaign(store, campaign_id)
+    now = _now_ms()
+    campaign["status"] = outcome
+    campaign["sent_at_ms"] = now
+    campaign["updated_at_ms"] = now
+    campaign["progress"] = {**asdict(progress), "state": outcome}
+    campaign["send_result"] = campaign_send_result(
+        send_store.find_plan(campaign_id), send_store.batches(campaign_id)
+    )
+    if outcome == STATUS_FAILED:
+        campaign["failure_reason"] = reason
+    store.save(campaign)
+
+
 __all__ = (
+    "finish_campaign_send_activity",
+    "load_campaign_batch_activity",
+    "prepare_campaign_send_activity",
+    "record_campaign_progress_activity",
     "load_campaign_send_plan_activity",
     "mark_campaign_sending_activity",
     "mark_marketing_opt_out_activity",

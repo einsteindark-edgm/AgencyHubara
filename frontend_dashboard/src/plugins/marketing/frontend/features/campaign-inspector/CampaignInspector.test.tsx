@@ -214,6 +214,30 @@ describe("CampaignInspector — validación", () => {
     expect(getByText("$364.500")).toBeTruthy(); // revenue COP
     expect(getByText("US$0,5000")).toBeTruthy(); // gastado, micros→US$ 4 dec
   });
+
+  it("campaña cancelada a mitad de envío: muestra el resultado de lo que alcanzó a salir", () => {
+    statsMock.data = {
+      campaignId: "mkt-1",
+      status: "cancelled",
+      planned: 300,
+      sent: 197,
+      failedCount: 1,
+      skippedCount: 1,
+      unitCostUsdMicros: 12_500,
+      spentUsdMicros: 2_462_500,
+      replied: 0,
+      attributedOrders: 0,
+      attributedRevenueCop: 0,
+      optedOut: 1,
+      ordersStale: false,
+    };
+    const { getByRole, getByText } = render(
+      <CampaignInspector campaign={makeCampaign({ status: "cancelled" })} />,
+    );
+    fireEvent.click(getByRole("button", { name: /Validación/ }));
+    expect(getByText("Resultado del envío")).toBeTruthy();
+    expect(getByText("197")).toBeTruthy();
+  });
 });
 
 describe("CampaignInspector — audiencia", () => {

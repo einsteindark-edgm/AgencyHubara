@@ -66,6 +66,10 @@ STATUS_SCHEDULED = "scheduled"
 STATUS_SENDING = "sending"
 STATUS_SENT = "sent"
 STATUS_FAILED = "failed"
+#: Envío por lotes (V2) que el operador frenó; sigue con «Reanudar».
+STATUS_PAUSED = "paused"
+#: El operador canceló a mitad de envío: lo que salió, salió; no sale más.
+STATUS_CANCELLED = "cancelled"
 
 #: Template MARKETING pre-aprobado por Meta que viaja en cada campaña
 #: (ver `platform/whatsapp/templates/catalog.yaml` + provisioning).
@@ -262,7 +266,7 @@ def resolve_campaign_audience(
         segment = segment_for_metadata(metadata)
         if segment is None:
             # Humano / baja: absoluto — ni el agregado manual lo pisa.
-            skipped.append(_excluded_recipient(session_id, metadata))
+            skipped.append(excluded_recipient(session_id, metadata))
             continue
         if session_id in removed_ids:
             skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
@@ -319,7 +323,7 @@ def resolve_campaign_audience(
     return CampaignAudience(recipients=recipients, skipped=skipped)
 
 
-def _excluded_recipient(session_id: str, metadata: dict[str, Any]) -> SkippedRecipient:
+def excluded_recipient(session_id: str, metadata: dict[str, Any]) -> SkippedRecipient:
     """Humano → "excluido"; baja → "dado_de_baja" con su registro."""
     from src.sdk.messagingkit import marketing_opt_out_info
 
@@ -642,8 +646,21 @@ def build_campaign_touch(
 def append_campaign_touch(
     metadata: dict[str, Any], touch: dict[str, Any]
 ) -> dict[str, Any]:
-    """Appendea el touch capeando el historial (mutación in-place)."""
+    """Appendea el touch capeando el historial (mutación in-place).
+
+    Idempotente por (campaña, contacto): un envío real que se reintenta (la
+    activity, el lote, un worker que se cae entre el write y el ack) no
+    duplica la atribución. Las pruebas del operador no cuentan como el envío
+    real, ni el real las pisa.
+    """
     touches = metadata.setdefault("campaign_touches", [])
+    if not touch.get("test") and any(
+        isinstance(t, dict)
+        and not t.get("test")
+        and t.get("campaign_id") == touch.get("campaign_id")
+        for t in touches
+    ):
+        return metadata
     touches.append(touch)
     if len(touches) > CAMPAIGN_TOUCHES_CAP:
         metadata["campaign_touches"] = touches[-CAMPAIGN_TOUCHES_CAP:]
