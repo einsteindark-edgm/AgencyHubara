@@ -82,8 +82,6 @@ async def test_fakes_capture_instead_of_acting() -> None:
     ]
     with pytest.raises(ApplicationError, match="ghosting"):
         await acts["decide_ghosting_action"]()
-    with pytest.raises(ApplicationError, match="audio"):
-        await acts["transcribe_audio_activity"]("x")
 
 
 async def test_a_bench_turn_without_llm_gives_up_at_once_instead_of_waiting() -> None:

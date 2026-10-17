@@ -12,6 +12,7 @@ from pathlib import Path
 
 from src.plugins.chats.agent.sales.workflows import inbound_message
 from src.plugins.chats.agent.sales.workflows.inbound_message import InboundMessageWorkflow
+from src.plugins.chats.agent.sales.workflows.inbound_session import InboundSessionWorkflow
 from src.sdk import get_task_queue, get_worker_spec
 
 _WORKER = Path(__file__).resolve().parents[4] / "src/plugins/chats/workers/sales.py"
@@ -38,7 +39,7 @@ def _starred(expr: ast.expr) -> set[str]:
 def test_the_sales_worker_registers_the_inbound_workflow_next_to_the_sessions() -> None:
     import src.plugins.chats.workers.sales as sales_worker
 
-    assert sales_worker.INBOUND_WORKFLOWS == [InboundMessageWorkflow]
+    assert sales_worker.INBOUND_WORKFLOWS == [InboundMessageWorkflow, InboundSessionWorkflow]
     assert _starred(_worker_kwargs()["workflows"]) == {"SALES_WORKFLOWS", "INBOUND_WORKFLOWS"}
 
 
@@ -57,7 +58,21 @@ def test_every_activity_the_inbound_workflow_schedules_is_registered() -> None:
     }
     registered = {_activity_name(a) for a in sales_worker.INBOUND_ACTIVITIES}
 
-    assert scheduled == {"ingest_inbound_message", "wait_inbound_predecessor"}
+    assert scheduled == {
+        # Fase 1 (runs vivos al desplegar la fase 2).
+        "ingest_inbound_message",
+        "wait_inbound_predecessor",
+        # Fase 2: un paso del ingest por activity, el anuncio y la espera.
+        "register_inbound_arrival",
+        "read_inbound_state",
+        "prepare_inbound_turn",
+        "write_inbound_history",
+        "deliver_inbound_turn",
+        "describe_inbound_image",
+        "transcribe_inbound_audio",
+        "notify_inbound_photo_done",
+        "wait_inbound_workflow",
+    }
     assert scheduled <= registered, scheduled - registered
     assert _starred(_worker_kwargs()["activities"]) == {"SALES_ACTIVITIES", "INBOUND_ACTIVITIES"}
 
@@ -73,5 +88,15 @@ def test_the_api_starts_the_workflow_by_its_name_on_the_queue_the_worker_listens
     assert entry._task_queue == get_task_queue("chats", "sales")
 
 
-def test_the_manifest_declares_the_inbound_workflow_on_the_sales_worker() -> None:
-    assert "InboundMessageWorkflow" in get_worker_spec("chats", "sales")["workflow_classes"]
+def test_the_manifest_declares_the_inbound_workflows_on_the_sales_worker() -> None:
+    classes = get_worker_spec("chats", "sales")["workflow_classes"]
+
+    assert {"InboundMessageWorkflow", "InboundSessionWorkflow"} <= set(classes)
+
+
+def test_the_dead_transcription_activity_is_gone_from_the_sales_worker() -> None:
+    """Fase 2: la nota de voz se transcribe en `transcribe_inbound_audio`; la
+    vieja `transcribe_audio_activity` no la agendaba ningún workflow."""
+    import src.plugins.chats.workers.sales as sales_worker
+
+    assert "transcribe_audio_activity" not in {_activity_name(a) for a in sales_worker.SALES_ACTIVITIES}

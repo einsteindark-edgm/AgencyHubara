@@ -2377,13 +2377,16 @@ class IngestInboundMessage:
 
         self._charge_audio(session_id, result)
 
-        # Limpiar pending_transcription
-        try:
-            metadata = self._metadata_store.read(session_id)
-            base = copy.deepcopy(metadata)
-            metadata.pop("pending_transcription", None)
+        # El resultado al documento, sobre lo fresco (candado + lectura
+        # fresca): solo se saca el pendiente de ESTA nota de voz (si mientras
+        # tanto llegó otra, el suyo se queda) y no se pisa lo que otro
+        # escritor puso mientras se transcribía.
+        def _record_transcription(fresh: dict[str, Any]) -> dict[str, Any]:
+            pending = fresh.get("pending_transcription")
+            if isinstance(pending, dict) and pending.get("media_id") == media_id:
+                fresh.pop("pending_transcription")
             if result.ok and result.text:
-                recent = list(metadata.get("recent_transcriptions") or [])
+                recent = list(fresh.get("recent_transcriptions") or [])
                 recent.append({
                     "media_id": media_id,
                     "text": result.text,
@@ -2391,18 +2394,18 @@ class IngestInboundMessage:
                     "duration_seconds": result.duration_seconds,
                     "cost_usd_estimate": result.cost_usd_estimate,
                 })
-                metadata["recent_transcriptions"] = recent[-20:]
+                fresh["recent_transcriptions"] = recent[-20:]
             else:
-                errors = list(metadata.get("transcription_failures") or [])
+                errors = list(fresh.get("transcription_failures") or [])
                 errors.append({
                     "media_id": media_id,
                     "error": result.error,
                     "provider": result.provider,
                 })
-                metadata["transcription_failures"] = errors[-20:]
-            self._safe_write_metadata(session_id, metadata, base)
-        except Exception:  # noqa: BLE001
-            pass
+                fresh["transcription_failures"] = errors[-20:]
+            return fresh
+
+        self._update_best_effort(session_id, _record_transcription, what="transcripcion")
 
         # Emit analytics
         if self._event_bus:

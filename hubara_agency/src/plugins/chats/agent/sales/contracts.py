@@ -190,11 +190,27 @@ class IngestTurn:
     reply_to: dict[str, Any] | None = None
 
 
-@dataclass(frozen=True)
-class VisionOutcome:
-    """Lo que la visión leyó de una foto, para su reentrada como texto."""
+# --- El orden de entrega por cliente (ADR 2026-10-16) ----------------------
 
-    text: str
-    persisted_image_url: str | None = None
-    customer_text: str | None = None
-    photo_note: str | None = None
+
+@dataclass(frozen=True)
+class InboundArrival:
+    """Un mensaje que se anuncia al `InboundSessionWorkflow` de su cliente
+    para saber cuál es su anterior (`workflow_id` del suyo, llegada al webhook)."""
+
+    workflow_id: str
+    received_at_ms: int
+
+
+@dataclass(frozen=True)
+class InboundSessionState:
+    """Lo que el `InboundSessionWorkflow` de un cliente lleva a su próximo run
+    (continue-as-new): los últimos anunciados."""
+
+    recent: list[InboundArrival] = field(default_factory=list)
+
+
+def inbound_session_workflow_id(session_id: str) -> str:
+    """Id del `InboundSessionWorkflow` de un cliente: `inbound-wa_<número>`.
+    No choca con el de un mensaje (`inbound-wamid.…`)."""
+    return f"inbound-{session_id}"
