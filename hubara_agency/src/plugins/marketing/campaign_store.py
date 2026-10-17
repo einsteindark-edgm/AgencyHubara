@@ -32,6 +32,21 @@ class CampaignStore:
         out.sort(key=lambda c: c.get("updated_at_ms") or 0, reverse=True)
         return out
 
+    def file_signatures(self) -> dict[str, tuple[int, int, int]]:
+        """{campaign_id: (mtime_ns, size, inode)} sin leer los archivos. La
+        escritura atómica cambia el inode, así que cada `save` cambia la firma
+        aunque el tamaño y el mtime no se muevan."""
+        if not self._dir.is_dir():
+            return {}
+        out: dict[str, tuple[int, int, int]] = {}
+        for path in self._dir.glob("*.json"):
+            try:
+                st = path.stat()
+            except OSError:
+                continue  # borrada entre el glob y el stat
+            out[path.stem] = (st.st_mtime_ns, st.st_size, st.st_ino)
+        return out
+
     def get(self, campaign_id: str) -> dict[str, Any] | None:
         path = self._path(campaign_id)
         if not path.exists():

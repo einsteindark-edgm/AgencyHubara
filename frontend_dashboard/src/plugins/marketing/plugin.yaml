@@ -39,9 +39,13 @@ api:
   tags: [Marketing]
 
 # ── Agente Temporal ────────────────────────────────────────────────────
-# Worker único `campaigns` — corre CampaignSendWorkflow (un envío de campaña
-# por invocación; "enviar ahora" arranca el workflow ya, "programar" lo
-# arranca con start_delay). SIN `owns_route`: este plugin no recibe inbounds
+# Worker único `campaigns` — corre CampaignSendWorkflowV2 (un envío de campaña
+# por invocación, por lotes: un CampaignSendBatchWorkflow hijo por lote, con
+# pausa/reanudar/cancelar por Update; "enviar ahora" arranca el workflow ya,
+# "programar" lo arranca con start_delay). CampaignSendWorkflow (V1) sigue
+# registrado para las campañas programadas con ese tipo. El proceso corre
+# además un worker en `<task_queue>-sends` (solo el send a Meta, con su
+# ritmo): no es un worker aparte del manifest. SIN `owns_route`: este plugin no recibe inbounds
 # ni toma el turno conversacional — las respuestas del cliente las maneja el
 # agente sales de chats; la atribución viaja por campaign_touches en el vault.
 agent:
@@ -51,6 +55,8 @@ agent:
       module: src.plugins.marketing.workers.campaigns
       task_queue: queue-marketing-campaigns
       workflow_classes:
+        - CampaignSendWorkflowV2
+        - CampaignSendBatchWorkflow
         - CampaignSendWorkflow
       deployment:
         replicas: 1                     # un envío de campaña a la vez

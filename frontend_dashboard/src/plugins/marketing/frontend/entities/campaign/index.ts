@@ -3,6 +3,7 @@ export type {
   CampaignGoal,
   CampaignMessage,
   CampaignPatch,
+  CampaignProgress,
   CampaignSendResult,
   CampaignSendStarted,
   CampaignStats,
@@ -31,6 +32,7 @@ export {
 } from "./model";
 export { campaignKeys } from "./keys";
 export {
+  useCampaignEvents,
   useCampaigns,
   useCampaignStats,
   useCampaignOrdersEvents,
@@ -38,6 +40,8 @@ export {
   useClearContacts,
   useCreateCampaign,
   useImportContacts,
+  usePauseCampaign,
+  useResumeCampaign,
   useSendCampaign,
   useTestSend,
   useUpdateCampaign,

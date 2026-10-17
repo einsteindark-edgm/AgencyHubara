@@ -4,20 +4,26 @@ La lógica vive en ``domain/`` (pura, sin I/O); este módulo traduce
 HTTP ↔ dominio. Auth: la aplica el loader central (`src/main.py`) al montar
 el router (require_auth salvo rutas públicas — acá no hay ninguna pública).
 """
+import asyncio
 import json
 import logging
 import re
 import time
 import uuid
+from dataclasses import asdict
 from datetime import timedelta
 from typing import Any
 
 from anyio import from_thread
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
+from temporalio.client import WorkflowExecutionStatus, WorkflowUpdateFailedError
+from temporalio.service import RPCError, RPCStatusCode
 
 from src.plugins.marketing.api.coupons import router as coupons_router
 from src.plugins.marketing.campaign_coupon import check_campaign_coupon
+from src.plugins.marketing.campaign_events import start_campaign_events, stop_campaign_events
+from src.plugins.marketing.campaign_send_store import CampaignSendStore
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
 from src.plugins.marketing.domain.campaigns import (
@@ -26,8 +32,13 @@ from src.plugins.marketing.domain.campaigns import (
     is_test_session,
     ALL_SEGMENTS,
     IMPORTED_CONTACTS_CAP,
+    STATUS_CANCELLED,
     STATUS_DRAFT,
+    STATUS_FAILED,
+    STATUS_PAUSED,
     STATUS_SCHEDULED,
+    STATUS_SENDING,
+    STATUS_SENT,
     append_campaign_touch,
     build_campaign_touch,
     campaign_stats,
@@ -40,10 +51,16 @@ from src.plugins.marketing.domain.campaigns import (
     resolve_campaign_audience,
     segment_for_metadata,
 )
+from src.plugins.marketing.domain.campaign_send import (
+    CampaignSendInput,
+    CampaignSendProgress,
+    campaign_send_result,
+)
 from src.plugins.marketing.domain.contacts import normalize_phone, parse_contacts_file
 from src.plugins.marketing.domain.coupons import coupon_terms
 from src.plugins.marketing.domain.logic import health_payload
 from src.sdk import get_task_queue
+from src.sdk.castkit import current_actor
 from src.sdk.connectorkit import (
     FilesystemAttributionStore,
     OrderFactsSnapshot,
@@ -103,6 +120,21 @@ def _require_campaign(campaign_id: str) -> dict[str, Any]:
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     return campaign
+
+
+# --- Avance en vivo -----------------------------------------------------------
+# El worker escribe el avance en el vault; la API lo muestrea y lo publica en
+# el stream del dashboard (`marketing / campaign_updated`).
+
+
+@router.on_event("startup")
+async def _start_campaign_events() -> None:
+    start_campaign_events(_store)
+
+
+@router.on_event("shutdown")
+async def _stop_campaign_events() -> None:
+    await stop_campaign_events()
 
 
 @router.get("/health")
@@ -484,7 +516,7 @@ def _validate_ready_to_send(campaign: dict[str, Any]) -> None:
 
 @router.post("/campaigns/{campaign_id}/send")
 async def send_campaign(campaign_id: str, body: SendCampaignBody) -> dict:
-    """Envía ahora o programa (start_delay Temporal) el CampaignSendWorkflow."""
+    """Envía ahora o programa (start_delay Temporal) el CampaignSendWorkflowV2."""
     campaign = _require_campaign(campaign_id)
     if campaign["status"] not in _EDITABLE_STATUSES:
         raise HTTPException(
@@ -505,18 +537,32 @@ async def send_campaign(campaign_id: str, body: SendCampaignBody) -> dict:
     # uno programado que empieza antes sirve; uno que vence antes, no.
     await _validate_campaign_coupon(campaign, at_ms=body.schedule_at_ms)
 
-    client = await get_temporal_client()
-    workflow_id = f"campaign-send-{campaign_id}"
+    previous_status = campaign["status"]
+    if body.schedule_at_ms is None:
+        # Enviándose desde YA, antes de que el workflow exista: mientras arma
+        # el plan nadie la edita, la borra ni la vuelve a enviar, y la API no
+        # pisa lo que el workflow escriba (p. ej. fallida por el cupón).
+        campaign["status"] = STATUS_SENDING
+        # La marca del V2: el panel ofrece pausar/cancelar solo a un envío
+        # que reporta avance (el workflow viejo no lo hace).
+        campaign["progress"] = asdict(CampaignSendProgress(total=0))
+        campaign["updated_at_ms"] = now
+        _store().save(campaign)
+
+    workflow_id = _send_workflow_id(campaign_id)
     try:
+        client = await get_temporal_client()
         handle = await client.start_workflow(
-            "CampaignSendWorkflow",
-            args=[campaign_id, campaign.get("name") or campaign_id],
+            "CampaignSendWorkflowV2",
+            args=[CampaignSendInput(campaign_id=campaign_id, campaign_name=campaign.get("name") or campaign_id)],
             id=workflow_id,
             task_queue=get_task_queue("marketing", "campaigns"),
             start_delay=start_delay,
         )
     except Exception as exc:  # noqa: BLE001 — superficie el error al operador
         log.warning("marketing.send: start_workflow falló: %s", exc)
+        if body.schedule_at_ms is None:
+            _restore_status(campaign_id, previous_status)
         detail = f"No pude arrancar el envío en Temporal: {exc}"
         status = 409 if "already" in str(exc).lower() else 502
         raise HTTPException(status_code=status, detail=detail) from exc
@@ -534,27 +580,54 @@ async def send_campaign(campaign_id: str, body: SendCampaignBody) -> dict:
     }
 
 
-@router.post("/campaigns/{campaign_id}/cancel")
-async def cancel_campaign(campaign_id: str) -> dict:
-    """Cancela una campaña PROGRAMADA: aborta el workflow encolado y vuelve
-    la campaña a borrador (re-programar = editar + enviar de nuevo).
+def _restore_status(campaign_id: str, status: str) -> None:
+    """El envío no arrancó: la campaña vuelve a como estaba (solo si nadie
+    la movió de `sending` mientras tanto)."""
+    store = _store()
+    campaign = store.get(campaign_id)
+    if campaign is None or campaign["status"] != STATUS_SENDING:
+        return
+    campaign["status"] = status
+    campaign["updated_at_ms"] = _now_ms()
+    store.save(campaign)
 
-    Reconciliación-lite: si Temporal ya no conoce el workflow (purga de
-    namespace, deploy), igual se resetea — el estado del vault es el que ve
-    el operador y no puede quedar `scheduled` huérfano.
+
+@router.post("/campaigns/{campaign_id}/cancel")
+async def cancel_campaign(campaign_id: str, request: Request) -> dict:
+    """Cancela una campaña PROGRAMADA o a MITAD de envío.
+
+    Programada: aborta el workflow encolado y vuelve la campaña a borrador
+    (re-programar = editar + enviar de nuevo). Reconciliación-lite: si
+    Temporal ya no conoce el workflow (purga de namespace, deploy), igual se
+    resetea — el estado del vault es el que ve el operador y no puede quedar
+    `scheduled` huérfano.
+
+    Enviándose o pausada: Update `cancel` al CampaignSendWorkflowV2 — no sale
+    ningún lote más, el que está en vuelo termina y el workflow deja la
+    campaña cancelada con lo que alcanzó a salir (nunca vuelve a borrador:
+    se podría reenviar). Si su workflow ya no corre (la campaña quedó
+    colgada), se cierra acá como fallida con el motivo.
     """
     campaign = _require_campaign(campaign_id)
+    log.info("marketing.cancel: campaña %s (%s) — %s", campaign_id, campaign["status"], current_actor(request))
+    if campaign["status"] in _IN_FLIGHT_STATUSES:
+        return await _cancel_in_flight(campaign)
     if campaign["status"] != STATUS_SCHEDULED:
         raise HTTPException(
             status_code=409,
-            detail=f"Solo se cancela una campaña programada (está {campaign['status']!r})",
+            detail=f"Solo se cancela una campaña programada o enviándose (está {campaign['status']!r})",
         )
     try:
+        # Terminate, no cancel: el workflow programado todavía no corrió nada
+        # (con cancel, el id podía quedar «corriendo» hasta la hora programada
+        # y volver a enviar el borrador daba «already started»).
         client = await get_temporal_client()
-        await client.get_workflow_handle(f"campaign-send-{campaign_id}").cancel()
+        await client.get_workflow_handle(_send_workflow_id(campaign_id)).terminate(
+            reason="Programación cancelada desde el panel"
+        )
         workflow_cancelled = True
     except Exception as exc:  # noqa: BLE001 — reset igual; queda en el log
-        log.warning("marketing.cancel: cancel del workflow falló: %s", exc)
+        log.warning("marketing.cancel: terminate del workflow programado falló: %s", exc)
         workflow_cancelled = False
 
     campaign["status"] = STATUS_DRAFT
@@ -562,6 +635,193 @@ async def cancel_campaign(campaign_id: str) -> dict:
     campaign["updated_at_ms"] = _now_ms()
     _store().save(campaign)
     return {"ok": True, "workflow_cancelled": workflow_cancelled}
+
+
+# --- Control del envío en curso (CampaignSendWorkflowV2) -------------------
+
+#: Estados en los que hay un envío en curso que el operador puede controlar.
+_IN_FLIGHT_STATUSES = {STATUS_SENDING, STATUS_PAUSED}
+_SEND_WORKFLOW_V2 = "CampaignSendWorkflowV2"
+_STUCK_SEND_REASON = (
+    "El envío ya no estaba corriendo en Temporal (se cortó antes de cerrar la "
+    "campaña); se cerró desde el panel. Lo que alcanzó a salir, salió."
+)
+
+
+def _send_workflow_id(campaign_id: str) -> str:
+    return f"campaign-send-{campaign_id}"
+
+
+async def _describe_send(campaign_id: str) -> tuple[Any, Any, str | None]:
+    """(handle, estado, tipo) del workflow de envío; estado None si Temporal
+    ya no lo conoce. Temporal caído NO es "ya no corre" (502): cerrar la
+    campaña con el envío vivo lo dejaría mandando a escondidas."""
+    try:
+        client = await get_temporal_client()
+        handle = client.get_workflow_handle(_send_workflow_id(campaign_id))
+        description = await handle.describe()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            return None, None, None
+        raise HTTPException(status_code=502, detail=f"Temporal no respondió: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 — superficie el error al operador
+        raise HTTPException(status_code=502, detail=f"Temporal no respondió: {exc}") from exc
+    return handle, description.status, description.workflow_type
+
+
+def _require_v2(workflow_type: str | None) -> None:
+    if workflow_type != _SEND_WORKFLOW_V2:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Este envío arrancó con la versión anterior: no se puede pausar ni "
+                "cancelar a mitad de camino; termina solo."
+            ),
+        )
+
+
+#: Cuánto espera la API a que el workflow responda un Update (worker caído o
+#: atrasado: el botón no queda colgado).
+_UPDATE_TIMEOUT_S = 20.0
+
+
+async def _send_update(handle: Any, update: str) -> dict:
+    for attempt in (1, 2):
+        try:
+            progress = await asyncio.wait_for(
+                handle.execute_update(update), timeout=_UPDATE_TIMEOUT_S
+            )
+            return {"ok": True, "progress": progress}
+        except WorkflowUpdateFailedError as exc:
+            reason = getattr(exc.cause, "message", None) or str(exc.cause)
+            raise HTTPException(status_code=409, detail=reason) from exc
+        except TimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    "Temporal no respondió a tiempo: el pedido puede haberse aplicado igual. "
+                    "Refresca en un momento."
+                ),
+            ) from exc
+        except RPCError as exc:
+            # Un Update que cae justo en el continue-as-new del envío: un
+            # reintento lo manda a la corrida nueva.
+            if attempt == 1:
+                log.warning("marketing.%s: update falló, reintento: %s", update, exc)
+                continue
+            raise HTTPException(status_code=502, detail=f"Temporal no respondió: {exc}") from exc
+        except Exception as exc:  # noqa: BLE001 — superficie el error al operador
+            log.warning("marketing.%s: update falló: %s", update, exc)
+            raise HTTPException(status_code=502, detail=f"Temporal no respondió: {exc}") from exc
+    raise AssertionError("inalcanzable")
+
+
+async def _control_send(campaign_id: str, update: str, *, required_status: str) -> dict:
+    campaign = _require_campaign(campaign_id)
+    if campaign["status"] != required_status:
+        raise HTTPException(
+            status_code=409,
+            detail=f"La campaña no está {_STATUS_WORDS[required_status]} (está {campaign['status']!r})",
+        )
+    if update == "resume":
+        await _coupon_still_good_for_resume(campaign)
+    handle, status, workflow_type = await _describe_send(campaign_id)
+    if status != WorkflowExecutionStatus.RUNNING:
+        raise HTTPException(
+            status_code=409, detail="El envío ya no está corriendo; cancélalo para cerrar la campaña."
+        )
+    _require_v2(workflow_type)
+    return await _send_update(handle, update)
+
+
+async def _coupon_still_good_for_resume(campaign: dict[str, Any]) -> None:
+    """Un envío pausado días: el cupón pudo vencer, pausarse o cambiar. Lo que
+    falta saldría con el mensaje viejo (variables del plan), así que no se
+    reanuda; el operador cancela y arma otra campaña."""
+    from src.sdk.connectorkit import PromotionsUnavailableError
+
+    code = (campaign.get("coupon_code") or "").strip()
+    try:
+        check = await check_campaign_coupon(get_promotions_port(), campaign, at_ms=_now_ms())
+    except PromotionsUnavailableError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"No pude validar el cupón {code} en Medusa ahora mismo — reintenta en un momento",
+        ) from e
+    if check is None:
+        return
+    if check.problem:
+        raise HTTPException(
+            status_code=422,
+            detail=f"No se puede reanudar: el cupón {check.code} {check.problem}. Cancela el envío.",
+        )
+    if any(campaign.get(k) != v for k, v in coupon_terms(check.promotion).items()):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"El cupón {check.code} cambió desde que salió el envío: lo que falta saldría "
+                "anunciando los términos viejos. Cancela el envío y arma otra campaña."
+            ),
+        )
+
+
+_STATUS_WORDS = {STATUS_SENDING: "enviándose", STATUS_PAUSED: "pausada"}
+
+
+@router.post("/campaigns/{campaign_id}/pause")
+async def pause_campaign(campaign_id: str, request: Request) -> dict:
+    """Pausa el envío en curso: el lote en vuelo termina y no sale otro hasta
+    «Reanudar». El workflow deja la campaña en `paused` al momento."""
+    log.info("marketing.pause: campaña %s — %s", campaign_id, current_actor(request))
+    return await _control_send(campaign_id, "pause", required_status=STATUS_SENDING)
+
+
+@router.post("/campaigns/{campaign_id}/resume")
+async def resume_campaign(campaign_id: str, request: Request) -> dict:
+    """Reanuda un envío pausado desde el lote siguiente (si el cupón todavía
+    sirve tal como se anunció)."""
+    log.info("marketing.resume: campaña %s — %s", campaign_id, current_actor(request))
+    return await _control_send(campaign_id, "resume", required_status=STATUS_PAUSED)
+
+
+async def _cancel_in_flight(campaign: dict[str, Any]) -> dict:
+    campaign_id = campaign["id"]
+    handle, status, workflow_type = await _describe_send(campaign_id)
+    if status == WorkflowExecutionStatus.RUNNING:
+        _require_v2(workflow_type)
+        return {**await _send_update(handle, "cancel"), "workflow_cancelled": True}
+    # El workflow ya no corre y la campaña quedó colgada: se cierra acá, con el
+    # desenlace real si lo hay y con lo que alcanzó a salir.
+    outcome, reason = STATUS_FAILED, _STUCK_SEND_REASON
+    if status == WorkflowExecutionStatus.COMPLETED:
+        summary = await handle.result()
+        finished = summary.get("outcome", STATUS_SENT) if isinstance(summary, dict) else STATUS_SENT
+        if finished in (STATUS_SENT, STATUS_CANCELLED):
+            outcome, reason = finished, None
+    elif status == WorkflowExecutionStatus.CANCELED:
+        outcome, reason = STATUS_CANCELLED, "Se canceló desde Temporal antes de cerrar la campaña."
+    closed = _close_stuck_send(campaign_id, outcome, reason)
+    return {"ok": True, "workflow_cancelled": False, "progress": (closed or {}).get("progress")}
+
+
+def _close_stuck_send(campaign_id: str, outcome: str, reason: str | None) -> dict[str, Any] | None:
+    """Relee la campaña: si el workflow la cerró mientras tanto, no se pisa."""
+    store = _store()
+    campaign = store.get(campaign_id)
+    if campaign is None or campaign["status"] not in _IN_FLIGHT_STATUSES:
+        return campaign
+    send_store = CampaignSendStore(WORKSPACE_VAULT_DIR)
+    if send_store.exists(campaign_id):
+        campaign["send_result"] = campaign_send_result(
+            send_store.find_plan(campaign_id), send_store.batches(campaign_id)
+        )
+    campaign["status"] = outcome
+    campaign["failure_reason"] = reason
+    campaign["updated_at_ms"] = _now_ms()
+    store.save(campaign)
+    send_store.remove(campaign_id)
+    log.warning("marketing.cancel: campaña %s colgada cerrada como %s", campaign_id, outcome)
+    return campaign
 
 
 #: Lo que puede traer un teléfono tecleado: dígitos, `+`, espacios y
@@ -595,6 +855,13 @@ async def test_send(campaign_id: str, body: TestSendBody) -> dict:
     como 502 con el motivo — nunca un 500 pelado.
     """
     campaign = _require_campaign(campaign_id)
+    if campaign["status"] not in _EDITABLE_STATUSES:
+        # Esperar a Meta y guardar la campaña entera podía pisar el cierre
+        # del envío real.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Campaña en estado {campaign['status']!r} — la prueba es antes de enviar",
+        )
     session_id = _session_id_for_phone(body.phone)
     if session_id is None or not _SESSION_ID_RE.fullmatch(session_id):
         raise HTTPException(
