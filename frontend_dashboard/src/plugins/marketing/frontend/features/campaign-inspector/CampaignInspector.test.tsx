@@ -238,6 +238,38 @@ describe("CampaignInspector — validación", () => {
     expect(getByText("Resultado del envío")).toBeTruthy();
     expect(getByText("197")).toBeTruthy();
   });
+
+  it("campaña fallida con envíos parciales: muestra lo que salió y lo que costó", () => {
+    statsMock.data = {
+      campaignId: "mkt-1",
+      status: "failed",
+      planned: 300,
+      sent: 120,
+      failedCount: 0,
+      skippedCount: 0,
+      unitCostUsdMicros: 12_500,
+      spentUsdMicros: 1_500_000,
+      replied: 0,
+      attributedOrders: 0,
+      attributedRevenueCop: 0,
+      optedOut: 0,
+      ordersStale: false,
+    };
+    const partial = {
+      planned: 300,
+      sent: 120,
+      failed: [],
+      skipped: [],
+      unitCostUsdMicros: 12_500,
+      spentUsdMicros: 1_500_000,
+    };
+    const { getByRole, getByText } = render(
+      <CampaignInspector campaign={makeCampaign({ status: "failed", sendResult: partial })} />,
+    );
+    fireEvent.click(getByRole("button", { name: /Validación/ }));
+    expect(getByText("Resultado del envío")).toBeTruthy();
+    expect(getByText("120")).toBeTruthy();
+  });
 });
 
 describe("CampaignInspector — audiencia", () => {

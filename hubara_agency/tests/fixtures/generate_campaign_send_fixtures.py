@@ -15,6 +15,10 @@ inventadas), activities fake, identidad del worker → `fixture-worker`:
   * `history_campaign_send_batch_v1.json` / `..._batch_failed_v1.json` — los
     dos `CampaignSendBatchWorkflow` hijos de esa corrida: el primero con un
     envío y una baja de Meta (131050), el segundo con un envío fallido.
+  * `history_campaign_send_v2_continue_as_new.json` — la primera corrida de
+    un envío que se renueva; `..._v2_cancel.json` — cancelación por Update
+    con un lote en vuelo; `..._v2_quiet_hours.json` — un lote en horario de
+    silencio: el envío espera (timer) y sigue solo.
 
     cd hubara_agency && PYTHONPATH=. uv run python \\
         tests/fixtures/generate_campaign_send_fixtures.py [out_dir]
@@ -24,6 +28,9 @@ from __future__ import annotations
 import asyncio
 import re
 import sys
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -85,10 +92,8 @@ async def _v1(env: WorkflowEnvironment, out: Path) -> None:
         await _dump(handle, out / "history_campaign_send_v1.json")
 
 
-async def _v2(env: WorkflowEnvironment, out: Path) -> None:
-    fakes = v2_tests.Fakes(
-        3, hold_batch_at=0, opted_out=frozenset({"wa_1"}), failing=frozenset({"wa_2"})
-    )
+@asynccontextmanager
+async def _v2_workers(env: WorkflowEnvironment, fakes: v2_tests.Fakes) -> AsyncIterator[None]:
     async with Worker(
         env.client,
         task_queue=QUEUE,
@@ -101,16 +106,29 @@ async def _v2(env: WorkflowEnvironment, out: Path) -> None:
         activities=[fakes.send_activity()],
         identity=_IDENTITY,
     ):
-        handle = await env.client.start_workflow(
-            CampaignSendWorkflowV2.run,
-            CampaignSendInput(campaign_id="mkt-1", campaign_name="Promo madre", batch_size=2),
-            id=v2_tests.WORKFLOW_ID,
-            task_queue=QUEUE,
-        )
+        yield
+
+
+async def _start_v2(env: WorkflowEnvironment, **over) -> WorkflowHandle:
+    return await env.client.start_workflow(
+        CampaignSendWorkflowV2.run,
+        CampaignSendInput(campaign_id="mkt-1", campaign_name="Promo madre", **over),
+        id=v2_tests.WORKFLOW_ID,
+        task_queue=QUEUE,
+    )
+
+
+async def _v2(env: WorkflowEnvironment, out: Path) -> None:
+    """Pausa y reanudación (Updates) + baja de Meta + envío fallido."""
+    fakes = v2_tests.Fakes(
+        3, hold_batch_at=0, opted_out=frozenset({"wa_1"}), failing=frozenset({"wa_2"})
+    )
+    async with _v2_workers(env, fakes):
+        handle = await _start_v2(env, batch_size=2)
         await asyncio.wait_for(fakes.holding.wait(), timeout=30)
         await handle.execute_update(CampaignSendWorkflowV2.pause)
         fakes.release.set()
-        await asyncio.wait_for(fakes.paused_recorded.wait(), timeout=30)
+        await asyncio.wait_for(fakes.batch_recorded.wait(), timeout=30)
         await handle.execute_update(CampaignSendWorkflowV2.resume)
         await handle.result()
         await _dump(handle, out / "history_campaign_send_v2.json")
@@ -123,11 +141,48 @@ async def _v2(env: WorkflowEnvironment, out: Path) -> None:
             await _dump(child, out / name)
 
 
+async def _v2_continue_as_new(env: WorkflowEnvironment, out: Path) -> None:
+    """La primera corrida de un envío que se renueva (continue-as-new)."""
+    fakes = v2_tests.Fakes(3)
+    async with _v2_workers(env, fakes):
+        handle = await _start_v2(env, batch_size=1, batches_per_run=1)
+        await handle.result()
+        first = env.client.get_workflow_handle(
+            v2_tests.WORKFLOW_ID, run_id=handle.first_execution_run_id
+        )
+        await _dump(first, out / "history_campaign_send_v2_continue_as_new.json")
+
+
+async def _v2_cancel(env: WorkflowEnvironment, out: Path) -> None:
+    """Cancelación por Update con un lote en vuelo."""
+    fakes = v2_tests.Fakes(4, hold_batch_at=2)
+    async with _v2_workers(env, fakes):
+        handle = await _start_v2(env, batch_size=2)
+        await asyncio.wait_for(fakes.holding.wait(), timeout=30)
+        await handle.execute_update(CampaignSendWorkflowV2.cancel)
+        fakes.release.set()
+        await handle.result()
+        await _dump(handle, out / "history_campaign_send_v2_cancel.json")
+
+
+async def _v2_quiet_hours(env: WorkflowEnvironment, out: Path) -> None:
+    """Un lote en horario de silencio: el envío espera (timer) y sigue solo."""
+    opens_at = int(time.time() * 1000) + 10 * 3_600_000
+    fakes = v2_tests.Fakes(4, quiet_until_at={2: opens_at})
+    async with _v2_workers(env, fakes):
+        handle = await _start_v2(env, batch_size=2)
+        await handle.result()
+        await _dump(handle, out / "history_campaign_send_v2_quiet_hours.json")
+
+
 async def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     async with await WorkflowEnvironment.start_time_skipping() as env:
         await _v1(env, out)
         await _v2(env, out)
+        await _v2_continue_as_new(env, out)
+        await _v2_cancel(env, out)
+        await _v2_quiet_hours(env, out)
 
 
 if __name__ == "__main__":

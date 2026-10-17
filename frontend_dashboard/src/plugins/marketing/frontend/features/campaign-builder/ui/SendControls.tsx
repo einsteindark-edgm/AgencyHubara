@@ -16,7 +16,11 @@ import {
   useResumeCampaign,
   type Campaign,
 } from "@plugins/marketing/frontend/entities/campaign";
-import { apiErrorDetail, fmtN } from "@plugins/marketing/frontend/lib/format";
+import {
+  apiErrorDetail,
+  fmtDateTimeMs,
+  fmtN,
+} from "@plugins/marketing/frontend/lib/format";
 
 interface Props {
   campaign: Campaign;
@@ -34,11 +38,20 @@ export function SendControls({ campaign }: Props) {
   const error = pause.error ?? resume.error ?? cancel.error;
   const busy = pause.isPending || resume.isPending || cancel.isPending;
 
+  if (progress === null) {
+    // El workflow viejo no reporta avance ni acepta pausa/cancelación.
+    return (
+      <div className="shrink-0 border-b border-line bg-sidebar/40 px-5 py-2 text-[11.5px] text-fg-muted">
+        Este envío arrancó con la versión anterior: no se puede pausar ni cancelar; termina solo.
+      </div>
+    );
+  }
+
   return (
     <div className="flex shrink-0 flex-col gap-1.5 border-b border-line bg-sidebar/40 px-5 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 flex-1 text-[11.5px] text-fg-muted">
-          {progress ? (
+          {progress.total > 0 ? (
             <>
               <span className="font-semibold tabular-nums text-fg">
                 {fmtN(progress.processed)} de {fmtN(progress.total)}
@@ -106,6 +119,14 @@ export function SendControls({ campaign }: Props) {
           </button>
         )}
       </div>
+      {paused && progress.pauseReason ? (
+        <p role="status" className="text-[11px] text-warn">
+          Se pausó sola: {progress.pauseReason}
+          {progress.resumeAtMs !== null
+            ? ` Sigue solo el ${fmtDateTimeMs(progress.resumeAtMs)}.`
+            : ""}
+        </p>
+      ) : null}
       {confirmingCancel ? (
         <p className="text-[11px] text-danger">
           No se deshace: el lote en curso termina, no sale ningún otro y la campaña queda cancelada.

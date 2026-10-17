@@ -29,6 +29,10 @@ export interface CampaignProgress {
   skipped: number;
   /** "sending" | "paused" | "cancelling" (y el desenlace al cerrar). */
   state: string;
+  /** Por qué se pausó sola; null si la pausó el operador. */
+  pauseReason: string | null;
+  /** Pausada por horario de silencio: cuándo sigue sola. */
+  resumeAtMs: number | null;
 }
 
 export type CampaignGoal = "" | "discount_general" | "discount_product" | "launch";

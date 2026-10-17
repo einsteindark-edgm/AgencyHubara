@@ -42,6 +42,10 @@ export const backendSendProgressSchema = z.object({
   opted_out: z.number().int().default(0),
   skipped: z.number().int().default(0),
   state: z.string().default("sending"),
+  /** Por qué se pausó sola (lote que falló, Meta rechazando, horario). */
+  pause_reason: z.string().nullable().default(null),
+  /** Pausada por horario de silencio: cuándo sigue sola (epoch ms). */
+  resume_at_ms: z.number().int().nullable().default(null),
 });
 
 export const backendTestSendRecordSchema = z.object({

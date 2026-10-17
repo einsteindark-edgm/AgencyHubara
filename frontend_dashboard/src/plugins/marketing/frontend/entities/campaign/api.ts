@@ -88,6 +88,8 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
             optedOut: b.progress.opted_out,
             skipped: b.progress.skipped,
             state: b.progress.state,
+            pauseReason: b.progress.pause_reason,
+            resumeAtMs: b.progress.resume_at_ms,
           },
     sendResult:
       b.send_result === null

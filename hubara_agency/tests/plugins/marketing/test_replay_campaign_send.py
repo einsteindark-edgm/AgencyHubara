@@ -67,3 +67,21 @@ async def test_a_batched_send_with_pause_and_resume_replays() -> None:
 @pytest.mark.asyncio
 async def test_each_batch_replays(fixture: str) -> None:
     await Replayer(workflows=[CampaignSendBatchWorkflow]).replay_workflow(_history(fixture))
+
+
+@pytest.mark.parametrize(
+    ("fixture", "must_have"),
+    [
+        ("history_campaign_send_v2_continue_as_new.json", "workflow_execution_continued_as_new_event_attributes"),
+        ("history_campaign_send_v2_cancel.json", "workflow_execution_update_accepted_event_attributes"),
+        ("history_campaign_send_v2_quiet_hours.json", "timer_started_event_attributes"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_other_shapes_of_a_batched_send_replay(fixture: str, must_have: str) -> None:
+    history = _history(fixture)
+    assert must_have in _event_kinds(history)
+
+    await Replayer(workflows=[CampaignSendWorkflowV2, CampaignSendBatchWorkflow]).replay_workflow(
+        history
+    )
