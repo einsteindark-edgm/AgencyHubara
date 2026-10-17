@@ -327,9 +327,10 @@ intentos (cada uno cuesta) y sin reintentar errores de programación.
     tope de 5 s (`_best_effort`), sin tareas sueltas (L-7);
   - `PhotoReads` y `use_cases/photo_reads.py`;
   - `transcribe_audio_activity`, que estaba muerta (del worker y del
-    laboratorio). El módulo queda sin registrar: sus imports de
-    `src.platform` están congelados en la allowlist P-28, bajo
-    `tests/architecture/` (ruta protegida). Borrarlo es drenar esas líneas en
+    laboratorio). El módulo queda como código muerto, sin `@activity.defn`
+    (así el gate de coherencia del worker no la exige registrada). Sus imports
+    de `src.platform` están congelados en la allowlist P-28, bajo
+    `tests/architecture/` (ruta protegida); borrarlo es drenar esas líneas en
     un PR con el label `architecture-change`.
 - La transcripción viva saca **solo su pendiente**, con un `update()` atómico. Si
   mientras tanto llegó otra nota de voz, la suya se queda.

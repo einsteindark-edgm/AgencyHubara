@@ -1,11 +1,13 @@
-"""RETIRADA — ningún worker la registra (entrada durable, fase 2).
+"""RETIRADA — ya no es una activity ni la registra ningún worker (entrada
+durable, fase 2). Código muerto a la espera de borrarse.
 
 La nota de voz se transcribe en el paso `transcribe_inbound_audio` de
-`InboundMessageWorkflow` (`IngestInboundMessage.transcribe_audio`). Ningún
-workflow agendaba esta activity. El módulo se queda solo porque sus imports de
-`src.platform` están congelados en la allowlist P-28
+`InboundMessageWorkflow` (`IngestInboundMessage.transcribe_audio`); ningún
+workflow agendaba esta activity. Sin `@activity.defn`, el gate de coherencia
+del worker (`test_spinal`) no la exige registrada. El módulo se queda solo
+porque sus imports de `src.platform` están congelados en la allowlist P-28
 (`tests/architecture/p28_platform_import_allowlist.txt`, ruta protegida):
-borrarlo exige drenar esas líneas en un PR con el label `architecture-change`.
+borrarlo es drenar esas líneas en un PR con el label `architecture-change`.
 
 Lo que hacía (histórico): transcribe audio inbound y reentry al ingest con
 texto sintético.
@@ -39,7 +41,6 @@ from src.platform.constants import WHATSAPP_SESSION_PREFIX
 from src.platform.temporal.heartbeat import with_heartbeat
 
 
-@activity.defn(name="transcribe_audio_activity")
 @with_heartbeat(every=5)
 async def transcribe_audio_activity(session_id: str) -> str:
     """Transcribe el audio pending para esta sesión y lo signal-ea al workflow.
