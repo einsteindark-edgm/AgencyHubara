@@ -20,17 +20,43 @@ queue. Detalles del comportamiento del agente se definen en
 ### Requirement: Webhook de WhatsApp inbound
 
 El sistema MUST exponer `POST /api/webhook` que reciba mensajes inbound
-de WhatsApp Cloud API y los despache a `IngestInboundMessage` use case
-en background (sin bloquear la response al cliente WhatsApp).
+de WhatsApp Cloud API y los deje en Temporal ANTES de responder 200
+(entrada durable, `docs/adr/2026-10-15-durable-inbound-entry.md`): un deploy
+o un OOM de la API MUST NOT perder un mensaje que Meta ya dio por entregado.
+El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 
 #### Scenario: Mensaje de texto válido
 
 - GIVEN un body WhatsApp Cloud bien formado con un mensaje de texto
 - WHEN `POST /api/webhook` recibe el body
 - THEN parsea con `parse_whatsapp_inbound_all` (el POST ENTERO)
-- AND devuelve `{status: "ok"}` con HTTP 200 en < 200ms
-- AND `IngestInboundMessage.execute(parsed)` se invoca en background
-- AND eventualmente arranca/signalá el workflow apropiado (sales o remarketing)
+- AND arranca `InboundMessageWorkflow` con id `inbound-<wamid>` y `REJECT_DUPLICATE` en la cola del worker `sales`, con el mensaje parseado y ya en la dirección de su conversación
+- AND recién entonces devuelve `{status: "ok"}` con HTTP 200
+- AND el workflow corre `IngestInboundMessage.execute(parsed)` en una activity (heartbeat, 5 intentos repartidos en ~3 min) que eventualmente arranca/signalea el workflow apropiado (sales o remarketing)
+
+#### Scenario: Temporal no acepta el mensaje
+
+- GIVEN Temporal no responde (o falla) al arrancar el workflow de un mensaje
+- THEN el webhook devuelve HTTP 503 (Meta reintenta el POST)
+- AND el mensaje queda `stage=enqueue_failed` con el error en el ledger
+- AND los mensajes del POST que ya habían entrado no se repiten en el reintento (los frena `REJECT_DUPLICATE`)
+- AND durante los 5 s siguientes a una falla el webhook responde 503 sin volver a probar (con Temporal colgado no se apilan webhooks de 8 s cada uno)
+- AND el `raw` de Meta NO viaja a Temporal (la historia guarda el input 30 días, en claro)
+
+#### Scenario: Meta re-entrega un mensaje que ya entró
+
+- GIVEN un `wamid` cuyo `inbound-<wamid>` ya existe en Temporal
+- THEN el webhook lo cuenta como aceptado (HTTP 200) y deja `stage=duplicate`
+- AND el mensaje no se ingiere dos veces
+
+#### Scenario: Un reintento del ingest no repite efectos
+
+- GIVEN la activity del ingest se reintenta tras ingerir parte del mensaje (el worker murió a mitad)
+- THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
+- AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: solo una caída del proceso entre el efecto y su marca lo repite)
+- AND dos intentos del mismo mensaje que se superponen avisan a la sesión UNA vez, y un intento cancelado mientras avisa termina el aviso y deja su marca
+- AND un error de programación (`TypeError`, `KeyError`…) no se reintenta
+- AND una foto cancelada antes de que arranque su lectura no deja a los textos del cliente esperándola
 
 #### Scenario: POST batcheado (varios mensajes en un mismo webhook)
 
@@ -40,9 +66,9 @@ y el resto se perdía en silencio.
 
 - GIVEN un POST con varios mensajes — en varios `entry`, varios `changes`, o varios ítems de un mismo `messages[]`
 - WHEN se procesa
-- THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por background task
-- AND en el orden en que Meta los mandó (los tasks corren en serie → dos mensajes del mismo cliente se ingieren en orden)
-- AND el fallo de un task (un ingest o un delivery status que lanza) MUST NOT impedir los siguientes: se loguea con traceback (`inbound_ingest_failed` / `delivery_status_ingest_failed`) y se sigue
+- THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por `InboundMessageWorkflow`
+- AND en el orden en que Meta los mandó: cada mensaje lleva el `wamid` del anterior del MISMO cliente en ese POST (`after`) y su workflow espera a que ese cierre (tope 2 min; si no existe o falló, sigue)
+- AND el fallo de un ingest MUST NOT impedir los siguientes (cada uno es su propio workflow); el de un delivery status (background task) tampoco: se loguea con traceback (`delivery_status_ingest_failed`) y se sigue
 - AND cada mensaje deja su desenlace en el ledger de inbound (ver "Ledger durable de inbound del webhook")
 
 #### Scenario: Body malformado
@@ -599,14 +625,20 @@ MUST NOT afectar la respuesta al webhook.
 - THEN escribe un registro `request` (`outcome=accepted`, `fields`, `n_messages`, `n_statuses`)
 - AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` — `wa_<teléfono>` o `wa_<CC><id>` si solo vino el BSUID —, `user_id` (el `from_user_id` crudo, también en los `rejected`) y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
 
+#### Scenario: el mensaje entra a Temporal
+
+- GIVEN un mensaje válido del cliente (`field=messages`)
+- WHEN el webhook lo deja en Temporal
+- THEN queda `stage=queued` (o `stage=duplicate` si ya estaba); si Temporal falló, `stage=enqueue_failed` con `error` (no es desenlace: Meta reintenta)
+
 #### Scenario: el ingest deja su desenlace
 
-- GIVEN un mensaje entregado a `IngestInboundMessage` / `IngestStandby`
+- GIVEN un mensaje entregado a `IngestInboundMessage` (activity del worker `sales`) / `IngestStandby` (background task de la API)
 - WHEN el ingest termina
 - THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error`
-- AND la excepción NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción y dejaría sin ingerir a los mensajes encolados detrás
+- AND en la activity la excepción se re-lanza (Temporal reintenta, 5 intentos); en `standby` NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción
 - AND un ítem que el parser rechaza queda `stage=rejected` con el motivo en `error` (el reporte lo cuenta como `failed`)
-- AND un `seen` sin desenlace se reporta como `lost`
+- AND un `seen` sin desenlace se reporta como `lost`, salvo que haya entrado a Temporal (`queued`/`duplicate`): entonces es `pending`, y `stuck` si a la hora del reporte lleva más de media hora así
 
 #### Scenario: un POST rechazado también deja registro
 
@@ -616,7 +648,7 @@ MUST NOT afectar la respuesta al webhook.
 #### Scenario: reporte de reconciliación
 
 - WHEN el operador corre `python -m src.plugins.chats.agent.sales.inbound_ledger_report --from D --to D`
-- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed` y `lost`, con los teléfonos enmascarados salvo `--full`
+- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed`, `lost`, `pending` (en Temporal sin desenlace) y `stuck` (así hace más de media hora), con los teléfonos enmascarados salvo `--full`
 
 ### Requirement: Cupones de descuento validados contra Medusa
 

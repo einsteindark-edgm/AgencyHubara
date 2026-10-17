@@ -24,7 +24,9 @@ isinstance check).
 """
 from __future__ import annotations
 
+import asyncio
 import copy
+import hashlib
 import re
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
@@ -320,6 +322,19 @@ async def catalog_gap_note_for(
     return catalog_gap_note(verdict.value)
 
 
+class InboundEffectsPort(Protocol):
+    """Lo que un reintento del ingest no repite, por `wamid` (ADR 2026-10-15
+    §6, `inbound_effects_store.py`): se `claim`-ea antes de un envío al
+    cliente y se `mark`-ea después de escribir el historial o avisar a la
+    sesión."""
+
+    def claim(self, wamid: str, effect: str) -> bool: ...
+
+    def done(self, wamid: str, effect: str) -> bool: ...
+
+    def mark(self, wamid: str, effect: str) -> None: ...
+
+
 class PhotoIdentifierPort(Protocol):
     """Qué producto nuestro es la foto (``use_cases/photo_product``)."""
 
@@ -332,6 +347,10 @@ class PhotoIdentifierPort(Protocol):
 #: (`done=False`) o la foto ya entró al bot (`done=True`). Texto antes de la
 #: foto (2026-09-30): el workflow espera la foto en la misma ráfaga.
 PhotoNotifier = Callable[[str, str, bool], Awaitable[None]]
+
+#: Avisos a la sesión en vuelo (`_deliver_turn_once`): referencia fuerte para que
+#: uno que sigue tras cancelarse el intento no lo recoja el GC (L-7).
+_IN_FLIGHT: set[asyncio.Future[None]] = set()
 
 
 class IngestInboundMessage:
@@ -355,8 +374,13 @@ class IngestInboundMessage:
         photo_wait_s: float = PHOTO_WAIT_MAX_S,
         photo_notifier: PhotoNotifier | None = None,
         order_facts: OrderFactsReader | None = None,
+        effects: InboundEffectsPort | None = None,
     ) -> None:
         self._history_store = history_store
+        # Entrada durable (ADR 2026-10-15): el ingest corre en una activity con
+        # reintentos; lo que un reintento no puede repetir queda marcado por
+        # `wamid`. Sin él (tests, laboratorio), todo sale como siempre.
+        self._effects = effects
         # Los datos reales de un pedido (OrderFacts): el cliente que escribe
         # justo después de comprar abre el episodio en post-venta, con la etapa
         # y el pago del pedido (caso pedido #64). Sin él, la nota de siempre.
@@ -368,6 +392,8 @@ class IngestInboundMessage:
         # Las fotos de cada cliente que se están leyendo: sus mensajes esperan
         # a que la foto entre al bot (ráfaga partida, 2026-09-30).
         self._photo_reads = PhotoReads()
+        # Un candado por wamid mientras se avisa a la sesión (`_deliver_turn_once`).
+        self._turn_locks: dict[str, asyncio.Lock] = {}
         self._photo_wait_s = photo_wait_s
         # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
         # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
@@ -1083,11 +1109,11 @@ class IngestInboundMessage:
                 "voice": (parsed.audio or {}).get("voice", False),
             }
             self._safe_write_metadata(session_id, metadata, base)
-            # HU-002 / A.5: spawn background transcription task. El HTTP layer
-            # tiene permiso de I/O (ya llama Temporal client), así que la
-            # transcripción puede correr ahí — más simple que un workflow
-            # dedicado, y el media URL de Meta expira a los 5min así que no
-            # podemos demorar.
+            # HU-002 / A.5: spawn background transcription task (en el proceso
+            # que corre el ingest: el worker `sales` desde la entrada durable).
+            # Los 5 min de Meta son de la URL firmada, no del `media_id`: cada
+            # descarga lo vuelve a resolver (ADR 2026-10-15 §5). La fase 2 la
+            # vuelve una activity.
             #
             # PREMORTEM #2: spawn safe — captura excepciones y las loguea.
             _spawn_safe(
@@ -1125,13 +1151,22 @@ class IngestInboundMessage:
             }
             self._safe_write_metadata(session_id, metadata, base)
             self._photo_reads.begin(session_id)
-            # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
-            await self._notify_photo(session_id, parsed.message_id, done=False)
-            _spawn_safe(
-                self._read_photo(parsed, session_id),
-                label="vision.describe_and_reenter",
-                session_id=session_id,
-            )
+            reading = False
+            try:
+                # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
+                await self._notify_photo(session_id, parsed.message_id, done=False)
+                _spawn_safe(
+                    self._read_photo(parsed, session_id),
+                    label="vision.describe_and_reenter",
+                    session_id=session_id,
+                )
+                reading = True
+            finally:
+                # Cancelado antes de lanzar la lectura (la activity se apagó): nadie
+                # va a llamar `end()` y los textos del cliente esperarían esta foto
+                # para siempre (premortem PM-006).
+                if not reading:
+                    self._photo_reads.end(session_id)
             return
 
         # --- 5. Sin texto efectivo: ignorar pero loguear ---
@@ -1235,11 +1270,8 @@ class IngestInboundMessage:
             # no, nadie tendría el caso (octava revisión).
             if notify_client:
                 try:
-                    from src.platform.whatsapp import client as wa_client
-
-                    await wa_client.send_message(
-                        parsed.phone_number_id,
-                        parsed.from_number,
+                    await self._send_once(
+                        parsed,
                         "Recibí tu documento 🤍. Un colega del equipo lo "
                         "revisa y te confirma enseguida.",
                     )
@@ -1274,7 +1306,10 @@ class IngestInboundMessage:
             **_build_reply_kwargs(parsed, metadata, events_before),
             **_late_delivery_kwargs(sent_ms, now_ms, arrived_after_window),
         }
-        if persisted_document_url:
+        # Un reintento de la entrada no duplica la línea del cliente en el panel.
+        if self._effect_done(parsed, "history"):
+            logger.info("inbound_history_already_written", session=session_id, wamid=parsed.message_id)
+        elif persisted_document_url:
             self._history_store.append_user_event(
                 session_id,
                 effective.text,
@@ -1283,6 +1318,7 @@ class IngestInboundMessage:
                 document_filename=effective.document_filename,
                 **reply_kwargs,
             )
+            self._mark_effect(parsed, "history")
         else:
             self._history_store.append_user_event(
                 session_id,
@@ -1290,6 +1326,7 @@ class IngestInboundMessage:
                 image_url=persisted_image_url,
                 **reply_kwargs,
             )
+            self._mark_effect(parsed, "history")
 
         # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
         # Solo la respuesta del formulario (`nfm_reply`) termina la espera de
@@ -1442,40 +1479,102 @@ class IngestInboundMessage:
             turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
         if previous_episode is not None:
             turn_message = with_previous_episode(previous_episode, turn_message)
-        await self._load_session.execute(
-            session_id=session_id,
-            message=turn_message,
-            phone_number_id=parsed.phone_number_id,
-            **route_kwargs,
-            # Traza v2 (plan del laboratorio, PR 3): wamid, hora y tipo del
-            # mensaje; el workflow arma `inbound[]` de la ráfaga con esto. El
-            # texto crudo (sin la campaña citada ni el episodio anterior) es lo
-            # que lee el clasificador de las capas nuevas (PR 14).
-            inbound_meta={**_inbound_meta(parsed), "text": effective.text},
-            extra_context=[
-                note
-                for note in (
-                    campaign_reply_note,
-                    episode_boundary_note,
-                    deferral_note,
-                    web_cart_note,
-                    web_product_note,
-                    order_draft_note,
-                    coupon_note,
-                    photo_facts_note,
-                    photo_note,
-                    photo_citation_note,
-                    cart_note,
-                    gap_note,
-                )
-                if note
-            ]
-            or None,
+        await self._deliver_turn_once(
+            parsed,
+            session_id,
+            lambda: self._load_session.execute(
+                session_id=session_id,
+                message=turn_message,
+                phone_number_id=parsed.phone_number_id,
+                **route_kwargs,
+                # Traza v2 (plan del laboratorio, PR 3): wamid, hora y tipo del
+                # mensaje; el workflow arma `inbound[]` de la ráfaga con esto. El
+                # texto crudo (sin la campaña citada ni el episodio anterior) es lo
+                # que lee el clasificador de las capas nuevas (PR 14).
+                inbound_meta={**_inbound_meta(parsed), "text": effective.text},
+                extra_context=[
+                    note
+                    for note in (
+                        campaign_reply_note,
+                        episode_boundary_note,
+                        deferral_note,
+                        web_cart_note,
+                        web_product_note,
+                        order_draft_note,
+                        coupon_note,
+                        photo_facts_note,
+                        photo_note,
+                        photo_citation_note,
+                        cart_note,
+                        gap_note,
+                    )
+                    if note
+                ]
+                or None,
+            ),
         )
 
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    def _effect_done(self, parsed: WhatsAppMessage, effect: str) -> bool:
+        """¿Un intento anterior de la entrada ya hizo este efecto con este mensaje?"""
+        return self._effects is not None and self._effects.done(parsed.message_id, effect)
+
+    def _mark_effect(self, parsed: WhatsAppMessage, effect: str) -> None:
+        if self._effects is not None:
+            self._effects.mark(parsed.message_id, effect)
+
+    async def _deliver_turn_once(
+        self, parsed: WhatsAppMessage, session_id: str, deliver: Callable[[], Awaitable[None]]
+    ) -> None:
+        """El mensaje a la sesión de ventas, UNA vez por wamid (un reintento de
+        la entrada no hace que el bot conteste dos veces; la sesión V2 no
+        deduplica por wamid). Premortem PM-003:
+
+        - dos intentos del mismo mensaje que se superponen (un heartbeat vencido
+          con el primero vivo) pasan de a uno: el segundo ve la marca y no avisa;
+        - un intento cancelado mientras avisa (el worker se apaga) termina el
+          aviso y deja la marca: lo que ya salió hacia Temporal no se repite.
+        """
+        if self._effects is None:
+            await deliver()
+            return
+        wamid = parsed.message_id
+        lock = self._turn_locks.setdefault(wamid, asyncio.Lock())
+        try:
+            async with lock:
+                if self._effect_done(parsed, "turn"):
+                    logger.info("inbound_turn_already_delivered", session=session_id, wamid=wamid)
+                    return
+
+                async def deliver_and_mark() -> None:
+                    await deliver()
+                    self._mark_effect(parsed, "turn")
+
+                delivery = asyncio.ensure_future(deliver_and_mark())
+                # Referencia fuerte mientras corre (L-7): si el intento se
+                # cancela, el aviso sigue hasta terminar y dejar su marca.
+                _IN_FLIGHT.add(delivery)
+                delivery.add_done_callback(_IN_FLIGHT.discard)
+                await asyncio.shield(delivery)
+        finally:
+            if not lock.locked():
+                self._turn_locks.pop(wamid, None)
+
+    async def _send_once(self, parsed: WhatsAppMessage, text: str) -> None:
+        """Un envío directo al cliente, una vez por mensaje y texto. Se reclama
+        ANTES de enviar: un reintento de la entrada no lo repite, y si el
+        proceso muere entre el reclamo y el envío el cliente se queda sin esa
+        cortesía (nunca la recibe dos veces)."""
+        fingerprint = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+        if self._effects is not None and not self._effects.claim(parsed.message_id, f"send:{fingerprint}"):
+            logger.info("inbound_send_already_done", wamid=parsed.message_id, fingerprint=fingerprint)
+            return
+        from src.platform.whatsapp import client as wa_client
+
+        await wa_client.send_message(parsed.phone_number_id, parsed.from_number, text)
 
     async def _read_inbound(self, inbound: Inbound) -> Any:
         """Las lecturas del cliente con el proveedor inyectado o el del motor.
@@ -2192,7 +2291,6 @@ class IngestInboundMessage:
         """
         from src.platform.audio.composition import get_audio_transcription_port
         from src.platform.audio.dtos import TranscriptionRequest
-        from src.platform.whatsapp import client as wa_client
 
         audio_info = parsed.audio or {}
         media_id = audio_info.get("id")
@@ -2285,11 +2383,7 @@ class IngestInboundMessage:
                         "Recibí tu audio pero no logré entenderlo bien. "
                         "¿Me lo escribes en un mensaje? 🤍"
                     )
-                await wa_client.send_message(
-                    parsed.phone_number_id,
-                    parsed.from_number,
-                    fallback,
-                )
+                await self._send_once(parsed, fallback)
             except Exception:  # noqa: BLE001
                 pass
             return
@@ -2354,7 +2448,6 @@ class IngestInboundMessage:
         """
         from src.platform.vision.composition import get_image_vision_port
         from src.platform.vision.dtos import VisionRequest
-        from src.platform.whatsapp import client as wa_client
 
         media = parsed.media or {}
         media_id = media.get("id")
@@ -2490,9 +2583,8 @@ class IngestInboundMessage:
                 reason_category="PAYMENT_VERIFICATION_PENDING",
             )
             try:
-                await wa_client.send_message(
-                    parsed.phone_number_id,
-                    parsed.from_number,
+                await self._send_once(
+                    parsed,
                     "¡Perfecto! Recibimos tu comprobante 🤍. Tu pedido pasa a "
                     "elaboración y cuando lo tengamos listo te informamos el "
                     "despacho.",
@@ -3169,8 +3261,10 @@ def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:
     Acá envolvemos la coro en un wrapper que catchea todo, loguea
     estructurado (con label + session_id para correlación), y descarta.
 
-    Pattern usado en HTTP layer del ingest (no en activities Temporal —
-    las activities ya tienen su propio retry policy + logging).
+    Pattern usado por el ingest para la visión y el audio. Desde la entrada
+    durable (ADR 2026-10-15) el ingest corre en una activity del worker
+    `sales`: estas tasks siguen fuera de Temporal (si el proceso muere, se
+    pierden, como antes en la API). La fase 2 las vuelve activities.
     """
     import asyncio
 

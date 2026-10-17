@@ -122,6 +122,13 @@ from src.plugins.chats.agent.sales.workflows.sales_session import (
 from src.plugins.chats.agent.sales.workflows.sales_session_v2 import (
     HubaraSalesSessionWorkflowV2,
 )
+from src.plugins.chats.agent.sales.workflows.inbound_message import (
+    InboundMessageWorkflow,
+)
+from src.plugins.chats.agent.sales.activities.inbound_entry import (
+    ingest_inbound_message_activity,
+    wait_inbound_predecessor_activity,
+)
 from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES,
@@ -134,6 +141,16 @@ from src.plugins.chats.agent.sales.decisions.egress_activities import (
 # V2 al lado; el registro de bots arranca uno u otro POR NOMBRE. Constante de
 # módulo para que el sandbox del laboratorio registre las mismas clases.
 SALES_WORKFLOWS = [HubaraSalesSessionWorkflow, HubaraSalesSessionWorkflowV2]
+
+# Entrada durable (ADR 2026-10-15): el webhook deja cada mensaje del cliente en
+# Temporal (`inbound-<wamid>`) y ESTE worker lo ingiere — el mismo `.env`, el
+# mismo vault y el mismo proceso que ya le habla a la sesión, sin un contenedor
+# más en la caja de 4 GB. Listas aparte: el sandbox del laboratorio registra
+# solo las de la sesión (`SALES_WORKFLOWS` / `SALES_ACTIVITIES`).
+# Invariante de la fase 1: este worker corre como UNA réplica (`PhotoReads` y
+# la lectura de fotos/audios viven en memoria del proceso).
+INBOUND_WORKFLOWS = [InboundMessageWorkflow]
+INBOUND_ACTIVITIES = [ingest_inbound_message_activity, wait_inbound_predecessor_activity]
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
@@ -606,8 +623,8 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=SALES_WORKFLOWS,
-        activities=SALES_ACTIVITIES,
+        workflows=[*SALES_WORKFLOWS, *INBOUND_WORKFLOWS],
+        activities=[*SALES_ACTIVITIES, *INBOUND_ACTIVITIES],
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough
         # o rompe con RestrictedWorkflowAccessError. Ver otel_workflow_runner.

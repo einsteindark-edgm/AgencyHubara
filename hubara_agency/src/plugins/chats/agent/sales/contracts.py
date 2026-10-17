@@ -15,6 +15,7 @@ pueda preservar el contador entre runs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -82,3 +83,30 @@ class HandoffReply:
     customer_text: str
     wamids: list[str]
     ts_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class InboundMessageInput:
+    """Input del `InboundMessageWorkflow` (entrada durable, ADR 2026-10-15).
+
+    Campos:
+      * `message`: el `WhatsAppMessage` como dict (`dataclasses.asdict`), tal
+        como lo dejó el webhook: parseado y con la dirección de su conversación
+        (`_in_their_conversation`), SIN el `raw` de Meta: el ingest no lo lee
+        y la historia de Temporal Cloud guarda el input 30 días, en claro.
+      * `after`: `wamid` del mensaje anterior del MISMO cliente en el mismo
+        POST. El workflow espera a que ese termine antes de ingerir este (el
+        orden que antes daban los background tasks en serie).
+      * `received_at_ms`: cuándo llegó al webhook (para medir la espera en
+        Temporal; la fase 2 lo usa como reloj del ingest).
+    """
+
+    message: dict[str, Any]
+    after: str | None = None
+    received_at_ms: int = 0
+
+
+def inbound_workflow_id(wamid: str) -> str:
+    """Id del workflow de entrada de un mensaje: con `REJECT_DUPLICATE`, una
+    re-entrega de Meta del mismo `wamid` no entra dos veces."""
+    return f"inbound-{wamid}"

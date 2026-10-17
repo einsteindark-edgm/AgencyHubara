@@ -193,6 +193,7 @@ services:
     - MEDUSA_DEFAULT_SHIPPING_OPTION_ID=${MEDUSA_DEFAULT_SHIPPING_OPTION_ID}
     - MEDUSA_DEFAULT_CURRENCY=${MEDUSA_DEFAULT_CURRENCY:-cop}
     - MEDUSA_DEFAULT_COUNTRY=${MEDUSA_DEFAULT_COUNTRY:-co}
+    - MEDUSA_PUBLISHABLE_API_KEY=${MEDUSA_PUBLISHABLE_API_KEY}
     - ENABLED_PLUGINS=ads,agents_admin,catalog,chats,eta,lab,marketing,mba,order_sentinel,orders,reengagement,system_map
     - EXOCLAW_STATE_DIR=/app/hubara_vault/agent_state
     volumes:

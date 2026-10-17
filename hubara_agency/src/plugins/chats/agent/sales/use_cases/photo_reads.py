@@ -8,9 +8,10 @@ foto y la foto entraba como otro turno (2026-09-30). El ingest retiene los
 mensajes del cliente mientras se lee una foto suya (`wait`), con tope: si la
 visión se cuelga, el mensaje sale igual.
 
-En memoria: la foto se lee en el mismo proceso de la API que recibió el
-webhook (un solo proceso en producción). Si el proceso se reinicia, no queda
-nada que esperar y el mensaje sale al instante, como antes.
+En memoria: la foto se lee en el mismo proceso que corre el ingest — el
+worker `sales` desde la entrada durable (ADR 2026-10-15), una sola réplica en
+producción. Si el proceso se reinicia, no queda nada que esperar y el mensaje
+sale al instante, como antes. La fase 2 del ADR lo vuelve estado de un workflow.
 """
 from __future__ import annotations
 
