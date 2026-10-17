@@ -275,6 +275,11 @@ WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID", "")
 # /hubara/<tenant>/ (no son secretos: son ids públicos del pool/app client).
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
 COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "")
+# App clients M2M (client_credentials) de Cognito aceptados por la API, coma-separados.
+# Cada uno pasa SOLO con un scope que autorice el método+ruta (ver `auth._M2M_SCOPE_RULES`):
+# hoy `hubara-api/ads.read` = GET /api/ads/* (el Hubara Agent Gateway). Vacío = deshabilitado.
+# No es secreto (son ids públicos); en prod viene de SSM /hubara/<tenant>/.
+COGNITO_M2M_CLIENT_IDS = os.getenv("COGNITO_M2M_CLIENT_IDS", "")
 # Bearer de SERVICIO para llamadas machine-to-machine a la API (workers → API,
 # ej. el executor de order-sentinel — un worker no tiene request entrante del
 # cual portar identidad, castkit no aplica). Vacío = deshabilitado (el camino
