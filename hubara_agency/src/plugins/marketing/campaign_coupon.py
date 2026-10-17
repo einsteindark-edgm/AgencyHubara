@@ -52,6 +52,11 @@ async def check_campaign_coupon(
     if allow_not_started and resolution.reason == "not_started" and starts_at is not None:
         # Lo demás (vencido, agotado, reglas ilegibles) se juzga en su inicio.
         resolution = resolve_coupon(code, promotions, now_ms=starts_at)
+    if resolution.ok and getattr(resolution.promotion, "granted_only", False):
+        # Cupón personal (premortem C6): una campaña no lo puede anunciar.
+        return CampaignCouponCheck(
+            code, resolution.promotion, campaign_coupon_problem("granted_only", resolution.promotion)
+        )
     if resolution.ok:
         return CampaignCouponCheck(code, resolution.promotion, None)
     problem = campaign_coupon_problem(resolution.reason, resolution.promotion, scheduled=scheduled)

@@ -126,3 +126,33 @@ techo), `tests/platform/test_reengagement_ladder.py` (`max_steps`, la mañana
 siguiente), `tests/platform/test_record_remarketing_touch_activity.py`,
 `tests/infra/test_remarketing_frequency_terraform.py` (el techo nace en
 Terraform) y `infra/terraform/platform/tests/lab_config.tftest.hcl`.
+
+## Mensajes interactivos dentro de la ventana y botones FLOW en plantillas
+
+Reseñas tras la entrega (2026-10-13). Dentro de la ventana de 24 h un plugin
+puede abrir un WhatsApp Flow o mandar un botón con enlace como mensaje normal,
+con historial del chat y log de salientes:
+
+```python
+from src.sdk.messagingkit import (
+    InteractiveCTAUrlOutbound, InteractiveFlowOutbound,
+    send_cta_url_to_session, send_flow_to_session,
+)
+await send_flow_to_session(sid, InteractiveFlowOutbound(flow_id=..., flow_token=..., flow_cta="Calificar mi pedido",
+                           flow_action_screen="RATING", header_media_id=media_id), history_text="…",
+                           sender="reviews")
+await send_cta_url_to_session(sid, InteractiveCTAUrlOutbound(body="…", button_text="Opinar en Google", url="https://…"),
+                              sender="reviews")
+```
+
+En el historial del chat quedan como **aviso** (`kind: "notice"`, `sender`: quien
+lo manda; por defecto `"aviso"`), no como mensaje del bot: el LLM no los tiene en
+su historial, así que el turno siguiente los cita (`episode_memory.unseen_notices`).
+Un «¡Gracias!» a un aviso sigue siendo un acuse (no abre conversación).
+
+Fuera de la ventana Meta los rechaza (131047): el caller cae a una plantilla. Las
+plantillas pueden declarar `buttons: [{type: flow, text, navigate_screen}]` en
+`catalog.yaml`; `send_template_to_session(…, flow_token=…, flow_action_data=…)`
+llena el botón (el token entra al fingerprint de idempotencia). La CLI de
+aprovisionamiento arma el botón con el id del Flow PUBLICADO (`flow_name`).
+

@@ -992,3 +992,19 @@ async def test_detail_item_exposes_the_color_and_aroma_of_the_line(adapter):
         "metadata": {"handle": "cubo-love", "color": "Rosado", "aroma": "Café"},
     })
     assert (it.color, it.aroma) == ("Rosado", "Café")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_carries_the_medusa_product_id(adapter):
+    """Reseñas tras la entrega (2026-10-13): la calificación del pedido se
+    publica en la ficha de CADA producto en Medusa, por su product_id."""
+    it = await _detail_item(adapter, {"product_id": "prod_01DZ"})
+    assert it.product_id == "prod_01DZ"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_without_product_id_is_none(adapter):
+    it = await _detail_item(adapter, {})
+    assert it.product_id is None

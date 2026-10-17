@@ -445,10 +445,12 @@ class TestSendTemplateEpisodeEdgeCases:
         assert metadata["last_outbound"]["wa_message_id"] == "wamid.X"
 
     @pytest.mark.asyncio
-    async def test_closed_episode_does_not_get_log_entry(
+    async def test_closed_episode_records_the_template_as_sent_after_close(
         self, isolated_vault, monkeypatch
     ):
-        """Episodio cerrado: NO contaminamos su outbound_messages."""
+        """Episodio cerrado (premortem C7, reseñas 2026-10-13): la plantilla que
+        sale después (aviso del ETA, invitación a calificar) va a ese episodio
+        marcada `after_close` — si no, su costo no aparecía en ninguna parte."""
         session_id = "wa_5491111111111"
         _write_metadata(
             isolated_vault,
@@ -485,10 +487,9 @@ class TestSendTemplateEpisodeEdgeCases:
         )
 
         metadata = _read_metadata(isolated_vault, session_id)
-        # Episode cerrado NO se tocó.
-        assert "outbound_messages" not in metadata["episodes"][0]
-        assert "cost_summary" not in metadata["episodes"][0]
-        # last_outbound sí se actualizó.
+        [entry] = metadata["episodes"][0]["outbound_messages"]
+        assert entry["wa_message_id"] == "wamid.X" and entry["after_close"] is True
+        assert metadata["episodes"][0]["cost_summary"]["messages_pending_count"] == 1
         assert metadata["last_outbound"]["wa_message_id"] == "wamid.X"
 
 

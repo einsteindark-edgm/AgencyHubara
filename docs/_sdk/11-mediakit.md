@@ -43,3 +43,11 @@ derive_image_label("https://assets.hubara.com.co/img1.webp")            # None
 
 `None` significa "este filename no nombra un diseño" — el caller NO inventa
 una etiqueta en su lugar.
+
+## Descargar un medio entrante: `fetch_media_bytes`
+
+`await fetch_media_bytes(media_id, max_bytes=…)` → `(bytes, mime)` o `None`: la
+foto que el cliente sube en un formulario (PhotoPicker del Flow de calificación,
+plugin `reviews`). Reintenta transitorios; `max_bytes` corta archivos enormes
+antes de bajarlos.
+

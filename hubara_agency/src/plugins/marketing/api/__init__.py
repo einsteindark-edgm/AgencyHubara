@@ -410,8 +410,13 @@ async def list_promotions() -> dict:
         log.warning("marketing: no pude leer promociones de Medusa: %s", e)
         return {"promotions": [], "unavailable": True}
     now_ms = _now_ms()
+    # Un cupón personal (`granted_only`: el agradecimiento por calificar) no
+    # se anuncia en una campaña (premortem C6): solo lo usa quien lo recibió.
     promotions = [
-        p for p in promotions if coupon_problem(p, now_ms=now_ms) in (None, "not_started")
+        p
+        for p in promotions
+        if coupon_problem(p, now_ms=now_ms) in (None, "not_started")
+        and not getattr(p, "granted_only", False)
     ]
     return {
         "promotions": [

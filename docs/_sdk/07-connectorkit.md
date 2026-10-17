@@ -278,6 +278,51 @@ Quién lo usa:
 - `apply_coupon` / `list_promotions`: unidades que quedan, agotado y falla cerrada.
 - `present_order_confirmation` / `register_order` y "Crear pedido" (`chats/api/session_actions.py`, `order_intake.py`): reparto por unidad, `quota_changed` y `coupon_quota_id` en la línea.
 
+## Cupones personales: `CouponGrantsStore` (uno por persona, un uso, con vencimiento)
+
+**Qué soluciona.** El agradecimiento por calificar un pedido (plugin `reviews`,
+2026-10-13) es un cupón que solo puede usar quien lo recibió, una vez y antes de
+que venza. Medusa no limita por persona ni cuenta usos de pedidos borrador (los
+del bot), así que la concesión vive en Hubara.
+
+**Cómo funciona.** El cupón se crea una vez en la central con la condición
+`granted_only` (`CouponConditions`, `_promotions/conditions/<CÓDIGO>.json`):
+`ConditionedPromotionsPort` la pega en `PromotionDTO.granted_only`. Cada
+concesión va a `_promotions/grants/<sesión>.json` (`VaultCouponGrantsStore`,
+`flock`), idempotente por `(código, referencia)`. `resolve_coupon_application(…,
+has_grant=…)` rechaza con `not_granted` a quien no la tiene y con
+`grant_unknown` si no se puede leer o la puerta no tiene wiring (falla cerrada,
+L-32). `register_order` (bot y «Crear pedido») gasta la concesión.
+
+**Cómo se usa.**
+
+```python
+from src.sdk.connectorkit import CouponGrant, get_coupon_grants_store
+
+grants = get_coupon_grants_store()
+grants.grant(CouponGrant(code="GRACIAS5", session_id=sid, percent=5, granted_at_ms=now,
+                         expires_at_ms=now + 60 * DAY, source="review", reference=order_id))
+grants.active(sid, "GRACIAS5", now)      # la vigente o None
+grants.mark_used(sid, "GRACIAS5", order_id, now)
+```
+
+Doble oficial: `FakeCouponGrantsStore` (mismo contrato; test de contrato en
+`tests/platform/promotions/test_coupon_grants.py`).
+
+## Reseñas de producto: `ProductReviewsPort` (Medusa `productReview`)
+
+**Qué soluciona.** Publicar en la tienda web las reseñas que el equipo aprueba.
+El módulo vive en el backend de Medusa (`src/modules/product-review`): admin
+`POST /admin/product-reviews` (upsert por `external_id`) y rutas públicas que lee
+la tienda (`/store/products/:id/reviews`, `/store/product-reviews/summary`).
+
+**Cómo se usa.** `get_product_reviews_port()` → `upsert(ProductReviewInput)` (una
+fila por producto; fecha ISO con zona; cuerpos estrictos) y
+`upload_photo(nombre, bytes, mime)` → URL en R2. Sin Medusa configurado o con el
+módulo sin desplegar levanta `ProductReviewsUnavailableError` con un texto para
+el operador (un 404 sugiere desplegar el módulo y correr su migración); nunca un
+éxito falso. Doble oficial: `FakeProductReviews`.
+
 ## Percepción: `PerceptionPort` (el oráculo del motor de decisiones)
 
 Preguntas **cerradas y tipadas** sobre una conversación, respondidas por Jev

@@ -44,7 +44,12 @@ from src.platform.whatsapp.cost import (
     add_outbound_to_summary,
     empty_episode_cost_summary,
 )
-from src.platform.whatsapp.dtos import CarouselCard, OutboundResult
+from src.platform.whatsapp.dtos import (
+    CarouselCard,
+    InteractiveCTAUrlOutbound,
+    InteractiveFlowOutbound,
+    OutboundResult,
+)
 from src.platform.whatsapp.quiet_hours import allowed_hours, is_quiet_hours_for_session, resolve_local_timezone
 from src.platform.whatsapp.templates.registry import (
     TemplateSpec,
@@ -566,6 +571,108 @@ async def send_photo_message_to_session(
     return result
 
 
+#: Quién manda un aviso que no escribió el bot (Flow / botón con enlace dentro
+#: de la ventana), si quien llama no lo dice: `kind: notice` en el historial.
+NOTICE_SENDER = "aviso"
+
+
+async def send_flow_to_session(
+    session_id: str,
+    flow: InteractiveFlowOutbound,
+    *,
+    history_text: str,
+    image_url: str | None = None,
+    sender: str = NOTICE_SENDER,
+) -> OutboundResult:
+    """Abre un WhatsApp Flow como mensaje NORMAL (dentro de la ventana 24h).
+
+    Fuera de la ventana Meta lo rechaza (131047): el caller cae a una plantilla
+    con botón FLOW. Si Meta lo aceptó, queda en el log de salientes del
+    episodio y en el historial del chat (`history_text`, con la foto del
+    encabezado en `image_url` si la hubo).
+    """
+    phone_number_id, to = _interactive_destination(session_id)
+    result = await whatsapp_client.send_flow(phone_number_id, to, flow)
+    if result.ok:
+        _record_interactive(session_id, result, history_text, image_url, sender=sender)
+    return result
+
+
+async def send_cta_url_to_session(
+    session_id: str, cta: InteractiveCTAUrlOutbound, *, sender: str = NOTICE_SENDER
+) -> OutboundResult:
+    """Texto + un botón con enlace como mensaje NORMAL (dentro de la ventana).
+    `sender`: quién lo manda (el historial lo marca como aviso, no del bot)."""
+    phone_number_id, to = _interactive_destination(session_id)
+    result = await whatsapp_client.send_cta_url(phone_number_id, to, cta)
+    if result.ok:
+        _record_interactive(
+            session_id, result, f"{cta.body}\n[{cta.button_text}] {cta.url}", None, sender=sender
+        )
+    return result
+
+
+def _interactive_destination(session_id: str) -> tuple[str, str]:
+    phone_number_id = os.getenv("WHATSAPP_PHONE_NUMBER_ID") or ""
+    metadata = _read_metadata(session_id)
+    phone_number_id = metadata.get("phone_number_id", phone_number_id)
+    if not phone_number_id:
+        raise RuntimeError("WHATSAPP_PHONE_NUMBER_ID not configured")
+    return phone_number_id, session_id.replace(WHATSAPP_SESSION_PREFIX, "")
+
+
+def _record_interactive(
+    session_id: str,
+    result: OutboundResult,
+    history_text: str,
+    image_url: str | None,
+    *,
+    sender: str = NOTICE_SENDER,
+) -> None:
+    log_entry = OutboundLogEntry(
+        sent_at_ms=_now_ms(),
+        wa_message_id=result.wa_message_id or "",
+        kind="interactive",
+        template_name=None,
+        pricing=None,
+        cost_usd_micros=None,
+        rate_card_version=None,
+    )
+
+    def _record(fresh: dict[str, Any]) -> dict[str, Any] | None:
+        if not fresh:
+            # Lectura fresca vacía: no pisar la metadata con un dict vacío.
+            log.error("interactive outbound log skipped: empty metadata", session_id=session_id)
+            return None
+        _append_outbound_to_active_episode(fresh, log_entry)
+        fresh["last_outbound"] = asdict(log_entry)
+        return fresh
+
+    _update_metadata(session_id, _record)
+    history_path = WORKSPACE_VAULT_DIR / session_id / "sessions" / f"{session_id}.jsonl"
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        # Aviso, no del bot (premortem C5): con `kind`/`sender` el turno
+        # siguiente sabe que el LLM no lo tiene en su historial y lo cita
+        # (`episode_memory.unseen_notices`); el chat lo muestra igual.
+        event: dict[str, Any] = {
+            "role": "assistant",
+            "kind": "notice",
+            "sender": sender or NOTICE_SENDER,
+            "content": history_text,
+            "timestamp": _now_iso_utc(),
+        }
+        if image_url:
+            event["image_url"] = image_url
+        if result.wa_message_id:
+            event["wamid"] = result.wa_message_id
+        with history_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError as e:
+        # El mensaje YA salió: perder el rastro es malo, pero no se re-envía.
+        log.warning("interactive_history_persist_failed", session_id=session_id, error=str(e))
+
+
 async def send_document_to_session(
     session_id: str,
     media_id: str,
@@ -799,17 +906,29 @@ def record_outbound_in_active_episode(
 # §10). Un turno tarda segundos; dos minutos cubren reintentos del envío.
 _FAREWELL_GRACE_MS = 2 * 60 * 1000
 
+#: Lo que sale por fuera del bot después del cierre (plantillas: ETA,
+#: invitación a calificar; Flow / botón con enlace): va al último episodio
+#: aunque esté cerrado (premortem C7). Un texto libre, solo en la gracia.
+_COSTED_AFTER_CLOSE_KINDS = frozenset({"template", "interactive"})
+
 
 def _append_outbound_to_active_episode(
     metadata: dict[str, Any],
     log_entry: OutboundLogEntry,
 ) -> None:
     """Mutates: agrega `log_entry` al `outbound_messages[]` del episodio
-    activo y actualiza su `cost_summary`. Si NO hay episodio activo (caso
-    raro: outbound sin haber recibido inbound), retorna sin tocar — el
-    OutboundLogEntry se persiste en `metadata.last_outbound` solamente. Un
-    episodio que cerró hace menos de `_FAREWELL_GRACE_MS` cuenta como activo:
-    es la despedida del turno que lo cerró.
+    activo y actualiza su `cost_summary`. Sin ningún episodio (outbound sin
+    haber recibido inbound), retorna sin tocar — el OutboundLogEntry se
+    persiste en `metadata.last_outbound` solamente.
+
+    Con el último episodio CERRADO (premortem C7: la invitación a calificar
+    sale tras la entrega, los avisos del ETA, lo que manda el equipo) el envío
+    va a ESE episodio marcado `after_close`, como los demás costos de la
+    conversación (`record_episode_usage`: el abierto o, si no hay, el último):
+    sin esto el costo de una plantilla de marketing no aparecía en ninguna
+    parte. `IngestDeliveryStatus` materializa su costo; lo que el episodio
+    tenía al cerrar sigue congelado. Un texto libre solo si es la despedida
+    del turno que lo cerró (`_FAREWELL_GRACE_MS`), también `after_close`.
 
     Detalle de cost: el `log_entry` viene con `cost_usd_micros=None` y
     `pricing=None` porque el send activity NO conoce el pricing todavía
@@ -817,15 +936,20 @@ def _append_outbound_to_active_episode(
     materializa después usando `materialize_pending_in_summary`.
     """
     episodes = metadata.get("episodes", [])
-    if not episodes:
+    if not episodes or not isinstance(episodes[-1], dict):
         return
     last = episodes[-1]
     closed_at = last.get("closed_at_ms")
-    if closed_at is not None and not (
-        isinstance(closed_at, (int, float))
-        and log_entry.sent_at_ms - closed_at <= _FAREWELL_GRACE_MS
+    after_close = closed_at is not None
+    if (
+        after_close
+        and log_entry.kind not in _COSTED_AFTER_CLOSE_KINDS
+        and not (
+            isinstance(closed_at, (int, float))
+            and log_entry.sent_at_ms - closed_at <= _FAREWELL_GRACE_MS
+        )
     ):
-        return  # episodio cerrado hace rato — no contaminar
+        return  # un texto libre mucho después del cierre: no contaminar
 
     # Asegurar list + summary inicial
     outbound_list = last.setdefault("outbound_messages", [])
@@ -877,7 +1001,7 @@ def _append_outbound_to_active_episode(
             summary = empty_episode_cost_summary()
 
     new_summary = add_outbound_to_summary(summary, log_entry)
-    outbound_list.append(asdict(log_entry))
+    outbound_list.append({**asdict(log_entry), **({"after_close": True} if after_close else {})})
     last["cost_summary"] = asdict(new_summary)
 
 
@@ -989,8 +1113,14 @@ async def send_template_to_session(
     header_media_id: str | None = None,
     header_image_url: str | None = None,
     carousel_cards: list[CarouselCard] | None = None,
+    flow_token: str | None = None,
+    flow_action_data: dict[str, Any] | None = None,
 ) -> OutboundResult:
     """Envía un template aprobado y persiste el OutboundLogEntry.
+
+    `flow_token` / `flow_action_data`: plantillas con botón FLOW (la invitación
+    a calificar). El token identifica qué se responde y entra al fingerprint:
+    misma referencia visible con otro token = otro envío.
 
     `carousel_cards`: tarjetas de producto para plantillas con carrusel
     (campañas): viajan al cliente, entran al fingerprint de idempotencia y
@@ -1043,6 +1173,8 @@ async def send_template_to_session(
     fingerprint_extra: dict[str, str] = {}
     if header_media_id:
         fingerprint_extra["__header_media_id"] = header_media_id
+    if flow_token:
+        fingerprint_extra["__flow_token"] = flow_token
     if carousel_cards:
         fingerprint_extra["__carousel"] = json.dumps(
             [asdict(card) for card in carousel_cards], sort_keys=True
@@ -1071,6 +1203,8 @@ async def send_template_to_session(
         variables,
         header_media_id=header_media_id,
         carousel_cards=carousel_cards,
+        flow_token=flow_token,
+        flow_action_data=flow_action_data,
     )
 
     # 4. Parse error y decidir retry policy

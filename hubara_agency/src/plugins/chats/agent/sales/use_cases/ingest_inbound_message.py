@@ -51,6 +51,7 @@ from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.cart_lines import CartLine, build_cart_note, lines_from_products
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from src.plugins.chats.agent.sales.translate import (
+    is_review_reply_message,
     EffectiveText,
     translate_to_effective_text,
 )
@@ -88,8 +89,10 @@ from src.plugins.chats.agent.sales.use_cases.closing_ack import (
 )
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     quote_team_exchange_in_turn,
+    quote_notices_in_turn,
     quote_template_in_turn,
     request_clean_llm_history,
+    unseen_notices,
     unseen_team_exchange,
     unseen_template_text,
     with_previous_episode,
@@ -136,6 +139,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
 from src.plugins.chats.agent.sales.use_cases.photo_reads import PhotoReads
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
+    declined_coupons,
     build_coupon_note,
 )
 from src.plugins.chats.agent.sales.use_cases.web_product_ref import (
@@ -159,6 +163,7 @@ from src.plugins.chats.agent.sales.use_cases.web_cart import (
 )
 from src.plugins.chats.shared.contracts.events import (
     CustomerRepliedEvent,
+    ReviewSubmittedEvent,
     ServiceWindowOpenedEvent,
 )
 
@@ -199,6 +204,34 @@ CampaignCouponApplier = Callable[[str, int], Awaitable[CouponApplication]]
 #: cupón aplicado (el cupo del vault menos lo vendido en Medusa).
 CouponUnitsReader = Callable[[dict[str, Any]], Awaitable[QuotaOffer]]
 
+def _has_coupon(metadata: dict[str, Any]) -> bool:
+    """¿El episodio activo ya tiene un cupón (cualquiera, aunque su snapshot
+    sea viejo)? Un cupón aplicado nunca se pisa con otro."""
+    episodes = metadata.get("episodes") or []
+    return bool(episodes and isinstance(episodes[-1], dict) and episodes[-1].get("applied_coupon"))
+
+
+def _thanks_coupon_episode(metadata: dict[str, Any], code: str) -> dict[str, Any] | None:
+    """El episodio donde puede quedar el cupón de agradecimiento, o None.
+
+    Solo un episodio ABIERTO de una conversación que lleva el bot (premortem
+    C1): guardarlo abría un episodio si el último estaba cerrado (y la
+    etiqueta volvía a NO_ETIQUETADO: con el equipo al frente el chat salía de
+    la bandeja humana; un «¡Gracias!» al gracias abría uno fantasma). Tampoco
+    si ya tiene un cupón o si en este episodio lo quitaron (premortem C8: no
+    se vuelve a poner en cada mensaje)."""
+    if metadata.get("active_route") == ROUTE_HUMANO or _has_coupon(metadata):
+        return None
+    episode = get_active_episode(metadata)
+    if episode is None or code in declined_coupons(episode):
+        return None
+    return episode
+
+
+#: `(sesión, now_ms) → CouponApplication | None`: el cupón de agradecimiento
+#: por calificar (personal) de quien escribe, validado; None = no tiene.
+ThanksCouponApplier = Callable[[str, int], Awaitable["CouponApplication | None"]]
+
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
@@ -211,6 +244,11 @@ _PHOTO_NOTICE_TIMEOUT_S = 2.0
 #: Validar el cupón de la campaña (promociones de Medusa + vendidas del cupo)
 #: antes del primer turno. Si no alcanza, el bot lo aplica con `apply_coupon`.
 _CAMPAIGN_COUPON_TIMEOUT_S = 5.0
+
+#: Reintentos del despacho de una calificación (revisión M1): Temporal puede
+#: fallar un instante y la calificación trae el cupón prometido. Corren en
+#: segundo plano (premortem C3): el webhook no los espera.
+_REVIEW_DISPATCH_BACKOFF_S: tuple[float, ...] = (0.5, 1.0, 2.0)
 
 #: Lo que el cliente pide y no existe: el catálogo es el snapshot local (~30
 #: productos); el tope evita leer de más si crece, el timeout es por si no
@@ -355,8 +393,20 @@ class IngestInboundMessage:
         photo_wait_s: float = PHOTO_WAIT_MAX_S,
         photo_notifier: PhotoNotifier | None = None,
         order_facts: OrderFactsReader | None = None,
+        thanks_coupon: ThanksCouponApplier | None = None,
+        review_client_factory: TemporalClientFactory | None = None,
     ) -> None:
         self._history_store = history_store
+        # Fábrica de Temporal SOLO para la calificación (premortem C3): la
+        # composición no le pasa `temporal_client_factory` al ingest (el
+        # watchdog sigue apagado ahí) y sin fábrica toda calificación quedaba
+        # guardada sin llegar al plugin de reseñas. Sin ella, la de siempre.
+        self._review_client_factory = review_client_factory or temporal_client_factory
+        # Cupón de agradecimiento por calificar (reseñas, 2026-10-13): se
+        # aplica solo cuando quien lo tiene nos escribe ("lo aplicamos solo").
+        self._thanks_coupon = thanks_coupon
+        # Tareas de segundo plano propias (reintentos de una calificación).
+        self._background: set[Any] = set()
         # Los datos reales de un pedido (OrderFacts): el cliente que escribe
         # justo después de comprar abre el episodio en post-venta, con la etapa
         # y el pago del pedido (caso pedido #64). Sin él, la nota de siempre.
@@ -459,6 +509,18 @@ class IngestInboundMessage:
             metadata = {}
             base = _Unread()
 
+        # Calificaciones que no llegaron al plugin de reseñas (premortem C3):
+        # otra vez, en segundo plano, con cada mensaje de este cliente.
+        _parked = metadata.get("pending_review_submissions")
+        if isinstance(_parked, list) and _parked and self._review_client_factory is not None:
+            self._spawn_background(
+                self._redrive_review_submissions(
+                    session_id, [p for p in _parked if isinstance(p, dict)]
+                ),
+                label="reviews.redrive_submissions",
+                session_id=session_id,
+            )
+
         # --- 1b. Nombre de perfil de WhatsApp (`contacts[].profile.name`) ---
         # La bandeja de la app y los incendios muestran quién escribe, no solo
         # el número. Va por `update()` (lock + lectura fresca) y entra a la copia
@@ -533,6 +595,20 @@ class IngestInboundMessage:
         # después de uno más nuevo no la cierra hacia atrás.
         window_from_ms = _latest_inbound_ms(metadata, sent_ms, now_ms)
         arrived_after_window = compute_service_window_expiry(window_from_ms) <= now_ms
+        # --- 2-bis. Calificación del pedido (reseñas, 2026-10-13) ---
+        # La respuesta del formulario de calificación la procesa el plugin
+        # `reviews` (reseña, cupón, gracias). Va ANTES del ciclo de episodios
+        # (revisión H2): quien ya compró y califica no abre un episodio
+        # NO_ETIQUETADO (la reactivación lo vería como lead frío) ni se le
+        # programa el watchdog; sí reabre la ventana (el gracias la usa) y el
+        # mensaje queda en el chat. Una calificación vale aunque llegue tarde.
+        if is_review_reply_message(parsed):
+            await self._ingest_review_reply(
+                session_id, parsed, metadata, base,
+                now_ms=now_ms, sent_ms=sent_ms, window_from_ms=window_from_ms,
+                arrived_after_window=arrived_after_window,
+            )
+            return
         # Re-engagement (bug run 3b3fbaee): si el último episodio ya estaba
         # CERRADO, este inbound abre uno nuevo. Capturamos el episodio cerrado
         # ANTES de que `ensure_active_episode` mute `episodes[]`, para inyectar
@@ -1027,6 +1103,39 @@ class IngestInboundMessage:
                     campaign_reply_touch, coupon=application
                 )
 
+        # --- 2h. Cupón de agradecimiento por calificar: se aplica solo ---
+        # Reseñas tras la entrega (2026-10-13): el gracias promete «cuando nos
+        # escribas, lo aplicamos solo». Como el de la campaña: validado acá
+        # (timeout corto, L-2) y guardado en el episodio sin pisar otro cupón.
+        # Nunca abre un episodio ni toca la etiqueta (premortem C1): con el
+        # equipo al frente, tras un acuse o sin episodio abierto, espera al
+        # mensaje que abra la venta (el camino normal de 2c lo abre y acá se
+        # aplica en ESE episodio).
+        if (
+            self._thanks_coupon is not None
+            and not closing_ack
+            and _thanks_coupon_episode(metadata, "") is not None
+        ):
+            thanks = await self._check_thanks_coupon(session_id, now_ms)
+            target = (
+                _thanks_coupon_episode(metadata, thanks.code)
+                if thanks is not None and thanks.applied
+                else None
+            )
+            if thanks is not None and target is not None:
+                thanks_episode_id = target.get("episode_id")
+
+                def _thanks_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                    episode = _thanks_coupon_episode(fresh, thanks.code)
+                    if episode is None or episode.get("episode_id") != thanks_episode_id:
+                        return None  # otra ráfaga cambió el episodio, o ya no toca
+                    return store_coupon_application(fresh, thanks, now_ms=now_ms)
+
+                stored = self._update_best_effort(session_id, _thanks_mutator, what="cupon_de_agradecimiento")
+                if stored is not None:
+                    metadata = stored
+                    _rebase(base, metadata)
+
         # --- 2d. HU-WA24H-001 Sprint 2: watchdog wiring ---
         # Después de persistir el timestamp, emitir los eventos que el
         # dispatcher manifest convertirá en (a) arranque del
@@ -1254,13 +1363,18 @@ class IngestInboundMessage:
         # a su propia oferta anterior): si un colega escribió después del
         # último mensaje del bot, el turno lleva ese tramo (con la plantilla
         # adentro, si el colega mandó una).
+        # Ni los avisos que salen por fuera del bot (premortem C5: la
+        # invitación a calificar, el gracias con el cupón).
         unseen_template: str | None = None
         team_exchange: list[tuple[str, str]] | None = None
+        notices: list[str] | None = None
         if campaign_reply_touch is None:
             events_now = self._session_events(session_id)
             team_exchange = unseen_team_exchange(events_now)
             if team_exchange is None:
                 unseen_template = unseen_template_text(events_now)
+            if team_exchange is None and unseen_template is None:
+                notices = unseen_notices(events_now)
 
         # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
@@ -1438,6 +1552,8 @@ class IngestInboundMessage:
         )
         if unseen_template is not None:
             turn_message = quote_template_in_turn(unseen_template, turn_message)
+        if notices is not None:
+            turn_message = quote_notices_in_turn(notices, turn_message)
         if team_exchange is not None:
             turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
         if previous_episode is not None:
@@ -1608,6 +1724,202 @@ class IngestInboundMessage:
             return list(read_events(session_id) or [])
         except Exception:  # noqa: BLE001
             return []
+
+    async def _ingest_review_reply(
+        self,
+        session_id: str,
+        parsed: WhatsAppMessage,
+        metadata: dict[str, Any],
+        base: dict[str, Any],
+        *,
+        now_ms: int,
+        sent_ms: int,
+        window_from_ms: int,
+        arrived_after_window: bool,
+    ) -> None:
+        """La calificación: ventana + chat + `ReviewSubmittedEvent`, nada más."""
+        metadata["last_inbound_at_ms"] = window_from_ms
+        metadata["service_window_expires_at_ms"] = compute_service_window_expiry(window_from_ms)
+        if parsed.message_id:
+            metadata["last_inbound_message_id"] = parsed.message_id
+        self._safe_write_metadata(session_id, metadata, base)
+        effective = await translate_to_effective_text(parsed)
+        self._history_store.append_user_event(
+            session_id,
+            effective.text,
+            **_build_reply_kwargs(parsed, metadata, None),
+            **_late_delivery_kwargs(sent_ms, now_ms, arrived_after_window),
+        )
+        await self._emit_review_submitted(
+            session_id,
+            # Sin wamid (raro), un id propio: el workflow es por mensaje.
+            parsed.message_id or f"{session_id}-{sent_ms}",
+            (effective.structured_payload or {}).get("response_json") or {},
+            sent_ms,
+        )
+
+    async def _emit_review_submitted(
+        self,
+        session_id: str,
+        wa_message_id: str,
+        response_json: dict[str, Any],
+        received_at_ms: int,
+    ) -> None:
+        """`ReviewSubmittedEvent` al plugin de reseñas por el dispatcher.
+
+        Perder la calificación es perder el cupón prometido (el webhook ya
+        respondió 200 y Meta no la reentrega). Premortem C3: queda guardada en
+        `pending_review_submissions` ANTES de despachar (un reinicio a mitad no
+        la pierde) y sale de ahí solo cuando un workflow la tomó; un despacho
+        sin transición o con `reviews` apagado NO cuenta como hecho. Un intento
+        en línea; los reintentos van en segundo plano (los mensajes que vienen
+        detrás en el mismo webhook no esperan). Lo que siga guardado se vuelve
+        a despachar con el próximo mensaje del cliente (el workflow es por
+        wamid y la actividad es idempotente)."""
+        import json as _json
+
+        entry = {
+            "wa_message_id": wa_message_id,
+            "response_json": _json.dumps(response_json, ensure_ascii=False),
+            "received_at_ms": received_at_ms,
+        }
+        self._park_review_submission(session_id, entry)
+        reason = await self._dispatch_review_submission(session_id, entry)
+        if reason is None:
+            return
+        if self._review_client_factory is None:
+            self._log_parked_reviews(session_id, wa_message_id, reason)
+            return
+        self._spawn_background(
+            self._retry_review_submission(session_id, entry, reason),
+            label="reviews.retry_submission",
+            session_id=session_id,
+        )
+
+    async def emit_review_submitted(
+        self, session_id: str, wa_message_id: str, response_json: dict[str, Any], received_at_ms: int
+    ) -> None:
+        """La calificación que llegó por otro oído (standby de MBA, C9): mismo
+        camino que la del webhook normal."""
+        await self._emit_review_submitted(session_id, wa_message_id, response_json, received_at_ms)
+
+    def _park_review_submission(self, session_id: str, entry: dict[str, Any]) -> None:
+        def _keep(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            pending = list(fresh.get("pending_review_submissions") or [])
+            if any(isinstance(p, dict) and p.get("wa_message_id") == entry["wa_message_id"] for p in pending):
+                return None
+            fresh["pending_review_submissions"] = [*pending, entry][-20:]
+            return fresh
+
+        self._update_best_effort(session_id, _keep, what="calificacion_pendiente")
+
+    def _unpark_review_submission(self, session_id: str, wa_message_id: str) -> None:
+        def _drop(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            pending = list(fresh.get("pending_review_submissions") or [])
+            kept = [p for p in pending if not (isinstance(p, dict) and p.get("wa_message_id") == wa_message_id)]
+            if len(kept) == len(pending):
+                return None
+            if kept:
+                fresh["pending_review_submissions"] = kept
+            else:
+                fresh.pop("pending_review_submissions", None)
+            return fresh
+
+        self._update_best_effort(session_id, _drop, what="calificacion_despachada")
+
+    async def _dispatch_review_submission(self, session_id: str, entry: dict[str, Any]) -> str | None:
+        """Un intento. None = un workflow la tomó (y sale de la lista); si
+        no, el motivo."""
+        if self._review_client_factory is None:
+            return "sin dispatcher"
+        event = ReviewSubmittedEvent(
+            session_id=session_id,
+            wa_message_id=str(entry.get("wa_message_id") or ""),
+            response_json=str(entry.get("response_json") or "{}"),
+            received_at_ms=int(entry.get("received_at_ms") or 0),
+        )
+        try:
+            client = await self._review_client_factory()
+            result = await dispatch_envelope_with_client(
+                envelope_for(event, source_plugin="chats", source_worker="sales"), client
+            )
+        except Exception as exc:  # noqa: BLE001 — queda guardada y se reintenta
+            return type(exc).__name__
+        if not getattr(result, "matches", None):
+            return "reviews_apagado" if getattr(result, "skipped_disabled", None) else "sin_transicion"
+        self._unpark_review_submission(session_id, event.wa_message_id)
+        return None
+
+    async def _retry_review_submission(self, session_id: str, entry: dict[str, Any], reason: str) -> None:
+        import asyncio
+
+        for delay in _REVIEW_DISPATCH_BACKOFF_S:
+            await asyncio.sleep(delay)
+            reason = await self._dispatch_review_submission(session_id, entry) or ""
+            if not reason:
+                return
+        self._log_parked_reviews(session_id, str(entry.get("wa_message_id")), reason)
+
+    async def _redrive_review_submissions(self, session_id: str, pending: list[dict[str, Any]]) -> None:
+        """Las calificaciones guardadas de este cliente, otra vez al plugin."""
+        reason = None
+        for entry in pending:
+            reason = await self._dispatch_review_submission(session_id, entry) or reason
+        if reason is not None:
+            self._log_parked_reviews(session_id, str(pending[-1].get("wa_message_id")), reason)
+
+    def _log_parked_reviews(self, session_id: str, wa_message_id: str, reason: str) -> None:
+        """ERROR con cuántas siguen guardadas: el operador lo ve en el log."""
+        try:
+            pending = self._metadata_store.read(session_id).get("pending_review_submissions") or []
+        except Exception:  # noqa: BLE001 — el conteo es informativo
+            pending = []
+        logger.error(
+            "review_submissions_parked",
+            session_id=session_id,
+            wa_message_id=wa_message_id,
+            reason=reason,
+            parked=len(pending),
+        )
+
+    def _spawn_background(self, coro: Any, *, label: str, session_id: str) -> None:
+        """`_spawn_safe` guardando la tarea (que el recolector no la corte a
+        mitad; los tests la esperan)."""
+        import asyncio
+
+        async def _run() -> None:
+            try:
+                await coro
+            except Exception as e:  # noqa: BLE001 — fire-and-forget safety
+                logger.warning(
+                    "background_task_failed", label=label, session_id=session_id,
+                    error_type=type(e).__name__, error=str(e),
+                )
+
+        task = asyncio.create_task(_run())
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+
+    async def _check_thanks_coupon(
+        self, session_id: str, now_ms: int
+    ) -> CouponApplication | None:
+        """El cupón de agradecimiento vigente de quien escribe, validado con
+        timeout corto (L-2). None = no tiene o no se pudo saber: nunca tumba
+        el ingest (el bot igual lo ve en `list_promotions`)."""
+        import asyncio
+
+        if self._thanks_coupon is None:
+            return None
+        try:
+            return await asyncio.wait_for(
+                self._thanks_coupon(session_id, now_ms),
+                timeout=_CAMPAIGN_COUPON_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrada a list_promotions/apply_coupon
+            logger.warning(
+                "thanks_coupon_check_failed", session_id=session_id, reason=type(exc).__name__
+            )
+            return None
 
     async def _check_campaign_coupon(
         self, code: str, now_ms: int

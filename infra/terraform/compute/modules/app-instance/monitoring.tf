@@ -46,6 +46,7 @@ locals {
     chats-post_sale_return = "chats\\.workers\\.post_sale_return$"
     eta                    = "eta\\.workers\\.eta$"
     marketing-campaigns    = "marketing\\.workers\\.campaigns$"
+    reviews-requests       = "reviews\\.workers\\.requests$"
     reengagement-cycle     = "reengagement\\.workers\\.cycle$"
     order_sentinel-cycle   = "order_sentinel\\.workers\\.cycle$"
     orders-reconcile       = "orders\\.workers\\.reconcile$"
