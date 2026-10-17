@@ -333,6 +333,42 @@ def denial_claims(
     return out
 
 
+# ── El precio de la caja dicho por unidad ──────────────────────────────────
+
+
+@dataclass(frozen=True)
+class BoxWords:
+    """Las frases de `caja_por_unidad` (el `with:` de sus ítems en el paquete)."""
+
+    #: Un precio por unidad: «cada una», «por unidad», «cada velita».
+    por_unidad: str
+    #: La cláusula que nombra la caja habla de cajas («$25.000 cada caja»).
+    habla_de_caja: str
+
+
+def box_fact(title: str, units: int, price: int | None) -> str:
+    price_of = f"{format_cop(price)} es el precio" if price else "el precio es el"
+    return f"{title} se cobra por caja: {price_of} de la caja de {units} unidades (la cantidad del pedido son cajas)"
+
+
+def box_unit_claims(
+    text: str | None, *, products: Sequence[str], units: Sequence[int], prices: Sequence[int], words: BoxWords
+) -> list[Claim]:
+    """Lo que se cobra por caja dicho con un precio por unidad: si una cláusula
+    dice un precio por unidad (y no lo niega) sin nombrar la caja, un par por
+    cada producto por caja del que habla el texto (caso del 2026-10-16: «el
+    precio es por unidad, cada velita vale $25.000» por una caja de 12). Las
+    frases son anchas («cada una» también habla de cajas): solo proponen; si
+    el texto le pone a cada vela el precio de la caja lo decide Jev."""
+    per_unit, box = phrases(words.por_unidad), re.compile(phrases(words.habla_de_caja))
+    if not any(affirms(c, per_unit) for c in clauses(text) if not box.search(c)):
+        return []
+    return [
+        (f"el precio de {title} es por unidad", box_fact(title, n, price or None))
+        for title, n, price in zip(products, units, prices, strict=True)
+    ]
+
+
 # ── La cifra que afirma el cliente ─────────────────────────────────────────
 
 
@@ -361,10 +397,13 @@ def customer_figures(text: str | None, figures: Sequence[int]) -> list[int]:
 
 __all__ = [
     "COD_TERM",
+    "BoxWords",
     "CouponWords",
     "DenialWords",
     "PaymentWords",
     "StatusWords",
+    "box_fact",
+    "box_unit_claims",
     "coupon_claims",
     "customer_figures",
     "denial_claims",

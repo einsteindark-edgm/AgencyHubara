@@ -414,15 +414,15 @@ class HubaraEtaSessionWorkflow:
             args=[session_id, message],
             **_SEND,
         )
-        persist_args: list = [session_id, message]
-        if workflow.patched("persist-wamids-v1"):
-            # Las burbujas que salieron, con su wamid: el doble check de
-            # WhatsApp del chat se une por ahí (caso 2026-10-15). Detrás del
-            # patch: los runs en vuelo replayean con los args de su history.
-            persist_args += [None, delivered if isinstance(delivered, list) else None]
+        # Las burbujas que salieron, con su wamid: el doble check de WhatsApp
+        # del chat se une por ahí (caso 2026-10-15). Siempre: es solo el
+        # contenido de la activity (L-22). Con `workflow.patched`, un run de
+        # antes del deploy (un pedido vive días) guardaba sin wamids todo lo
+        # nuevo: el patch recuerda su primer resultado en el run.
+        workflow.deprecate_patch("persist-wamids-v1")
         await workflow.execute_activity(
             persist_assistant_message_activity,
-            args=persist_args,
+            args=[session_id, message, None, delivered if isinstance(delivered, list) else None],
             **_FAST,
         )
         await workflow.execute_activity(

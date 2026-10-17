@@ -150,6 +150,14 @@ describe("DecisionsControlPanel", () => {
     expect(within(figure).getByText("¿le da la razón al cliente en una cuenta que no es la de su pedido? (solo con Jev)")).toBeInTheDocument();
   });
 
+  it("nombra el precio de la caja dicho por unidad (ventas-7, 2026-10-16)", async () => {
+    state = payload({ caja_por_unidad: "off" });
+    renderPanel();
+
+    const box = await screen.findByRole("group", { name: "Precio de la caja dicho por unidad" });
+    expect(within(box).getByText("¿le dice que cada vela cuesta lo que cuesta la caja? (solo con Jev)")).toBeInTheDocument();
+  });
+
   it("nombra el acuse tras la despedida con su pregunta", async () => {
     state = payload({ acuse: "off" });
     renderPanel();

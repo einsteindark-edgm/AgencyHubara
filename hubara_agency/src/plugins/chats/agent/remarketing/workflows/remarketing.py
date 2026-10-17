@@ -73,12 +73,26 @@ _DEBOUNCE_MAX_WAIT = timedelta(seconds=12)
 def _persist_args_with_wamids(args: list, delivered: object) -> list:
     """Args de `persist_assistant_message_activity` con las burbujas que
     salieron (`[{wamid, text}]`, 4.º argumento): el doble check de WhatsApp
-    del chat se une por esos wamids (caso 2026-10-15). Detrás de
-    `persist-wamids-v1`: los runs en vuelo replayean con los args de su history
-    (L-9)."""
-    if not workflow.patched("persist-wamids-v1"):
-        return args
-    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+    del chat se une por esos wamids (caso 2026-10-15).
+
+    Siempre, sin depender del patch: es solo el contenido de la activity (L-22).
+    Con `workflow.patched` el toque que salía después del deploy no los
+    guardaba: Temporal recuerda el primer resultado del run, y en un run que
+    venía de antes ese primer resultado era el False de reproducir un toque
+    viejo (3.er toque «sin confirmación», 2026-10-15). `deprecate_patch` deja
+    reproducir los runs que ya grabaron la marca.
+
+    5.º argumento, `"remarketing"`: el mensaje queda marcado como de este
+    agente. Ventas no lo tiene en su historial y, sin la marca, la nota de
+    «lo que pasó sin ti» se cortaba en el gancho (caso 2026-10-16). También
+    solo contenido: sin patch."""
+    workflow.deprecate_patch("persist-wamids-v1")
+    return [
+        *args,
+        *([None] * (3 - len(args))),
+        delivered if isinstance(delivered, list) else None,
+        "remarketing",
+    ]
 
 
 def reply_summary(message: object) -> str:

@@ -6,6 +6,8 @@ es determinista (``decided_by: "rules"``): nada de LLM acá.
 """
 from __future__ import annotations
 
+import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
@@ -593,11 +595,33 @@ def handoff_pending(events: list[dict[str, Any]]) -> bool:
     return False
 
 
-def unanswered_since(events: list[dict[str, Any]]) -> tuple[int, int | None]:
+#: Lo que el cliente manda sin pedir nada: reaccionar (o quitar la reacción) y un sticker. Son las marcas que deja
+#: `agent/sales/translate.py` en el historial («[el cliente envió un reaction]» es el historial viejo).
+_NO_REPLY_MARKER = re.compile(r"\[el cliente (?:reaccionó con [^\]]*|quitó su reacción|envió un (?:reaction|sticker))\]")
+
+
+def _asks_for_reply(event: dict[str, Any], asks_nothing: Callable[[str], bool] | None) -> bool:
+    content = event.get("content")
+    if not isinstance(content, str):
+        return True
+    text = content.strip()
+    if _NO_REPLY_MARKER.fullmatch(text):
+        return False
+    return not (asks_nothing is not None and asks_nothing(text))
+
+
+def unanswered_since(
+    events: list[dict[str, Any]], *, asks_nothing: Callable[[str], bool] | None = None
+) -> tuple[int, int | None]:
     """(mensajes del cliente sin respuesta, epoch ms del PRIMERO de ellos).
 
     Se recorre desde el final hasta la última respuesta que el cliente vio.
     Un inbound legacy sin timestamp cuenta pero no fecha la espera.
+
+    Un mensaje que no pide nada no deja a nadie esperando (caso del operador, 2026-10-15: un 👍 o un «gracias»
+    era incendio grave a los 10 min): una reacción o un sticker, y el texto que `asks_nothing` lea como acuse
+    («gracias», «ok perfecto»; la ruta le pasa la regla del acuse del ingest). Si antes hubo una pregunta, se sigue
+    esperando desde la pregunta.
     """
     count = 0
     since: int | None = None
@@ -605,8 +629,9 @@ def unanswered_since(events: list[dict[str, Any]]) -> tuple[int, int | None]:
         if not isinstance(event, dict):
             continue
         if event.get("role") == "user":
-            count += 1
-            since = _event_ms(event) or since
+            if _asks_for_reply(event, asks_nothing):
+                count += 1
+                since = _event_ms(event) or since
         elif _is_reply(event):
             break
     return count, since

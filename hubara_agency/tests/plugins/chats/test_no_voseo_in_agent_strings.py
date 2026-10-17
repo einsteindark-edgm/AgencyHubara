@@ -36,6 +36,9 @@ _AGENT_ROOT = _HUBARA_ROOT / "src" / "plugins" / "chats" / "agent"
 # (voseo) y este guard no lo veía porque solo escaneaba el árbol del agente.
 _EXTRA_LLM_FACING_FILES = [
     _HUBARA_ROOT / "src" / "platform" / "workflow_helpers.py",
+    # Las notas de lo que Ventas no vio (colega, gancho de remarketing) que
+    # van al turno del LLM (casos 2026-10-09 y 2026-10-16).
+    _HUBARA_ROOT / "src" / "plugins" / "chats" / "shared" / "team_exchange.py",
 ]
 
 # Formas voseo INEQUÍVOCAS (sin homógrafo legítimo en tuteo/3ª/infinitivo).

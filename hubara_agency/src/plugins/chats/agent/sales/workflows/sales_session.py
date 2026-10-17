@@ -291,11 +291,13 @@ def _note_guard(
 def _persist_args_with_wamids(args: list, delivered: object) -> list:
     """Args de `persist_assistant_message_activity` con las burbujas que
     salieron (`[{wamid, text}]`, 4.º argumento): el doble check de WhatsApp
-    del chat se une por esos wamids (caso 2026-10-15). Detrás de
-    `persist-wamids-v1`: los runs en vuelo replayean con los args de su history
-    (L-9, mismo criterio que `persist-tools-used-v1`)."""
-    if not workflow.patched("persist-wamids-v1"):
-        return args
+    del chat se une por esos wamids (caso 2026-10-15).
+
+    Siempre, sin depender del patch: es solo el contenido de la activity (L-22).
+    `workflow.patched` recuerda su primer resultado en todo el run: en un run
+    que venía de antes del deploy era False y los mensajes nuevos salían sin
+    wamids. `deprecate_patch` deja reproducir los runs que ya grabaron la marca."""
+    workflow.deprecate_patch("persist-wamids-v1")
     return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
 
 
