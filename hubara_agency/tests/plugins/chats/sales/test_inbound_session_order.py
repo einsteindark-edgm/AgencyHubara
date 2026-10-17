@@ -193,3 +193,22 @@ async def test_the_customer_workflow_remembers_who_arrived_across_continue_as_ne
 
     assert run.status == WorkflowExecutionStatus.CONTINUED_AS_NEW
     assert steps.calls.index("deliver:wamid.B") < steps.calls.index("history:wamid.C")
+
+
+@pytest.mark.asyncio
+async def test_a_message_announced_late_still_holds_the_ones_that_arrived_after_it(env) -> None:
+    """Los anuncios pueden llegar desordenados (dos activities a la vez en el
+    worker): el texto se anuncia antes que la foto que llegó primero al
+    webhook. El workflow del cliente le avisa al texto que también tiene que
+    esperar a la foto."""
+    steps = Steps()
+    steps.outcome["wamid.P"] = TURN_DESCRIBE
+    steps.slow[("describe", "wamid.P")] = 1.5
+    steps.slow[("turn", "wamid.T")] = 1.0  # el texto sigue leyendo (Jev) cuando la foto se anuncia
+    async with _worker(env, steps):
+        text = await _start(env, _input("wamid.T", received_at_ms=2_000))
+        await asyncio.sleep(0.3)  # el texto ya se anunció
+        photo = await _start(env, _input("wamid.P", kind="image", received_at_ms=1_000))
+        await asyncio.wait_for(asyncio.gather(photo.result(), text.result()), timeout=30)
+
+    assert steps.calls.index("deliver:wamid.P_vision") < steps.calls.index("history:wamid.T")

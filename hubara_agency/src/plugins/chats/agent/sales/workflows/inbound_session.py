@@ -7,7 +7,9 @@ arrancar (`arrived`, vía `signal_with_start` desde una activity) y este le
 responde por la señal `predecessor` con el workflow de su mensaje anterior: el
 último anunciado con una llegada al webhook estrictamente menor ("" si no hay).
 El mensaje lee en paralelo con los demás y, antes de escribir el historial,
-espera con tope a que ese anterior termine.
+espera con tope a que ese anterior termine. Si un mensaje que llegó antes se
+anuncia después (dos activities a la vez), los ya anunciados que llegaron
+después reciben otra señal `predecessor` con él: también lo esperan.
 
 «Foto en lectura» es entonces un workflow abierto: el de una foto no termina
 hasta que la foto entró al bot, y el texto escrito después la espera. Es estado
@@ -76,8 +78,13 @@ class InboundSessionWorkflow:
             while self._arrivals:
                 arrival = self._arrivals.pop(0)
                 previous = predecessor_of(self._recent, arrival)
+                # Anunciados antes pero llegados DESPUÉS al webhook (dos
+                # activities a la vez): también esperan a este.
+                later = [a.workflow_id for a in self._recent if a.received_at_ms > arrival.received_at_ms]
                 self._recent = [*self._recent, arrival][-_KEEP:]
                 await self._answer(arrival.workflow_id, previous or "")
+                for workflow_id in later:
+                    await self._answer(workflow_id, arrival.workflow_id)
                 answered += 1
             if answered >= _CONTINUE_AS_NEW_AFTER or workflow.info().is_continue_as_new_suggested():
                 await workflow.wait_condition(workflow.all_handlers_finished)

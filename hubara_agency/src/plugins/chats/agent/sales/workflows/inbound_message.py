@@ -144,8 +144,10 @@ _STEPS_PATCH = "inbound-steps-v1"
 @workflow.defn(name="InboundMessageWorkflow")
 class InboundMessageWorkflow:
     def __init__(self) -> None:
-        # El anterior que respondió el workflow del cliente ("" = no hay).
-        self._predecessor: str | None = None
+        # Los anteriores que dijo el workflow del cliente: el que respondió al
+        # anunciarse y los que se anunciaron tarde pero llegaron antes.
+        self._answered = False
+        self._predecessors: list[str] = []
         self._registered = False
         self._waited = False
         # Workflows anteriores ya esperados (no se espera dos veces al mismo).
@@ -153,9 +155,12 @@ class InboundMessageWorkflow:
 
     @workflow.signal
     def predecessor(self, workflow_id: str = "") -> None:
-        """La respuesta del ``InboundSessionWorkflow``: el workflow del mensaje
-        anterior del cliente ("" si no hay)."""
-        self._predecessor = workflow_id
+        """La respuesta del ``InboundSessionWorkflow``: el workflow de un
+        mensaje anterior del cliente ("" si no hay). Puede llegar más de una:
+        un mensaje que llegó antes al webhook pero se anunció después."""
+        self._answered = True
+        if workflow_id and workflow_id not in self._predecessors:
+            self._predecessors.append(workflow_id)
 
     @workflow.run
     async def run(self, inp: InboundMessageInput) -> str:
@@ -222,15 +227,15 @@ class InboundMessageWorkflow:
         if self._waited:
             return
         self._waited = True
-        previous = [inbound_workflow_id(inp.after)] if inp.after else []
+        after = [inbound_workflow_id(inp.after)] if inp.after else []
         if self._registered:
             try:
-                await workflow.wait_condition(lambda: self._predecessor is not None, timeout=_ORDER_REPLY_MAX)
+                await workflow.wait_condition(lambda: self._answered, timeout=_ORDER_REPLY_MAX)
             except asyncio.TimeoutError:
                 workflow.logger.warning("inbound_order_reply_missing")
-            if self._predecessor:
-                previous.append(self._predecessor)
-        await self._wait_for(previous)
+        # Mientras espera, puede enterarse de otro anterior (anunciado tarde).
+        while pending := [w for w in [*after, *self._predecessors] if w not in self._waited_for]:
+            await self._wait_for(pending)
 
     async def _wait_for(self, workflow_ids: list[str]) -> None:
         """Espera (con tope) a que terminen esos workflows de entrada, cada uno

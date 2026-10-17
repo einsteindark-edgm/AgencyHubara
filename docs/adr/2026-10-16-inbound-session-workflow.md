@@ -79,5 +79,10 @@ Dos excepciones:
   Si algo se traba, el mensaje sale igual. Se pierde el orden, nunca el mensaje.
 - **No hay ciclos.** El anterior siempre tiene una hora de llegada estrictamente menor. Dentro de un
   POST, `after` sigue mandando aunque los anuncios lleguen desordenados.
+- **Anuncios desordenados entre POSTs.** Dos activities pueden correr a la vez, y entonces el texto se
+  anuncia antes que la foto que llegó primero. En ese caso el workflow del cliente le manda al texto otra
+  señal `predecessor` con la foto. El texto espera a todos los anteriores que conozca antes de escribir su
+  historial, también a los que le avisan mientras espera. Si el texto ya escribió su historial, la señal
+  llega tarde y no pasa nada.
 - **El orden es el de llegada al webhook** (`received_at_ms`), no el `timestamp` de Meta (en
   segundos). Meta entrega en orden. Un rezagado de días ya lo marca «llegó tarde» y no se reordena.
