@@ -215,26 +215,84 @@ def apply_readings(
 ) -> Written:
     """ESCRIBE las lecturas en el metadata (mutación), igual que siempre: la
     señal de compra y la confirmación, la pausa de reactivación y la baja de
-    marketing (sticky: solo la revierte el operador). La usan el ingest y el
-    sandbox del laboratorio: los dos escriben exactamente lo mismo."""
-    from src.plugins.chats.shared.purchase_signals import apply_inbound_purchase_signal
-    from src.sdk.messagingkit import OPT_OUT_SOURCE_TEXT, apply_reengagement_deferral, mark_marketing_opt_out
-
-    signal = apply_inbound_purchase_signal(
-        metadata, readings.purchase[0], readings.purchase[1], now_ms=now_ms, message_id=message_id, text=text
+    marketing (sticky: solo la revierte el operador). La usa el sandbox del
+    laboratorio; el ingest escribe las mismas dos partes en pasos distintos
+    (`apply_lasting_readings` al leer, `apply_last_message_marks` en el orden
+    de llegada) y el resultado es exactamente el mismo."""
+    written = apply_lasting_readings(
+        metadata, readings, text=text, now_ms=now_ms, opt_out_campaign_id=opt_out_campaign_id
     )
-    apply_reengagement_deferral(metadata, text, readings.deferral, courtesy=readings.courtesy, now_ms=now_ms, tz=tz)
+    apply_last_message_marks(
+        metadata, last_message_marks(readings), text=text, now_ms=now_ms, message_id=message_id, tz=tz
+    )
+    return written
+
+
+def apply_lasting_readings(
+    metadata: dict[str, Any],
+    readings: Readings,
+    *,
+    text: str | None,
+    now_ms: int,
+    opt_out_campaign_id: str | None,
+) -> Written:
+    """Lo que vale aunque después llegue otro mensaje: la confirmación de
+    compra en el borrador (con producto, o el carrito) y la baja de marketing
+    (sticky: solo la revierte el operador)."""
+    from src.plugins.chats.shared.purchase_signals import confirm_inbound_purchase
+    from src.sdk.messagingkit import OPT_OUT_SOURCE_TEXT, mark_marketing_opt_out
+
+    signal = confirm_inbound_purchase(metadata, readings.purchase[0], readings.purchase[1], now_ms=now_ms)
     opted_out = False
     if not metadata.get("marketing_opt_out") and text and readings.opt_out:
         mark_marketing_opt_out(metadata, now_ms=now_ms, source=OPT_OUT_SOURCE_TEXT, campaign_id=opt_out_campaign_id)
         opted_out = True
+    return Written(signal=signal, opted_out=opted_out)
+
+
+def last_message_marks(readings: Readings) -> dict[str, Any]:
+    """Las lecturas que describen al ÚLTIMO mensaje del cliente, como JSON
+    (la entrada durable las pasa del paso del estado al del historial): la
+    señal de compra, el aplazamiento y la cortesía."""
+    deferral = readings.deferral
+    return {
+        "purchase": readings.purchase[0],
+        "deferral": {"until_ms": deferral.until_ms, "kind": deferral.kind} if deferral is not None else None,
+        "courtesy": readings.courtesy,
+        "courtesy_only": readings.courtesy_only,
+    }
+
+
+def apply_last_message_marks(
+    metadata: dict[str, Any],
+    marks: Mapping[str, Any],
+    *,
+    text: str | None,
+    now_ms: int,
+    message_id: str | None,
+    tz: Any,
+) -> None:
+    """ESCRIBE lo que describe al ÚLTIMO mensaje del cliente: la señal de
+    compra (`SIGNAL_KEY`), la pausa por aplazamiento (una fecha; otro texto la
+    levanta) y la cortesía. Cada mensaje pisa las del anterior, así que se
+    escriben en el orden de llegada, con `last_inbound_message_id` (si la foto
+    que reentra tarde las escribiera al leer, borraría las del texto que el
+    cliente mandó después)."""
+    from src.plugins.chats.shared.purchase_signals import mark_inbound_signal
+    from src.sdk.messagingkit import ReengagementDeferral, apply_reengagement_deferral
+
+    mark_inbound_signal(metadata, marks.get("purchase"), now_ms=now_ms, message_id=message_id, text=text)
+    raw = marks.get("deferral")
+    deferral = (
+        ReengagementDeferral(until_ms=int(raw["until_ms"]), kind=str(raw["kind"])) if isinstance(raw, Mapping) else None
+    )
+    apply_reengagement_deferral(metadata, text, deferral, courtesy=bool(marks.get("courtesy")), now_ms=now_ms, tz=tz)
     # La cortesía vale para ESTE mensaje: la leen la nota del episodio nuevo,
     # el paso desde remarketing y la guía del turno (con `reglas`, nunca).
-    if readings.courtesy_only:
+    if marks.get("courtesy_only"):
         metadata[COURTESY_KEY] = {"message_id": message_id, "at_ms": now_ms}
     else:
         metadata.pop(COURTESY_KEY, None)
-    return Written(signal=signal, opted_out=opted_out)
 
 
 async def read_coupon_talk(

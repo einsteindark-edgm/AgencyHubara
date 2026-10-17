@@ -148,6 +148,8 @@ class InboundMessageWorkflow:
         self._predecessor: str | None = None
         self._registered = False
         self._waited = False
+        # Workflows anteriores ya esperados (no se espera dos veces al mismo).
+        self._waited_for: set[str] = set()
 
     @workflow.signal
     def predecessor(self, workflow_id: str = "") -> None:
@@ -161,6 +163,11 @@ class InboundMessageWorkflow:
             return await self._whole_ingest(inp)
         request = IngestRequest(message=inp.message, received_at_ms=inp.received_at_ms)
         await self._register(inp)
+        if inp.after:
+            # Dentro de un POST, el estado espera al anterior (como en la fase
+            # 1): los dos verían el mismo episodio cerrado o la misma campaña
+            # sin responder. Entre POSTs las lecturas corren en paralelo.
+            await self._wait_for([inbound_workflow_id(inp.after)])
         await self._steps(request, inp)
         return "ingested"
 
@@ -194,12 +201,10 @@ class InboundMessageWorkflow:
                 await self._steps(reentry, inp)
             return
         if turn.outcome == TURN_DESCRIBE:
+            # Si la foto no se puede leer, el workflow falla a la vista (como
+            # cualquier otro paso), pero antes la sesión deja de esperarla.
             try:
                 reentry = await workflow.execute_activity(describe_inbound_image_activity, request, **_MEDIA)
-            except ActivityError:
-                workflow.logger.error("inbound_photo_lost", extra={"wamid": request.message.get("message_id")})
-                reentry = None
-            try:
                 if reentry is not None:
                     await self._steps(reentry, inp)
             finally:
@@ -225,7 +230,15 @@ class InboundMessageWorkflow:
                 workflow.logger.warning("inbound_order_reply_missing")
             if self._predecessor:
                 previous.append(self._predecessor)
-        for workflow_id in dict.fromkeys(previous):
+        await self._wait_for(previous)
+
+    async def _wait_for(self, workflow_ids: list[str]) -> None:
+        """Espera (con tope) a que terminen esos workflows de entrada, cada uno
+        una sola vez. Si la espera falla, sigue: el orden no vale un mensaje."""
+        for workflow_id in dict.fromkeys(workflow_ids):
+            if workflow_id in self._waited_for:
+                continue
+            self._waited_for.add(workflow_id)
             try:
                 await workflow.execute_activity(wait_inbound_workflow_activity, workflow_id, **_GATE)
             except ActivityError:

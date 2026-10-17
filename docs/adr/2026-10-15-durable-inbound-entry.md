@@ -266,10 +266,32 @@ sola escritura, bajo la guarda de la toma humana (#393).
 - O la rotación quedaría escrita antes de esperar a Jev, y una persona que toma el
   chat durante esa espera ya no podría deshacerla.
 
-Lo que el estado decide (la nota de frontera, la campaña, el resumen del episodio
-anterior; nunca el episodio entero, que lleva los datos de envío del borrador)
-queda en el resultado del paso. Un reintento posterior ya no lo pierde: era el
-«límite conocido» de la fase 1.
+Lo que el estado decide queda en el resultado del paso: la nota de frontera, la
+campaña y el resumen del episodio anterior (nunca el episodio entero, que lleva
+los datos de envío del borrador). Un reintento de un paso **posterior** ya no lo
+pierde: era el «límite conocido» de la fase 1.
+
+Sigue abierto en el propio paso del estado. Si el worker muere después de su
+escritura y antes de devolver, el reintento decide sobre el documento ya rotado
+y el turno sale sin la nota de frontera: milisegundos de ventana.
+
+**Las lecturas que describen al último mensaje se escriben en orden.** La señal
+de compra (`SIGNAL_KEY`), la pausa por aplazamiento y la cortesía las pisa cada
+mensaje nuevo. Por eso las escribe el paso del historial, que va en orden,
+junto con `last_inbound_message_id`; viajan como `IngestState.last_message_marks`.
+
+En el paso del estado quedan solo las que valen aunque llegue otro mensaje: la
+confirmación de compra en el borrador y la baja.
+
+Sin esto, la foto que reentra tarde borraba la señal del «luego te escribo» que
+el cliente mandó detrás. El turno salía sin la nota de aplazamiento y la pausa
+se levantaba (revisión del PR).
+
+**Dentro de un POST, el estado espera al anterior** (como en la fase 1). Si no,
+los dos mensajes verían el mismo episodio cerrado o la misma campaña sin
+responder, y los dos turnos llevarían la nota de frontera y la campaña, con el
+cupón validado dos veces. Entre POSTs las lecturas corren en paralelo, como en
+la fase 1; esa carrera ya existía y queda anotada abajo.
 
 **El diario de efectos** deja de ser lo que evita repetir pasos ya hechos; eso lo
 hace el historial del workflow. Sigue dentro de cada activity para lo que su
@@ -281,8 +303,10 @@ propio reintento no puede repetir:
 - `history` cubre los milisegundos entre escribir la línea y que la activity
   termine.
 
-El paso del estado se reintenta si su escritura falla (`write_failed`). Los demás
-escriben de mejor esfuerzo, como en la fase 1.
+El paso del estado se reintenta si su escritura falla (`write_failed`), hasta 3
+intentos. Después el mensaje sigue igual, como en la fase 1: mejor un turno sin
+el episodio rotado que un mensaje que no llega. Los demás pasos escriben de mejor
+esfuerzo.
 
 ### 2 · La foto y la nota de voz, cada una su paso
 
@@ -293,6 +317,11 @@ intentos (cada uno cuesta) y sin reintentar errores de programación.
   El workflow la corre por los mismos pasos, con la llegada de la foto como reloj.
 - Al terminar la foto (también si su lectura falló), `notify_inbound_photo_done`
   le avisa a la sesión de ventas. Así su ráfaga deja de esperarla.
+- Si la foto o la nota de voz no se pueden leer tras sus intentos, el workflow
+  queda *Failed*, a la vista y reseteable como cualquier otro paso. Antes se
+  perdían en silencio en `_spawn_safe`.
+- Un reintento repite la llamada al proveedor y su cobro a la conversación; son 3
+  intentos como mucho y solo tras una falla.
 - Se retiraron:
   - `_spawn_safe`: los eventos de analytics y el aviso al watchdog se esperan con
     tope de 5 s (`_best_effort`), sin tareas sueltas (L-7);
@@ -359,6 +388,14 @@ todos los pasos.
   sigue diferido a su propio ADR.
 - **El orden usa la llegada al webhook, no el `timestamp` de Meta** (que viene en
   segundos). Un rezagado de días ya lo marca «llegó tarde».
+- **Dos mensajes de POSTs distintos que llegan casi juntos** corren sus pasos del
+  estado a la vez, como en la fase 1. Si la conversación estaba cerrada, los dos
+  pueden ver el episodio cerrado y llevar la nota de frontera; los dos pueden
+  responder a la misma campaña.
+  - Las lecturas del último mensaje ya no se pisan (van en orden).
+  - Cerrar del todo esta carrera es separar la lectura con Jev (en paralelo) de
+    la escritura del estado (en orden), que fue el corte que proponía el plan.
+    Queda como mejora.
 
 ## Consecuencias
 

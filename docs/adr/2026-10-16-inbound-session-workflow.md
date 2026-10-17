@@ -53,9 +53,17 @@ foto, que ya está en la ráfaga.
 ### Por qué no serializar todo el ingest por cliente
 
 Lo descartó la fase 1 por latencia, y sigue descartado. Aquí solo se ordena el tramo final, el
-historial y la entrega, que tarda decenas de milisegundos. Las lecturas, Jev y la visión corren en
-paralelo. Una ráfaga «hola» + «quiero velas» + «¿envían a Cali?» llega junta a la sesión, en el orden
-en que entró al webhook.
+historial y la entrega, que tarda decenas de milisegundos. Las lecturas, Jev y la visión de mensajes
+de POSTs distintos corren en paralelo. Una ráfaga «hola» + «quiero velas» + «¿envían a Cali?» (un
+POST por mensaje, lo típico) llega junta a la sesión, en el orden en que entró al webhook.
+
+Dos excepciones:
+
+- **Dentro de un mismo POST, el paso del estado espera al anterior** (`after`, como en la fase 1).
+  Los dos verían el mismo episodio cerrado o la misma campaña sin responder.
+- **Las lecturas que describen al último mensaje** (señal de compra, pausa, cortesía) se escriben
+  en el tramo ordenado, con `last_inbound_message_id`. Escritas al leer, la foto que reentra tarde
+  borraría las del texto que el cliente mandó después.
 
 ## Consecuencias
 

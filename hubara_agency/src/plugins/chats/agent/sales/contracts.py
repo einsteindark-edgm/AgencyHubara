@@ -167,6 +167,10 @@ class IngestState:
     #: El resumen del episodio que este mensaje cerró (cómo cerró, productos,
     #: cupón): solo eso viaja; los datos de envío del borrador no salen del vault.
     previous_episode_summary: str | None = None
+    #: Lo que las lecturas dicen del ÚLTIMO mensaje (señal de compra, pausa por
+    #: aplazamiento, cortesía; `decisions.readings.last_message_marks`): lo
+    #: escribe el paso del historial, en el orden de llegada.
+    last_message_marks: dict[str, Any] | None = None
     #: La escritura del estado falló (no la saltó una lectura fallida): la
     #: activity lo reintenta.
     write_failed: bool = False

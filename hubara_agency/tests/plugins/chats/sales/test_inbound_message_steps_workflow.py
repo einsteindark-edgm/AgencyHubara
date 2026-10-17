@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from temporalio import activity
+from temporalio.client import WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
@@ -207,14 +208,30 @@ async def test_a_photo_reenters_as_text_and_then_tells_the_session_it_is_done(en
 
 
 @pytest.mark.asyncio
-async def test_the_session_hears_the_photo_is_done_even_if_reading_it_breaks(env) -> None:
+async def test_a_photo_whose_reading_breaks_fails_in_sight_after_telling_the_session(env) -> None:
+    """La foto que no se pudo leer no se traga el error: el workflow queda
+    Failed (a la vista y reseteable), igual que cualquier otro paso. Antes de
+    fallar le avisa a la sesión que deje de esperarla."""
     steps = Steps()
     steps.outcome["wamid.P"] = TURN_DESCRIBE
     steps.broken.add("describe:wamid.P")
     async with _worker(env, steps):
-        await _run(env, _input("wamid.P", kind="image"))
+        with pytest.raises(WorkflowFailureError):
+            await _run(env, _input("wamid.P", kind="image"))
 
     assert steps.calls[-1] == "photo_done:wamid.P"
+    assert not any(call.startswith("deliver:") for call in steps.calls)
+
+
+@pytest.mark.asyncio
+async def test_a_voice_note_whose_transcription_breaks_fails_in_sight(env) -> None:
+    steps = Steps()
+    steps.outcome["wamid.V"] = TURN_TRANSCRIBE
+    steps.broken.add("transcribe:wamid.V")
+    async with _worker(env, steps):
+        with pytest.raises(WorkflowFailureError):
+            await _run(env, _input("wamid.V", kind="audio"))
+
     assert not any(call.startswith("deliver:") for call in steps.calls)
 
 
@@ -250,12 +267,15 @@ async def test_a_message_without_text_writes_nothing(env) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_chained_message_reads_right_away_and_waits_only_before_its_history(env) -> None:
-    """Lecturas en paralelo, entrega en orden: el segundo mensaje del POST no
-    espera al primero para leer con Jev, solo para escribir su línea."""
+async def test_a_message_of_the_same_post_reads_after_the_previous_one(env) -> None:
+    """Dentro de un POST, el paso del estado espera al anterior (como en la
+    fase 1): los dos verían el mismo episodio cerrado o la misma campaña sin
+    responder y los dos turnos llevarían la nota de frontera, la campaña y el
+    cupón validado dos veces (revisión del PR). Entre POSTs las lecturas sí
+    corren en paralelo (`test_inbound_session_order.py`)."""
     steps = Steps()
     async with _worker(env, steps):
         await _run(env, _input("wamid.B", after="wamid.A"))
 
-    assert steps.calls.index("turn:wamid.B") < steps.calls.index("wait:inbound-wamid.A")
-    assert steps.calls.index("wait:inbound-wamid.A") < steps.calls.index("history:wamid.B")
+    assert steps.calls.index("wait:inbound-wamid.A") < steps.calls.index("state:wamid.B")
+    assert steps.calls.count("wait:inbound-wamid.A") == 1

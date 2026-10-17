@@ -130,7 +130,9 @@ from src.plugins.chats.shared.purchase_signals import (
 )
 from src.plugins.chats.agent.sales.decisions.readings import (
     Inbound,
-    apply_readings,
+    apply_last_message_marks,
+    apply_lasting_readings,
+    last_message_marks,
     read_catalog_gap,
     read_coupon_talk,
 )
@@ -776,13 +778,16 @@ class IngestInboundMessage:
         #   campaña la provocó: la que citó (2026-09-25) o la del touch
         #   reciente. Una prueba citada no carga la baja.
         _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
-        written = apply_readings(
+        # Lo que vale aunque llegue otro mensaje (la confirmación, la baja) se
+        # escribe acá; lo que describe al ÚLTIMO mensaje (la señal, la pausa,
+        # la cortesía) lo escribe el paso del historial, en el orden de llegada
+        # (`IngestState.last_message_marks`): los pasos del estado de dos
+        # mensajes del cliente corren a la vez.
+        written = apply_lasting_readings(
             metadata,
             readings,
             text=parsed.text,
             now_ms=now_ms,
-            message_id=parsed.message_id,
-            tz=tz,
             opt_out_campaign_id=(
                 _quoted["campaign_id"]
                 if _quoted is not None and not _quoted.get("test")
@@ -902,6 +907,7 @@ class IngestInboundMessage:
             previous_episode_summary=(
                 previous_episode_summary(previous_episode) if previous_episode is not None else None
             ),
+            last_message_marks=last_message_marks(readings),
             write_failed=not written and not isinstance(base, _Unread),
         )
 
@@ -1248,6 +1254,7 @@ class IngestInboundMessage:
             # Aún persistimos last_inbound_message_id para que el typing
             # indicator pueda referenciar este msg si el cliente reintenta.
             if parsed.message_id:
+                self._mark_last_message(metadata, request, state)
                 metadata["last_inbound_message_id"] = parsed.message_id
                 self._safe_write_metadata(session_id, metadata, base)
             return IngestTurn(outcome=TURN_IGNORED)
@@ -1481,12 +1488,15 @@ class IngestInboundMessage:
         )
 
         # --- 7. Persistir last_inbound_message_id para typing indicator ---
+        # …con lo que las lecturas dicen de ESTE mensaje (la señal de compra,
+        # la pausa, la cortesía): este paso va en el orden de llegada.
+        self._mark_last_message(metadata, request, state)
         if parsed.message_id:
             metadata["last_inbound_message_id"] = parsed.message_id
             self._safe_write_metadata(session_id, metadata, base)
-        elif cleared_flow_flag:
-            # No hay message_id PERO limpiamos el flag arriba — persistimos
-            # el pop para que no quede zombie en metadata.
+        elif cleared_flow_flag or state.last_message_marks is not None:
+            # No hay message_id PERO limpiamos el flag o hay lecturas —
+            # persistimos para que no quede zombie en metadata.
             self._safe_write_metadata(session_id, metadata, base)
 
     async def deliver(self, request: IngestRequest, state: IngestState, turn: IngestTurn) -> None:
@@ -1607,6 +1617,23 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    @staticmethod
+    def _mark_last_message(metadata: dict[str, Any], request: IngestRequest, state: IngestState) -> None:
+        """Escribe en `metadata` lo que las lecturas dicen del ÚLTIMO mensaje
+        (señal de compra, pausa, cortesía; `apply_last_message_marks`). Va con
+        `last_inbound_message_id`: cada mensaje pisa las del anterior."""
+        if state.last_message_marks is None:
+            return
+        parsed = message_from_dict(request.message)
+        apply_last_message_marks(
+            metadata,
+            state.last_message_marks,
+            text=parsed.text,
+            now_ms=state.now_ms,
+            message_id=parsed.message_id,
+            tz=resolve_local_timezone(state.session_id),
+        )
 
     def _effect_done(self, parsed: WhatsAppMessage, effect: str) -> bool:
         """¿Un intento anterior de la entrada ya hizo este efecto con este mensaje?"""

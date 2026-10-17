@@ -100,6 +100,23 @@ async def test_a_state_that_could_not_be_written_is_retried(monkeypatch, ledger)
 
 
 @pytest.mark.asyncio
+async def test_a_state_that_never_gets_written_still_lets_the_message_through(monkeypatch, ledger) -> None:
+    """Revisión del PR: con un error de escritura que no se arregla, agotar
+    los reintentos dejaba el mensaje sin historial ni bot (el ingest de la
+    fase 1 seguía igual). En el último intento del estado, el mensaje sigue."""
+    from src.plugins.chats.agent.sales.activities.inbound_entry import STATE_WRITE_ATTEMPTS
+
+    _use(monkeypatch, _Ingest(state=replace(_STATE, write_failed=True)))
+    env = ActivityEnvironment()
+    env.info = replace(env.info, attempt=STATE_WRITE_ATTEMPTS)
+
+    state = await env.run(read_inbound_state_activity, _REQUEST)
+
+    assert state.session_id == _STATE.session_id
+    assert ledger.stages() == []  # no es un desenlace: el mensaje sigue su camino
+
+
+@pytest.mark.asyncio
 async def test_a_failing_step_leaves_its_mark_in_the_ledger_and_raises(monkeypatch, ledger) -> None:
     _use(monkeypatch, _Ingest(fail="turn"))
 

@@ -57,7 +57,7 @@ activity (fase 2), y la entrega a la sesión va en orden de llegada por cliente
 - GIVEN un paso del ingest se reintenta tras hacer parte de su trabajo (el worker murió a mitad)
 - THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
 - AND lo que decidió el paso del estado (la nota de frontera del episodio nuevo, la respuesta a campaña, el resumen del episodio anterior —sin los datos de envío de su borrador, que no salen del vault—) llega a la entrega aunque la entrega se reintente: viaja en el resultado del paso, no se vuelve a decidir sobre un documento que ya la tiene escrita
-- AND si la escritura del estado falla, ese paso se reintenta (el episodio y las lecturas no se pierden)
+- AND si la escritura del estado falla, ese paso se reintenta (hasta 3 intentos); si sigue fallando, el mensaje sigue igual hasta el historial y el bot
 - AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: solo una caída del proceso entre el efecto y su marca lo repite)
 - AND dos intentos del mismo mensaje que se superponen avisan a la sesión UNA vez, y un intento cancelado mientras avisa termina el aviso y deja su marca
 - AND un error de programación (`TypeError`, `KeyError`…) no se reintenta
@@ -68,6 +68,7 @@ activity (fase 2), y la entrega a la sesión va en orden de llegada por cliente
 - THEN el workflow la lee en su propio paso (`describe_inbound_image` / `transcribe_inbound_audio`, heartbeat, 3 intentos) y la hace entrar como texto (`<wamid>_vision` / `<wamid>_transcribed`) por los mismos pasos, con la llegada de la foto como reloj
 - AND al terminar la foto (también si su lectura falló) le avisa a la sesión de ventas que ya no la espere (`photo_reading` con `done=True`)
 - AND ninguna lectura queda como tarea suelta del proceso: si el worker muere a mitad, el paso se repite en otro worker
+- AND si tras sus intentos no se puede leer, el workflow queda Failed a la vista (reseteable), no se pierde en silencio
 - AND una nota de voz que no se entendió le pide al cliente que la escriba UNA vez y no llega al bot
 
 #### Scenario: Orden de entrega por cliente sin serializar las lecturas
@@ -77,7 +78,8 @@ activity (fase 2), y la entrega a la sesión va en orden de llegada por cliente
 - THEN cada uno se anuncia al `InboundSessionWorkflow` del cliente (`inbound-wa_<número>`), que le responde con su anterior (el último anunciado con una llegada al webhook estrictamente menor)
 - AND los dos se leen en seguida, en paralelo
 - AND el segundo escribe su línea del historial y llega a la sesión DESPUÉS de que termine el primero (espera con tope de 30 s; si el anterior se traba, sale igual: se pierde el orden, nunca el mensaje)
-- AND dentro de un mismo POST también manda `after` (el anterior del mismo cliente en ese POST)
+- AND dentro de un mismo POST manda `after` (el anterior del mismo cliente en ese POST), y ahí el paso del estado también espera al anterior: los dos verían el mismo episodio cerrado o la misma campaña sin responder
+- AND lo que las lecturas dicen del ÚLTIMO mensaje (la señal de compra, la pausa por aplazamiento, la cortesía) se escribe en el paso del historial, en orden, con `last_inbound_message_id`: la foto que reentra tarde no borra la señal del «luego te escribo» que el cliente mandó detrás
 
 #### Scenario: El texto escrito detrás de una foto la espera
 

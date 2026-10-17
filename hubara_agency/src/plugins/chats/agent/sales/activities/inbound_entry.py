@@ -178,15 +178,27 @@ def _ingested(request: IngestRequest) -> None:
     )
 
 
+#: Intentos del paso del estado cuando su escritura falla (≤ los de su política
+#: de reintentos). Después el mensaje sigue igual: mejor un turno sin el
+#: episodio rotado que un mensaje que no llega (revisión del PR).
+STATE_WRITE_ATTEMPTS = 3
+
+
 @activity.defn(name="read_inbound_state")
 @with_heartbeat(every=10)
 async def read_inbound_state_activity(request: IngestRequest) -> IngestState:
     """Paso 1: el estado de la sesión con sus lecturas (Jev). Si la escritura
-    del estado falla, el paso se reintenta: el episodio y las lecturas no se
-    pierden."""
+    del estado falla, el paso se reintenta (el episodio y las lecturas no se
+    pierden por un disco que falló un momento); si sigue fallando, el mensaje
+    sigue su camino, como en la fase 1."""
     state = await _step(request, "state", lambda ingest: ingest.read_state(request))
     if state.write_failed:
-        raise ApplicationError("no se pudo escribir el estado de la sesión", type="InboundStateWriteFailed")
+        if _attempt() < STATE_WRITE_ATTEMPTS:
+            raise ApplicationError("no se pudo escribir el estado de la sesión", type="InboundStateWriteFailed")
+        wamid, from_number = _ledger_message(request)
+        logger.error(
+            "inbound_state_write_given_up", wa_message_id=wamid, session=f"wa_{from_number}", attempt=_attempt()
+        )
     return state
 
 
