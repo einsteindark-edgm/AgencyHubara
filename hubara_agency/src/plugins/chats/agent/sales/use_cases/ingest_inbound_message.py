@@ -1,16 +1,21 @@
 """Use case top-level del webhook de WhatsApp.
 
 Recibe un `WhatsAppMessage` ya parseado (la decision de 4xx vs 200 vive en el
-parser, en ``api.py``) y orquesta:
+parser, en ``api.py``) y lo procesa en pasos (entrada durable, fase 2; ADR
+2026-10-15). `InboundMessageWorkflow` corre cada paso en su activity y
+``execute`` los corre uno tras otro en el proceso:
 
-1. Detectar y persistir referral CTWA si es la primera vez en la sesión.
-2. Traducir el inbound a "texto efectivo" (texto natural para el LLM).
-3. Si el mensaje requiere transcripción (audio), encolar la activity y NO
-   delegar al agente hasta tener el texto.
-4. Persistir el evento del usuario en el JSONL via
+1. ``read_state``: el estado de la sesión (referral CTWA, origen, episodio,
+   ventana) con las lecturas del cliente (Jev), en una escritura.
+2. ``prepare_turn``: carrito y cupón, el texto efectivo (texto natural para el
+   LLM), el PDF y las citas; o por qué todavía no hay turno.
+3. ``describe_image`` / ``transcribe_audio``: la foto o la nota de voz, que
+   reentran como texto (NO se delega al agente hasta tener el texto).
+4. ``write_history``: el evento del usuario en el JSONL via
    ``FilesystemMessageHistoryStore``.
-5. Emitir eventos analytics (referral_captured, wa_interaction).
-6. Delegar a ``LoadOrStartSalesSession`` para resolver ruta + signal.
+5. ``deliver``: las notas del turno y ``LoadOrStartSalesSession`` (ruta +
+   signal), con los eventos de analytics (referral_captured, wa_interaction)
+   en el paso que los produce.
 
 Backward-compat: el comportamiento para `text` solo permanece idéntico al
 legacy — los tests existentes (`test_ingest_inbound_message.py`) pasan sin
@@ -330,10 +335,11 @@ async def catalog_gap_note_for(
 
 
 class InboundEffectsPort(Protocol):
-    """Lo que un reintento del ingest no repite, por `wamid` (ADR 2026-10-15
-    §6, `inbound_effects_store.py`): se `claim`-ea antes de un envío al
-    cliente y se `mark`-ea después de escribir el historial o avisar a la
-    sesión."""
+    """Lo que el reintento de un paso del ingest no repite, por `wamid` (ADR
+    2026-10-15 §6, `inbound_effects_store.py`): se `claim`-ea antes de un envío
+    al cliente y se `mark`-ea después de escribir el historial o avisar a la
+    sesión. Que un paso ya terminado no se repita lo da el historial del
+    workflow."""
 
     def claim(self, wamid: str, effect: str) -> bool: ...
 
@@ -514,25 +520,16 @@ class IngestInboundMessage:
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
         # Lo que había en disco al leer (incidente 2026-10-06): cada escritura
-        # de este `execute` lleva SOLO lo que cambió desde acá (o desde su
+        # de este paso lleva SOLO lo que cambió desde acá (o desde su
         # escritura anterior), no la copia entera. Entre la lectura y la
         # escritura grande se espera a Jev varios segundos; en ese rato el
         # flush del turno anterior saca de la cola la foto que ya mandó, y la
         # copia entera la devolvía (salía otra vez en el turno siguiente).
-        try:
-            # Un error pasajero se reintenta (hasta 3 veces, sin frenar el bucle).
-            metadata = await read_retrying_transient_errors(self._metadata_store, session_id)
-            base: dict[str, Any] = copy.deepcopy(metadata)
-        except Exception as exc:  # noqa: BLE001 — best-effort: el mensaje no se pierde
-            # Sigue fallando tras los reintentos (el store lanza: nunca da una
-            # copia vieja ni `{}`). El mensaje sigue al historial y al router,
-            # que relee; lo que el ingest decida sobre `{}` NO se escribe
-            # (pisaba el origen).
-            logger.warning(
-                "ingest_metadata_unreadable", session=session_id, error=repr(exc)[:200]
-            )
-            metadata = {}
-            base = _Unread()
+        # Si sigue fallando tras los reintentos (el store lanza: nunca da una
+        # copia vieja ni `{}`), el mensaje sigue al historial y al router, que
+        # relee; lo que el ingest decida sobre `{}` NO se escribe (pisaba el
+        # origen).
+        metadata, base = await self._read_metadata(session_id)
 
         # --- 1b. Nombre de perfil de WhatsApp (`contacts[].profile.name`) ---
         # La bandeja de la app y los incendios muestran quién escribe, no solo
