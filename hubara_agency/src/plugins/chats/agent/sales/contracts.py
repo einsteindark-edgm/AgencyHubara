@@ -92,7 +92,8 @@ class InboundMessageInput:
     Campos:
       * `message`: el `WhatsAppMessage` como dict (`dataclasses.asdict`), tal
         como lo dejó el webhook: parseado y con la dirección de su conversación
-        (`_in_their_conversation`). Lleva `raw` (el mensaje crudo de Meta).
+        (`_in_their_conversation`), SIN el `raw` de Meta: el ingest no lo lee
+        y la historia de Temporal Cloud guarda el input 30 días, en claro.
       * `after`: `wamid` del mensaje anterior del MISMO cliente en el mismo
         POST. El workflow espera a que ese termine antes de ingerir este (el
         orden que antes daban los background tasks en serie).
