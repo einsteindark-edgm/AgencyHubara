@@ -73,6 +73,8 @@ CAPABILITIES: tuple[str, ...] = (
     # ¿pide el producto de la caja que nombró?, y el «por mayor» que son velas
     # sueltas (laboratorio del 2026-10-14).
     "cajas", "caja_nombrada", "por_mayor",
+    # El precio de la caja dicho por unidad («cada velita vale $25.000», ventas-7, 2026-10-16).
+    "caja_por_unidad",
     # Decisiones del agente (F8) y la promesa del relevo a un colega
     # (red de seguridad antes de enviar, 2026-09-30).
     "contactar", "cierre", "relevo",

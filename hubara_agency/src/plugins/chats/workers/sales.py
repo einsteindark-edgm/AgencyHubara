@@ -68,6 +68,7 @@ from src.plugins.chats.agent.sales.activities import (
     flush_pending_ui_intents_activity,
     persist_turn_trace_activity,
     read_and_clear_pending_handoff_activity,
+    read_handoff_reply_activity,
     read_idle_timeout_seconds_activity,
     read_order_draft_note_activity,
     read_reply_window_activity,
@@ -532,6 +533,9 @@ SALES_ACTIVITIES = [
     decide_ghosting_action,
     bootstrap_sales_session_activity,
     read_and_clear_pending_handoff_activity,
+    # Lo que el cliente le escribió a remarketing, al turno del traspaso del
+    # V2 (caso 2026-10-16: con solo el resumen, Ventas se calló).
+    read_handoff_reply_activity,
     # Draft del pedido al turno de handoff (run 019f6db3): sin esto
     # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
     read_order_draft_note_activity,
