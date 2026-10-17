@@ -400,6 +400,7 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "coupon_claim_items": _CATALOG,
         "denial_claim_items": _CATALOG,
         "customer_figure_items": _CATALOG,
+        "box_unit_claim_items": _CATALOG,
     },
     "options": {
         "catalog_categories": _CATALOG,

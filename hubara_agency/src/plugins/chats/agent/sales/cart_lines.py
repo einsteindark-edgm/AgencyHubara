@@ -30,6 +30,9 @@ class CartLine:
     handle: str
     variant: str | None  # la variante elegida, si el producto tiene variantes reales
     unit_price_cop: int | None
+    #: Las unidades de la caja si la tienda lo cobra por caja (`domain.yaml:
+    #: sold_by_box`): el precio es el de la caja y la cantidad, cajas.
+    box_units: int | None = None
 
 
 def _cop(variant: Any) -> int | None:
@@ -55,20 +58,26 @@ def retailer_ids(items: Sequence[Mapping[str, Any]]) -> list[str]:
 
 
 def lines_from_products(
-    items: Sequence[Mapping[str, Any]], products: Iterable[Any]
+    items: Sequence[Mapping[str, Any]], products: Iterable[Any], *, boxes: Any = None
 ) -> dict[str, CartLine | None]:
     """Cada `product_retailer_id` del carrito → su línea del catálogo, o None
-    si el catálogo no lo tiene."""
+    si el catálogo no lo tiene. `boxes`: lo que la tienda cobra por caja
+    (`domain.yaml: sold_by_box`); sin él, todo va por unidad."""
+    # Aquí y no arriba: `use_cases/__init__` importa el ingest, que importa este módulo.
+    from src.plugins.chats.agent.sales.use_cases.product_options import pack_units
+
     known: dict[str, CartLine] = {}
     for product in products:
         variants = list(getattr(product, "variants", None) or [])
         real = has_real_variants(product)
+        box_units = pack_units(product, boxes)
         for variant in variants:
             line = CartLine(
                 title=product.title,
                 handle=product.handle,
                 variant=(getattr(variant, "title", None) or None) if real else None,
                 unit_price_cop=_cop(variant),
+                box_units=box_units,
             )
             known.setdefault(variant_retailer_id(variant), line)
             if variant.id:
@@ -96,7 +105,10 @@ def cart_summary(items: Sequence[Mapping[str, Any]], lines: Mapping[str, CartLin
             parts.append(f"{qty}× {pid} (no está en el catálogo)")
             continue
         name = f"{line.title} · {line.variant}" if line.variant else line.title
-        price = f" a {_format_cop(line.unit_price_cop)} c/u" if line.unit_price_cop else ""
+        # Caso del 2026-10-16: «a $25.000 c/u» por una caja de 12 y el bot le
+        # confirmó al cliente que cada vela valía eso.
+        each = f"la caja de {line.box_units} unidades" if line.box_units else "c/u"
+        price = f" a {_format_cop(line.unit_price_cop)} {each}" if line.unit_price_cop else ""
         parts.append(f"{qty}× {name}{price} ({pid})")
     if not parts:
         return "(carrito vacío)"
@@ -116,7 +128,11 @@ def build_cart_note(
         if line is None:
             continue
         variant = f", variante «{line.variant}»" if line.variant else ""
-        rows.append(f"- {item.get('quantity', 1)}× «{line.title}»{variant} (handle {line.handle})")
+        box = (
+            f": se cobra por caja de {line.box_units} unidades, el precio es el de la caja y la cantidad son cajas"
+            if line.box_units else ""
+        )
+        rows.append(f"- {item.get('quantity', 1)}× «{line.title}»{variant} (handle {line.handle}){box}")
     if not rows:
         return None
     return (

@@ -1691,6 +1691,35 @@ texto final suelto por `send_reply`.
 - THEN el texto sale (Jev: 0,13–0,18 en la sonda)
 - AND «más el envío de $7.900» no se le pregunta a Jev: la tarifa es una cifra cierta
 
+### Requirement: Lo que se cobra por caja no se cotiza por unidad (`ventas-7`, 2026-10-16)
+
+En la misma revisión de los hechos (y la misma retención única), con un producto
+que la tienda cobra por caja en foco (`domain.yaml: sold_by_box`, hoy las velas
+de deseos), `caja_por_unidad` SHALL revisar si el texto le pone a cada vela o
+unidad el precio de la caja. `precio_ajeno` no lo ve: el monto es el del
+catálogo; lo falso es a qué se lo pone. La regla (frases del paquete:
+`por_unidad`, `habla_de_caja`) solo PROPONE una cláusula que dice un precio por
+unidad («cada una», «por unidad», «cada velita») sin nombrar la caja y sin
+negarlo; Jev, con lo que dice el sistema de la caja, decide (umbral 0,5; lo que
+Jev no contestó no se retiene, porque «cada una» también habla de cajas). Sin
+Jev, o sin un producto por caja en foco, no se juzga nada. Lo que quede MUST
+volver al modelo con el precio de la caja y cuántas unidades trae, sin empezar
+con «así es», y reconociendo el error si antes le dijo que era por unidad.
+
+El carrito del catálogo de WhatsApp SHALL decir la caja de lo que se cobra por
+caja («a $25.000 la caja de 12 unidades», no «c/u») y su nota, que la cantidad
+son cajas.
+
+#### Scenario: «el precio es por unidad, cada velita vale $25.000» (producción, 2026-10-16)
+
+- GIVEN una caja de Velas de deseos cuadradas ($25.000 la caja de 12) en el pedido
+- WHEN el cliente pregunta si cada vela vale eso y el bot contesta «Así es, $25.000 cada una»
+  o «el precio es por unidad, cada velita vale $25.000»
+- THEN el texto vuelve una vez con «$25.000 es el precio de la caja de 12 unidades»
+  (Jev: 0,73 y 0,94 en la sonda)
+- AND «si llevas dos cajas, te quedan a $25.000 cada una» sale (Jev: 0,05)
+- AND «cada caja trae 12 velitas y vale $25.000» no se le pregunta a Jev
+
 ### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
 
 Cuando el cliente escribe desde la ficha de un producto del catálogo de

@@ -60,6 +60,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   cajas: "Cajas o velas",
   caja_nombrada: "La caja que nombró el cliente",
   por_mayor: "Por mayor o velas sueltas",
+  caja_por_unidad: "Precio de la caja dicho por unidad",
   cantidad: "Cantidad",
   categoria: "Categoría",
   familia_de_color: "Familia de color",
@@ -270,6 +271,9 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
       : value === "duda"
         ? warn("No se sabe si es al por mayor: vuelve al bot una vez con las cuentas")
         : plain("Es al por mayor: pasa a un colega"),
+  // Lo que se cobra por caja con un precio por unidad («cada velita vale $25.000», ventas-7, 2026-10-16).
+  caja_por_unidad: (value) =>
+    claimSentence(value, "ese es el precio de la caja", "No le pone a cada unidad el precio de la caja"),
   // El cliente afirma una suma que no es la de su pedido y el texto le daba la razón (2026-10-14).
   cifra_del_cliente: (value) => {
     const terms = list(value);
@@ -487,6 +491,7 @@ const FACT_QUESTIONS: Record<string, (term: string) => string> = {
   cupon_ajeno: (term) => `¿El texto le ofrece ${term} como cupón vigente?`,
   negacion_falsa: (term) => `¿El texto le dice que no tenemos ${term}?`,
   cifra_del_cliente: (term) => `El cliente escribió ${term}: ¿el texto le da la razón?`,
+  caja_por_unidad: () => "¿El texto le pone a cada unidad el precio de la caja?",
 };
 
 function questionText(d: EngineDecisionView, q: string): string {
@@ -507,7 +512,7 @@ function questionText(d: EngineDecisionView, q: string): string {
       ? `¿El texto le ofrece «${String(word)}» como ${foreign[1]} del producto?`
       : `¿El texto le ofrece el ${foreign[1]} ${foreign[2]} como ${foreign[1]} del producto?`;
   }
-  const fact = /^(precio_ajeno|pago_ajeno|estado_ajeno|cupon_ajeno|negacion_falsa|cifra_del_cliente)\.termino_(\d+)$/.exec(q);
+  const fact = /^(precio_ajeno|pago_ajeno|estado_ajeno|cupon_ajeno|negacion_falsa|cifra_del_cliente|caja_por_unidad)\.termino_(\d+)$/.exec(q);
   if (fact) {
     // Jev revisa lo que propuso la regla, en su orden.
     const terms = list(d.rule !== undefined ? d.rule : d.value);
