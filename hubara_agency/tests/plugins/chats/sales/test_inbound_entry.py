@@ -66,13 +66,44 @@ async def test_the_client_is_reused_and_rebuilt_after_a_failure(env) -> None:
             raise ConnectionError("temporal cloud no contesta")
         return env.client
 
-    entry = InboundEntry(factory, task_queue=QUEUE)
+    now = [0.0]
+    entry = InboundEntry(factory, task_queue=QUEUE, clock=lambda: now[0])
     with pytest.raises(ConnectionError):
         await entry.accept(_input("wamid.A"))
+    now[0] += 60
     await entry.accept(_input("wamid.B"))
     await entry.accept(_input("wamid.C"))
 
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_right_after_a_failure_the_webhook_fails_fast_instead_of_queueing_on_temporal(env) -> None:
+    """Premortem PM-009: con Temporal colgado, cada webhook esperaba sus 8 s en
+    fila detrás del candado (el POST k, k×8 s). Tras una falla, unos segundos
+    de 503 inmediato; después se vuelve a intentar."""
+    from src.plugins.chats.agent.sales.use_cases.inbound_entry import InboundUnavailable
+
+    calls: list[int] = []
+
+    async def factory():
+        calls.append(1)
+        if len(calls) == 1:
+            raise ConnectionError("temporal cloud no contesta")
+        return env.client
+
+    now = [0.0]
+    entry = InboundEntry(factory, task_queue=QUEUE, clock=lambda: now[0])
+    with pytest.raises(ConnectionError):
+        await entry.accept(_input("wamid.A"))
+
+    now[0] += 1
+    with pytest.raises(InboundUnavailable):
+        await entry.accept(_input("wamid.B"))
+    assert len(calls) == 1
+
+    now[0] += 10
+    assert await entry.accept(_input("wamid.B")) is True
 
 
 @pytest.mark.asyncio

@@ -149,3 +149,16 @@ async def test_a_message_queued_by_another_version_still_ingests(monkeypatch, le
 
     assert await ActivityEnvironment().run(ingest_inbound_message_activity, inp) == "ingested"
     assert ingest.received == [_MESSAGE]
+
+
+@pytest.mark.asyncio
+async def test_a_message_that_cannot_be_rebuilt_is_ledgered_as_failed(monkeypatch, ledger) -> None:
+    """Premortem PM-005: rehidratar corría fuera del try; un input roto fallaba
+    sin `ingest_failed` en el ledger ni el wamid en el log."""
+    monkeypatch.setattr(composition, "build_ingest_use_case", lambda: _Ingest())
+    broken = InboundMessageInput(message={"message_id": "wamid.ROTO", "from_number": "573001234567"})
+
+    with pytest.raises(TypeError):
+        await ActivityEnvironment().run(ingest_inbound_message_activity, broken)
+
+    assert [(r["stage"], r["wa_message_id"]) for r in ledger.records] == [("ingest_failed", "wamid.ROTO")]

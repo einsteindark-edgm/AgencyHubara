@@ -136,10 +136,10 @@ def test_summary_tells_arrived_vs_lost_inside_per_bogota_day_and_ad() -> None:
 
     assert summary["requests"] == {"accepted": 1, "signature_rejected": 1}
     assert summary["by_day_ad"] == {
-        "2026-09-17": {_AD: {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0, "pending": 0}},
+        "2026-09-17": {_AD: {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0, "pending": 0, "stuck": 0}},
         "2026-09-18": {
-            _AD: {"sessions": 3, "ingested": 1, "failed": 1, "lost": 1, "pending": 0},
-            "sin_referral": {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0, "pending": 0},
+            _AD: {"sessions": 3, "ingested": 1, "failed": 1, "lost": 1, "pending": 0, "stuck": 0},
+            "sin_referral": {"sessions": 1, "ingested": 1, "failed": 0, "lost": 0, "pending": 0, "stuck": 0},
         },
     }
     assert summary["lost"] == [{"wa_message_id": "wamid.B", "session_id": "wa_573000000001", "at_ms": t + 2, "source_id": _AD}]
@@ -157,7 +157,7 @@ def test_summary_counts_a_parser_rejection_as_failed_with_its_reason() -> None:
 
     summary = summarize_ledger(records)
 
-    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 1, "ingested": 0, "failed": 1, "lost": 0, "pending": 0}
+    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 1, "ingested": 0, "failed": 1, "lost": 0, "pending": 0, "stuck": 0}
     assert summary["failed"][0]["error"] == "text message missing 'text.body'"
     assert summary["lost"] == []
 
@@ -182,6 +182,26 @@ def test_a_message_waiting_in_temporal_counts_as_pending_not_as_lost_or_failed()
 
     summary = summarize_ledger(records)
 
-    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 4, "ingested": 1, "failed": 0, "lost": 1, "pending": 2}
+    assert summary["by_day_ad"]["2026-09-18"][_AD] == {"sessions": 4, "ingested": 1, "failed": 0, "lost": 1, "pending": 2, "stuck": 0}
     assert [row["wa_message_id"] for row in summary["pending"]] == ["wamid.Q", "wamid.G"]
     assert [row["wa_message_id"] for row in summary["lost"]] == ["wamid.F"]
+
+
+def test_a_message_waiting_in_temporal_for_too_long_counts_as_stuck() -> None:
+    """Premortem PM-005: `pending` no envejecía; un workflow varado (rollback
+    sin el tipo registrado, terminado desde la UI, worker caído) quedaba
+    `pending` para siempre. Pasada la media hora es `stuck`: hay que mirarlo."""
+    t = _SEP_18_0710_BOG
+    records = [
+        _seen("wamid.OLD", "wa_573001234567", t, _AD),
+        _stage("queued", "wamid.OLD", "wa_573001234567", t + 1),
+        _seen("wamid.NEW", "wa_573000000001", t + 29 * 60_000, _AD),
+        _stage("queued", "wamid.NEW", "wa_573000000001", t + 29 * 60_000 + 1),
+    ]
+
+    summary = summarize_ledger(records, now_ms=t + 31 * 60_000)
+
+    bucket = summary["by_day_ad"]["2026-09-18"][_AD]
+    assert (bucket["pending"], bucket["stuck"]) == (1, 1)
+    assert [row["wa_message_id"] for row in summary["stuck"]] == ["wamid.OLD"]
+    assert [row["wa_message_id"] for row in summary["pending"]] == ["wamid.NEW"]

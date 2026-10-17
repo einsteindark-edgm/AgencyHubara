@@ -24,6 +24,7 @@ isinstance check).
 """
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 import re
@@ -354,6 +355,10 @@ class PhotoIdentifierPort(Protocol):
 #: foto (2026-09-30): el workflow espera la foto en la misma ráfaga.
 PhotoNotifier = Callable[[str, str, bool], Awaitable[None]]
 
+#: Avisos a la sesión en vuelo (`_deliver_turn_once`): referencia fuerte para que
+#: uno que sigue tras cancelarse el intento no lo recoja el GC (L-7).
+_IN_FLIGHT: set[asyncio.Future[None]] = set()
+
 
 class IngestInboundMessage:
     """Procesa un `WhatsAppMessage` ya parseado: history + routing + signal."""
@@ -390,6 +395,8 @@ class IngestInboundMessage:
         # Aviso al workflow de ventas: una foto del cliente se está leyendo (y
         # cuándo ya entró). Sin él, la foto entra como hoy.
         self._photo_notifier = photo_notifier
+        # Un candado por wamid mientras se avisa a la sesión (`_deliver_turn_once`).
+        self._turn_locks: dict[str, asyncio.Lock] = {}
         # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
         # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
         # campos de hoy. Sin proveedor, el del motor con el registro de bots
@@ -1563,40 +1570,40 @@ class IngestInboundMessage:
         # «no están todas» y el bot negó lo verificado). La foto que reentra
         # ya lleva su propia nota.
         photo_facts_note = None if request.from_photo else build_photo_facts_note(metadata)
-        # Un reintento de la entrada no hace que el bot conteste dos veces.
-        if self._effect_done(parsed, "turn"):
-            logger.info("inbound_turn_already_delivered", session=session_id, wamid=parsed.message_id)
-            return
         # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
         # remarketing no recibe plugin_context) — el turno va a Ventas.
         route_kwargs: dict[str, Any] = {"prefer_sales": True} if turn.prefer_sales else {}
-        await self._load_session.execute(
-            session_id=session_id,
-            message=turn.turn_message,
-            phone_number_id=parsed.phone_number_id,
-            **route_kwargs,
-            inbound_meta=turn.inbound_meta,
-            extra_context=[
-                note
-                for note in (
-                    turn.campaign_reply_note,
-                    state.episode_boundary_note,
-                    deferral_note,
-                    web_cart_note,
-                    web_product_note,
-                    order_draft_note,
-                    coupon_note,
-                    photo_facts_note,
-                    request.photo_note,
-                    photo_citation_note,
-                    turn.cart_note,
-                    turn.gap_note,
-                )
-                if note
-            ]
-            or None,
+        # Un reintento de la entrada no hace que el bot conteste dos veces.
+        await self._deliver_turn_once(
+            parsed,
+            session_id,
+            lambda: self._load_session.execute(
+                session_id=session_id,
+                message=turn.turn_message,
+                phone_number_id=parsed.phone_number_id,
+                **route_kwargs,
+                inbound_meta=turn.inbound_meta,
+                extra_context=[
+                    note
+                    for note in (
+                        turn.campaign_reply_note,
+                        state.episode_boundary_note,
+                        deferral_note,
+                        web_cart_note,
+                        web_product_note,
+                        order_draft_note,
+                        coupon_note,
+                        photo_facts_note,
+                        request.photo_note,
+                        photo_citation_note,
+                        turn.cart_note,
+                        turn.gap_note,
+                    )
+                    if note
+                ]
+                or None,
+            ),
         )
-        self._mark_effect(parsed, "turn")
 
     # =========================================================================
     # Helpers
@@ -1609,6 +1616,43 @@ class IngestInboundMessage:
     def _mark_effect(self, parsed: WhatsAppMessage, effect: str) -> None:
         if self._effects is not None:
             self._effects.mark(parsed.message_id, effect)
+
+    async def _deliver_turn_once(
+        self, parsed: WhatsAppMessage, session_id: str, deliver: Callable[[], Awaitable[None]]
+    ) -> None:
+        """El mensaje a la sesión de ventas, UNA vez por wamid (un reintento de
+        la entrada no hace que el bot conteste dos veces; la sesión V2 no
+        deduplica por wamid). Premortem PM-003:
+
+        - dos intentos del mismo mensaje que se superponen (un heartbeat vencido
+          con el primero vivo) pasan de a uno: el segundo ve la marca y no avisa;
+        - un intento cancelado mientras avisa (el worker se apaga) termina el
+          aviso y deja la marca: lo que ya salió hacia Temporal no se repite.
+        """
+        if self._effects is None:
+            await deliver()
+            return
+        wamid = parsed.message_id
+        lock = self._turn_locks.setdefault(wamid, asyncio.Lock())
+        try:
+            async with lock:
+                if self._effect_done(parsed, "turn"):
+                    logger.info("inbound_turn_already_delivered", session=session_id, wamid=wamid)
+                    return
+
+                async def deliver_and_mark() -> None:
+                    await deliver()
+                    self._mark_effect(parsed, "turn")
+
+                delivery = asyncio.ensure_future(deliver_and_mark())
+                # Referencia fuerte mientras corre (L-7): si el intento se
+                # cancela, el aviso sigue hasta terminar y dejar su marca.
+                _IN_FLIGHT.add(delivery)
+                delivery.add_done_callback(_IN_FLIGHT.discard)
+                await asyncio.shield(delivery)
+        finally:
+            if not lock.locked():
+                self._turn_locks.pop(wamid, None)
 
     async def _send_once(self, parsed: WhatsAppMessage, text: str) -> None:
         """Un envío directo al cliente, una vez por mensaje y texto. Se reclama

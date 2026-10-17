@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import replace
 from typing import Any
 
 import structlog
@@ -57,21 +56,26 @@ async def ingest_inbound_message_activity(inp: InboundMessageInput) -> str:
     evita repetir lo que el intento anterior ya hizo."""
     from src.plugins.chats.agent.sales import composition
 
-    parsed = _message(inp.message)
+    wamid = str(inp.message.get("message_id") or "")
+    from_number = str(inp.message.get("from_number") or "")
+    # La conversación en cada log: con el wamid ubica el workflow `inbound-<wamid>`.
+    log = logger.bind(wa_message_id=wamid, session=f"wa_{from_number}", attempt=_attempt())
     try:
-        await composition.build_ingest_use_case().execute(parsed, received_at_ms=inp.received_at_ms or None)
+        # Rehidratar también va adentro: un input roto deja `ingest_failed` con
+        # su wamid (premortem PM-005).
+        await composition.build_ingest_use_case().execute(
+            _message(inp.message), received_at_ms=inp.received_at_ms or None
+        )
     except BaseException as exc:
         # También la cancelación (el worker se apaga a mitad): el mensaje NO
         # llegó al bot, se reintenta — nunca queda `ingested`.
         if isinstance(exc, Exception):
-            logger.exception("inbound_ingest_failed", wa_message_id=parsed.message_id, attempt=_attempt())
-        _ledger(composition, parsed, "ingest_failed", error=f"{type(exc).__name__}: {exc}")
+            log.exception("inbound_ingest_failed")
+        _ledger(composition, wamid, from_number, "ingest_failed", error=f"{type(exc).__name__}: {exc}")
         raise
-    _ledger(composition, parsed, "ingested")
-    logger.info(
+    _ledger(composition, wamid, from_number, "ingested")
+    log.info(
         "inbound_ingested",
-        wa_message_id=parsed.message_id,
-        attempt=_attempt(),
         waited_ms=int(time.time() * 1000) - inp.received_at_ms if inp.received_at_ms else None,
     )
     return "ingested"
@@ -86,15 +90,15 @@ def _attempt() -> int:
     return activity.info().attempt
 
 
-def _ledger(composition: Any, parsed: WhatsAppMessage, stage: str, *, error: str | None = None) -> None:
+def _ledger(composition: Any, wamid: str, from_number: str, stage: str, *, error: str | None = None) -> None:
     composition.build_inbound_ledger().append(
         [
             message_stage_record(
                 stage=stage,
                 at_ms=int(time.time() * 1000),
                 field="messages",
-                wa_message_id=parsed.message_id,
-                from_number=parsed.from_number,
+                wa_message_id=wamid,
+                from_number=from_number,
                 error=error,
             )
         ]
@@ -129,13 +133,14 @@ async def wait_inbound_predecessor_activity(wamid: str) -> str:
 _SYNTHETIC_SUFFIXES = ("_transcribed", "_vision")
 
 
-def _ledger_message(request: IngestRequest) -> WhatsAppMessage:
-    """El mensaje del webhook que cuenta el ledger (sin el sufijo de la reentrada)."""
-    parsed = message_from_dict(request.message)
-    wamid = parsed.message_id or ""
+def _ledger_message(request: IngestRequest) -> tuple[str, str]:
+    """`(wamid, from_number)` del mensaje del webhook que cuenta el ledger (sin
+    el sufijo de la reentrada). Sin rehidratar: un input roto igual deja su
+    marca (premortem PM-005)."""
+    wamid = str(request.message.get("message_id") or "")
     for suffix in _SYNTHETIC_SUFFIXES:
         wamid = wamid.removesuffix(suffix)
-    return replace(parsed, message_id=wamid)
+    return wamid, str(request.message.get("from_number") or "")
 
 
 async def _step(request: IngestRequest, step: str, run: Any) -> Any:
@@ -148,10 +153,12 @@ async def _step(request: IngestRequest, step: str, run: Any) -> Any:
     try:
         return await run(composition.build_ingest_use_case())
     except BaseException as exc:
-        parsed = _ledger_message(request)
+        wamid, from_number = _ledger_message(request)
         if isinstance(exc, Exception):
-            logger.exception("inbound_step_failed", step=step, wa_message_id=parsed.message_id, attempt=_attempt())
-        _ledger(composition, parsed, "ingest_failed", error=f"{step}: {type(exc).__name__}: {exc}")
+            logger.exception(
+                "inbound_step_failed", step=step, wa_message_id=wamid, session=f"wa_{from_number}", attempt=_attempt()
+            )
+        _ledger(composition, wamid, from_number, "ingest_failed", error=f"{step}: {type(exc).__name__}: {exc}")
         raise
 
 
@@ -160,11 +167,12 @@ def _ingested(request: IngestRequest) -> None:
     tenía nada que escribir)."""
     from src.plugins.chats.agent.sales import composition
 
-    parsed = _ledger_message(request)
-    _ledger(composition, parsed, "ingested")
+    wamid, from_number = _ledger_message(request)
+    _ledger(composition, wamid, from_number, "ingested")
     logger.info(
         "inbound_ingested",
-        wa_message_id=parsed.message_id,
+        wa_message_id=wamid,
+        session=f"wa_{from_number}",
         attempt=_attempt(),
         waited_ms=int(time.time() * 1000) - request.received_at_ms if request.received_at_ms else None,
     )

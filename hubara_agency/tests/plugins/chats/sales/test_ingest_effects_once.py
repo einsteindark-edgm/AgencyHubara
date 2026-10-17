@@ -146,3 +146,44 @@ def test_the_real_ingest_journals_its_effects_in_the_vault(monkeypatch, _isolate
 
     assert list((_isolate_vault_dir / "_ledger" / "inbound_effects").rglob("*"))
     assert use_case._effect_done(_message("wamid.REAL"), "turn") is True
+
+
+@pytest.mark.asyncio
+async def test_the_document_ack_goes_out_once_even_if_the_retry_runs_in_a_new_process(tmp_path, monkeypatch) -> None:
+    """Premortem PM-013 (spec «Un reintento del ingest no repite efectos»): el
+    reintento corre en otro worker (proceso nuevo, metadata que el intento
+    anterior no alcanzó a escribir): «Recibí tu documento» no sale dos veces."""
+    from unittest.mock import AsyncMock
+
+    import src.platform.media.store as media_store
+    from src.platform.whatsapp import client as wa_client
+
+    monkeypatch.setattr(media_store, "WORKSPACE_VAULT_DIR", tmp_path)
+    monkeypatch.setattr(
+        "src.platform.audio.meta_media_fetcher.fetch_media_bytes",
+        AsyncMock(return_value=(b"%PDF-1.4 comprobante", "application/pdf")),
+    )
+    sent: list[str] = []
+
+    async def _send(_phone_id: str, _to: str, text: str, *_a: Any, **_k: Any) -> None:
+        sent.append(text)
+
+    monkeypatch.setattr(wa_client, "send_message", _send)
+    document = WhatsAppMessage(
+        message_id="wamid.DOC", from_number="573001234567", phone_number_id="PID", text=None,
+        media={"type": "document", "id": "doc-9", "mime_type": "application/pdf", "filename": "comprobante.pdf"},
+        timestamp="1714312345",
+    )
+    effects_root = tmp_path / "effects"
+
+    for _attempt in range(2):
+        use_case = IngestInboundMessage(
+            history_store=_History(),  # type: ignore[arg-type]
+            load_session=_Session(),  # type: ignore[arg-type]
+            metadata_store=_Metadata(),  # type: ignore[arg-type]
+            effects=FilesystemInboundEffects(effects_root, now_ms=lambda: 1_789_992_000_000),
+        )
+        await use_case.execute(document)
+
+    assert len(sent) == 1
+    assert "Recibí tu documento" in sent[0]

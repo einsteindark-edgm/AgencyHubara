@@ -7,9 +7,11 @@ la sesión de ventas, un envío directo al cliente — queda marcado acá por
 ``wamid``: un archivo vacío por (mensaje, efecto), creado con ``O_EXCL``, bajo el
 vault (sobrevive al proceso y al deploy).
 
-Un directorio por día UTC. Un reintento se mide en minutos, así que se consultan
-el día de hoy y el de ayer; los días más viejos se borran al abrir uno nuevo. La
-re-entrega de Meta días después la frena antes ``REJECT_DUPLICATE`` en Temporal.
+Un directorio por día UTC, conservado tanto como la retención de Temporal
+(30 días): un reintento se mide en minutos, pero un workflow fallido se puede
+resetear desde la UI días después y su ingest no debe repetir lo ya hecho
+(premortem PM-007). Los días más viejos se borran al abrir uno nuevo. La
+re-entrega de Meta la frena antes ``REJECT_DUPLICATE`` en Temporal.
 
 Best-effort, como el ledger: un disco roto se loguea y el ingest sigue (en el
 peor caso un reintento repite el efecto; nunca se pierde el mensaje).
@@ -28,9 +30,10 @@ import structlog
 logger = structlog.get_logger()
 
 _DAY_MS = 86_400_000
-#: Días que se conservan (hoy incluido). Ayer basta para un reintento que cruza
-#: la medianoche UTC; el resto es margen para investigar.
-_KEEP_DAYS = 3
+#: Días que se conservan y se consultan (hoy incluido): la retención del
+#: namespace de Temporal (`infra/terraform/temporal-cloud`, 30 días), hasta donde
+#: se puede resetear un workflow de entrada.
+_KEEP_DAYS = 30
 
 
 def _day(at_ms: int) -> str:
@@ -63,7 +66,7 @@ class FilesystemInboundEffects:
         name = _marker_name(wamid, effect)
         now = self._now_ms()
         try:
-            return any((self._root / _day(now - back * _DAY_MS) / name).exists() for back in (0, 1))
+            return any((self._root / _day(now - back * _DAY_MS) / name).exists() for back in range(_KEEP_DAYS))
         except OSError as exc:
             logger.error("inbound_effects_read_failed", effect=effect, error=str(exc))
             return False

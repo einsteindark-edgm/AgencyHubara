@@ -147,3 +147,19 @@ async def test_a_voice_note_nobody_understood_is_ingested_there(monkeypatch, led
 
     assert await ActivityEnvironment().run(transcribe_inbound_audio_activity, _REQUEST) is None
     assert ledger.stages() == [("ingested", "wamid.A")]
+
+
+@pytest.mark.asyncio
+async def test_a_message_that_cannot_be_rebuilt_is_ledgered_as_failed(monkeypatch, ledger) -> None:
+    """Premortem PM-005, en los pasos: un input roto (otra versión del
+    webhook) falla con `ingest_failed` y su wamid en el ledger."""
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import IngestInboundMessage
+
+    real = IngestInboundMessage(history_store=object(), load_session=object(), metadata_store=object())  # type: ignore[arg-type]
+    _use(monkeypatch, real)  # type: ignore[arg-type]
+    broken = IngestRequest(message={"message_id": "wamid.ROTO", "from_number": "573001234567"})
+
+    with pytest.raises(TypeError):
+        await ActivityEnvironment().run(read_inbound_state_activity, broken)
+
+    assert ledger.stages() == [("ingest_failed", "wamid.ROTO")]
