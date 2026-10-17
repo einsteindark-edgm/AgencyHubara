@@ -52,6 +52,8 @@ describe("mapBackendCampaign — envío por lotes (pausa / cancelación)", () =>
         opted_out: 1,
         skipped: 0,
         state: "paused",
+        pause_reason: "Meta rechazó 60 de 100 envíos del último lote",
+        resume_at_ms: null,
       },
     });
     expect(paused.status).toBe("paused");
@@ -63,6 +65,8 @@ describe("mapBackendCampaign — envío por lotes (pausa / cancelación)", () =>
       optedOut: 1,
       skipped: 0,
       state: "paused",
+      pauseReason: "Meta rechazó 60 de 100 envíos del último lote",
+      resumeAtMs: null,
     });
     expect(mapBackendCampaign({ ...backendSent, status: "cancelled" }).status).toBe(
       "cancelled",

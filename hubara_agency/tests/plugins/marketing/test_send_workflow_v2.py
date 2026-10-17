@@ -34,6 +34,8 @@ from src.plugins.marketing.agent.campaigns.workflows.send_v2 import (
 from src.plugins.marketing.domain.campaign_send import (
     CampaignBatch,
     CampaignBatchResult,
+    CampaignDelivery,
+    CampaignDeliveryOutcome,
     CampaignSendInput,
     CampaignSendProgress,
     CampaignSendStart,
@@ -63,15 +65,25 @@ class Fakes:
         failing: frozenset[str] = frozenset(),
         opted_out: frozenset[str] = frozenset(),
         stamp_failure: str | None = None,
+        quiet_now: frozenset[str] = frozenset(),
+        load_failure_at: int | None = None,
+        quiet_until_at: dict[int, int] | None = None,
+        carousel_error: bool = False,
         carousel: bool = False,
         blocked_reason: str | None = None,
+        hold_prepare: bool = False,
     ) -> None:
         self.total = total
+        self.hold_prepare = hold_prepare
         self.hold_batch_at = hold_batch_at
         self.skip = skip
         self.failing = failing
         self.opted_out = opted_out
         self.stamp_failure = stamp_failure
+        self.quiet_now = quiet_now
+        self.load_failure_at = load_failure_at
+        self.quiet_until_at = dict(quiet_until_at or {})
+        self.carousel_error = carousel_error
         self.carousel = carousel
         self.blocked_reason = blocked_reason
         self.cards = [
@@ -87,14 +99,19 @@ class Fakes:
         self.recorded: list[tuple[CampaignSendProgress, CampaignBatchResult | None]] = []
         self.finished: list[tuple[CampaignSendProgress, str, str | None]] = []
         self.holding = asyncio.Event()
+        self.preparing = asyncio.Event()
         self.release = asyncio.Event()
         self.paused_recorded = asyncio.Event()
+        self.batch_recorded = asyncio.Event()
 
     def activities(self) -> list:
         fakes = self
 
         @activity.defn(name="prepare_campaign_send")
         async def prepare(campaign_id: str) -> CampaignSendStart:
+            if fakes.hold_prepare:
+                fakes.preparing.set()
+                await fakes.release.wait()
             return CampaignSendStart(
                 total=0 if fakes.blocked_reason else fakes.total,
                 template_name="campaign_promo_marketing_v1",
@@ -105,6 +122,11 @@ class Fakes:
         @activity.defn(name="prepare_campaign_carousel")
         async def carousel(campaign_id: str) -> list[CarouselCard]:
             fakes.carousels.append(campaign_id)
+            if fakes.carousel_error:
+                raise ApplicationError(
+                    "Carrusel de la campaña 'mkt-1': producto 'vela' no está en el catálogo",
+                    non_retryable=True,
+                )
             return fakes.cards
 
         @activity.defn(name="load_campaign_batch")
@@ -113,6 +135,10 @@ class Fakes:
             if start == fakes.hold_batch_at:
                 fakes.holding.set()
                 await fakes.release.wait()
+            if start == fakes.load_failure_at:
+                fakes.load_failure_at = None  # falla una vez; el reintento anda
+                raise ApplicationError("el vault no responde", non_retryable=True)
+            quiet_until_ms = fakes.quiet_until_at.pop(start, None)
             ids = [f"wa_{i}" for i in range(start, end)]
             return CampaignBatch(
                 recipients=[
@@ -121,19 +147,9 @@ class Fakes:
                     if s not in fakes.skip
                 ],
                 skipped=[SkippedRecipient(s, "quiet_hours") for s in ids if s in fakes.skip],
+                touch={"campaign_id": campaign_id, "campaign_name": "Promo madre"},
+                quiet_until_ms=quiet_until_ms,
             )
-
-        @activity.defn(name="stamp_campaign_touch")
-        async def stamp(
-            session_id: str, campaign_id: str, campaign_name: str, wa_message_id: str | None = None
-        ) -> None:
-            if session_id == fakes.stamp_failure:
-                raise ApplicationError("el vault no responde", non_retryable=True)
-            fakes.touches.append((session_id, campaign_name, wa_message_id))
-
-        @activity.defn(name="mark_marketing_opt_out")
-        async def opt_out(session_id: str, campaign_id: str) -> None:
-            fakes.opt_outs.append((session_id, campaign_id))
 
         @activity.defn(name="record_campaign_progress")
         async def record(
@@ -144,6 +160,8 @@ class Fakes:
             fakes.recorded.append((progress, batch))
             if progress.state == "paused":
                 fakes.paused_recorded.set()
+            if batch is not None:
+                fakes.batch_recorded.set()
 
         @activity.defn(name="finish_campaign_send")
         async def finish(
@@ -151,31 +169,34 @@ class Fakes:
         ) -> None:
             fakes.finished.append((progress, outcome, reason))
 
-        return [prepare, carousel, load, stamp, opt_out, record, finish]
+        return [prepare, carousel, load, record, finish]
 
     def send_activity(self):
         fakes = self
 
-        @activity.defn(name="send_whatsapp_template_activity")
-        async def send(
-            session_id: str,
-            template_name: str,
-            variables: dict,
-            carousel_cards: list[CarouselCard] | None = None,
-        ) -> dict:
-            if session_id in fakes.failing:
-                raise ApplicationError("Meta 131026 non-retryable", non_retryable=True)
-            if session_id in fakes.opted_out:
+        @activity.defn(name="deliver_campaign_message")
+        async def deliver(delivery: CampaignDelivery) -> CampaignDeliveryOutcome:
+            sid = delivery.session_id
+            if sid in fakes.failing:
                 raise ApplicationError(
-                    "WhatsApp template send failed (non-retryable, code=131050)",
-                    non_retryable=True,
-                    type="TemplateMetaError131050",
+                    "Meta 131026 non-retryable", non_retryable=True, type="TemplateMetaError131026"
                 )
-            fakes.sends.append(session_id)
-            fakes.send_cards.append(carousel_cards)
-            return {"wa_message_id": f"wamid-{session_id}", "ok": True, "error": None}
+            if sid in fakes.opted_out:
+                # Meta 131050: la activity marca la baja atribuida a la campaña.
+                fakes.opt_outs.append((sid, delivery.campaign_id))
+                return CampaignDeliveryOutcome(outcome="opted_out")
+            if sid in fakes.quiet_now:
+                return CampaignDeliveryOutcome(outcome="skipped", skip_reason="quiet_hours")
+            fakes.sends.append(sid)
+            fakes.send_cards.append(delivery.cards)
+            stamped = sid != fakes.stamp_failure
+            if stamped:
+                fakes.touches.append((sid, delivery.touch["campaign_name"], f"wamid-{sid}"))
+            return CampaignDeliveryOutcome(
+                outcome="sent", wa_message_id=f"wamid-{sid}", stamped=stamped
+            )
 
-        return send
+        return deliver
 
     @property
     def batches(self) -> list[CampaignBatchResult]:
@@ -299,11 +320,14 @@ async def test_pause_waits_after_the_batch_in_flight_and_resume_finishes_the_res
 
         paused = await handle.execute_update(CampaignSendWorkflowV2.pause)
         assert paused.state == "paused"
+        # El panel lo ve YA (el lote en vuelo sigue): no vuelve a ofrecer
+        # «Pausar» mientras ese lote termina.
+        assert fakes.recorded[-1] == (paused, None)
         with pytest.raises(WorkflowUpdateFailedError):
             await handle.execute_update(CampaignSendWorkflowV2.pause)
 
         fakes.release.set()
-        await _wait(fakes.paused_recorded)
+        await _wait(fakes.batch_recorded)
         progress = await handle.query(CampaignSendWorkflowV2.progress)
         assert (progress.processed, progress.sent, progress.state) == (100, 100, "paused")
         assert fakes.loads == [(0, 100)]
@@ -332,6 +356,7 @@ async def test_cancel_mid_send_stops_after_the_batch_in_flight_and_closes_the_ca
 
         cancelling = await handle.execute_update(CampaignSendWorkflowV2.cancel)
         assert cancelling.state == "cancelling"
+        assert fakes.recorded[-1] == (cancelling, None)
         with pytest.raises(WorkflowUpdateFailedError):
             await handle.execute_update(CampaignSendWorkflowV2.cancel)
         fakes.release.set()
@@ -389,24 +414,164 @@ async def test_a_temporal_cancellation_mid_send_still_closes_the_campaign(
 
 
 @pytest.mark.asyncio
-async def test_a_failure_mid_send_leaves_the_campaign_failed_with_the_reason(
+async def test_cancelling_before_the_send_starts_does_not_close_the_campaign(
     temporal_env: WorkflowEnvironment,
 ) -> None:
-    """Un stamp que no se puede escribir tumbaba el V1 y la campaña quedaba
-    en «sending» para siempre: ahora queda fallida, con el motivo y con lo
-    que alcanzó a salir."""
+    """Cancelar una campaña programada (antes de dispararse) la devuelve a
+    borrador desde la API. Si el workflow la cerrara como «cancelada», el
+    operador ya no podría editarla ni reprogramarla."""
+    fakes = Fakes(300, hold_prepare=True)
+
+    async with _workers(temporal_env, fakes):
+        handle = await _start(temporal_env, batch_size=100)
+        await _wait(fakes.preparing)
+        await handle.cancel()
+        with pytest.raises(WorkflowFailureError):
+            await handle.result()
+        fakes.release.set()
+
+    assert (fakes.recorded, fakes.finished, fakes.loads) == ([], [], [])
+
+
+@pytest.mark.asyncio
+async def test_a_touch_that_could_not_be_written_does_not_stop_the_campaign(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    """Lo que ya salió no se reintenta ni frena la campaña por no poder
+    anotarlo: cuenta como enviado y queda en la lista de sin atribución."""
     fakes = Fakes(300, stamp_failure="wa_150")
+
+    summary = await _run(temporal_env, fakes, batch_size=100)
+
+    assert summary["sent"] == 300
+    assert fakes.finished[0][1] == "sent"
+    assert [b.unstamped for b in fakes.batches] == [[], ["wa_150"], []]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_that_fails_pauses_the_campaign_with_the_reason_and_resume_retries_it(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    """Un error que tumbaba el V1 dejaba la campaña en «sending» para
+    siempre. Un lote que falla (el vault no responde) ahora PAUSA la campaña
+    con el motivo a la vista: «fallida» no tiene vuelta y perdía al resto de
+    la audiencia. Reanudar vuelve a intentar ese lote."""
+    fakes = Fakes(300, load_failure_at=100)
+
+    async with _workers(temporal_env, fakes):
+        handle = await _start(temporal_env, batch_size=100)
+        await _wait(fakes.paused_recorded)
+        paused = fakes.recorded[-1][0]
+        assert (paused.state, paused.processed) == ("paused", 100)
+        assert paused.pause_reason is not None and "el vault no responde" in paused.pause_reason
+        assert fakes.finished == []
+
+        await handle.execute_update(CampaignSendWorkflowV2.resume)
+        summary = await handle.result()
+
+    assert fakes.loads == [(0, 100), (100, 200), (100, 200), (200, 300)]
+    assert summary["sent"] == 300
+    assert fakes.recorded[-1][0].pause_reason is None
+
+
+@pytest.mark.asyncio
+async def test_a_failure_outside_the_batches_leaves_the_campaign_failed_with_the_reason(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    fakes = Fakes(300, carousel=True, carousel_error=True)
 
     async with _workers(temporal_env, fakes):
         handle = await _start(temporal_env, batch_size=100)
         with pytest.raises(WorkflowFailureError):
             await handle.result()
 
-    assert (200, 300) not in fakes.loads
+    assert fakes.loads == []
     [(progress, outcome, reason)] = fakes.finished
     assert outcome == "failed"
-    assert (progress.processed, progress.sent) == (100, 100)
-    assert reason is not None and "el vault no responde" in reason
+    assert reason is not None and "no está en el catálogo" in reason
+
+
+@pytest.mark.asyncio
+async def test_when_meta_rejects_most_of_a_batch_the_campaign_pauses_instead_of_burning_the_audience(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    """Plantilla pausada, token vencido, pago: Meta rechaza casi todo. Seguir
+    a 10/s quemaba a toda la audiencia como «fallidos» sin vuelta."""
+    fakes = Fakes(300, failing=frozenset(f"wa_{i}" for i in range(100, 160)))
+
+    async with _workers(temporal_env, fakes):
+        handle = await _start(temporal_env, batch_size=100)
+        await _wait(fakes.paused_recorded)
+        paused = fakes.recorded[-1][0]
+        assert paused.processed == 200
+        assert "60 de 100" in paused.pause_reason
+        assert "TemplateMetaError131026" in paused.pause_reason
+        assert (200, 300) not in fakes.loads
+
+        await handle.execute_update(CampaignSendWorkflowV2.resume)
+        summary = await handle.result()
+
+    assert summary["sent"] == 240
+    assert fakes.loads[-1] == (200, 300)
+
+
+@pytest.mark.asyncio
+async def test_a_batch_mostly_in_quiet_hours_waits_for_the_window_instead_of_skipping_them(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    """Una campaña disparada a las 21:15 no quema la cola marcándola «fuera
+    de horario»: espera a que abra la ventana y sigue sola."""
+    import time
+
+    opens_at = int(time.time() * 1000) + 10 * 3_600_000
+    fakes = Fakes(300, quiet_until_at={100: opens_at})
+
+    async with _workers(temporal_env, fakes):
+        handle = await _start(temporal_env, batch_size=100)
+        summary = await handle.result()
+
+    assert fakes.loads == [(0, 100), (100, 200), (100, 200), (200, 300)]
+    assert summary["sent"] == 300
+    waiting = [p for p, _batch in fakes.recorded if p.resume_at_ms is not None]
+    assert waiting and waiting[0].state == "paused"
+    assert waiting[0].resume_at_ms == opens_at
+    assert "horario" in waiting[0].pause_reason
+    assert fakes.finished[0][1] == "sent"
+
+
+@pytest.mark.asyncio
+async def test_a_campaign_paused_for_a_week_cancels_itself_with_the_reason(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    fakes = Fakes(300, hold_batch_at=0)
+
+    async with _workers(temporal_env, fakes):
+        handle = await _start(temporal_env, batch_size=100)
+        await _wait(fakes.holding)
+        await handle.execute_update(CampaignSendWorkflowV2.pause)
+        fakes.release.set()
+        summary = await handle.result()
+
+    assert summary["outcome"] == "cancelled"
+    [(progress, outcome, reason)] = fakes.finished
+    assert (outcome, progress.processed) == ("cancelled", 100)
+    assert reason is not None and "7 días" in reason
+
+
+@pytest.mark.asyncio
+async def test_a_campaign_with_nobody_to_send_to_closes_failed_with_the_reason(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    """Toda la audiencia quedó fuera al disparar (bajas, respiro…): «Enviada»
+    con 0 escondía que no salió nada."""
+    fakes = Fakes(0)
+
+    summary = await _run(temporal_env, fakes)
+
+    [(progress, outcome, reason)] = fakes.finished
+    assert outcome == "failed"
+    assert reason is not None and "nadie" in reason
+    assert summary["outcome"] == "failed"
 
 
 @pytest.mark.asyncio
@@ -414,10 +579,11 @@ async def test_opt_outs_failures_and_batch_skips_are_counted_apart(
     temporal_env: WorkflowEnvironment,
 ) -> None:
     fakes = Fakes(
-        5,
+        6,
         skip=frozenset({"wa_2"}),
         failing=frozenset({"wa_3"}),
         opted_out=frozenset({"wa_4"}),
+        quiet_now=frozenset({"wa_5"}),
     )
 
     summary = await _run(temporal_env, fakes)
@@ -426,7 +592,13 @@ async def test_opt_outs_failures_and_batch_skips_are_counted_apart(
     assert batch.sent == 2
     assert batch.failed == ["wa_3"]
     assert batch.opted_out == ["wa_4"]
-    assert batch.skipped == [SkippedRecipient("wa_2", "quiet_hours")]
+    # Omitido al cargar el lote (wa_2) y al momento de enviar (wa_5).
+    assert batch.skipped == [
+        SkippedRecipient("wa_2", "quiet_hours"),
+        SkippedRecipient("wa_5", "quiet_hours"),
+    ]
+    assert batch.failure_types == {"TemplateMetaError131026": 1}
+    assert batch.failure_example is not None and "131026" in batch.failure_example
     assert fakes.opt_outs == [("wa_4", "mkt-1")]
     # Solo lo que salió queda atribuido, con el id del mensaje de Meta.
     assert sorted(fakes.touches) == [
@@ -434,13 +606,13 @@ async def test_opt_outs_failures_and_batch_skips_are_counted_apart(
         ("wa_1", "Promo madre", "wamid-wa_1"),
     ]
     progress = fakes.finished[0][0]
-    assert (progress.sent, progress.failed, progress.opted_out, progress.skipped) == (2, 1, 1, 1)
+    assert (progress.sent, progress.failed, progress.opted_out, progress.skipped) == (2, 1, 1, 2)
     assert summary == {
-        "planned": 5,
+        "planned": 6,
         "sent": 2,
         "failed": 1,
         "opted_out": 1,
-        "skipped": 1,
+        "skipped": 2,
         "outcome": "sent",
     }
 

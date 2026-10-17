@@ -41,6 +41,9 @@ sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
 | `history_campaign_send_v2.json` | `CampaignSendWorkflowV2` | sintética, envío por lotes con pausa y reanudación (Updates) |
 | `history_campaign_send_batch_v1.json` | `CampaignSendBatchWorkflow` | sintética, lote hijo de la anterior: un envío y una baja de Meta (131050) |
 | `history_campaign_send_batch_failed_v1.json` | `CampaignSendBatchWorkflow` | sintética, lote hijo de la anterior: un envío fallido |
+| `history_campaign_send_v2_continue_as_new.json` | `CampaignSendWorkflowV2` | sintética, primera corrida de un envío que se renueva (continue-as-new) |
+| `history_campaign_send_v2_cancel.json` | `CampaignSendWorkflowV2` | sintética, cancelación por Update con un lote en vuelo |
+| `history_campaign_send_v2_quiet_hours.json` | `CampaignSendWorkflowV2` | sintética, lote en horario de silencio: espera (timer) y sigue solo |
 
 **`history_campaign_send_v1.json` está CONGELADA y NO se regenera.** Es el
 `CampaignSendWorkflow` (V1) tal como quedó cuando salió `CampaignSendWorkflowV2`

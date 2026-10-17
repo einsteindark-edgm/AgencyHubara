@@ -11,19 +11,31 @@
   },
   "body": [
     {
-      "type": "notice", "tone": "danger", "title": "La campaña no salió", "text": "{{campana.failure_reason}}",
+      "type": "notice",
+      "tone": "{{campana.status | map:'cancelled=warning;*=danger'}}",
+      "title": "{{campana.status | map:'cancelled=Se canceló;*=La campaña no salió'}}",
+      "text": "{{campana.failure_reason}}",
       "visible": "{{campana.failure_reason | present}}"
+    },
+    {
+      "type": "notice", "tone": "warning", "title": "Se pausó sola", "text": "{{campana.progress.pause_reason}}",
+      "visible": "{{campana.status | eq:'paused' | and:campana.progress.pause_reason}}"
     },
     {
       "type": "row",
       "children": [
         {
           "type": "tag",
-          "text": "{{campana.status | map:'draft=Borrador;scheduled=Programada;sending=Enviando;sent=Enviada;failed=No salió'}}",
-          "tone": "{{campana.status | map:'sent=success;failed=danger;scheduled=primary;sending=primary;*=neutral'}}"
+          "text": "{{campana.status | map:'draft=Borrador;scheduled=Programada;sending=Enviando;paused=Pausada;sent=Enviada;cancelled=Cancelada;failed=No salió'}}",
+          "tone": "{{campana.status | map:'sent=success;failed=danger;scheduled=primary;sending=primary;paused=warning;*=neutral'}}"
         },
         { "type": "text", "style": "caption", "tone": "muted", "text": "{{campana.sent_at_ms | default:campana.created_at_ms | datetime}}" }
       ]
+    },
+    {
+      "type": "key_value", "label": "AVANCE DEL ENVÍO",
+      "value": "{{campana.progress.processed | default:0 | number}} de {{campana.progress.total | default:0 | number}} procesados · {{campana.progress.sent | default:0 | number}} enviados",
+      "visible": "{{campana.status | in:'sending,paused'}}"
     },
     {
       "type": "grid", "columns": 2, "visible": "{{stats | present}}",

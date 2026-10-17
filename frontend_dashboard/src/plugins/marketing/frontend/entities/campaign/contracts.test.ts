@@ -145,7 +145,7 @@ describe("backendCampaignSchema", () => {
     };
     expect(
       backendCampaignSchema.parse({ ...draftFixture, status: "paused", progress }).progress,
-    ).toEqual(progress);
+    ).toEqual({ ...progress, pause_reason: null, resume_at_ms: null });
     expect(backendCampaignSchema.parse(draftFixture).progress).toBeNull();
   });
 

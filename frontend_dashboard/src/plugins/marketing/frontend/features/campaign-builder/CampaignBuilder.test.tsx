@@ -230,6 +230,8 @@ describe("CampaignBuilder — envío en curso (pausar / reanudar / cancelar)", (
     optedOut: 1,
     skipped: 0,
     state: "sending",
+    pauseReason: null,
+    resumeAtMs: null,
   };
 
   it("muestra el avance y 'Pausar envío' dispara el POST /pause", () => {
@@ -268,6 +270,47 @@ describe("CampaignBuilder — envío en curso (pausar / reanudar / cancelar)", (
       <CampaignBuilder campaign={makeCampaign({ status: "sending", progress })} />,
     );
     expect(getByText(/ya se está cancelando/)).toBeTruthy();
+  });
+
+  it("una pausa automática dice por qué (y cuándo sigue, si espera el horario)", () => {
+    const { getByText, rerender } = render(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          status: "paused",
+          progress: {
+            ...progress,
+            state: "paused",
+            pauseReason: "Meta rechazó 60 de 100 envíos del último lote",
+            resumeAtMs: null,
+          },
+        })}
+      />,
+    );
+    expect(getByText(/Meta rechazó 60 de 100/)).toBeTruthy();
+
+    rerender(
+      <CampaignBuilder
+        campaign={makeCampaign({
+          status: "paused",
+          progress: {
+            ...progress,
+            state: "paused",
+            pauseReason: "Horario de silencio",
+            resumeAtMs: Date.UTC(2026, 9, 17, 13, 0),
+          },
+        })}
+      />,
+    );
+    expect(getByText(/sigue solo el 17 de oct, 08:00/i)).toBeTruthy();
+  });
+
+  it("un envío del workflow viejo (sin avance) no ofrece controles que no sirven", () => {
+    const { getByText, queryByRole } = render(
+      <CampaignBuilder campaign={makeCampaign({ status: "sending", progress: null })} />,
+    );
+    expect(getByText(/versión anterior/)).toBeTruthy();
+    expect(queryByRole("button", { name: "Pausar envío" })).toBeNull();
+    expect(queryByRole("button", { name: "Cancelar envío" })).toBeNull();
   });
 
   it("una campaña cancelada queda en solo lectura y sin controles", () => {

@@ -1,4 +1,5 @@
 """Activities del envío de campañas — ActivityEnvironment + vault aislado."""
+import asyncio
 import json
 from pathlib import Path
 
@@ -418,6 +419,8 @@ async def test_prepare_send_keeps_the_plan_in_the_vault_and_returns_only_the_cou
     for n in (1, 2, 3):
         _seed_session(vault, f"wa_+57{n}", {"tag": "COMPRA_EXITOSA"})
     _seed_session(vault, "wa_+579", {"tag": "HUMANO"})
+    _seed_session(vault, "wa_+578", {"tag": "INTERESADO"})  # fuera de segmento
+    _seed_session(vault, "wa_+577", {"tag": "COMPRA_EXITOSA", "seeded_test": True})
 
     start = await ActivityEnvironment().run(prepare_campaign_send_activity, "mkt-1")
 
@@ -429,6 +432,8 @@ async def test_prepare_send_keeps_the_plan_in_the_vault_and_returns_only_the_cou
     )
     plan = _send_store(vault).plan("mkt-1")
     assert sorted(r.session_id for r in plan.recipients) == ["wa_+571", "wa_+572", "wa_+573"]
+    # Los «fuera de segmento» son el resto del vault: no son de esta campaña
+    # (inflaban el resultado y cada GET /campaigns).
     assert [(s.session_id, s.reason) for s in plan.skipped] == [("wa_+579", "excluido")]
     assert plan.unit_cost_usd_micros == 12500
 
@@ -583,6 +588,30 @@ async def test_finish_writes_the_whole_result_from_the_batches(_isolate_vault_di
 
 
 @pytest.mark.asyncio
+async def test_finish_removes_the_plan_and_a_retried_finish_keeps_the_result(
+    _isolate_vault_dir: Path,
+) -> None:
+    """El plan (nombres y números de miles de contactos) no se queda en el
+    vault después del cierre: el resultado ya está en la campaña. Si la
+    activity se reintenta después de borrarlo, no pisa ese resultado."""
+    from src.plugins.marketing.agent.campaigns.activities import finish_campaign_send_activity
+    from src.plugins.marketing.domain.campaign_send import CampaignSendProgress
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, status="sending")
+    await _sent_two_batches(vault)
+    progress = CampaignSendProgress(total=300, processed=200, sent=197, failed=1, opted_out=1, skipped=1)
+
+    await ActivityEnvironment().run(finish_campaign_send_activity, "mkt-1", progress, "cancelled", None)
+    first = CampaignStore(vault).get("mkt-1")
+    await ActivityEnvironment().run(finish_campaign_send_activity, "mkt-1", progress, "cancelled", None)
+
+    assert not (vault / "_campaigns" / "_sends" / "mkt-1").exists()
+    assert CampaignStore(vault).get("mkt-1")["send_result"] == first["send_result"]
+    assert first["send_result"]["sent"] == 197
+
+
+@pytest.mark.asyncio
 async def test_finish_after_a_failure_leaves_the_campaign_failed_with_the_reason(
     _isolate_vault_dir: Path,
 ) -> None:
@@ -609,6 +638,30 @@ async def test_finish_after_a_failure_leaves_the_campaign_failed_with_the_reason
 
 
 @pytest.mark.asyncio
+async def test_a_cancellation_keeps_its_reason(_isolate_vault_dir: Path) -> None:
+    """Una pausa olvidada que se canceló sola, o una cancelación desde
+    Temporal: el operador ve por qué."""
+    from src.plugins.marketing.agent.campaigns.activities import finish_campaign_send_activity
+    from src.plugins.marketing.domain.campaign_send import CampaignSendProgress
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, status="paused")
+    await _sent_two_batches(vault)
+    reason = "Estuvo pausada más de 7 días sin reanudarse: se canceló sola."
+
+    await ActivityEnvironment().run(
+        finish_campaign_send_activity,
+        "mkt-1",
+        CampaignSendProgress(total=300, processed=200, sent=197),
+        "cancelled",
+        reason,
+    )
+
+    saved = CampaignStore(vault).get("mkt-1")
+    assert (saved["status"], saved["failure_reason"]) == ("cancelled", reason)
+
+
+@pytest.mark.asyncio
 async def test_finish_without_a_plan_still_closes_the_campaign(_isolate_vault_dir: Path) -> None:
     """El plan nunca se guardó (falló antes de armarlo): igual queda fallida
     con el motivo, sin reventar por el plan que no está."""
@@ -625,3 +678,301 @@ async def test_finish_without_a_plan_still_closes_the_campaign(_isolate_vault_di
     saved = CampaignStore(vault).get("mkt-1")
     assert (saved["status"], saved["failure_reason"]) == ("failed", "Medusa caída")
     assert saved["send_result"]["planned"] == 0
+    # No salió nada: no tiene fecha de envío.
+    assert saved["sent_at_ms"] is None
+
+
+async def _ticks_while(awaitable) -> int:
+    """Cuántas veces respira el event loop mientras corre `awaitable`."""
+    ticks = 0
+
+    async def _ticker() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.05)
+            ticks += 1
+
+    ticker = asyncio.create_task(_ticker())
+    try:
+        await awaitable
+    finally:
+        ticker.cancel()
+    return ticks
+
+
+@pytest.mark.asyncio
+async def test_preparing_the_plan_does_not_freeze_the_worker(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """El worker de campañas corre los envíos a Meta en el mismo proceso: un
+    escaneo largo del vault no puede congelar su event loop (ni el heartbeat)."""
+    import time
+
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    class _SlowVault:
+        def __init__(self, *_args) -> None:
+            pass
+
+        def scan_sessions(self) -> list:
+            time.sleep(1.0)
+            return []
+
+    _seed_campaign(_isolate_vault_dir)
+    monkeypatch.setattr(acts, "FilesystemAttributionStore", _SlowVault)
+
+    ticks = await _ticks_while(
+        ActivityEnvironment().run(acts.prepare_campaign_send_activity, "mkt-1")
+    )
+
+    assert ticks >= 5
+
+
+@pytest.mark.asyncio
+async def test_loading_a_batch_does_not_freeze_the_worker(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import time
+
+    import src.plugins.marketing.agent.campaigns.activities as acts
+    from src.plugins.marketing.campaign_send_store import CampaignSendStore
+
+    def _slow_recipients(self, campaign_id: str, start: int, end: int) -> list:
+        time.sleep(1.0)
+        return []
+
+    monkeypatch.setattr(CampaignSendStore, "recipients", _slow_recipients)
+
+    ticks = await _ticks_while(
+        ActivityEnvironment().run(acts.load_campaign_batch_activity, "mkt-1", 0, 100)
+    )
+
+    assert ticks >= 5
+
+
+# --- Entrega de UN mensaje (envío + touch en una sola activity) ---------------
+
+_SESSION = "wa_573001112233"
+
+
+def _delivery(session_id: str = _SESSION):
+    from src.plugins.marketing.domain.campaign_send import CampaignDelivery
+
+    return CampaignDelivery(
+        campaign_id="mkt-1",
+        session_id=session_id,
+        template_name="campaign_promo_marketing_v1",
+        variables={"greeting": "Hola"},
+        touch={
+            "campaign_id": "mkt-1",
+            "campaign_name": "Promo madre",
+            "message": "15% en velas artesanales.",
+            "coupon_code": "MAMA15",
+            "product_handles": [],
+        },
+    )
+
+
+def _metadata(vault: Path, session_id: str = _SESSION) -> dict:
+    path = vault / session_id / "metadata.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+@pytest.fixture()
+def meta_sends(monkeypatch) -> list[str]:
+    """Meta en memoria: cada envío devuelve un wamid nuevo (jamás la real)."""
+    from types import SimpleNamespace
+
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    calls: list[str] = []
+
+    async def _send(session_id, template_name, variables, **kw):
+        calls.append(session_id)
+        return SimpleNamespace(wa_message_id=f"wamid-{len(calls)}", ok=True, error=None)
+
+    monkeypatch.setattr(acts, "send_template_to_session", _send)
+    return calls
+
+
+@pytest.mark.asyncio
+async def test_a_delivery_sends_and_stamps_the_touch_in_one_step(
+    _isolate_vault_dir: Path, meta_sends: list[str]
+) -> None:
+    from src.plugins.marketing.agent.campaigns.activities import deliver_campaign_message_activity
+
+    outcome = await ActivityEnvironment().run(deliver_campaign_message_activity, _delivery())
+
+    assert (outcome.outcome, outcome.wa_message_id, outcome.stamped) == ("sent", "wamid-1", True)
+    assert meta_sends == [_SESSION]
+    [touch] = _metadata(_isolate_vault_dir)["campaign_touches"]
+    assert touch["campaign_id"] == "mkt-1"
+    assert touch["coupon_code"] == "MAMA15"
+    assert touch["wa_message_id"] == "wamid-1"
+    assert isinstance(touch["sent_at_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_a_retried_delivery_does_not_send_it_twice(
+    _isolate_vault_dir: Path, meta_sends: list[str]
+) -> None:
+    """El worker murió después de enviar y anotar (un deploy): el reintento ve
+    el touch y no reenvía, aunque hayan pasado más de los 2 min de la dedup
+    del send de plataforma."""
+    from src.plugins.marketing.agent.campaigns.activities import deliver_campaign_message_activity
+
+    _seed_session(
+        _isolate_vault_dir,
+        _SESSION,
+        {"campaign_touches": [{"campaign_id": "mkt-1", "sent_at_ms": 1, "wa_message_id": "wamid-0"}]},
+    )
+
+    outcome = await ActivityEnvironment().run(deliver_campaign_message_activity, _delivery())
+
+    assert (outcome.outcome, outcome.wa_message_id) == ("sent", "wamid-0")
+    assert meta_sends == []
+
+
+@pytest.mark.asyncio
+async def test_a_touch_that_cannot_be_written_still_counts_as_sent(
+    _isolate_vault_dir: Path, meta_sends: list[str], monkeypatch
+) -> None:
+    """Lo que ya salió no se reintenta por no poder anotarlo (eso lo
+    reenviaría): sale como enviado, marcado sin touch."""
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    def _broken_update(self, session_id, mutator):
+        raise OSError("disco lleno")
+
+    monkeypatch.setattr(acts.FilesystemMetadataStore, "update", _broken_update)
+
+    outcome = await ActivityEnvironment().run(acts.deliver_campaign_message_activity, _delivery())
+
+    assert (outcome.outcome, outcome.stamped) == ("sent", False)
+    assert meta_sends == [_SESSION]
+
+
+@pytest.mark.asyncio
+async def test_meta_131050_marks_the_opt_out_with_this_campaign(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    async def _rejected(session_id, template_name, variables, **kw):
+        raise ApplicationError(
+            "WhatsApp template send failed (non-retryable, code=131050)",
+            non_retryable=True,
+            type="TemplateMetaError131050",
+        )
+
+    monkeypatch.setattr(acts, "send_template_to_session", _rejected)
+
+    outcome = await ActivityEnvironment().run(acts.deliver_campaign_message_activity, _delivery())
+
+    assert outcome.outcome == "opted_out"
+    metadata = _metadata(_isolate_vault_dir)
+    assert metadata["marketing_opt_out"] is True
+    assert metadata["marketing_opt_out_campaign_id"] == "mkt-1"
+
+
+@pytest.mark.asyncio
+async def test_other_meta_rejections_fail_the_delivery(_isolate_vault_dir: Path, monkeypatch) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    async def _rejected(session_id, template_name, variables, **kw):
+        raise ApplicationError("plantilla pausada", non_retryable=True, type="TemplateMetaError132012")
+
+    monkeypatch.setattr(acts, "send_template_to_session", _rejected)
+
+    with pytest.raises(ApplicationError) as err:
+        await ActivityEnvironment().run(acts.deliver_campaign_message_activity, _delivery())
+
+    assert err.value.type == "TemplateMetaError132012"
+    assert "campaign_touches" not in _metadata(_isolate_vault_dir)
+
+
+@pytest.mark.asyncio
+async def test_at_send_time_an_opt_out_or_quiet_hours_skip_without_sending(
+    _isolate_vault_dir: Path, meta_sends: list[str], monkeypatch
+) -> None:
+    """El envío puede esperar turno en la cola (ritmo hacia Meta, un worker
+    caído): se re-chequea al momento de mandar, no solo al cargar el lote."""
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    _seed_session(_isolate_vault_dir, "wa_1", {"marketing_opt_out": True})
+    monkeypatch.setattr(
+        acts, "is_quiet_hours_for_session", lambda session_id, now_utc: session_id == "wa_2"
+    )
+
+    opted = await ActivityEnvironment().run(acts.deliver_campaign_message_activity, _delivery("wa_1"))
+    quiet = await ActivityEnvironment().run(acts.deliver_campaign_message_activity, _delivery("wa_2"))
+
+    assert (opted.outcome, opted.skip_reason) == ("skipped", "dado_de_baja")
+    assert (quiet.outcome, quiet.skip_reason) == ("skipped", "quiet_hours")
+    assert meta_sends == []
+
+
+@pytest.mark.asyncio
+async def test_a_batch_carries_what_the_customer_receives_once(_isolate_vault_dir: Path) -> None:
+    """El touch de cada envío copia el texto armado una vez por lote: no se
+    relee la campaña (que puede pesar cientos de KB) por cada destinatario."""
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    _seed_session(vault, "wa_+571", {"tag": "COMPRA_EXITOSA"})
+    await ActivityEnvironment().run(acts.prepare_campaign_send_activity, "mkt-1")
+
+    batch = await ActivityEnvironment().run(acts.load_campaign_batch_activity, "mkt-1", 0, 1)
+
+    assert batch.touch["campaign_id"] == "mkt-1"
+    assert batch.touch["campaign_name"] == "Promo madre"
+    assert batch.touch["coupon_code"] == "MAMA15"
+    assert "15% en velas" in batch.touch["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_batch_mostly_in_quiet_hours_says_when_the_window_opens(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """La mayoría del lote fuera de horario: el lote no sale y dice cuándo
+    abre la ventana (el envío espera en vez de quemarlos como omitidos)."""
+    from datetime import datetime, timedelta, timezone
+
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    for n in (1, 2, 3):
+        _seed_session(vault, f"wa_+57{n}", {"tag": "COMPRA_EXITOSA"})
+    await ActivityEnvironment().run(acts.prepare_campaign_send_activity, "mkt-1")
+    opens = datetime.now(timezone.utc) + timedelta(hours=2)
+    monkeypatch.setattr(acts, "is_quiet_hours_for_session", lambda session_id, now_utc: now_utc < opens)
+
+    batch = await ActivityEnvironment().run(acts.load_campaign_batch_activity, "mkt-1", 0, 3)
+
+    opens_ms = int(opens.timestamp() * 1000)
+    assert batch.quiet_until_ms is not None
+    assert opens_ms <= batch.quiet_until_ms <= opens_ms + 15 * 60_000
+
+
+@pytest.mark.asyncio
+async def test_a_few_contacts_in_quiet_hours_do_not_hold_the_batch(
+    _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    import src.plugins.marketing.agent.campaigns.activities as acts
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault)
+    for n in (1, 2, 3):
+        _seed_session(vault, f"wa_+57{n}", {"tag": "COMPRA_EXITOSA"})
+    await ActivityEnvironment().run(acts.prepare_campaign_send_activity, "mkt-1")
+    monkeypatch.setattr(
+        acts, "is_quiet_hours_for_session", lambda session_id, now_utc: session_id == "wa_+571"
+    )
+
+    batch = await ActivityEnvironment().run(acts.load_campaign_batch_activity, "mkt-1", 0, 3)
+
+    assert batch.quiet_until_ms is None
+    assert [(s.session_id, s.reason) for s in batch.skipped] == [("wa_+571", "quiet_hours")]
+    assert len(batch.recipients) == 2

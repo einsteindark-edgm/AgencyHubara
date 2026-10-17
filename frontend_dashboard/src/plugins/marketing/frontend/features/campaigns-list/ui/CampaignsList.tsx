@@ -28,7 +28,9 @@ const FILTERS: { key: StatusFilter; label: string }[] = [
   { key: "draft", label: "Borrador" },
   { key: "scheduled", label: "Programada" },
   { key: "sending", label: "Enviando" },
+  { key: "paused", label: "Pausada" },
   { key: "sent", label: "Enviada" },
+  { key: "cancelled", label: "Cancelada" },
 ];
 
 interface Props {
@@ -167,7 +169,7 @@ function CampaignCard({
           <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
           {meta.label}
         </span>
-        {c.status === "failed" && c.failureReason ? (
+        {(c.status === "failed" || c.status === "cancelled") && c.failureReason ? (
           <span className="text-[10.5px] text-fg-faint">{c.failureReason}</span>
         ) : null}
         {c.status === "sent" && c.sendResult ? (

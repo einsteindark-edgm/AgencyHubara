@@ -167,8 +167,12 @@ function CarouselPreview({ handles }: { handles: string[] }) {
 
 function ValidationPanel({ campaign }: { campaign: Campaign }) {
   const items = campaignChecklist(campaign);
-  // Cancelada a mitad de envío también tiene resultado: lo que alcanzó a salir.
-  const hasResult = campaign.status === "sent" || campaign.status === "cancelled";
+  // Enviada, cancelada o fallida a mitad: si hay resultado, se muestra lo que
+  // alcanzó a salir y lo que costó.
+  const hasResult =
+    campaign.status === "sent" ||
+    campaign.status === "cancelled" ||
+    campaign.sendResult !== null;
   const { data: stats } = useCampaignStats(campaign.id, hasResult);
   useCampaignOrdersEvents();
 

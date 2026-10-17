@@ -181,6 +181,9 @@ class CampaignRecipient:
     session_id: str
     segment: str
     customer_name: str | None = None
+    #: Agregado a mano o importado: decisión consciente del operador sobre
+    #: este contacto, se salta el respiro de 48 h entre campañas.
+    bypass_cooldown: bool = False
 
 
 #: Razón de skip de un contacto que pidió la baja (texto o desde WhatsApp).
@@ -216,6 +219,22 @@ class CampaignAudience:
 #: Respiro mínimo entre campañas al MISMO contacto (calidad del número Meta:
 #: dos promos en el mismo día invitan al report/block).
 CAMPAIGN_COOLDOWN_MS = 48 * 60 * 60 * 1000
+
+
+def has_recent_touch_from_other_campaign(
+    metadata: dict[str, Any], campaign_id: str, now_ms: int
+) -> bool:
+    """El respiro de 48 h al enviar: solo cuentan los envíos de OTRAS campañas
+    (el de esta, real o de prueba, no la frena a sí misma)."""
+    others = {
+        **metadata,
+        "campaign_touches": [
+            t
+            for t in metadata.get("campaign_touches") or []
+            if isinstance(t, dict) and t.get("campaign_id") != campaign_id
+        ],
+    }
+    return _has_recent_campaign_touch(others, now_ms)
 
 
 def _has_recent_campaign_touch(metadata: dict[str, Any], now_ms: int) -> bool:
@@ -301,6 +320,7 @@ def resolve_campaign_audience(
                 segment=resolved_segment,
                 customer_name=customer_name_from_metadata(metadata)
                 or (imported.get(session_id) if is_imported else None),
+                bypass_cooldown=is_manual or is_imported,
             )
         )
     # Importados SIN sesión en el vault: destinatarios nuevos para el bot.
@@ -318,6 +338,7 @@ def resolve_campaign_audience(
                 session_id=session_id,
                 segment=SEGMENT_IMPORTADOS,
                 customer_name=_first_name(name),
+                bypass_cooldown=True,
             )
         )
     return CampaignAudience(recipients=recipients, skipped=skipped)
@@ -388,6 +409,9 @@ class RecipientSendPlan:
 
     session_id: str
     variables: dict[str, str]
+    #: Se salta el respiro de 48 h (agregado a mano o importado): el lote
+    #: lo vuelve a mirar al enviar y necesita saberlo.
+    bypass_cooldown: bool = False
 
 
 @dataclass(frozen=True)
@@ -442,15 +466,11 @@ def build_send_plan(
     audience = resolve_campaign_audience(
         campaign, sessions, now_ms=now_ms, is_quiet_hours=is_quiet_hours
     )
-    names = {
-        r.session_id: r.customer_name for r in audience.recipients
-    }
     recipients = [
         RecipientSendPlan(
             session_id=r.session_id,
-            variables=campaign_template_variables(
-                campaign, customer_name=names[r.session_id]
-            ),
+            variables=campaign_template_variables(campaign, customer_name=r.customer_name),
+            bypass_cooldown=r.bypass_cooldown,
         )
         for r in audience.recipients
     ]
@@ -643,6 +663,20 @@ def build_campaign_touch(
     return touch
 
 
+def campaign_touch_of(metadata: dict[str, Any], campaign_id: Any) -> dict[str, Any] | None:
+    """El touch del envío REAL de esta campaña al contacto, o None. (Una
+    prueba del operador no cuenta.)"""
+    for touch in metadata.get("campaign_touches") or []:
+        if isinstance(touch, dict) and not touch.get("test") and touch.get("campaign_id") == campaign_id:
+            return touch
+    return None
+
+
+def received_campaign(metadata: dict[str, Any], campaign_id: Any) -> bool:
+    """¿El contacto ya recibió el envío REAL de esta campaña?"""
+    return campaign_touch_of(metadata, campaign_id) is not None
+
+
 def append_campaign_touch(
     metadata: dict[str, Any], touch: dict[str, Any]
 ) -> dict[str, Any]:
@@ -654,12 +688,7 @@ def append_campaign_touch(
     real, ni el real las pisa.
     """
     touches = metadata.setdefault("campaign_touches", [])
-    if not touch.get("test") and any(
-        isinstance(t, dict)
-        and not t.get("test")
-        and t.get("campaign_id") == touch.get("campaign_id")
-        for t in touches
-    ):
+    if not touch.get("test") and received_campaign(metadata, touch.get("campaign_id")):
         return metadata
     touches.append(touch)
     if len(touches) > CAMPAIGN_TOUCHES_CAP:

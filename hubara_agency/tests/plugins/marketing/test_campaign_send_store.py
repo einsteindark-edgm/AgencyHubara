@@ -73,3 +73,19 @@ def test_the_send_files_are_not_listed_as_campaigns(tmp_path) -> None:
     store.save_batch("mkt-1", CampaignBatchResult(start=0, end=2, sent=2))
 
     assert [c["id"] for c in CampaignStore(tmp_path).list_campaigns()] == ["mkt-1"]
+
+
+def test_a_slice_reads_only_its_part_of_a_big_plan(tmp_path) -> None:
+    """Un plan de miles de contactos no se relee entero en cada lote: el corte
+    sale solo de su trozo (aunque otro trozo esté dañado)."""
+    store = CampaignSendStore(tmp_path)
+    store.save_plan(_plan(1_200))
+    # Se daña todo archivo que tenga a los primeros destinatarios: si el corte
+    # 600-700 necesitara leerlos, fallaría.
+    for path in (tmp_path / "_campaigns" / "_sends" / "mkt-1").rglob("*.json"):
+        if '"wa_5"' in path.read_text(encoding="utf-8"):
+            path.write_text("{dañado", encoding="utf-8")
+
+    recipients = store.recipients("mkt-1", 600, 700)
+
+    assert [r.session_id for r in recipients] == [f"wa_{i}" for i in range(600, 700)]

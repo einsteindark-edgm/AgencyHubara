@@ -7,18 +7,18 @@ envíos), la campaña no sale y esto lo dice.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from temporalio import activity
 from temporalio.testing import WorkflowEnvironment
 
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.domain.campaign_send import CampaignSendInput, sends_task_queue
 from src.plugins.marketing.domain.campaigns import new_campaign
 from src.sdk import get_task_queue
-from src.sdk.messagingkit import CarouselCard
 
 QUEUE = get_task_queue("marketing", "campaigns")
 
@@ -59,29 +59,26 @@ async def test_the_worker_sends_a_campaign_end_to_end_over_the_vault(
 
     sent: list[str] = []
 
-    @activity.defn(name="send_whatsapp_template_activity")
-    async def fake_send(
-        session_id: str,
-        template_name: str,
-        variables: dict,
-        carousel_cards: list[CarouselCard] | None = None,
-    ) -> dict:
+    async def fake_meta(session_id: str, template_name: str, variables: dict, **kw):
+        # Solo Meta es fake: la entrega (envío + touch) es la activity real, y
+        # está registrada SOLO en el queue de envíos — si el V2 la mandara al
+        # queue principal, nadie la tomaría y esto no terminaría.
         sent.append(session_id)
-        return {"wa_message_id": f"wamid-{session_id}", "ok": True, "error": None}
+        return SimpleNamespace(wa_message_id=f"wamid-{session_id}", ok=True, error=None)
 
-    monkeypatch.setattr(worker_mod, "send_whatsapp_template_activity", fake_send)
+    monkeypatch.setattr(acts, "send_template_to_session", fake_meta)
     monkeypatch.setattr(acts, "is_quiet_hours_for_session", lambda session_id, now_utc: False)
     vault = _isolate_vault_dir
     _seed(vault)
 
     main, sends = worker_mod.build_workers(temporal_env.client)
     async with main, sends:
-        summary = await temporal_env.client.execute_workflow(
+        summary = await asyncio.wait_for(temporal_env.client.execute_workflow(
             "CampaignSendWorkflowV2",
             CampaignSendInput(campaign_id="mkt-1", campaign_name="Promo madre"),
             id="campaign-send-mkt-1",
             task_queue=QUEUE,
-        )
+        ), timeout=120)
 
     assert summary["sent"] == 3
     assert sorted(sent) == [f"wa_57300000000{n}" for n in (1, 2, 3)]
