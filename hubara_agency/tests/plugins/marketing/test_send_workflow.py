@@ -285,3 +285,29 @@ async def test_a_plan_blocked_by_the_coupon_sends_nothing_and_does_not_mark_it_s
 
     assert summary["blocked_reason"] == blocked.blocked_reason
     assert (tracker.statuses, tracker.sends, tracker.result) == ([], [], None)
+
+
+@pytest.mark.asyncio
+async def test_the_activities_that_heartbeat_are_scheduled_with_a_heartbeat_timeout() -> None:
+    """El plan y los envíos laten (`@with_heartbeat`): con `heartbeat_timeout`,
+    si el worker muere a mitad (un deploy), Temporal los reintenta en 30 s y no
+    al vencer su `start_to_close` (auditoría de Temporal, 2026-10-15)."""
+    from datetime import timedelta
+
+    from temporalio.api.enums.v1 import EventType
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(env.client, task_queue=QUEUE, workflows=[CampaignSendWorkflow], activities=_fakes(Tracker())):
+            handle = await env.client.start_workflow(
+                CampaignSendWorkflow.run, args=["mkt-1", "Promo madre"], id="campaign-send-hb", task_queue=QUEUE
+            )
+            await handle.result()
+            history = await handle.fetch_history()
+
+    timeouts = {
+        e.activity_task_scheduled_event_attributes.activity_type.name: e.activity_task_scheduled_event_attributes.heartbeat_timeout.ToTimedelta()
+        for e in history.events
+        if e.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    }
+    assert timeouts["load_campaign_send_plan"] == timedelta(seconds=30)
+    assert timeouts["send_whatsapp_template_activity"] == timedelta(seconds=30)

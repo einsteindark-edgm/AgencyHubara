@@ -6,6 +6,8 @@ import asyncio
 from loguru import logger
 from temporalio.worker import Worker
 
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
+
 from src.platform.logging import setup_logging
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
@@ -35,12 +37,14 @@ async def main() -> None:
             write_snapshot_activity,
             push_meta_catalog_activity,
         ],
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
 
     logger.info(
         "📦 catalog_sync worker arriba. Cola: '{}'", task_queue
     )
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

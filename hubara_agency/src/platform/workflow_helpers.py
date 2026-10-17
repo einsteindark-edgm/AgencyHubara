@@ -50,7 +50,7 @@ with workflow.unsafe.imports_passed_through():
     from src.platform.tool_dispatch import tool_failed_result
     from src.platform.temporal.retry_policies import (
         _CONV_OPTIONS,
-        _LLM_OPTIONS,
+        _LLM_CHAT_OPTIONS,
         _TOOL_OPTIONS,
     )
 
@@ -1201,7 +1201,7 @@ async def _llm_chat_through_outage(
             return await workflow.execute_activity(
                 llm_chat,
                 chat_input,
-                **_LLM_OPTIONS,  # type: ignore[arg-type]
+                **_LLM_CHAT_OPTIONS,  # type: ignore[arg-type]
             )
         except ActivityError as exc:
             if (

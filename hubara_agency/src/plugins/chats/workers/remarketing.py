@@ -17,6 +17,8 @@ init_otel("remarketing-agent")
 from loguru import logger
 from temporalio.worker import Worker
 
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
+
 from src.platform.temporal.activities import (
     check_remarketing_eligibility,
     claim_conversation_routing,
@@ -151,10 +153,12 @@ async def main() -> None:
         # OTel obs: passthrough opentelemetry en el sandbox del workflow
         # (mismo motivo que en sales.py). Ver otel_workflow_runner.
         workflow_runner=otel_workflow_runner(),
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
 
     logger.info("🎯 Remarketing Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

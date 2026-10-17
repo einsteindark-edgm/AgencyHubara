@@ -157,7 +157,7 @@ async def emit_order_stage_activity(
         dispatch_envelope_with_client,
         envelope_for,
     )
-    from src.platform.temporal.client import get_temporal_client
+    from src.platform.temporal.client import get_activity_temporal_client
     from src.plugins.orders.shared.contracts.events import OrderStageChangedEvent
 
     # Normalizar display_id ("#6") → backend id: el handler pasa el order_id
@@ -207,7 +207,7 @@ async def emit_order_stage_activity(
         )
         return "capi_only"
 
-    client = await get_temporal_client()
+    client = await get_activity_temporal_client()  # el del worker
     await dispatch_envelope_with_client(
         envelope_for(
             OrderStageChangedEvent(
@@ -240,12 +240,12 @@ async def emit_ready_photo_request_activity(order_id: str, session_id: str) -> s
         dispatch_envelope_with_client,
         envelope_for,
     )
-    from src.platform.temporal.client import get_temporal_client
+    from src.platform.temporal.client import get_activity_temporal_client
     from src.plugins.orders.shared.contracts.events import (
         OrderReadyPhotoRequestedEvent,
     )
 
-    client = await get_temporal_client()
+    client = await get_activity_temporal_client()  # el del worker
     await dispatch_envelope_with_client(
         envelope_for(
             OrderReadyPhotoRequestedEvent(
