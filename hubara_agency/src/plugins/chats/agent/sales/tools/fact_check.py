@@ -41,6 +41,7 @@ from src.plugins.chats.agent.sales.use_cases.product_options import (
     colors_of,
     focus_products,
     option_sheets,
+    pack_units,
     presentations_of,
     single_sheets,
 )
@@ -258,6 +259,10 @@ class FactCheck:
         )
         own = [*(a for p in focus for a in aromas_of(p)), *(c for p in focus for c in colors_of(p)),
                *(v for p in focus for v in presentations_of(p))]
+        sold_by_box = store_domain().get("sold_by_box")
+        boxes = tuple(
+            (p.title, units, catalog_unit_price(p)) for p in focus if (units := pack_units(p, sold_by_box))
+        )
         return ReplyFacts(
             focus=tuple(focus), aromas=tuple(aromas), colors=tuple(colors), sheets=option_sheets(focus),
             single=single_sheets(focus),
@@ -268,7 +273,7 @@ class FactCheck:
             titles_all=tuple(p.title for p in products if getattr(p, "title", None)),
             own_labels=tuple(dict.fromkeys(own)),
             names=_customer_names(metadata),
-            customer_text=burst, order_figures=figures, figure_truth=truth,
+            customer_text=burst, order_figures=figures, figure_truth=truth, boxes=boxes,
             **coupons,
         )
 

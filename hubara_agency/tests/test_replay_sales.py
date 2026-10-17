@@ -498,3 +498,79 @@ async def test_the_carry_reads_histories_break_without_the_gate(
     with pytest.raises(workflow.NondeterminismError, match=clash):
         await replayer.replay_workflow(_promises_history(fixture))
     assert consulted["n"] == 1, f"el gate se consultó {consulted['n']} veces"
+
+
+# ── Gate `handoff-customer-reply-v1` (caso del 2026-10-16) ─────────────────
+# Al leer un traspaso de remarketing, el V2 lee también lo que escribió el
+# cliente (activity `read_handoff_reply`, comando nuevo). Control negativo: la
+# history de los turnos de sistema (`V2_SYSTEM_TURNS_PRECLOCK_FIXTURE`) trae
+# tres traspasos SIN el marcador; sin el gate, cada sitio pediría la activity.
+# Control positivo: `..._handoff_reply_v1`, sintética con el marcador (el
+# traspaso con el «Si», un NO_MESSAGE con su ronda extra y la respuesta).
+# CONGELADA — no se regenera (procedencia en
+# `fixtures/generate_sales_v2_handoff_reply_fixture.py`); se borra junto con
+# `workflow.deprecate_patch("handoff-customer-reply-v1")`.
+_HANDOFF_REPLY_GATE = "handoff-customer-reply-v1"
+HANDOFF_REPLY_FIXTURE = Path(__file__).parent / "fixtures" / "history_sales_v2_handoff_reply_v1.json"
+
+
+@pytest.mark.parametrize(
+    ("site", "ungated_from_consultation"),
+    [
+        pytest.param("traspaso de remarketing al arrancar", 1, id="handoff-start"),
+        pytest.param("traspaso con la sesión dormida", 2, id="handoff-idle"),
+        pytest.param("traspaso a mitad de sesión", 3, id="handoff-refresh"),
+    ],
+)
+async def test_the_v2_handoffs_recorded_before_the_reply_break_without_its_gate(
+    monkeypatch, site: str, ungated_from_consultation: int
+) -> None:
+    """Cada sitio del traspaso está protegido por el gate (un replay que no
+    puede fallar no prueba nada)."""
+    from temporalio import workflow
+
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    real_patched = workflow.patched
+    consultations = {"n": 0}
+
+    def ungated(patch_id: str) -> bool:
+        if patch_id != _HANDOFF_REPLY_GATE:
+            return real_patched(patch_id)
+        consultations["n"] += 1
+        return consultations["n"] >= ungated_from_consultation
+
+    monkeypatch.setattr(workflow, "patched", ungated)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    with pytest.raises(workflow.NondeterminismError):
+        await replayer.replay_workflow(_v2_system_turns_history())
+    assert consultations["n"] == ungated_from_consultation, (
+        f"{site}: el gate se consultó {consultations['n']} veces"
+    )
+
+
+async def test_the_handoff_reply_history_replays() -> None:
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    await replayer.replay_workflow(_promises_history(HANDOFF_REPLY_FIXTURE))
+
+
+async def test_the_handoff_reply_history_breaks_with_the_gate_off(monkeypatch) -> None:
+    """Control negativo del positivo: con el gate apagado, el código no lee lo
+    que escribió el cliente y la history trae el marcador."""
+    from temporalio import workflow
+
+    from src.plugins.chats.agent.sales.workflows.sales_session_v2 import HubaraSalesSessionWorkflowV2
+
+    real_patched = workflow.patched
+
+    def gate_off(patch_id: str) -> bool:
+        return False if patch_id == _HANDOFF_REPLY_GATE else real_patched(patch_id)
+
+    monkeypatch.setattr(workflow, "patched", gate_off)
+
+    replayer = Replayer(workflows=[HubaraSalesSessionWorkflowV2])
+    with pytest.raises(workflow.NondeterminismError, match=f"patch marker encountered for change {_HANDOFF_REPLY_GATE}"):
+        await replayer.replay_workflow(_promises_history(HANDOFF_REPLY_FIXTURE))

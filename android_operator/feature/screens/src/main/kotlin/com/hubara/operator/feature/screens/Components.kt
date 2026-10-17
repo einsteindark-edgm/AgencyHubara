@@ -485,10 +485,17 @@ private fun SduiListItem(node: Node, scope: Scope, modifier: Modifier, tap: (() 
                 val tone = textTone(node.text("overline_tone", scope))
                 Text(it, style = t.labelSmallEmphasized, color = if (tone == Color.Unspecified) muted else tone, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(
-                node.text("title", scope), maxLines = 1, overflow = TextOverflow.Ellipsis,
-                style = if (emphasis || node.template("emphasis") == null) t.titleMediumEmphasized else t.titleMedium,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                Text(
+                    node.text("title", scope), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
+                    style = if (emphasis || node.template("emphasis") == null) t.titleMediumEmphasized else t.titleMedium,
+                )
+                // La píldora del título va en la misma línea: la fila no crece (en la bandeja, «Humano»).
+                node.text("title_tag", scope).takeIf { it.isNotBlank() }?.let {
+                    val (bg, fg) = toneColors(node.text("title_tag_tone", scope))
+                    StatusPill(it, bg, fg)
+                }
+            }
             node.text("subtitle", scope).takeIf { it.isNotBlank() }?.let {
                 Text(
                     it, maxLines = 2, overflow = TextOverflow.Ellipsis,
@@ -543,9 +550,9 @@ private fun Badge(count: String, label: String) {
 private fun SduiStepper(node: Node, scope: Scope, modifier: Modifier) {
     val steps = options(node, scope)
     val current = node.text("current", scope)
-    val reached = steps.indexOfFirst { it.first.asText() == current }
+    val reached = steps.indexOfFirst { it.value.asText() == current }
     val colors = MaterialTheme.colorScheme
-    val label = node.text("label", scope).ifBlank { steps.getOrNull(reached)?.second.orEmpty() }
+    val label = node.text("label", scope).ifBlank { steps.getOrNull(reached)?.label.orEmpty() }
     Row(modifier.fillMaxWidth().clearAndSetSemantics { contentDescription = label }) {
         steps.forEachIndexed { i, (_, stepLabel) ->
             val done = i < reached
@@ -673,16 +680,30 @@ private fun SduiButton(node: Node, scope: Scope, modifier: Modifier, tap: (() ->
     }
 }
 
+/** Una opción de `chips` / `stepper`. [badge]: el número de su bolita; null si no lleva (vacío o 0). [counted]: la
+ *  pantalla le declara bolita (aunque hoy esté en 0). */
+private data class SduiOption(val value: JsonElement, val label: String, val badge: String?, val counted: Boolean)
+
 /** Las opciones de `chips`: la lista literal o lo que dé su plantilla. */
 @Composable
-private fun options(node: Node, scope: Scope): List<Pair<JsonElement, String>> {
+private fun options(node: Node, scope: Scope): List<SduiOption> {
     val env = LocalScreenHost.current.env
     val raw = (node.props["options"] as? JsonArray) ?: (node.template("options")?.evaluate(scope, env) as? JsonArray) ?: return emptyList()
+    fun text(o: JsonObject, key: String) =
+        (o[key] as? JsonPrimitive)?.content?.let { com.hubara.operator.core.sdui.Template.parseOrLiteral(it).text(scope, env) }
     return raw.mapNotNull { el ->
         val o = el as? JsonObject ?: return@mapNotNull null
         val value = o["value"] ?: return@mapNotNull null
-        val label = (o["label"] as? JsonPrimitive)?.content?.let { com.hubara.operator.core.sdui.Template.parseOrLiteral(it).text(scope, env) } ?: value.asText()
-        value to label
+        SduiOption(value, text(o, "label") ?: value.asText(), text(o, "badge")?.takeIf { it.isNotBlank() && it != "0" }, "badge" in o)
+    }
+}
+
+/** El texto de una opción con su bolita (la misma de los no leídos de la bandeja) al lado. */
+@Composable
+private fun OptionLabel(option: SduiOption) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+        Text(option.label, maxLines = 1)
+        option.badge?.let { Badge(it, it) }
     }
 }
 
@@ -694,25 +715,36 @@ private fun SduiChips(node: Node, scope: Scope, modifier: Modifier) {
     val opts = options(node, scope)
     if (node.literal("style") == "segmented") {
         SingleChoiceSegmentedButtonRow(modifier.fillMaxWidth()) {
-            opts.forEachIndexed { i, (value, label) ->
+            opts.forEachIndexed { i, option ->
                 SegmentedButton(
-                    selected = selected?.asText() == value.asText(),
-                    onClick = { host.onBind(bind, value, false) },
+                    selected = selected?.asText() == option.value.asText(),
+                    onClick = { host.onBind(bind, option.value, false) },
                     shape = SegmentedButtonDefaults.itemShape(i, opts.size),
-                ) { Text(label, maxLines = 1) }
+                ) { OptionLabel(option) }
             }
         }
     } else {
-        Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-            opts.forEach { (value, label) ->
-                val on = selected?.asText() == value.asText()
-                FilterChip(
-                    selected = on, onClick = { host.onBind(bind, value, false) }, label = { Text(label) },
-                    leadingIcon = if (on) {
-                        { Icon(OperatorIcons.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
-                    } else null,
-                    shape = CircleShape,
-                )
+        val chip: @Composable (SduiOption) -> Unit = { option ->
+            val on = selected?.asText() == option.value.asText()
+            FilterChip(
+                selected = on, onClick = { host.onBind(bind, option.value, false) }, label = { OptionLabel(option) },
+                leadingIcon = if (on) {
+                    { Icon(OperatorIcons.Check, contentDescription = null, modifier = Modifier.size(FilterChipDefaults.IconSize)) }
+                } else null,
+                shape = CircleShape,
+            )
+        }
+        if (opts.any { it.counted }) {
+            // Con bolitas los chips no caben en una línea del teléfono: bajan de línea en vez de esconder el último a
+            // la derecha (S35, bandeja con 1.208 chats en el emulador).
+            FlowRow(
+                modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+            ) { opts.forEach { chip(it) } }
+        } else {
+            Row(modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                opts.forEach { chip(it) }
             }
         }
     }

@@ -62,6 +62,30 @@ class ReplyWindow:
 
 
 @dataclass(frozen=True)
+class HandoffReply:
+    """Lo que el cliente le escribió a remarketing, para el turno de Ventas
+    que sigue al traspaso (caso 2026-10-16; `read_handoff_reply`).
+
+    Ventas solo recibía el resumen de remarketing: arrancó sin el «Si» del
+    cliente, sin lo que dijo un colega y sin el gancho, y se calló.
+
+    Campos:
+      * `text`: el mensaje del turno — lo que escribió el cliente, tal cual,
+        con la nota de lo que pasó en el chat después del último mensaje de
+        Ventas (colega, avisos, gancho) adelante, si hubo algo.
+      * `customer_text`: solo lo que escribió el cliente (traza, clasificador).
+      * `wamids`: los mensajes del cliente que el turno ya trae (si alguno
+        también llega por señal, no se contesta dos veces).
+      * `ts_ms`: cuándo llegó el último; None si no se sabe.
+    """
+
+    text: str
+    customer_text: str
+    wamids: list[str]
+    ts_ms: int | None = None
+
+
+@dataclass(frozen=True)
 class InboundMessageInput:
     """Input del `InboundMessageWorkflow` (entrada durable, ADR 2026-10-15).
 

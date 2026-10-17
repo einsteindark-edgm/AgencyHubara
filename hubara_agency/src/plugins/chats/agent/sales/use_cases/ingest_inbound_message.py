@@ -1824,7 +1824,15 @@ class IngestInboundMessage:
         except Exception as exc:  # noqa: BLE001 — degrade, never break the ingest
             logger.warning("cart_names_unavailable", reason=type(exc).__name__)
             return None
-        return lines_from_products(items, list(result.results))
+        from src.plugins.chats.shared.store_pack import store_domain
+
+        # Lo que la tienda cobra por caja llega con su caja, no «c/u» (2026-10-16).
+        try:
+            boxes = store_domain().get("sold_by_box")
+        except Exception as exc:  # noqa: BLE001 — sin el dominio, todo va por unidad (como antes)
+            logger.warning("cart_boxes_unavailable", reason=type(exc).__name__)
+            boxes = None
+        return lines_from_products(items, list(result.results), boxes=boxes)
 
     async def _resolve_product_ref(self, sku: str) -> tuple[Any, str | None]:
         """Resolves a `ref: HUB-…` SKU against the catalog WITHOUT mutating

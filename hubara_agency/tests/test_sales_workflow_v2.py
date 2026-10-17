@@ -356,6 +356,16 @@ def test_the_burst_helpers_v2_uses_read_no_text() -> None:
     assert not _detectors_reached(source, _V2_PACKAGE, reused)
 
 
+def test_the_handoff_helpers_v2_uses_read_no_text() -> None:
+    """El helper del traspaso (caso 2026-10-16, con su gate) lee el chat en
+    una activity y arma el mensaje del turno: no juzga el texto."""
+    reused = _names_v2_imports_from(f"{_V2_PACKAGE}.handoff_v2")
+    source = V2_FILE.with_name("handoff_v2.py").read_text(encoding="utf-8")
+
+    assert {"handoff_reply", "reply_message"} <= reused
+    assert not _detectors_reached(source, _V2_PACKAGE, reused)
+
+
 def test_the_facade_functions_v2_applies_read_no_text() -> None:
     """Las funciones de la fachada que V2 usa solo aplican lo que el motor
     grabó. Por nombre: la fachada arma el plan con los tipos de `plan`, cuyo
