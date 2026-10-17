@@ -5,9 +5,9 @@
  * vuelo al cambiar de sección) + Zod `.parse()` (contract drift truena
  * temprano) + mapper snake→camel.
  *
- * Realtime: el backend de marketing no publica eventos SSE todavía — la lista
- * usa el refetch numérico ≥60s permitido como red de seguridad (regla #2)
- * para reflejar transiciones draft→sending→sent que hace el workflow.
+ * Realtime (regla #2): la API publica `marketing / campaign_updated` cuando
+ * el worker escribe una campaña en el vault (`useCampaignEvents`); el
+ * refetch numérico de 60 s queda como red de seguridad.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -171,11 +171,27 @@ export function useCampaigns() {
         .sort((a, b) => b.createdAtMs - a.createdAtMs);
     },
     staleTime: 30_000,
-    // Red de seguridad (numérico ≥ 60s permitido): el CampaignSendWorkflow
-    // muta status/send_result fuera del API — sin esto una campaña "sending"
-    // jamás pasaría a "sent" en pantalla.
+    // Red de seguridad (numérico ≥ 60s permitido): lo normal es que el
+    // evento `marketing` refresque la lista; esto cubre un evento perdido.
     refetchInterval: 60_000,
   });
+}
+
+/**
+ * Avance en vivo (montar UNA vez en la vista de campañas): el worker escribe
+ * el avance en el vault en cada lote y la API lo publica como
+ * `marketing / campaign_updated` — la lista se refresca y «X de N
+ * procesados» se mueve en segundos. La reconexión invalida por si se perdió
+ * un evento en el corte.
+ */
+export function useCampaignEvents(): void {
+  const qc = useQueryClient();
+  const invalidate = useCallback(
+    () => qc.invalidateQueries({ queryKey: campaignKeys.list() }),
+    [qc],
+  );
+  useDashboardEvents("marketing", invalidate);
+  useInvalidateOnReconnect(invalidate);
 }
 
 /** Stats de envío + atribución — solo tiene sentido para campañas enviadas

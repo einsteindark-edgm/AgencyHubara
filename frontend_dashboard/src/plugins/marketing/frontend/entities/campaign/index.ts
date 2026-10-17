@@ -32,6 +32,7 @@ export {
 } from "./model";
 export { campaignKeys } from "./keys";
 export {
+  useCampaignEvents,
   useCampaigns,
   useCampaignStats,
   useCampaignOrdersEvents,
