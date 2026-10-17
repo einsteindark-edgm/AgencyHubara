@@ -66,6 +66,7 @@ class Fakes:
         opted_out: frozenset[str] = frozenset(),
         stamp_failure: str | None = None,
         quiet_now: frozenset[str] = frozenset(),
+        ambiguous: frozenset[str] = frozenset(),
         load_failure_at: int | None = None,
         quiet_until_at: dict[int, int] | None = None,
         carousel_error: bool = False,
@@ -81,6 +82,8 @@ class Fakes:
         self.opted_out = opted_out
         self.stamp_failure = stamp_failure
         self.quiet_now = quiet_now
+        self.ambiguous = ambiguous
+        self.delivery_attempts: dict[str, int] = {}
         self.load_failure_at = load_failure_at
         self.quiet_until_at = dict(quiet_until_at or {})
         self.carousel_error = carousel_error
@@ -177,6 +180,10 @@ class Fakes:
         @activity.defn(name="deliver_campaign_message")
         async def deliver(delivery: CampaignDelivery) -> CampaignDeliveryOutcome:
             sid = delivery.session_id
+            fakes.delivery_attempts[sid] = fakes.delivery_attempts.get(sid, 0) + 1
+            if sid in fakes.ambiguous:
+                # Timeout o 504 de Meta: la plantilla pudo haber salido.
+                raise ApplicationError("Meta no respondió a tiempo", type="TemplateSendAmbiguous")
             if sid in fakes.failing:
                 raise ApplicationError(
                     "Meta 131026 non-retryable", non_retryable=True, type="TemplateMetaError131026"
@@ -615,6 +622,24 @@ async def test_opt_outs_failures_and_batch_skips_are_counted_apart(
         "skipped": 2,
         "outcome": "sent",
     }
+
+
+@pytest.mark.asyncio
+async def test_an_ambiguous_send_is_not_retried_so_nobody_gets_the_promo_twice(
+    temporal_env: WorkflowEnvironment,
+) -> None:
+    """Timeout o 504 de Meta en la plantilla: pudo haber salido, y el touch no
+    se escribió, así que el reintento la mandaría otra vez. Cuenta como
+    fallido con su tipo; el cortacircuito lo ve si es masivo."""
+    fakes = Fakes(3, ambiguous=frozenset({"wa_1"}))
+
+    await _run(temporal_env, fakes)
+
+    assert fakes.delivery_attempts["wa_1"] == 1
+    [batch] = fakes.batches
+    assert batch.failed == ["wa_1"]
+    assert batch.failure_types == {"TemplateSendAmbiguous": 1}
+    assert batch.sent == 2
 
 
 @pytest.mark.asyncio
