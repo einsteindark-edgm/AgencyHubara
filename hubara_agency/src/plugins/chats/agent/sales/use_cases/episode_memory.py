@@ -75,9 +75,16 @@ def previous_episode_summary(episode: dict[str, Any]) -> str:
 
 def with_previous_episode(episode: dict[str, Any], text: str) -> str:
     """El primer mensaje del episodio nuevo con lo anterior adelante."""
+    return with_previous_episode_summary(previous_episode_summary(episode), text)
+
+
+def with_previous_episode_summary(summary: str, text: str) -> str:
+    """Lo mismo, con el resumen ya armado (`previous_episode_summary`): así lo
+    pasa la entrada durable entre sus pasos, sin el episodio entero (los datos
+    de envío del borrador no van al historial de Temporal)."""
     return (
         "[Conversación anterior con este cliente, ya cerrada: "
-        f"{previous_episode_summary(episode)}. Esta es una conversación nueva: "
+        f"{summary}. Esta es una conversación nueva: "
         "no la retomes salvo que el cliente la mencione.]\n"
         f"{text}"
     )
