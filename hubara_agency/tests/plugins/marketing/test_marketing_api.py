@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 import src.plugins.marketing.api as api_mod
 from src.plugins.marketing.campaign_store import CampaignStore
+from src.plugins.marketing.domain.campaign_send import CampaignSendInput
 
 
 @pytest.fixture()
@@ -226,10 +227,60 @@ def test_send_now_arranca_el_workflow(client: TestClient, monkeypatch) -> None:
     assert res.status_code == 200
     assert res.json()["workflow_id"] == f"campaign-send-{campaign_id}"
     call = fake.calls[0]
-    assert call["workflow"] == "CampaignSendWorkflow"
-    assert call["args"][0] == campaign_id
+    # El V2 (por lotes, controlable): recibe solo ids; el plan va al vault.
+    assert call["workflow"] == "CampaignSendWorkflowV2"
+    assert call["args"] == [CampaignSendInput(campaign_id=campaign_id, campaign_name="Promo")]
     assert call["task_queue"] == "queue-marketing-campaigns"
     assert call["start_delay"] is None
+
+
+def test_send_now_marks_the_campaign_sending_before_the_workflow_runs(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """Sin esto quedaba en borrador hasta el primer lote: se podía editar,
+    borrar o volver a enviar mientras se armaba el plan, y la API pisaba lo
+    que el workflow ya había escrito (p. ej. la campaña fallida por cupón)."""
+    store = CampaignStore(_isolate_vault_dir)
+    seen: list[str] = []
+
+    class _Client:
+        async def start_workflow(self, workflow_name, *, args, id, task_queue, **kw):
+            seen.append(store.get(args[0].campaign_id)["status"])
+            return _FakeHandle()
+
+    async def _fake_client():
+        return _Client()
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = _ready_campaign(client)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+
+    assert res.status_code == 200
+    assert seen == ["sending"]
+    # La marca del V2: el panel distingue un envío que se puede controlar de
+    # uno del workflow viejo (que no escribe avance).
+    assert store.get(campaign_id)["progress"]["state"] == "sending"
+    assert client.put(f"/api/marketing/campaigns/{campaign_id}", json={"name": "Otra"}).status_code == 409
+
+
+def test_a_send_that_temporal_rejects_puts_the_campaign_back(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    class _Client:
+        async def start_workflow(self, *a, **kw):
+            raise RuntimeError("Temporal no responde")
+
+    async def _fake_client():
+        return _Client()
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = _ready_campaign(client)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/send", json={})
+
+    assert res.status_code == 502
+    assert CampaignStore(_isolate_vault_dir).get(campaign_id)["status"] == "draft"
 
 
 def test_send_programado_usa_start_delay_y_marca_scheduled(
@@ -430,9 +481,13 @@ def test_test_send_rechaza_un_numero_que_es_una_ruta(
 class _FakeWorkflowHandle:
     def __init__(self) -> None:
         self.cancelled = False
+        self.terminated = False
 
     async def cancel(self) -> None:
         self.cancelled = True
+
+    async def terminate(self, reason: str | None = None) -> None:
+        self.terminated = True
 
 
 def test_cancel_campana_programada_vuelve_a_draft(
@@ -458,7 +513,10 @@ def test_cancel_campana_programada_vuelve_a_draft(
 
     res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
     assert res.status_code == 200
-    assert handle.cancelled is True
+    # Terminate y no cancel: una programada que todavía no se disparó no
+    # corre nada al cancelarla (con cancel, el id podía quedar «corriendo»
+    # hasta la hora programada y volver a enviar daba «already started»).
+    assert (handle.terminated, handle.cancelled) == (True, False)
     saved = store.get(campaign_id)
     assert saved["status"] == "draft"
     assert saved["schedule_at_ms"] is None
@@ -494,6 +552,311 @@ def test_cancel_workflow_desaparecido_igual_resetea(
 def test_cancel_campana_no_programada_es_409(client: TestClient) -> None:
     campaign_id = _ready_campaign(client)
     res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+    assert res.status_code == 409
+
+
+# --- Control del envío en curso (CampaignSendWorkflowV2) --------------------
+
+
+class _SendingHandle:
+    """El workflow de envío según Temporal: su tipo, si sigue corriendo y qué
+    contesta a cada Update."""
+
+    def __init__(
+        self,
+        *,
+        workflow_type: str = "CampaignSendWorkflowV2",
+        running: bool = True,
+        reject: str | None = None,
+        gone: bool = False,
+        finished_with: str | None = None,
+        on_describe=None,
+    ) -> None:
+        self.workflow_type = workflow_type
+        self.running = running and finished_with is None
+        self.reject = reject
+        self.gone = gone
+        self.finished_with = finished_with
+        self.on_describe = on_describe
+        self.updates: list[str] = []
+
+    async def describe(self):
+        from types import SimpleNamespace
+
+        from temporalio.client import WorkflowExecutionStatus
+        from temporalio.service import RPCError, RPCStatusCode
+
+        if self.on_describe is not None:
+            self.on_describe()
+        if self.gone:
+            raise RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b"")
+        if self.finished_with is not None:
+            status = WorkflowExecutionStatus.COMPLETED
+        elif self.running:
+            status = WorkflowExecutionStatus.RUNNING
+        else:
+            status = WorkflowExecutionStatus.FAILED
+        return SimpleNamespace(status=status, workflow_type=self.workflow_type)
+
+    async def result(self):
+        return {"outcome": self.finished_with}
+
+    async def execute_update(self, update: str, *args, **kw):
+        from temporalio.client import WorkflowUpdateFailedError
+        from temporalio.exceptions import ApplicationError
+
+        self.updates.append(update)
+        if self.reject:
+            raise WorkflowUpdateFailedError(ApplicationError(self.reject))
+        return {"total": 300, "processed": 100, "sent": 98, "failed": 1, "opted_out": 1,
+                "skipped": 0, "state": {"pause": "paused", "cancel": "cancelling"}.get(update, "sending")}
+
+
+def _sending_campaign(
+    client: TestClient, vault: Path, monkeypatch, handle: _SendingHandle, status: str = "sending"
+) -> str:
+    class _Client:
+        def get_workflow_handle(self, workflow_id):
+            assert workflow_id.startswith("campaign-send-")
+            return handle
+
+    async def _fake_client():
+        return _Client()
+
+    monkeypatch.setattr(api_mod, "get_temporal_client", _fake_client)
+    campaign_id = _ready_campaign(client)
+    store = CampaignStore(vault)
+    campaign = store.get(campaign_id)
+    campaign["status"] = status
+    store.save(campaign)
+    return campaign_id
+
+
+def test_pausing_a_campaign_being_sent_asks_the_workflow(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/pause")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["pause"]
+    assert res.json()["progress"]["state"] == "paused"
+
+
+def test_resuming_a_paused_campaign_asks_the_workflow(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status="paused")
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/resume")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["resume"]
+
+
+def test_cancelling_mid_send_asks_the_workflow_which_closes_the_campaign(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """El lote en vuelo termina y el workflow deja la campaña cancelada: la
+    API no la toca (si la pasara a borrador, se podría volver a enviar)."""
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status="paused")
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["cancel"]
+    assert res.json()["progress"]["state"] == "cancelling"
+    assert CampaignStore(_isolate_vault_dir).get(campaign_id)["status"] == "paused"
+
+
+@pytest.mark.parametrize(("action", "status"), [("pause", "draft"), ("resume", "sending"), ("pause", "sent")])
+def test_controls_out_of_their_state_are_409_without_asking_temporal(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch, action: str, status: str
+) -> None:
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status=status)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/{action}")
+
+    assert res.status_code == 409
+    assert handle.updates == []
+
+
+def test_an_update_the_workflow_rejects_is_409_with_its_reason(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    handle = _SendingHandle(reject="El envío ya se está cancelando.")
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/pause")
+
+    assert res.status_code == 409
+    assert "ya se está cancelando" in res.json()["detail"]
+
+
+def test_a_send_started_by_the_old_workflow_cannot_be_controlled(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """Una campaña programada antes del V2 corre con el tipo viejo: no tiene
+    pausa ni cancelación a mitad de envío; termina sola."""
+    handle = _SendingHandle(workflow_type="CampaignSendWorkflow")
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 409
+    assert "versión anterior" in res.json()["detail"]
+    assert handle.updates == []
+
+
+@pytest.mark.parametrize("handle_kw", [{"gone": True}, {"running": False}])
+def test_cancelling_a_send_that_no_longer_runs_closes_the_stuck_campaign(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch, handle_kw: dict
+) -> None:
+    """Una campaña que quedó en «sending» con su workflow muerto (el bug del
+    V1) se cierra desde el botón: fallida, con el motivo a la vista."""
+    handle = _SendingHandle(**handle_kw)
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    _seed_send_files(_isolate_vault_dir, campaign_id)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == []
+    saved = CampaignStore(_isolate_vault_dir).get(campaign_id)
+    assert saved["status"] == "failed"
+    assert "ya no estaba corriendo" in saved["failure_reason"]
+    # Lo que alcanzó a salir no se pierde: el resultado sale de los lotes.
+    assert saved["send_result"]["sent"] == 97
+    assert not (_isolate_vault_dir / "_campaigns" / "_sends" / campaign_id).exists()
+
+
+def _seed_send_files(vault: Path, campaign_id: str) -> None:
+    from src.plugins.marketing.campaign_send_store import CampaignSendStore
+    from src.plugins.marketing.domain.campaign_send import CampaignBatchResult
+    from src.plugins.marketing.domain.campaigns import CampaignSendPlan, RecipientSendPlan
+
+    store = CampaignSendStore(vault)
+    store.save_plan(
+        CampaignSendPlan(
+            campaign_id=campaign_id,
+            template_name="campaign_promo_marketing_v1",
+            recipients=[RecipientSendPlan(f"wa_{i}", {}) for i in range(300)],
+            skipped=[],
+            unit_cost_usd_micros=12_500,
+            total_cost_usd_micros=12_500 * 300,
+        )
+    )
+    store.save_batch(campaign_id, CampaignBatchResult(start=0, end=100, sent=97, failed=["wa_5"]))
+
+
+def test_a_stuck_campaign_whose_send_finished_closes_with_its_real_outcome(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """El workflow terminó bien pero la campaña quedó «enviándose»: se cierra
+    con el desenlace real, no como fallida."""
+    handle = _SendingHandle(finished_with="sent")
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+    _seed_send_files(_isolate_vault_dir, campaign_id)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 200, res.text
+    saved = CampaignStore(_isolate_vault_dir).get(campaign_id)
+    assert (saved["status"], saved["failure_reason"]) == ("sent", None)
+    assert saved["send_result"]["sent"] == 97
+
+
+def test_a_campaign_the_workflow_closes_meanwhile_is_not_overwritten(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """El cierre del workflow aterriza entre la lectura de la API y la
+    consulta a Temporal: la API no lo pisa con su copia vieja."""
+    store = CampaignStore(_isolate_vault_dir)
+    campaign_id_box: list[str] = []
+
+    def _workflow_closes_it() -> None:
+        campaign = store.get(campaign_id_box[0])
+        campaign["status"] = "sent"
+        campaign["send_result"] = {"sent": 300}
+        store.save(campaign)
+
+    handle = _SendingHandle(running=False, on_describe=_workflow_closes_it)
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+    campaign_id_box.append(campaign_id)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/cancel")
+
+    assert res.status_code == 200, res.text
+    saved = store.get(campaign_id)
+    assert (saved["status"], saved["send_result"]) == ("sent", {"sent": 300})
+
+
+def test_resuming_with_a_coupon_that_no_longer_works_is_422_and_does_not_resume(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """Pausada el lunes, el cupón venció el miércoles: reanudar el jueves
+    mandaría miles de «usa MAMA15» con el cupón muerto."""
+    from src.sdk.connectorkit import FakePromotionsPort
+
+    handle = _SendingHandle()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle, status="paused")
+    store = CampaignStore(_isolate_vault_dir)
+    campaign = store.get(campaign_id)
+    campaign["coupon_code"] = "MAMA15"
+    store.save(campaign)
+    monkeypatch.setattr(
+        api_mod,
+        "get_promotions_port",
+        lambda: FakePromotionsPort([_promo_dto("MAMA15", status="inactive")]),
+    )
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/resume")
+
+    assert res.status_code == 422
+    assert "MAMA15" in res.json()["detail"]
+    assert handle.updates == []
+
+
+def test_an_update_temporal_does_not_answer_is_504(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    """Worker caído o atrasado: el botón no queda colgado esperando."""
+    import asyncio
+
+    class _Hung(_SendingHandle):
+        async def execute_update(self, update: str, *args, **kw):
+            self.updates.append(update)
+            await asyncio.sleep(30)
+
+    handle = _Hung()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+    monkeypatch.setattr(api_mod, "_UPDATE_TIMEOUT_S", 0.2)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/pause")
+
+    assert res.status_code == 504
+    assert handle.updates == ["pause"]
+
+
+def test_a_test_send_while_the_campaign_is_being_sent_is_409(
+    client: TestClient, _isolate_vault_dir: Path
+) -> None:
+    """La prueba guardaba la campaña entera leída antes de esperar a Meta:
+    podía pisar el cierre del envío real."""
+    campaign_id = _ready_campaign(client)
+    store = CampaignStore(_isolate_vault_dir)
+    campaign = store.get(campaign_id)
+    campaign["status"] = "sending"
+    store.save(campaign)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/test", json={"phone": "3001234567"})
+
     assert res.status_code == 409
 
 
@@ -1558,3 +1921,24 @@ def test_get_audience_conversation_de_un_cliente_sin_telefono(client: TestClient
     res = client.get("/api/marketing/audience/wa_CO9990000000000002/conversation")
     assert res.status_code == 200
     assert client.get("/api/marketing/audience/wa_CO.1502/conversation").status_code == 422
+
+
+def test_an_update_that_lands_on_a_continue_as_new_is_retried_once(
+    client: TestClient, _isolate_vault_dir: Path, monkeypatch
+) -> None:
+    from temporalio.service import RPCError, RPCStatusCode
+
+    class _Flaky(_SendingHandle):
+        async def execute_update(self, update: str, *args, **kw):
+            self.updates.append(update)
+            if len(self.updates) == 1:
+                raise RPCError("workflow is closing", RPCStatusCode.NOT_FOUND, b"")
+            return {"state": "paused"}
+
+    handle = _Flaky()
+    campaign_id = _sending_campaign(client, _isolate_vault_dir, monkeypatch, handle)
+
+    res = client.post(f"/api/marketing/campaigns/{campaign_id}/pause")
+
+    assert res.status_code == 200, res.text
+    assert handle.updates == ["pause", "pause"]
