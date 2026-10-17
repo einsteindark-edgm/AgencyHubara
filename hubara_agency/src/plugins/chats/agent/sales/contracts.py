@@ -14,7 +14,7 @@ pueda preservar el contador entre runs.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -109,3 +109,92 @@ def inbound_workflow_id(wamid: str) -> str:
     """Id del workflow de entrada de un mensaje: con `REJECT_DUPLICATE`, una
     re-entrega de Meta del mismo `wamid` no entra dos veces."""
     return f"inbound-{wamid}"
+
+
+# --- Los pasos del ingest (entrada durable, fase 2) -------------------------
+# `InboundMessageWorkflow` corre cada paso del ingest en su propia activity. Lo
+# que un paso le pasa al siguiente queda en el historial del workflow: un
+# reintento de un paso no repite los anteriores. Datos chicos; el documento de
+# la sesión se queda en el vault y cada paso lo relee.
+
+#: Desenlaces del paso del turno (`IngestTurn.outcome`).
+TURN_DELIVER = "deliver"  # historial + entrega a la sesión
+TURN_HISTORY_ONLY = "history_only"  # al chat, sin turno (llegó fuera de ventana, acuse de despedida)
+TURN_IGNORED = "ignored"  # sin texto efectivo: nada que escribir
+TURN_TRANSCRIBE = "transcribe"  # nota de voz: primero la transcripción
+TURN_DESCRIBE = "describe"  # foto: primero la visión
+
+
+@dataclass(frozen=True)
+class IngestRequest:
+    """Un mensaje del cliente a lo largo de los pasos del ingest.
+
+    Campos:
+      * `message`: el `WhatsAppMessage` como dict, tal como lo dejó el webhook.
+      * `received_at_ms`: llegada al webhook, el reloj de «llegó tarde» y
+        «fuera de ventana» (0 = la hora del paso).
+      * `persisted_image_url`, `photo_note`, `from_photo`: la reentrada de una
+        foto ya leída (`<wamid>_vision`).
+      * `customer_text` / `customer_text_from_message`: lo que escribió el
+        cliente para las lecturas; la descripción de una foto no es suya.
+    """
+
+    message: dict[str, Any]
+    received_at_ms: int = 0
+    persisted_image_url: str | None = None
+    customer_text: str | None = None
+    customer_text_from_message: bool = True
+    photo_note: str | None = None
+    from_photo: bool = False
+
+
+@dataclass(frozen=True)
+class IngestState:
+    """Paso 1, el estado de la sesión con sus lecturas: lo que decidió y ya
+    escribió en el vault (episodio, ventana, lecturas) y lo que los pasos
+    siguientes necesitan de esa decisión."""
+
+    session_id: str
+    now_ms: int
+    sent_ms: int
+    arrival_ms: int
+    arrived_after_window: bool = False
+    closing_ack: bool = False
+    referral_already_seen: bool = False
+    campaign_reply_note: str | None = None
+    campaign_reply_touch: dict[str, Any] | None = None
+    episode_boundary_note: str | None = None
+    previous_episode: dict[str, Any] | None = None
+    #: La escritura del estado falló (no la saltó una lectura fallida): la
+    #: activity lo reintenta.
+    write_failed: bool = False
+
+
+@dataclass(frozen=True)
+class IngestTurn:
+    """Paso 2, el carrito y el cupón: el texto del mensaje y el turno ya
+    armado, o por qué no hay turno todavía (`outcome`)."""
+
+    outcome: str
+    text: str = ""
+    turn_message: str = ""
+    history: dict[str, Any] = field(default_factory=dict)
+    is_flow_reply: bool = False
+    structured_payload: dict[str, Any] | None = None
+    inbound_meta: dict[str, Any] = field(default_factory=dict)
+    prefer_sales: bool = False
+    campaign_reply_note: str | None = None
+    coupon_talk: bool = False
+    cart_note: str | None = None
+    gap_note: str | None = None
+    reply_to: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class VisionOutcome:
+    """Lo que la visión leyó de una foto, para su reentrada como texto."""
+
+    text: str
+    persisted_image_url: str | None = None
+    customer_text: str | None = None
+    photo_note: str | None = None

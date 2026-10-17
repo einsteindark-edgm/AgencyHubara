@@ -39,7 +39,7 @@ async def ingest_inbound_message_activity(inp: InboundMessageInput) -> str:
 
     parsed = _message(inp.message)
     try:
-        await composition.build_ingest_use_case().execute(parsed)
+        await composition.build_ingest_use_case().execute(parsed, received_at_ms=inp.received_at_ms or None)
     except BaseException as exc:
         # También la cancelación (el worker se apaga a mitad): el mensaje NO
         # llegó al bot, se reintenta — nunca queda `ingested`.

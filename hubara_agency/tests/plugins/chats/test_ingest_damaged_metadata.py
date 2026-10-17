@@ -338,7 +338,12 @@ async def test_an_ingest_that_could_not_read_the_metadata_does_not_write_what_it
     decidía sobre `{}` y lo escribía: pisaba el origen de la conversación (el
     anuncio que la trajo). Ahora no escribe nada de lo suyo; el mensaje va al
     historial y al router, que relee el documento y decide con lo que hay de
-    verdad."""
+    verdad.
+
+    Desde la fase 2 de la entrada durable cada paso del ingest relee el
+    documento: el paso del historial, que sí lo pudo leer, deja
+    `last_inbound_message_id` (con el merge de tres vías, sobre lo que hay).
+    Lo que decidió el paso del estado sobre `{}` sigue sin escribirse."""
     store = FilesystemMetadataStore(_isolate_vault_dir)
     store.write(SID, {**_HUMAN_SESSION, "active_route": "ventas", "tag": "INTERESADO"})
     store.write(SID, {**_HUMAN_SESSION, "origin": {"source_type": "ad", "source_id": "AD_1"}})
@@ -365,6 +370,10 @@ async def test_an_ingest_that_could_not_read_the_metadata_does_not_write_what_it
         )
     )
 
-    assert path.read_bytes() == before, "el ingest escribió lo que decidió sobre un documento que no pudo leer"
+    after = json.loads(path.read_text(encoding="utf-8"))
+    assert {k: v for k, v in after.items() if k != "last_inbound_message_id"} == json.loads(before), (
+        "el ingest escribió lo que decidió sobre un documento que no pudo leer"
+    )
+    assert after.get("last_inbound_message_id") == "wamid.in"
     assert history.events, "el mensaje del cliente no quedó en el historial"
     assert router.routes == ["humano"]

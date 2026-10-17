@@ -32,9 +32,11 @@ class _Ingest:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.received: list[WhatsAppMessage] = []
+        self.kwargs: list[dict[str, Any]] = []
 
-    async def execute(self, parsed: WhatsAppMessage) -> None:
+    async def execute(self, parsed: WhatsAppMessage, **kwargs: Any) -> None:
         self.received.append(parsed)
+        self.kwargs.append(kwargs)
         if self.error is not None:
             raise self.error
 
@@ -71,6 +73,17 @@ async def test_the_ingest_receives_the_message_as_the_webhook_left_it(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_the_ingest_measures_lateness_from_the_webhook_arrival(monkeypatch, ledger) -> None:
+    """Fase 2, paso 5: un intento que corre minutos después no vuelve tarde un
+    mensaje que llegó a tiempo — el reloj es `received_at_ms`."""
+    ingest = _Ingest()
+
+    await _run(monkeypatch, ingest)
+
+    assert ingest.kwargs == [{"received_at_ms": 1_789_992_000_000}]
+
+
+@pytest.mark.asyncio
 async def test_an_ingested_message_leaves_its_outcome_in_the_ledger(monkeypatch, ledger) -> None:
     await _run(monkeypatch, _Ingest())
 
@@ -97,7 +110,7 @@ class _Stuck(_Ingest):
 
         self.started = asyncio.Event()
 
-    async def execute(self, parsed: WhatsAppMessage) -> None:
+    async def execute(self, parsed: WhatsAppMessage, **kwargs: Any) -> None:
         import asyncio
 
         self.received.append(parsed)
