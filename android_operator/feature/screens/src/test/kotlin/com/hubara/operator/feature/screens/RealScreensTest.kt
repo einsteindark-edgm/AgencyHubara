@@ -2,10 +2,14 @@ package com.hubara.operator.feature.screens
 
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -84,16 +88,29 @@ class RealScreensTest {
           {"session_id": "wa_000000000101", "title": "Laura Prueba", "name": "Laura Prueba", "detail": "000000000101 · Bot · Interesado",
            "preview": "¿y qué aromas tienen?", "unseen": 2, "unseen_label": "2 mensajes sin leer", "unread": true, "human": false, "has_order": false, "all": true, "time_ms": 1789999000000},
           {"session_id": "wa_000000000102", "title": "Sofía Prueba", "name": "Sofía Prueba", "detail": "000000000102 · Humano",
-           "preview": "hola", "unseen": 0, "unseen_label": "", "unread": false, "human": true, "has_order": false, "all": true, "time_ms": 1789999000000}]"""))
+           "preview": "hola", "unseen": 0, "unseen_label": "", "unread": false, "human": true, "has_order": false, "all": true, "time_ms": 1789999000000},
+          {"session_id": "wa_000000000104", "title": "Andrés Prueba", "name": "Andrés Prueba", "detail": "000000000104 · Bot · Pedido #41",
+           "preview": "¿ya salió?", "unseen": 0, "unseen_label": "", "unread": false, "human": false, "has_order": true, "all": true, "time_ms": 1789998000000}]"""))
         sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
         open("chats")
-        compose.onNodeWithText("Laura Prueba").assertExists()
+        // «Todos» son todos, y el que atiende una persona lleva su etiqueta «Humano» (caso del operador, 2026-10-15).
+        listOf("Laura Prueba", "Sofía Prueba", "Andrés Prueba").forEach { compose.onNodeWithText(it).assertExists() }
+        compose.onNode(hasText("Sofía Prueba") and hasText("Humano")).assertExists()
+        compose.onNode(hasText("Laura Prueba") and hasText("Humano")).assertDoesNotExist()
+        compose.onNode(hasText("Andrés Prueba") and hasText("Humano")).assertDoesNotExist()
         compose.onNode(hasContentDescription("2 mensajes sin leer")).assertExists()
         compose.onNodeWithText("No leídos").performClick()
+        compose.onNodeWithText("Laura Prueba").assertExists()
         compose.onNodeWithText("Sofía Prueba").assertDoesNotExist()
-        compose.onNodeWithText("Humano").performClick()
+        compose.onNodeWithText("Andrés Prueba").assertDoesNotExist()
+        compose.onNode(hasText("Humano") and isSelectable()).performClick()
         compose.onNodeWithText("Laura Prueba").assertDoesNotExist()
+        compose.onNodeWithText("Andrés Prueba").assertDoesNotExist()
         compose.onNodeWithText("Sofía Prueba").assertExists()
+        compose.onNodeWithText("Con pedido").performClick()
+        compose.onNodeWithText("Andrés Prueba").assertExists()
+        compose.onNodeWithText("Laura Prueba").assertDoesNotExist()
+        compose.onNodeWithText("Sofía Prueba").assertDoesNotExist()
 
         compose.onNode(hasContentDescription("Más opciones")).performClick()
         compose.onNodeWithText("Política de privacidad").performClick()
@@ -109,6 +126,52 @@ class RealScreensTest {
         // El botón del diálogo (el menú ya se cerró).
         compose.onNodeWithText("Cerrar sesión").performClick()
         compose.runOnIdle { assertThat(natives.map { it.first }).contains("sign_out") }
+    }
+
+    private fun chat(sid: String, name: String, unread: Boolean, human: Boolean, order: Boolean) = """
+        {"session_id": "$sid", "title": "$name", "name": "$name", "detail": "", "preview": "hola", "unseen": 0, "unseen_label": "",
+         "unread": $unread, "human": $human, "has_order": $order, "all": true, "time_ms": 1789999000000}"""
+
+    // Pedido del operador (2026-10-15): una bolita al lado de cada filtro con cuántas conversaciones tiene; un filtro
+    // vacío no la lleva. Sale de los mismos datos de la bandeja (Room, al día por el SSE).
+    @Test fun cada_filtro_de_la_bandeja_dice_cuantas_conversaciones_tiene() {
+        val inbox = MutableStateFlow(json("[" + listOf(
+            chat("wa_000000000101", "Laura Prueba", unread = true, human = false, order = false),
+            chat("wa_000000000102", "Sofía Prueba", unread = false, human = true, order = false),
+            chat("wa_000000000104", "Andrés Prueba", unread = true, human = false, order = true),
+        ).joinToString(",") + "]"))
+        sources["conversations"] = inbox
+        sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
+        open("chats")
+
+        compose.onNode(isSelectable() and hasText("Todos") and hasContentDescription("3")).assertExists()
+        compose.onNode(isSelectable() and hasText("No leídos") and hasContentDescription("2")).assertExists()
+        compose.onNode(isSelectable() and hasText("Humano") and hasContentDescription("1")).assertExists()
+        compose.onNode(isSelectable() and hasText("Con pedido") and hasContentDescription("1")).assertExists()
+        // Sofía vuelve al bot: «Humano» queda en cero y su bolita se va, sin recargar la pantalla.
+        inbox.value = json("[" + listOf(
+            chat("wa_000000000101", "Laura Prueba", unread = true, human = false, order = false),
+            chat("wa_000000000102", "Sofía Prueba", unread = false, human = false, order = false),
+        ).joinToString(",") + "]")
+        compose.onNode(isSelectable() and hasText("Todos") and hasContentDescription("2")).assertExists()
+        compose.onNode(isSelectable() and hasText("Humano") and hasContentDescription("0")).assertDoesNotExist()
+        compose.onNode(isSelectable() and hasText("Humano")).assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.ContentDescription))
+    }
+
+    // Con miles de chats (como producción) la bolita lleva punto de miles. Que los cuatro chips se vean sin deslizar lo
+    // cuida S35 en el emulador: Robolectric mide el texto muy angosto y aquí siempre caben.
+    @Test fun con_miles_de_chats_la_bolita_de_todos_lleva_punto_de_miles() {
+        val old = (1..1205).map { chat("wa_0000009%05d".format(it), "Cliente $it", unread = false, human = false, order = false) }
+        sources["conversations"] = MutableStateFlow(json("[" + (old + listOf(
+            chat("wa_000000000101", "Laura Prueba", unread = true, human = false, order = false),
+            chat("wa_000000000102", "Sofía Prueba", unread = false, human = true, order = false),
+            chat("wa_000000000104", "Andrés Prueba", unread = true, human = false, order = true),
+        )).joinToString(",") + "]"))
+        sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
+        open("chats")
+
+        compose.onNode(isSelectable() and hasText("Todos") and hasContentDescription("1.208")).assertExists()
+        compose.onNode(isSelectable() and hasText("No leídos") and hasContentDescription("2")).assertExists()
     }
 
     @Test fun un_incendio_de_orden_abre_su_ficha_y_uno_de_chat_lo_abre_en_vivo() {

@@ -28,7 +28,7 @@ from src.platform.registries import (
 )
 from src.platform.state import FilesystemMetadataStore
 from src.platform.tool_extensions import apply_tool_extensions
-from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.contracts import HandoffReply, SalesSessionInput
 from src.plugins.chats.agent.sales.prompts import build_decided_ghosting_prompt, build_ghosting_prompt
 
 
@@ -268,6 +268,25 @@ async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None
     if summary and last_inbound_is_courtesy(data):
         summary = f"{summary}\n{_COURTESY_HANDOFF_LINE}"
     return summary if summary else None
+
+
+@activity.defn(name="read_handoff_reply")
+async def read_handoff_reply_activity(session_id: str, already_pending: list[str]) -> HandoffReply | None:
+    """Lo que el cliente le escribió a remarketing, leído del chat (el JSONL
+    del dashboard), para el turno de Ventas que sigue al traspaso.
+
+    Caso del 2026-10-16: el traspaso solo llevaba el resumen de remarketing.
+    Ventas arrancó sin el «Si» del cliente, sin lo que había dicho un colega y
+    sin el gancho, y contestó NO_MESSAGE. Con esto el turno trae lo que el
+    cliente escribió, tal cual, y la nota de lo que Ventas no vio
+    (`episode_memory.handoff_reply_of`). `already_pending`: wamids que ya le
+    llegaron a Ventas por señal. None si el cliente no escribió al final.
+    """
+    from src.plugins.chats.agent.sales.composition import build_session_history_reader
+    from src.plugins.chats.agent.sales.use_cases.episode_memory import handoff_reply_of
+
+    events = build_session_history_reader()(session_id)
+    return handoff_reply_of(events, already_pending=already_pending)
 
 
 #: Lo que el framing del traspaso agrega cuando el cliente solo agradeció o

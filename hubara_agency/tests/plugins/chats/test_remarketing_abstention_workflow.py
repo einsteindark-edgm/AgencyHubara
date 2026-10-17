@@ -140,7 +140,8 @@ def _make_fake_activities(
 
     @activity.defn(name="persist_assistant_message_activity")
     async def fake_persist(
-        session_id: str, message: str, tools_used: object = None, delivered: object = None
+        session_id: str, message: str, tools_used: object = None, delivered: object = None,
+        agent: str | None = None,
     ) -> None:
         tracker.persist_calls.append(message)
 

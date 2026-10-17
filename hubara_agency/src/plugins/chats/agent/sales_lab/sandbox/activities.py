@@ -72,6 +72,9 @@ REAL_IN_SANDBOX = frozenset(
         "perceive_burst",
         "persist_assistant_message_activity",
         "read_and_clear_pending_handoff",
+        # Lo que el cliente le escribió a remarketing (caso 2026-10-16): solo
+        # lee el chat del sandbox.
+        "read_handoff_reply",
         "read_order_draft_note",
         "record_episode_llm_usage",
         "record_turn",

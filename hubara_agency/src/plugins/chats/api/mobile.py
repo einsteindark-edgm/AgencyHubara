@@ -42,6 +42,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     _render_payment_instructions_text,
 )
+from src.plugins.chats.agent.sales.use_cases.closing_ack import is_closing_ack
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.agent.sales.use_cases.funnel_stage import (
     STAGE_POSTCIERRE,
@@ -449,7 +450,8 @@ def _human_facts(deps: MobileDeps, session_id: str, metadata: dict[str, Any]) ->
     if metadata.get("active_route") != ROUTE_HUMANO:
         return None
     events = _read_events(deps.vault_dir, session_id)
-    count, since = unanswered_since(events)
+    # «gracias», «ok perfecto», un 👍: la regla del acuse del ingest (`closing_ack`); no dejan a nadie esperando.
+    count, since = unanswered_since(events, asks_nothing=is_closing_ack)
     last_inbound = metadata.get("last_inbound_at_ms")
     reason = metadata.get("escalation_reason")
     return ChatFireFacts(

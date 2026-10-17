@@ -42,6 +42,16 @@ class ValidationTest {
         assertThat(problems(screen("""{"type": "button", "text": "Sin acción"}""")).single()).contains("acción")
     }
 
+    // La bolita de un filtro (2026-10-15): su plantilla se revisa igual que la del texto de la opción.
+    @Test fun `la bolita de una opcion se revisa como su texto`() {
+        val ok = problems(screen("""{"type": "chips", "bind": "state.filtro", "options": [
+            {"value": "todas", "label": "Todas", "badge": "{{pedidos | count}}"}]}"""))
+        assertThat(ok).isEmpty()
+        val roto = problems(screen("""{"type": "chips", "bind": "state.filtro", "options": [
+            {"value": "todas", "label": "Todas", "badge": "{{pedidos | contar}}"}]}"""))
+        assertThat(roto.single()).contains("options[0].badge")
+    }
+
     @Test fun `valor que no esta en la lista`() {
         assertThat(problems(screen("""{"type": "text", "text": "a", "style": "gigante"}""")).single()).contains("gigante")
         assertThat(problems(screen("""{"type": "text", "text": "a", "style": "{{state.filtro}}"}"""))).isEmpty()

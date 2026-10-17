@@ -207,6 +207,70 @@ def reply(session_id: str, text: str) -> None:
     print(f"reply: {session_id} ← {text!r} (window open until +24 h)")
 
 
+# ── crowd ────────────────────────────────────────────────────────────────────
+
+
+def crowd(count: int) -> None:
+    """`count` conversaciones viejas del bot (un «Hola» hace 30 días): una bandeja con miles de chats, como
+    producción. Android 11 (SQLite 3.28) no acepta más de 999 parámetros en una consulta."""
+    t = now_ms()
+    old = t - 30 * DAY_MS
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
+    for i in range(count):
+        session_id = f"wa_0000009{i:05d}"
+        target = VAULT_DIR / session_id
+        if target.exists():
+            continue
+        staging = VAULT_DIR / f".staging-{session_id}-{uuid.uuid4().hex[:6]}"
+        (staging / "sessions").mkdir(parents=True)
+        append_jsonl(staging / "sessions" / f"{session_id}.jsonl",
+                     {"role": "user", "content": "Hola", "timestamp": iso_utc(old - i * MIN_MS), "wamid": _wamid()})
+        atomic_write_json(staging / "metadata.json", {
+            "phone_number_id": PHONE_NUMBER_ID, "active_route": "ventas", "tag": "SIN_RESPUESTA",
+            "motivo": "Saludó y no volvió a escribir", "last_inbound_at_ms": old - i * MIN_MS,
+        })
+        os.utime(staging / "sessions" / f"{session_id}.jsonl", ((old - i * MIN_MS) / 1000, (old - i * MIN_MS) / 1000))
+        os.rename(staging, target)
+    print(f"crowd: {count} conversaciones viejas del bot (wa_0000009xxxxx)")
+
+
+# ── answered ─────────────────────────────────────────────────────────────────
+
+
+def answered(session_id: str, name: str, text: str) -> None:
+    """Un chat que atiende el equipo: el operador respondió hace 30 min y 15 min después el cliente escribió `text`.
+    Con «gracias» o una reacción nadie espera (caso 2026-10-15: eran incendio grave); con una pregunta, sí."""
+    if not _SESSION_RE.fullmatch(session_id):
+        sys.exit(f"invalid session id {session_id!r}")
+    t = now_ms()
+    last = t - 15 * MIN_MS
+    wamid = _wamid()
+    events = [
+        {"role": "user", "content": "¿Me lo pueden mandar mañana?", "timestamp": iso_utc(t - 31 * MIN_MS), "wamid": _wamid()},
+        {"role": "assistant", "sender": "human", "content": "¡Claro! Sale mañana temprano 🙌",
+         "timestamp": iso_utc(t - 30 * MIN_MS)},
+        {"role": "user", "content": text, "timestamp": iso_utc(last), "wamid": wamid},
+    ]
+    motivo = f"{name.split()[0]} pidió que le mandaran el pedido mañana"
+    metadata = {
+        "phone_number_id": PHONE_NUMBER_ID, "profile": {"name": name}, "active_route": "humano", "tag": "HUMANO",
+        "motivo": motivo, "last_inbound_at_ms": last, "last_inbound_message_id": wamid,
+        "service_window_expires_at_ms": last + DAY_MS,
+        "status_history": [_status("HUMANO", motivo, "humano", t - 31 * MIN_MS)],
+    }
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
+    staging = VAULT_DIR / f".staging-{session_id}-{uuid.uuid4().hex[:6]}"
+    (staging / "sessions").mkdir(parents=True)
+    for ev in events:
+        append_jsonl(staging / "sessions" / f"{session_id}.jsonl", ev)
+    atomic_write_json(staging / "metadata.json", metadata)
+    target = VAULT_DIR / session_id
+    if target.exists():
+        shutil.rmtree(target)
+    os.rename(staging, target)
+    print(f"answered: {name} ({session_id}) answered 30 min ago, then wrote {text!r} 15 min ago")
+
+
 # ── bot-card ─────────────────────────────────────────────────────────────────
 
 #: Envíos del bot con su tarjeta, como los deja el flush (`flush_ui_intents._history_card`). `catalogo` es el caso
@@ -368,6 +432,12 @@ def main() -> None:
     p_reply = sub.add_parser("reply", help="append a customer message")
     p_reply.add_argument("session")
     p_reply.add_argument("text")
+    p_crowd = sub.add_parser("crowd", help="add N old bot conversations (an inbox as big as production)")
+    p_crowd.add_argument("--count", type=int, default=1200)
+    p_answered = sub.add_parser("answered", help="a human chat the operator answered; then the customer wrote TEXT")
+    p_answered.add_argument("session")
+    p_answered.add_argument("name")
+    p_answered.add_argument("text")
     p_card = sub.add_parser("bot-card", help="append a bot message with its card (catalog, order summary)")
     p_card.add_argument("session")
     p_card.add_argument("which", choices=sorted(BOT_CARDS))
@@ -402,6 +472,10 @@ def main() -> None:
             fire_new(args.session, args.name, args.waiting_min, just_handed_off=args.just_handed_off)
     elif args.cmd == "reply":
         reply(args.session, args.text)
+    elif args.cmd == "crowd":
+        crowd(args.count)
+    elif args.cmd == "answered":
+        answered(args.session, args.name, args.text)
     elif args.cmd == "bot-card":
         bot_card(args.session, args.which, args.tap)
     elif args.cmd == "config":

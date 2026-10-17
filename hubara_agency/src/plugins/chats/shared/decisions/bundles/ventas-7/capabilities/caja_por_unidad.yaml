@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El texto le pone a cada vela el precio de toda la caja?» (caso de producción
+# del 2026-10-16, bot V2: el cliente armó un carrito con una caja de
+# Velas de deseos cuadradas, $25.000 la caja de 12, y el bot le dijo «el precio
+# es por unidad, cada velita vale $25.000»; un colega tuvo que corregirlo).
+# `precio_ajeno` no lo ve: el monto es el del catálogo, lo falso es a qué se lo
+# pone. Con un producto que se cobra por caja en foco (`domain.yaml:
+# sold_by_box`), la regla propone si una cláusula dice un precio por unidad sin
+# nombrar la caja; Jev, con lo que dice el sistema de la caja, decide. Lo pide
+# `send_reply` (y las tarjetas) antes de enviar. Va en `ventas-7`, editado en el
+# lugar el mismo día (decisión del operador: emergencia).
+capability: caja_por_unidad
+value: "list<string>"
+input: CajaDelTexto
+# Las frases son de la tienda: un falso positivo, o algo que se escapa, se
+# corrige aquí con otra frase en una versión nueva del paquete, no en el código.
+# Separadas por comas; `*` = cualquier final, `a/b` = una u otra palabra, `…` =
+# hasta tres palabras en medio; tildes y mayúsculas no importan. «c/u» no se
+# puede escribir como frase (solo palabras).
+items:
+  builtin: box_unit_claim_items
+  with:
+    por_unidad: >-
+      cada una, cada uno, cada unidad, por unidad, la unidad, precio unitario, valor unitario,
+      cada vela*, cada velita*, por vela*, por velita*, vela* suelta*, velita* suelta*, unidad* suelta*
+    # La cláusula que nombra la caja habla de cajas («$25.000 cada caja», «cada
+    # caja trae 12»): no se propone.
+    habla_de_caja: caja*
+# La regla es de palabras: solo PROPONE. Sin Jev no se retiene nada (en `reglas`
+# y en sombra decide `no_items`; en sombra Jev contesta al lado y se mide):
+# «cada una» también habla de cajas o de cuánto dura cada vela.
+rule: {builtin: no_items}
+state: {builtin: text_and_claim_facts}
+each:
+  id: "caja_por_unidad.termino_{n}"
+  kind: noul
+  text: "¿El texto le dice que {term}, es decir, que cada vela o unidad suelta cuesta lo que cuesta toda la caja? Lo que dice el sistema: {fact}."
+  criteria:
+    "true": "sí: le pone a cada vela o unidad el precio de la caja («cada una», «por unidad», «cada velita»), o le confirma que el precio es por unidad, aunque no nombre el producto"
+    "false": "no: el precio que da es el de cada caja («cada una» habla de cajas), habla de otro producto, o no le da un precio por unidad (cuánto dura cada una, el aroma de cada una)"
+# Las frases son anchas: lo que se retiene lo dice Jev (no basta con que no lo
+# quite, como en `pago_ajeno`), y lo que Jev no contestó no se retiene.
+thresholds: {"yes": 0.5}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, has(i.p) && i.p >= th['yes']).map(i, i.term)"}
+floor: {builtin: jev}
+same: {builtin: tuple_eq}
+examples:
+  # El caso: «el precio es por unidad, cada velita vale $25.000».
+  - {items: [{term: el precio es por unidad, fact: x, p: 0.95}], expect: [el precio es por unidad]}
+  # «Si llevas dos cajas, te quedan a $25.000 cada una»: habla de cajas, Jev lo quita.
+  - {items: [{term: el precio es por unidad, fact: x, p: 0.04}], expect: []}
+  # Borde: 0,50 retiene; 0,49 no.
+  # Sonda con Jev real (2026-10-16, textos sintéticos del bot, caja de 12 a $25.000): lo que
+  # le pone a cada vela el precio de la caja 0,58–0,94 (los dos textos del caso: 0,94 y 0,73;
+  # el más bajo, «Sí, es por unidad» sin monto); lo que no 0,04–0,36 («dos cajas… a $25.000
+  # cada una» 0,05, «cada una dura 2 horas» 0,04; el más alto, la cuenta cierta «cada una
+  # sale a unos $2.083»).
+  - {items: [{term: a, fact: x, p: 0.5}, {term: b, fact: x, p: 0.49}], expect: [a]}
+  # Lo que Jev no contestó no se retiene (lo propuso una frase ancha).
+  - {items: [{term: a, fact: x, p: 0.9}, {term: b, fact: x}], expect: [a]}
+  - {items: [{term: a, fact: x}], expect: doubt}

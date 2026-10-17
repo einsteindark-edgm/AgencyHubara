@@ -144,6 +144,7 @@ class FilesystemMessageHistoryStore:
         sender: str | None = None,
         wamid: str | None = None,
         wamids: list[str] | None = None,
+        agent: str | None = None,
     ) -> None:
         """``tools_used``: NOMBRES de las tools que el agente ejecutó durante el
         turno que culminó en este mensaje. Campo distinto de ``tool_calls`` a
@@ -153,7 +154,13 @@ class FilesystemMessageHistoryStore:
         eval (reconstruct.to_evaluable_turns) le pasa al juez — sin esto el
         juez no ve que el turno llamó search_products/escalate_to_human y
         falla con falsos negativos (caso ep_010: correct_handoff=0.5 con la
-        escalada efectivamente hecha)."""
+        escalada efectivamente hecha).
+
+        ``agent``: el agente que lo escribió cuando NO es el de ventas (hoy,
+        ``"remarketing"``). Ventas no ve en su historial lo que escribió otro
+        agente; con la marca, la nota de «lo que pasó sin ti» lo cuenta (caso
+        2026-10-16: el gancho cortaba la nota). Sin marca = ventas, como
+        siempre; el dashboard la ignora."""
         event: dict[str, Any] = {
             "role": "assistant",
             "content": content,
@@ -170,6 +177,8 @@ class FilesystemMessageHistoryStore:
         if wamid:
             event["wamid"] = wamid
         _put_wamids(event, wamids)
+        if agent:
+            event["agent"] = agent
         self._append(session_id, event)
 
     def append_human_event(
