@@ -19,12 +19,14 @@ x-app: &app
   env_file: .env
   restart: unless-stopped
   # Apagado ordenado (auditoría de Temporal, 2026-10-15): la imagen corre
-  # `python` como PID 1, que no recibe el SIGTERM de `docker stop` sin un init.
-  # Con tini la señal llega a `run_worker`, que deja de pedir tareas y espera
-  # 30 s (`WORKER_GRACEFUL_SHUTDOWN`) a las activities en curso; el grace
-  # period le da ese tiempo antes del SIGKILL.
+  # `python` como PID 1, que solo recibe las señales que maneja; `run_worker`
+  # instala su handler de SIGTERM, deja de pedir tareas y espera 30 s
+  # (`WORKER_GRACEFUL_SHUTDOWN`) a las activities en curso; el grace period le
+  # da ese tiempo antes del SIGKILL. SIN `init: true` (premortem 2026-10-16):
+  # procstat de CloudWatch identifica cada proceso por su línea de comando y la
+  # de tini (`docker-init -- python -m …`) termina igual: la memoria por worker
+  # se promediaba a la mitad.
   # Guarda: hubara_agency/tests/infra/test_prod_compose_graceful_stop.py.
-  init: true
   stop_grace_period: 45s
   depends_on:
     litellm:

@@ -66,6 +66,7 @@ with workflow.unsafe.imports_passed_through():
         persist_assistant_message_activity,
     )
     from src.platform.whatsapp.activities import (
+        TEMPLATE_SEND_AMBIGUOUS,
         send_whatsapp_message_activity,
         send_whatsapp_template_activity,
     )
@@ -90,27 +91,45 @@ with workflow.unsafe.imports_passed_through():
 _IDLE_TIMEOUT = timedelta(days=7)
 _CONTINUE_AS_NEW_AFTER_TURNS = 50
 
-# Reintentos (auditoría de Temporal, 2026-10-15): con 3 intentos el ETA se
-# rendía en ~3 s y el loop se tragaba el error: un Medusa o un WhatsApp caídos
-# un par de minutos y el cliente nunca se enteraba de su pedido. Ahora reintenta
-# con espera creciente (tope de 5 min entre intentos) hasta 6 horas; un error
-# que Meta marca como definitivo (`non_retryable`) corta en el primer intento.
-# Solo opciones de las activities: replay seguro.
+# Reintentos (auditoría de Temporal, 2026-10-15; premortem 2026-10-16). Con 3
+# intentos el ETA se rendía en ~3 s y el loop se tragaba el error: un Medusa o
+# un WhatsApp caídos un par de minutos y el cliente nunca se enteraba.
+# * Leer el pedido (Medusa) y enviar (WhatsApp): espera creciente con tope de
+#   5 min entre intentos y TOPE DE INTENTOS (12, unos 40 min), no de reloj:
+#   `schedule_to_close` también cuenta la espera en la cola, y con el worker ETA
+#   caído más que eso los avisos vencían sin salir (antes salían al volver).
+# * Un envío AMBIGUO (timeout o 504: Meta pudo entregarlo) no se reintenta:
+#   reintentarlo le mandaba al cliente el mismo aviso decenas de veces.
+# * El vault (grabar el aviso, el panel, el tracking) falla por bugs, no por
+#   caídas de minutos: pocos intentos, para no trabar la sesión.
+# Un error que Meta marca como definitivo (`non_retryable`) corta en el primer
+# intento. Solo opciones de las activities: replay seguro.
 _PATIENT = RetryPolicy(
     initial_interval=timedelta(seconds=2),
     backoff_coefficient=2.0,
     maximum_interval=timedelta(minutes=5),
+    maximum_attempts=12,
 )
-_WINDOW = timedelta(hours=6)
-_FAST = {"start_to_close_timeout": timedelta(seconds=10), "schedule_to_close_timeout": _WINDOW, "retry_policy": _PATIENT}
-_ORDER = {"start_to_close_timeout": timedelta(seconds=30), "schedule_to_close_timeout": _WINDOW, "retry_policy": _PATIENT}
+_VAULT = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=2.0,
+    maximum_interval=timedelta(seconds=30),
+    maximum_attempts=5,
+)
+_FAST = {"start_to_close_timeout": timedelta(seconds=10), "retry_policy": _VAULT}
+_ORDER = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": _PATIENT}
 # Los envíos laten (`@with_heartbeat`): si el worker muere a mitad, el
 # reintento sale a los 30 s y no al vencer los 90 s.
 _SEND = {
     "start_to_close_timeout": timedelta(seconds=90),
     "heartbeat_timeout": timedelta(seconds=30),
-    "schedule_to_close_timeout": _WINDOW,
-    "retry_policy": _PATIENT,
+    "retry_policy": RetryPolicy(
+        initial_interval=_PATIENT.initial_interval,
+        backoff_coefficient=_PATIENT.backoff_coefficient,
+        maximum_interval=_PATIENT.maximum_interval,
+        maximum_attempts=_PATIENT.maximum_attempts,
+        non_retryable_error_types=[TEMPLATE_SEND_AMBIGUOUS],
+    ),
 }
 
 # Template de utilidad aprobado (catalog.yaml) para notificaciones de estado
@@ -119,6 +138,8 @@ _SEND = {
 # 2026-07-21: el slot de nombre llegaba vacío por el placeholder Medusa y Meta
 # rechazaba el envío con 131008 → notificación perdida).
 _ORDER_STATUS_TEMPLATE = "order_status_utility_v2"
+# El aviso en texto que WhatsApp no aceptó sale por esa plantilla.
+_REJECTED_TEXT_PATCH = "eta-rejected-text-as-template-v1"
 
 # Foto del pedido (plantilla con encabezado imagen): subir a Meta + enviar.
 _PHOTO = {
@@ -414,6 +435,19 @@ class HubaraEtaSessionWorkflow:
             args=[session_id, message],
             **_SEND,
         )
+        # WhatsApp no aceptó ninguna burbuja (la ventana se cerró entre el
+        # claim y el envío, Meta caído): la activity no lanza, devuelve `[]`, y
+        # el aviso quedaba grabado como enviado. Sale por la plantilla, que
+        # sirve dentro y fuera de la ventana y reintenta (premortem
+        # 2026-10-16). Comando nuevo (L-9): el gate se consulta SOLO en ese
+        # caso, así las histories sin rechazo ni lo ven.
+        if isinstance(delivered, list) and not delivered and workflow.patched(_REJECTED_TEXT_PATCH):
+            workflow.logger.warning(
+                f"ETA: WhatsApp no aceptó el texto del aviso; sale por la plantilla: "
+                f"session={session_id} order={order_id} stage={stage}"
+            )
+            await self._notify_template(session_id, order_id, stage, facts, tracking_url, shipping_cost)
+            return
         # Las burbujas que salieron, con su wamid: el doble check de WhatsApp
         # del chat se une por ahí (caso 2026-10-15). Siempre: es solo el
         # contenido de la activity (L-22). Con `workflow.patched`, un run de

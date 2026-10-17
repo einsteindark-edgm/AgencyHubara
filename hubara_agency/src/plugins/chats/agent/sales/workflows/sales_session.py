@@ -150,6 +150,10 @@ _MAX_TURN_RESTARTS = 2
 # un turno que todavía no le mostró nada al cliente vuelve a empezar con ella.
 # Tope: la visión tarda 2 a 8 s; una foto que no llega no retiene más.
 _PHOTO_WAIT_MAX = timedelta(seconds=15)
+# Los envíos y el flush laten (`@with_heartbeat`): si el worker muere a mitad,
+# Temporal los reintenta a los 30 s y no al vencer su `start_to_close`
+# (premortem de la Ola 0 de Temporal, 2026-10-16). Solo opciones: replay seguro.
+_SEND_HEARTBEAT = timedelta(seconds=30)
 _PHOTO_PATCH = "burst-waits-for-photo-v1"
 
 
@@ -367,6 +371,10 @@ def _continue_as_new_input(wf: Any, input: SalesSessionInput, session_id: str, t
         perception_mode=wf._perception_mode,
         perception_profile=wf._perception_profile,
         photos_reading=sorted(wf._photos_reading) or None,
+        # Solo el V2 recuerda lo que entró con un traspaso (caso 2026-10-16).
+        handoff_wamids=sorted(getattr(wf, "_handoff_wamids", ())) or None,
+        # Solo el V2 avisa de una respuesta que no se confirmó (`delivery_v2`).
+        undelivered=list(getattr(wf, "_undelivered", ())) or None,
     )
 
 
@@ -382,6 +390,10 @@ def _restore_carried(wf: Any, input: SalesSessionInput) -> None:
         wf._perception_profile = profile
     wf._pending_topics = [t for t in input.pending_topics or [] if isinstance(t, str)]
     wf._photos_reading.update(w for w in input.photos_reading or [] if isinstance(w, str))
+    if hasattr(wf, "_handoff_wamids"):
+        wf._handoff_wamids.update(w for w in input.handoff_wamids or [] if isinstance(w, str))
+    if hasattr(wf, "_undelivered"):
+        wf._undelivered = [n for n in input.undelivered or [] if isinstance(n, str)]
 
 
 def _burst_messages(batch: list[PendingMessage]) -> list[dict[str, Any]]:
@@ -1439,6 +1451,7 @@ class HubaraSalesSessionWorkflow:
                             send_whatsapp_message_activity,
                             args=[session.session_id, greeting],
                             start_to_close_timeout=timedelta(seconds=90),
+                            heartbeat_timeout=_SEND_HEARTBEAT,
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
                         trace_steps.append(_text_outbound(greeting, greeting_delivered))
@@ -1496,6 +1509,7 @@ class HubaraSalesSessionWorkflow:
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, pre_msg],
                                 start_to_close_timeout=timedelta(seconds=90),
+                                heartbeat_timeout=_SEND_HEARTBEAT,
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
                             trace_steps.append(_text_outbound(pre_msg, pre_delivered))
@@ -1726,6 +1740,7 @@ class HubaraSalesSessionWorkflow:
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, result.final_content],
                                 start_to_close_timeout=timedelta(seconds=90),
+                                heartbeat_timeout=_SEND_HEARTBEAT,
                                 retry_policy=RetryPolicy(maximum_attempts=2)
                             )
                             trace_steps.append(
@@ -1791,6 +1806,7 @@ class HubaraSalesSessionWorkflow:
                             flush_pending_ui_intents_activity,
                             args=[session.session_id],
                             start_to_close_timeout=timedelta(seconds=120),
+                            heartbeat_timeout=_SEND_HEARTBEAT,
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
                         flush_step = _flush_outbound(flush_report)

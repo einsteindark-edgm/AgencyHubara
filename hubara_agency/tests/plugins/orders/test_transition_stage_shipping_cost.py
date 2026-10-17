@@ -43,6 +43,7 @@ def harness(monkeypatch):
     )
     async def _start_emit(order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None):
         spawn_emit_calls.append((order_id, to_stage, tracking_url, shipping_cost))
+        return True  # el aviso arrancó (False = quedó en el buzón)
 
     monkeypatch.setattr("src.plugins.orders.api._start_durable_emit", _start_emit)
     monkeypatch.setattr(

@@ -227,13 +227,17 @@ def test_shutdown_timeout_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_shutdown_timeout_default_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Sin env var, default 15s (razonable para dev local)."""
+    """Sin env var, el tope duro le deja a cada worker su drenado completo
+    (`WORKER_GRACEFUL_SHUTDOWN`) más margen: con 15 s cortaba a mitad del
+    drenado de 30 s (premortem de la Ola 0 de Temporal, 2026-10-16)."""
+    from src.platform.temporal.worker_lifecycle import WORKER_GRACEFUL_SHUTDOWN
+
     monkeypatch.delenv("RUN_WORKERS_SHUTDOWN_TIMEOUT_S", raising=False)
     if "src.run_workers" in sys.modules:
         del sys.modules["src.run_workers"]
     import src.run_workers as mod
 
-    assert mod._SHUTDOWN_TIMEOUT_S == 15.0
+    assert mod._SHUTDOWN_TIMEOUT_S >= WORKER_GRACEFUL_SHUTDOWN.total_seconds() + 10
 
 
 def test_shutdown_timeout_invalid_value_falls_back_to_default(
@@ -245,7 +249,7 @@ def test_shutdown_timeout_invalid_value_falls_back_to_default(
         del sys.modules["src.run_workers"]
     import src.run_workers as mod
 
-    assert mod._SHUTDOWN_TIMEOUT_S == 15.0
+    assert mod._SHUTDOWN_TIMEOUT_S == mod._DEFAULT_SHUTDOWN_TIMEOUT_S
 
 
 # ---------------------------------------------------------------------------

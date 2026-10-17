@@ -201,7 +201,57 @@ jobs:
           MEDUSA_BASE_URL: http://medusa.invalid
           MEDUSA_ADMIN_TOKEN: ci-dummy
           OTEL_SDK_DISABLED: "true"
-        run: uv run pytest tests/test_replay_*.py -q
+        # `globstar`: también los replay que viven bajo tests/plugins/ (premortem
+        # 2026-10-16: `tests/test_replay_*.py` solo veía el primer nivel).
+        run: |
+          shopt -s globstar
+          uv run pytest tests/**/test_replay_*.py -q
+
+      - name: Temporal — continue-as-new, apagado ordenado, entregas y reintentos (Ola 0)
+        # Auditoría de Temporal 2026-10-15 y su premortem del 2026-10-16. Los
+        # gates AST (reintentos finitos, heartbeat de las entregas, workers con
+        # apagado ordenado), el compose y los manifests de prod, y el
+        # comportamiento: el corte por run, la entrega sin confirmar del V2, el
+        # buzón de avisos de etapa, los reintentos del ETA y el cliente único.
+        # Viven en tests/plugins/ y tests/platform/, que este job no corre
+        # completos: se nombran uno por uno (~40 s). Guarda:
+        # tests/infra/test_ci_runs_replay_tests.py.
+        if: needs.changes.outputs.central == 'true'
+        working-directory: hubara_agency
+        env:
+          MEDUSA_BASE_URL: http://medusa.invalid
+          MEDUSA_ADMIN_TOKEN: ci-dummy
+          OTEL_SDK_DISABLED: "true"
+        run: >-
+          uv run pytest -q
+          tests/infra/test_ci_runs_replay_tests.py
+          tests/infra/test_prod_compose_graceful_stop.py
+          tests/platform/orchestration/test_dispatcher.py
+          tests/platform/test_agentkit.py
+          tests/platform/test_continue_as_new.py
+          tests/platform/test_llm_chat_heartbeat.py
+          tests/platform/test_temporal_client.py
+          tests/platform/test_whatsapp_send_template.py
+          tests/platform/test_worker_lifecycle.py
+          tests/plugins/chats/test_post_sale_return_activities.py
+          tests/plugins/eta/test_eta_session_continue_as_new.py
+          tests/plugins/eta/test_eta_session_retries.py
+          tests/plugins/marketing/test_send_workflow.py
+          tests/plugins/orders/test_order_photo.py
+          tests/plugins/orders/test_stage_emit_start_is_awaited.py
+          tests/plugins/orders/test_transition_stage_notify_customer.py
+          tests/plugins/orders/test_transition_stage_shipping_cost.py
+          tests/plugins/orders/test_transition_stage_tracking_url.py
+          tests/plugins/test_deliveries_heartbeat_timeout.py
+          tests/plugins/test_run_workers.py
+          tests/plugins/test_workers_graceful_shutdown.py
+          tests/plugins/test_workflow_activities_finite_retries.py
+          tests/test_dispatcher_activities.py
+          tests/test_dispatcher_handoff_helpers.py
+          tests/test_llm_chat_heartbeat_timeout.py
+          tests/test_sales_v2_delivery_failures.py
+          tests/test_sales_workflow_continue_as_new.py
+          tests/test_sales_workflow_v2_continue_as_new.py
 
       - name: Premortem invariants (compose drift + paridad k8s + colas únicas)
         # Complementa el modo `strict: false` de la branch protection. Dos PRs de

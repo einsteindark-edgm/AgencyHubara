@@ -9,9 +9,22 @@ historia se acerca a sus límites (eventos o bytes) antes del tope de turnos.
 Replay (L-9): las dos reglas solo difieren en dónde cortan. Un run vivo nunca
 cortó con la vieja (si no, ya no viviría), y donde la vieja no corta la nueva
 tampoco, salvo por la sugerencia del servidor. El gate se consulta SOLO donde
-difieren: los runs vivos al desplegar no lo encuentran en su historia y pasan a
-la regla nueva en su próximo turno (sin la memoización de `patched` en False),
-y la historia de un run que ya cortó con la vieja se reproduce igual.
+difieren: un run vivo al desplegar que nunca recibió la sugerencia no lo
+encuentra en su historia y pasa a la regla nueva en su próximo turno (sin la
+memoización de `patched` en False); uno cuya historia ya pasó el umbral de la
+sugerencia (4 MiB, medido) lo consulta al reproducirse, queda en False y sigue
+con la regla vieja (cortar a los 50) hasta terminar: inofensivo. La historia de
+un run que ya cortó con la vieja se reproduce igual.
+
+Con prompts de ~29k tokens (cada ronda guarda el prompt dos veces: el resultado
+de `build_prompt` y el input de `llm_chat`), una sesión larga corta cada ~8-15
+turnos por la sugerencia, con un bootstrap nuevo cada vez: aceptable, y la
+historia chica también le ahorra memoria al worker.
+
+Rollback: un run que grabó el marcador choca con el código viejo (TMPRL1100):
+solo hacia adelante (`infra/DEPLOY_RUNBOOK.md`, «Revertir un deploy que cambió
+workflows de vida larga»).
+
 Puro y determinista: se importa en el sandbox del workflow.
 """
 from __future__ import annotations

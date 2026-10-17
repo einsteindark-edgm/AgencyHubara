@@ -72,7 +72,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
@@ -131,6 +131,9 @@ with workflow.unsafe.imports_passed_through():
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
+    # Una respuesta que no se confirmó: el turno siguiente lo sabe (premortem
+    # de la Ola 0 de Temporal, 2026-10-16).
+    from src.plugins.chats.agent.sales.workflows.delivery_v2 import UNDELIVERED_MAX, undelivered_note
     # Las tools que solo leen: el reinicio conserva su resultado (…7392).
     from src.plugins.chats.agent.sales.read_only_tools import READ_ONLY_TOOLS
     # Caída total del LLM (2026-10-15): Temporal espera y reintenta el turno.
@@ -211,7 +214,11 @@ _FLUSH_OPTIONS: dict[str, Any] = {**_SEND_OPTIONS, "start_to_close_timeout": tim
 
 def _delivery_failed(what: str, session_id: str, exc: ActivityError) -> None:
     """Una entrega agotó sus intentos: la sesión sigue (una falla técnica se
-    recupera sola y avisa, no pasa al equipo) y queda el error en el log."""
+    recupera sola y avisa, no pasa al equipo) y queda el error en el log. Una
+    cancelación no es una falla de entrega: sube y la sesión se cancela
+    (premortem 2026-10-16: si no, un cancel desde Temporal se perdía)."""
+    if isinstance(exc.cause, CancelledError):
+        raise exc
     workflow.logger.error(f"{what} falló tras sus intentos; la sesión sigue: session={session_id} err={exc.cause!r}")
 
 
@@ -247,6 +254,9 @@ class HubaraSalesSessionWorkflowV2:
         # wamids no se contestan otra vez si también llegan por señal.
         self._handoff_replies: list[PendingMessage] = []
         self._handoff_wamids: set[str] = set()
+        # Avisos para el turno siguiente de respuestas que no se confirmaron
+        # (`delivery_v2`, solo payload).
+        self._undelivered: list[str] = []
         _restore_carried(self, input)
 
     @workflow.signal
@@ -430,14 +440,18 @@ class HubaraSalesSessionWorkflowV2:
             context = msg.plugin_context or []
             kept = [n for n, name in zip(context, context_note_names(context)) if name != "burst_note"]
             msg = dataclasses.replace(msg, plugin_context=[note, *kept])
+        if self._undelivered:
+            msg = dataclasses.replace(msg, plugin_context=[*(msg.plugin_context or []), *self._undelivered])
         return msg
 
-    async def _send_text(
-        self, session_id: str, text: str, trace_steps: list[dict], trace_guards: list[str]
-    ) -> tuple[bool, Any]:
+    async def _send_text(self, session_id: str, text: str) -> Any:
         """Envía un texto del turno (3.er argumento `True`: lo decidió el
-        motor). Si agota sus intentos, la sesión sigue: `(False, None)` y la
-        traza lo dice; no se persiste lo que no salió."""
+        motor) y devuelve las burbujas que salieron. Un rechazo de WhatsApp no
+        lanza: vuelve `[]` (no salió). Si la activity agota sus intentos, lo que
+        lanzó es ambiguo (un timeout, el worker apagado, el vault después del
+        POST): la sesión sigue y el envío queda «sin confirmación» (`None`, como
+        las histories anteriores a la traza v2). En los dos casos el turno
+        siguiente lo sabe; cuando un envío vuelve a salir, el aviso se va."""
         try:
             delivered = await workflow.execute_activity(
                 send_whatsapp_message_activity,
@@ -446,9 +460,34 @@ class HubaraSalesSessionWorkflowV2:
             )
         except ActivityError as exc:
             _delivery_failed("El envío de WhatsApp", session_id, exc)
-            _note_guard(trace_steps, trace_guards, "delivery_failed", before=text, after="", v1=False)
-            return False, None
-        return True, delivered
+            self._remember_undelivered(undelivered_note(text, rejected=False))
+            return None
+        if isinstance(delivered, list) and not delivered:
+            self._remember_undelivered(undelivered_note(text, rejected=True))
+        elif delivered:
+            self._undelivered = []
+        return delivered
+
+    async def _persist_sent(self, session_id: str, args: list[Any]) -> None:
+        """Anota en el panel lo que salió (o quedó sin confirmar). De mejor
+        esfuerzo: el mensaje ya salió, y una falla del vault no tumba la sesión
+        ni reenvía nada (premortem 2026-10-16). Mismos comandos que antes."""
+        try:
+            await workflow.execute_activity(
+                persist_assistant_message_activity,
+                args=args,
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except ActivityError as exc:
+            if isinstance(exc.cause, CancelledError):
+                raise
+            workflow.logger.error(
+                f"El panel no anotó un mensaje que ya salió; la sesión sigue: session={session_id} err={exc.cause!r}"
+            )
+
+    def _remember_undelivered(self, note: str) -> None:
+        self._undelivered = [*self._undelivered, note][-UNDELIVERED_MAX:]
 
     @workflow.run
     async def run(self, input: SalesSessionInput) -> None:
@@ -859,24 +898,19 @@ class HubaraSalesSessionWorkflowV2:
                         retry_policy=RetryPolicy(maximum_attempts=3),
                     )
                     _note_guard(trace_steps, trace_guards, "first_contact_greeting", before="", after=greeting)
-                    # El saludo es la primera salida del turno.
-                    pending_at_reply = len(self._pending)
+                    # El saludo es la primera salida del turno, si sale: uno
+                    # que WhatsApp rechazó (`[]`) no lo es.
+                    pending_before_greeting = len(self._pending)
                     # 3.er argumento `True`: lo decidió el motor (el saludo
                     # aprobado que pidió `greeting_needed`); ver `text_out`.
-                    greeting_sent, greeting_delivered = await self._send_text(
-                        session.session_id, greeting, trace_steps, trace_guards
-                    )
-                    if greeting_sent:
-                        trace_steps.append(_text_outbound(greeting, greeting_delivered))
-                        # 4.º argumento: las burbujas que salieron, con su wamid
-                        # (el doble check de WhatsApp en el chat se une por ahí).
-                        await workflow.execute_activity(
-                            persist_assistant_message_activity,
-                            args=[session.session_id, greeting, None, greeting_delivered],
-                            start_to_close_timeout=timedelta(seconds=10),
-                            retry_policy=RetryPolicy(maximum_attempts=2),
-                        )
-                        trace_sent_texts.append(greeting)
+                    greeting_delivered = await self._send_text(session.session_id, greeting)
+                    if greeting_delivered != []:
+                        pending_at_reply = pending_before_greeting
+                    trace_steps.append(_text_outbound(greeting, greeting_delivered))
+                    # 4.º argumento: las burbujas que salieron, con su wamid
+                    # (el doble check de WhatsApp en el chat se une por ahí).
+                    await self._persist_sent(session.session_id, [session.session_id, greeting, None, greeting_delivered])
+                    trace_sent_texts.append(greeting)
 
                 # Selector de variantes (bug run fe86d4e4): si SALIÓ, él es el
                 # mensaje y el texto no se manda. Un selector rechazado no
@@ -988,24 +1022,22 @@ class HubaraSalesSessionWorkflowV2:
                             )
                             shutdown_after_send = True
                             safety_net_escalated = True
-                        # El texto es la primera salida si no hubo saludo.
-                        if pending_at_reply is None:
-                            pending_at_reply = len(self._pending)
-                        final_sent, final_delivered = await self._send_text(
-                            session.session_id, text_out, trace_steps, trace_guards
+                        # El texto es la primera salida si no hubo saludo (y si
+                        # sale: uno que WhatsApp rechazó no lo es).
+                        pending_before_reply = len(self._pending)
+                        final_delivered = await self._send_text(session.session_id, text_out)
+                        if pending_at_reply is None and final_delivered != []:
+                            pending_at_reply = pending_before_reply
+                        trace_steps.append(_text_outbound(text_out, final_delivered))
+                        trace_sent_texts.append(text_out)
+                        # El panel del dashboard muestra solo lo que salió
+                        # (diferencia 1 con el V1), «sin confirmación» si no se
+                        # sabe. `tools_used`: evidencia para el juez del eval
+                        # (caso ep_010).
+                        await self._persist_sent(
+                            session.session_id,
+                            [session.session_id, text_out, list(result.tools_used or []), final_delivered],
                         )
-                        if final_sent:
-                            trace_steps.append(_text_outbound(text_out, final_delivered))
-                            trace_sent_texts.append(text_out)
-                            # El panel del dashboard muestra solo lo que salió
-                            # (diferencia 1 con el V1). `tools_used`: evidencia
-                            # para el juez del eval (caso ep_010).
-                            await workflow.execute_activity(
-                                persist_assistant_message_activity,
-                                args=[session.session_id, text_out, list(result.tools_used or []), final_delivered],
-                                start_to_close_timeout=timedelta(seconds=10),
-                                retry_policy=RetryPolicy(maximum_attempts=2),
-                            )
                     elif trace_suppressed is None:
                         # El selector ES el mensaje (run fe86d4e4).
                         _note_guard(
@@ -1023,7 +1055,11 @@ class HubaraSalesSessionWorkflowV2:
                         )
                     except ActivityError as exc:
                         _delivery_failed("El envío de los componentes del turno", session.session_id, exc)
-                        _note_guard(trace_steps, trace_guards, "delivery_failed", before="ui_intents", after="", v1=False)
+                        # Ambiguo como el texto: pudo salir algo (catálogo,
+                        # selector, formulario). La traza lo dice sin confirmar.
+                        trace_steps.append(
+                            {"kind": "outbound", "at_ms": _now_ms(), "bubbles": [{"kind": "ui", "wamid": None, "delivered": None}]}
+                        )
                         flush_report = None
                     flush_step = _flush_outbound(flush_report)
                     if flush_step is not None:

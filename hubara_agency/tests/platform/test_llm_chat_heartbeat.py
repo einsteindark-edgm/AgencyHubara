@@ -46,3 +46,26 @@ async def test_llm_chat_heartbeats_while_the_model_thinks(monkeypatch: pytest.Mo
 
     assert out.content == "hola"
     assert len(beats) >= 3, f"llm_chat no late mientras el modelo piensa: {len(beats)} heartbeats"
+
+
+@pytest.mark.asyncio
+async def test_a_quick_llm_call_sends_no_heartbeat(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cada heartbeat que llega al servidor es una acción facturable de Temporal
+    Cloud: una respuesta que llega antes del primer intervalo no late."""
+
+    async def quick_acompletion(**_kwargs: object) -> litellm.ModelResponse:
+        await asyncio.sleep(0.05)  # la red: el event loop corre mientras tanto
+        return _response()
+
+    monkeypatch.setattr(provider_module, "acompletion", quick_acompletion)
+    monkeypatch.setattr(llm_module, "_HEARTBEAT_EVERY_S", 0.5)
+    beats: list[tuple] = []
+    env = ActivityEnvironment()
+    env.on_heartbeat = lambda *details: beats.append(details)
+
+    await env.run(
+        llm_chat,
+        LLMChatInput(messages=[{"role": "user", "content": "hola"}], llm=LLMConfig(model="deepseek/deepseek-v4-flash")),
+    )
+
+    assert beats == []

@@ -793,3 +793,17 @@ class TestIdConflictPolicy:
         )
 
         assert [s["id_conflict_policy"] for s in client.started] == [WorkflowIDConflictPolicy.FAIL]
+
+
+def test_the_sdk_still_keeps_the_start_response_that_the_noop_label_reads() -> None:
+    """`_started_new_run` lee `handle._start_workflow_response.started`: temporalio
+    1.25 no lo expone en público. Si un upgrade del SDK lo saca, el outcome
+    `noop_already_running` pasaría a decir `started` sin aviso; este canario
+    falla en el upgrade (premortem de la Ola 0 de Temporal, 2026-10-16)."""
+    import inspect
+
+    import temporalio.client as sdk_client
+    from temporalio.api.workflowservice.v1 import StartWorkflowExecutionResponse
+
+    assert "started" in StartWorkflowExecutionResponse.DESCRIPTOR.fields_by_name
+    assert "_start_workflow_response" in inspect.getsource(sdk_client.WorkflowHandle)

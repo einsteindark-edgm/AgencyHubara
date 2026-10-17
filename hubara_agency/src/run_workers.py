@@ -32,7 +32,8 @@ Shutdown: cada worker corre con ``run_worker`` y SIGINT/SIGTERM lo apaga en
 orden (deja de pedir tareas y espera a sus activities en curso, auditoría de
 Temporal 2026-10-15). El launcher comparte esa señal (``stop_signal``): espera
 a que todos terminen solos y solo cancela a los que pasen el timeout duro
-(15 s por defecto). Si un worker se cae, cancela a los demás.
+(el drenado de cada worker más margen, por defecto). Si un worker se cae,
+cancela a los demás.
 """
 from __future__ import annotations
 
@@ -46,33 +47,40 @@ from loguru import logger
 
 from src.platform.plugin_loader import validate_enabled
 from src.platform.plugin_manifest import enabled_plugins
-from src.platform.temporal.worker_lifecycle import stop_signal
+from src.platform.temporal.worker_lifecycle import WORKER_GRACEFUL_SHUTDOWN, stop_signal
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _PLUGINS_MANIFEST_DIR = _REPO_ROOT / "frontend_dashboard" / "src" / "plugins"
 
 
-def _resolve_shutdown_timeout() -> float:
-    """Tiempo máximo que esperamos por workers después de pedir cancel.
+#: El tope duro por defecto: el drenado completo de cada worker
+#: (`WORKER_GRACEFUL_SHUTDOWN`) más margen. Con 15 s el launcher cortaba a mitad
+#: del drenado de 30 s (premortem de la Ola 0 de Temporal, 2026-10-16).
+_DEFAULT_SHUTDOWN_TIMEOUT_S = WORKER_GRACEFUL_SHUTDOWN.total_seconds() + 15
 
-    Default 15s — razonable para dev local. En producción con miles de
-    workflows in-flight Temporal puede tardar más en flushar (premortem PR9).
-    Configurable via ``RUN_WORKERS_SHUTDOWN_TIMEOUT_S``. Si el valor no
-    parsea, fallback al default + warning visible.
+
+def _resolve_shutdown_timeout() -> float:
+    """Tiempo máximo que esperamos por workers después de pedir el apagado.
+
+    Default: el drenado de cada worker más margen (`_DEFAULT_SHUTDOWN_TIMEOUT_S`).
+    En producción con miles de workflows in-flight Temporal puede tardar más en
+    flushar (premortem PR9). Configurable via ``RUN_WORKERS_SHUTDOWN_TIMEOUT_S``.
+    Si el valor no parsea, fallback al default + warning visible.
     """
     raw = os.environ.get("RUN_WORKERS_SHUTDOWN_TIMEOUT_S", "").strip()
     if not raw:
-        return 15.0
+        return _DEFAULT_SHUTDOWN_TIMEOUT_S
     try:
         return float(raw)
     except ValueError:
         logger.warning(
             "[run_workers] RUN_WORKERS_SHUTDOWN_TIMEOUT_S={!r} no parsea como float; "
-            "usando default 15.0s",
+            "usando default {}s",
             raw,
+            _DEFAULT_SHUTDOWN_TIMEOUT_S,
         )
-        return 15.0
+        return _DEFAULT_SHUTDOWN_TIMEOUT_S
 
 
 _SHUTDOWN_TIMEOUT_S = _resolve_shutdown_timeout()

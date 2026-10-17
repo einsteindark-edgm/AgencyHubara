@@ -108,6 +108,10 @@ def reply_summary(message: object) -> str:
 # dejaba el workflow colgado en silencio (auditoría de Temporal, 2026-10-15);
 # ahora, tras ~1 min de reintentos, la activity falla a la vista. Solo opciones
 # de la activity: replay seguro.
+# Los envíos laten (`@with_heartbeat`): si el worker muere a mitad, Temporal
+# los reintenta a los 30 s y no al vencer los 90 s (premortem de la Ola 0 de
+# Temporal, 2026-10-16). Solo opciones: replay seguro.
+_SEND_HEARTBEAT = timedelta(seconds=30)
 _VAULT_RETRY = RetryPolicy(
     initial_interval=timedelta(seconds=1),
     backoff_coefficient=2.0,
@@ -852,6 +856,7 @@ class RemarketingSessionWorkflow:
                                 send_whatsapp_message_activity,
                                 args=[session_id, pre_msg],
                                 start_to_close_timeout=timedelta(seconds=90),
+                                heartbeat_timeout=_SEND_HEARTBEAT,
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
                             if workflow.patched("persist-assistant-message-v1"):
@@ -871,6 +876,7 @@ class RemarketingSessionWorkflow:
                             send_whatsapp_message_activity,
                             args=[session_id, result.final_content],
                             start_to_close_timeout=timedelta(seconds=90),
+                            heartbeat_timeout=_SEND_HEARTBEAT,
                             retry_policy=RetryPolicy(maximum_attempts=2)
                         )
                         # Persistir DESPUES del send (mismo razonamiento que en

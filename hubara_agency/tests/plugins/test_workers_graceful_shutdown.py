@@ -5,7 +5,7 @@ Ningún worker manejaba SIGTERM: un deploy los mataba a mitad de sus activities
 timeouts. Cada worker corre con `run_worker(worker)` (SIGTERM → deja de pedir
 tareas y espera a las que están en curso) y le pasa a su `Worker(...)` el
 `graceful_shutdown_timeout` común. Un worker nuevo que entra con
-`await worker.run()` pelado lo frena este guard.
+un `worker.run()` pelado (suelto o dentro de un `gather`) lo frena este guard.
 """
 from __future__ import annotations
 
@@ -55,5 +55,31 @@ def test_every_worker_shuts_down_in_order(module: Path) -> None:
         assert isinstance(value, ast.Name) and value.id == "WORKER_GRACEFUL_SHUTDOWN", (
             "el Worker(...) no pasa graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN"
         )
-    assert "await worker.run()" not in source, "corre el worker sin manejar SIGTERM: usá `await run_worker(worker)`"
+    assert _bare_runs(tree) == [], "corre un worker sin manejar SIGTERM: usá `await run_worker(worker)`"
     assert "run_worker(" in source, "no corre el worker con `run_worker` (SIGTERM → apagado ordenado)"
+
+
+def _bare_runs(tree: ast.AST) -> list[int]:
+    """Las líneas con un `.run()` sin argumentos (`worker.run()`, también dentro
+    de un `asyncio.gather(...)`); `asyncio.run(main())` lleva argumento."""
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run"
+        and not node.args
+        and not node.keywords
+    ]
+
+
+def test_the_guard_catches_workers_run_inside_a_gather() -> None:
+    """Caso negativo (premortem 2026-10-16): un `asyncio.gather(*(w.run() ...))`
+    no dice `await worker.run()`, pero tampoco maneja SIGTERM."""
+    source = (
+        "import asyncio\n"
+        "async def main():\n"
+        "    await asyncio.gather(*(worker.run() for worker in build_workers()))\n"
+        "asyncio.run(main())\n"
+    )
+    assert _bare_runs(ast.parse(source)) == [3]

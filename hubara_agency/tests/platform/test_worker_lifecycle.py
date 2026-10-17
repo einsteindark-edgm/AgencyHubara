@@ -102,3 +102,67 @@ def test_the_sdk_runtime_reexports_the_worker_lifecycle() -> None:
 
     assert getattr(kit, "run_worker", None) is impl.run_worker
     assert getattr(kit, "WORKER_GRACEFUL_SHUTDOWN", None) is impl.WORKER_GRACEFUL_SHUTDOWN
+
+
+@pytest.mark.asyncio
+async def test_a_second_signal_exits_at_once_instead_of_waiting_for_the_drain(monkeypatch: pytest.MonkeyPatch) -> None:
+    """En dev, Ctrl-C mientras el worker espera a sus activities: el segundo
+    Ctrl-C sale ya (antes quedaba esperando hasta el graceful timeout)."""
+    import src.platform.temporal.worker_lifecycle as lifecycle
+
+    forced: list[signal.Signals] = []
+    draining = asyncio.Event()
+
+    class SlowDrain(FakeWorker):
+        async def shutdown(self) -> None:
+            self.shutdowns += 1
+            draining.set()
+            await asyncio.sleep(3600)  # activities que no terminan
+
+    worker = SlowDrain(on_run=lambda: os.kill(os.getpid(), signal.SIGINT))
+
+    def force(sig: signal.Signals) -> None:
+        forced.append(sig)
+        worker._stopped.set()
+
+    monkeypatch.setattr(lifecycle, "_force_exit", force)
+    monkeypatch.setattr(lifecycle, "_REPEAT_WINDOW_S", 0.1)
+    running = asyncio.create_task(run_worker(worker))
+    await asyncio.wait_for(draining.wait(), timeout=5)
+    await asyncio.sleep(0.3)  # la persona aprieta Ctrl-C otra vez
+    os.kill(os.getpid(), signal.SIGINT)
+    await asyncio.sleep(0.2)
+    running.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await running
+
+    assert forced == [signal.SIGINT]
+
+
+@pytest.mark.asyncio
+async def test_the_copy_of_the_same_ctrl_c_that_uv_forwards_is_not_a_second_signal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`uv run` le reenvía el SIGINT al hijo además del que manda la terminal
+    al grupo (medido 2026-10-16: un Ctrl-C = dos SIGINT): esa copia casi
+    inmediata no es «otra vez Ctrl-C» y no corta el drenado."""
+    import src.platform.temporal.worker_lifecycle as lifecycle
+
+    forced: list[signal.Signals] = []
+    draining = asyncio.Event()
+
+    class SlowDrain(FakeWorker):
+        async def shutdown(self) -> None:
+            self.shutdowns += 1
+            draining.set()
+            await asyncio.sleep(0.6)  # las activities terminan
+            self._stopped.set()
+
+    def ctrl_c_through_uv() -> None:
+        os.kill(os.getpid(), signal.SIGINT)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    monkeypatch.setattr(lifecycle, "_force_exit", forced.append)
+    worker = SlowDrain(on_run=ctrl_c_through_uv)
+    await asyncio.wait_for(run_worker(worker), timeout=5)
+
+    assert forced == [], "una copia del mismo Ctrl-C cortó el drenado"
+    assert worker.shutdowns == 1

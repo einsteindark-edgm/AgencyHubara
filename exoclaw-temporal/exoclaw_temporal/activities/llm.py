@@ -163,9 +163,12 @@ _HEARTBEAT_EVERY_S: float = 10
 
 
 async def _heartbeat_loop() -> None:
+    # El primer latido sale al primer intervalo, no al arrancar: cada heartbeat
+    # que llega al servidor es una acción facturable de Temporal Cloud, y una
+    # respuesta que tarda menos que el intervalo no necesita ninguno.
     while True:
-        activity.heartbeat()
         await asyncio.sleep(_HEARTBEAT_EVERY_S)
+        activity.heartbeat()
 
 
 @activity.defn
