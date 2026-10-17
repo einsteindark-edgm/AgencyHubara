@@ -297,8 +297,11 @@ intentos (cada uno cuesta) y sin reintentar errores de programación.
   - `_spawn_safe`: los eventos de analytics y el aviso al watchdog se esperan con
     tope de 5 s (`_best_effort`), sin tareas sueltas (L-7);
   - `PhotoReads` y `use_cases/photo_reads.py`;
-  - `transcribe_audio_activity`, que estaba muerta (del worker, del
-    laboratorio y del módulo).
+  - `transcribe_audio_activity`, que estaba muerta (del worker y del
+    laboratorio). El módulo queda sin registrar: sus imports de
+    `src.platform` están congelados en la allowlist P-28, bajo
+    `tests/architecture/` (ruta protegida). Borrarlo es drenar esas líneas en
+    un PR con el label `architecture-change`.
 - La transcripción viva saca **solo su pendiente**, con un `update()` atómico. Si
   mientras tanto llegó otra nota de voz, la suya se queda.
 
