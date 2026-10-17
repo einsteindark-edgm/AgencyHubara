@@ -19,8 +19,23 @@ from pathlib import Path
 
 from tests.plugins.activity_options_ast import SRC, ScheduledActivity, all_scheduled_activities, scheduled_activities
 
-#: Las activities que le entregan algo al cliente (función o nombre registrado).
-DELIVERIES = frozenset(
+#: Cada activity que le entrega algo al cliente: (función, nombre registrado).
+#: El workflow la agenda por la función o por el nombre (string): cuentan los dos.
+DELIVERIES: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("send_whatsapp_message_activity", "send_whatsapp_message_activity"),
+        ("send_whatsapp_template_activity", "send_whatsapp_template_activity"),
+        ("flush_pending_ui_intents_activity", "flush_pending_ui_intents_activity"),
+        ("send_ready_photo_activity", "send_ready_photo_activity"),
+        ("send_remarketing_template_activity", "send_remarketing_template_activity"),
+        # La entrega de las campañas V2 (#442): llega con ese PR y se agenda por
+        # su nombre registrado, que no es el de la función.
+        ("deliver_campaign_message_activity", "deliver_campaign_message"),
+    }
+)
+_NAMES = frozenset(name for pair in DELIVERIES for name in pair)
+#: Las que existen en esta rama (las demás pueden llegar con otro PR).
+_PRESENT = frozenset(
     {
         "send_whatsapp_message_activity",
         "send_whatsapp_template_activity",
@@ -35,7 +50,7 @@ def _without_heartbeat(calls: list[ScheduledActivity]) -> list[str]:
     return [
         c.where
         for c in calls
-        if c.target in DELIVERIES and (c.options is None or "heartbeat_timeout" not in c.options)
+        if c.target in _NAMES and (c.options is None or "heartbeat_timeout" not in c.options)
     ]
 
 
@@ -47,10 +62,12 @@ def test_the_gate_catches_a_delivery_without_heartbeat_timeout(tmp_path: Path) -
         "async def run():\n"
         "    await workflow.execute_activity(send_whatsapp_message_activity, retry_policy=1)\n"  # 4
         "    await workflow.execute_activity('send_whatsapp_template_activity', **_SEND)\n"  # 5: ok
-        "    await workflow.execute_activity(otra_activity, retry_policy=1)\n",  # 6: no es entrega
+        "    await workflow.execute_activity(otra_activity, retry_policy=1)\n"  # 6: no es entrega
+        # 7: la entrega de campañas V2 (#442), agendada por su nombre registrado.
+        "    await workflow.execute_activity('deliver_campaign_message', retry_policy=1)\n",
         encoding="utf-8",
     )
-    assert [w.rsplit(":", 1)[1] for w in _without_heartbeat(scheduled_activities(module))] == ["4"]
+    assert [w.rsplit(":", 1)[1] for w in _without_heartbeat(scheduled_activities(module))] == ["4", "7"]
 
 
 def test_every_delivery_to_the_customer_has_a_heartbeat_timeout() -> None:
@@ -63,11 +80,11 @@ def test_every_delivery_heartbeats_more_often_than_its_timeout() -> None:
     every: dict[str, int] = {}
     for path in sorted(SRC.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) or node.name not in DELIVERIES:
+            if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) or node.name not in _NAMES:
                 continue
             for dec in node.decorator_list:
                 if isinstance(dec, ast.Call) and getattr(dec.func, "id", None) == "with_heartbeat":
                     value = next((k.value for k in dec.keywords if k.arg == "every"), None)
                     every[node.name] = value.value if isinstance(value, ast.Constant) else 10
-    assert set(every) == DELIVERIES, f"entregas que no laten: {sorted(DELIVERIES - set(every))}"
+    assert _PRESENT <= set(every), f"entregas que no laten: {sorted(_PRESENT - set(every))}"
     assert all(seconds <= 10 for seconds in every.values()), every
