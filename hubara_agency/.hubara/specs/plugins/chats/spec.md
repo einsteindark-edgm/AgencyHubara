@@ -56,7 +56,7 @@ activity (fase 2), y la entrega a la sesión va en orden de llegada por cliente
 
 - GIVEN un paso del ingest se reintenta tras hacer parte de su trabajo (el worker murió a mitad)
 - THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
-- AND lo que decidió el paso del estado (la nota de frontera del episodio nuevo, la respuesta a campaña, el episodio anterior) llega a la entrega aunque la entrega se reintente: viaja en el resultado del paso, no se vuelve a decidir sobre un documento que ya la tiene escrita
+- AND lo que decidió el paso del estado (la nota de frontera del episodio nuevo, la respuesta a campaña, el resumen del episodio anterior —sin los datos de envío de su borrador, que no salen del vault—) llega a la entrega aunque la entrega se reintente: viaja en el resultado del paso, no se vuelve a decidir sobre un documento que ya la tiene escrita
 - AND si la escritura del estado falla, ese paso se reintenta (el episodio y las lecturas no se pierden)
 - AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: solo una caída del proceso entre el efecto y su marca lo repite)
 - AND dos intentos del mismo mensaje que se superponen avisan a la sesión UNA vez, y un intento cancelado mientras avisa termina el aviso y deja su marca

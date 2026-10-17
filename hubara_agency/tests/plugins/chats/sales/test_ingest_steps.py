@@ -150,3 +150,25 @@ async def test_the_boundary_note_of_a_returning_customer_survives_between_steps(
     assert outcome == "deliver"
     [turn] = bot.turns
     assert any("nueva" in note.lower() or "anterior" in note.lower() for note in turn["extra_context"])
+
+
+@pytest.mark.asyncio
+async def test_the_state_step_keeps_the_closed_episodes_shipping_data_out_of_temporal() -> None:
+    """Lo que un paso devuelve queda 30 días en el historial de Temporal Cloud.
+    Del episodio que se cerró, el turno solo usa su resumen (cómo cerró, qué
+    productos, el cupón); los datos de envío del borrador no salen del vault."""
+    doc = _returning_customer()
+    doc["episodes"][0]["order_draft"] = {
+        "items": [{"producto": "Vela de lavanda"}],
+        "slots": {"nombre": "Ana Pérez", "direccion": "Calle 10 # 4-21", "ciudad": "Cali"},
+    }
+    use_case, _history, bot = _ingest(_Metadata(doc))
+    request = IngestRequest(message=asdict(_text("hola de nuevo")), received_at_ms=_NOW_MS)
+
+    state = await use_case.read_state(request)
+    [payload] = await DataConverter.default.encode([state])
+
+    assert b"Calle 10" not in payload.data and "Ana Pérez".encode() not in payload.data
+    turn = await use_case.prepare_turn(request, state)
+    assert "Conversación anterior con este cliente" in turn.turn_message
+    assert "Vela de lavanda" in turn.turn_message

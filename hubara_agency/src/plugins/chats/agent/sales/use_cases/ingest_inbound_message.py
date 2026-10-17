@@ -110,7 +110,8 @@ from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     request_clean_llm_history,
     unseen_team_exchange,
     unseen_template_text,
-    with_previous_episode,
+    previous_episode_summary,
+    with_previous_episode_summary,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     CAMPAIGN_CLOSING_TAG,
@@ -898,7 +899,9 @@ class IngestInboundMessage:
             campaign_reply_note=campaign_reply_note,
             campaign_reply_touch=campaign_reply_touch,
             episode_boundary_note=episode_boundary_note,
-            previous_episode=previous_episode,
+            previous_episode_summary=(
+                previous_episode_summary(previous_episode) if previous_episode is not None else None
+            ),
             write_failed=not written and not isinstance(base, _Unread),
         )
 
@@ -918,7 +921,6 @@ class IngestInboundMessage:
         arrived_after_window = state.arrived_after_window
         campaign_reply_note = state.campaign_reply_note
         campaign_reply_touch = state.campaign_reply_touch
-        previous_episode = state.previous_episode
         persisted_image_url = request.persisted_image_url
         metadata, base = await self._read_metadata(session_id)
         # Lo que el cliente vio ANTES de este mensaje (el historial todavía no
@@ -1432,8 +1434,8 @@ class IngestInboundMessage:
             turn_message = quote_template_in_turn(unseen_template, turn_message)
         if team_exchange is not None:
             turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
-        if previous_episode is not None:
-            turn_message = with_previous_episode(previous_episode, turn_message)
+        if state.previous_episode_summary is not None:
+            turn_message = with_previous_episode_summary(state.previous_episode_summary, turn_message)
         return IngestTurn(
             outcome=TURN_DELIVER,
             text=effective.text,

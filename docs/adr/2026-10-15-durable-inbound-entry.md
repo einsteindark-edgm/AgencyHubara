@@ -266,7 +266,8 @@ sola escritura, bajo la guarda de la toma humana (#393).
 - O la rotación quedaría escrita antes de esperar a Jev, y una persona que toma el
   chat durante esa espera ya no podría deshacerla.
 
-Lo que el estado decide (la nota de frontera, la campaña, el episodio anterior)
+Lo que el estado decide (la nota de frontera, la campaña, el resumen del episodio
+anterior; nunca el episodio entero, que lleva los datos de envío del borrador)
 queda en el resultado del paso. Un reintento posterior ya no lo pierde: era el
 «límite conocido» de la fase 1.
 

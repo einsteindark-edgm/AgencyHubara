@@ -164,7 +164,9 @@ class IngestState:
     campaign_reply_note: str | None = None
     campaign_reply_touch: dict[str, Any] | None = None
     episode_boundary_note: str | None = None
-    previous_episode: dict[str, Any] | None = None
+    #: El resumen del episodio que este mensaje cerró (cómo cerró, productos,
+    #: cupón): solo eso viaja; los datos de envío del borrador no salen del vault.
+    previous_episode_summary: str | None = None
     #: La escritura del estado falló (no la saltó una lectura fallida): la
     #: activity lo reintenta.
     write_failed: bool = False
