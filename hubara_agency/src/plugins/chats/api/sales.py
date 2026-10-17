@@ -339,7 +339,11 @@ async def _enter_durably(messages: Sequence[Any]) -> None:
     previous: dict[str, str] = {}
     for parsed in messages:
         inp = InboundMessageInput(
-            message=asdict(parsed), after=previous.get(parsed.from_number), received_at_ms=_now_ms()
+            # Sin el `raw` de Meta: el ingest no lo lee y la historia de Temporal
+            # Cloud guarda el input 30 días, en claro (premortem PM-004).
+            message=asdict(replace(parsed, raw={})),
+            after=previous.get(parsed.from_number),
+            received_at_ms=_now_ms(),
         )
         try:
             accepted = await entry.accept(inp)
@@ -348,7 +352,12 @@ async def _enter_durably(messages: Sequence[Any]) -> None:
             _ledger_stage("enqueue_failed", parsed, error=f"{type(exc).__name__}: {exc}")
             raise HTTPException(status_code=503, detail="inbound queue unavailable") from exc
         _ledger_stage("queued" if accepted else "duplicate", parsed)
-        previous[parsed.from_number] = parsed.message_id
+        if parsed.message_id:
+            previous[parsed.from_number] = parsed.message_id
+        else:
+            # Sin wamid no hay workflow al que esperar: el siguiente se encadena al
+            # último que sí lo tiene (premortem PM-015).
+            logger.warning("inbound_without_wamid", from_number_tail=str(parsed.from_number)[-4:])
 
 
 def _ledger_stage(stage: str, parsed: Any, *, error: str | None = None) -> None:

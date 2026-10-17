@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict
+from datetime import timedelta
 
 import pytest
-from temporalio import activity
+from temporalio import activity, workflow
 from temporalio.client import WorkflowFailureError
 from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
-from temporalio.worker import Worker
+from temporalio.worker import UnsandboxedWorkflowRunner, Worker
 
 from src.plugins.chats.agent.sales.activities.inbound_entry import wait_inbound_predecessor_activity
 from src.plugins.chats.agent.sales.contracts import InboundMessageInput, inbound_workflow_id
@@ -161,3 +162,62 @@ async def test_a_stuck_previous_message_holds_the_next_only_up_to_the_cap(env, m
         assert await asyncio.wait_for(second.result(), timeout=30) == "ingested"
         release.set()
         assert await first.result() == "ingested"
+
+
+@pytest.mark.asyncio
+async def test_a_programming_error_is_not_retried(env) -> None:
+    """Premortem PM-011: un error determinista (TypeError, KeyError…) no se
+    arregla reintentando, y cada intento repetía Jev, el cupón en Medusa, el
+    reloj del watchdog y analytics."""
+    attempts: list[int] = []
+
+    @activity.defn(name="ingest_inbound_message")
+    async def buggy(inp: InboundMessageInput) -> str:
+        attempts.append(1)
+        raise KeyError("campo_que_no_esta")
+
+    async with Worker(
+        env.client, task_queue=QUEUE, workflows=[InboundMessageWorkflow],
+        activities=[buggy, wait_inbound_predecessor_activity],
+    ):
+        handle = await _start(env, _input("wamid.A"))
+        with pytest.raises(WorkflowFailureError):
+            await handle.result()
+
+    assert len(attempts) == 1
+
+
+@workflow.defn(name="ProbeInboundPredecessorWait")
+class _ProbeWait:
+    """Sonda: devuelve lo que contesta la espera al anterior (el workflow real
+    lo descarta y sigue, así que sus tests no ven la rama)."""
+
+    @workflow.run
+    async def run(self, wamid: str) -> str:
+        return await workflow.execute_activity(
+            wait_inbound_predecessor_activity, wamid, start_to_close_timeout=timedelta(seconds=60)
+        )
+
+
+@pytest.mark.asyncio
+async def test_the_wait_tells_done_failed_and_not_found_apart(env) -> None:
+    """Premortem PM-013: los tests de anterior ausente o fallido pasaban aunque
+    la espera reventara (el workflow sigue igual)."""
+    ingest = _Ingest(fail={"wamid.BAD"})
+    async with Worker(
+        env.client, task_queue=QUEUE, workflows=[InboundMessageWorkflow, _ProbeWait],
+        activities=[ingest.activity(), wait_inbound_predecessor_activity],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        await (await _start(env, _input("wamid.OK"))).result()
+        with pytest.raises(WorkflowFailureError):
+            await (await _start(env, _input("wamid.BAD"))).result()
+
+        async def probe(wamid: str) -> str:
+            return await env.client.execute_workflow(_ProbeWait.run, wamid, id=f"probe-{wamid}", task_queue=QUEUE)
+
+        assert (await probe("wamid.OK"), await probe("wamid.BAD"), await probe("wamid.GHOST")) == (
+            "done",
+            "failed",
+            "not_found",
+        )

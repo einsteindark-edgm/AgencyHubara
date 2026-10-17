@@ -155,3 +155,36 @@ def test_a_post_with_only_statuses_does_not_touch_temporal(webhook, monkeypatch)
 
     assert r.status_code == 200
     assert entry.accepted == []
+
+
+def test_the_raw_meta_payload_does_not_travel_to_temporal(webhook) -> None:
+    """Premortem PM-004: la historia de Temporal Cloud guarda el input 30 días,
+    en claro. El `raw` de Meta no lo usa el ingest; no viaja."""
+    post, _, _ = webhook
+    entry = _Entry()
+
+    post(_body(_msg("wamid.A", _ANA)), entry)
+
+    assert entry.accepted[0].message["raw"] == {}
+
+
+def test_metas_retry_after_a_503_still_chains_the_customers_messages(webhook) -> None:
+    """Premortem PM-013: tras el 503, Meta reenvía el POST entero; el primero ya
+    estaba (duplicate) y el segundo igual espera por él."""
+    post, _, _ = webhook
+    entry = _Entry(already={"wamid.A1"})
+
+    post(_body(_msg("wamid.A1", _ANA), _msg("wamid.A2", _ANA)), entry)
+
+    assert entry.received() == [("wamid.A2", "wamid.A1")]
+
+
+def test_a_message_without_wamid_does_not_break_the_chain_of_the_next(webhook) -> None:
+    """Premortem PM-015: sin wamid no hay workflow al que esperar; el siguiente
+    se encadena al último que sí lo tiene (nunca a un `after` vacío)."""
+    post, _, _ = webhook
+    entry = _Entry()
+
+    post(_body(_msg("wamid.A1", _ANA), _msg("", _ANA), _msg("wamid.A3", _ANA)), entry)
+
+    assert entry.received() == [("wamid.A1", None), ("", "wamid.A1"), ("wamid.A3", "wamid.A1")]

@@ -42,7 +42,9 @@ Recién con todos aceptados responde 200.
 - **Temporal falla** (sin conexión, timeout de 8 s): `enqueue_failed` en el ledger
   y respuesta **503**. Meta reintenta el POST entero; lo que ya había entrado lo
   frena la dedupe. Los statuses y los `BackgroundTasks` de ese POST no corren con
-  el 503 (FastAPI los descarta); se procesan con el reintento.
+  el 503 (FastAPI los descarta); se procesan con el reintento. Tras una falla,
+  durante 5 s el webhook responde 503 sin volver a probar: con Temporal colgado,
+  cada webhook esperaba sus 8 s en fila detrás del mismo candado.
 - **Los statuses (✓/✓✓) y los campos `standby` y `messaging_handovers`** siguen
   como hoy: `BackgroundTasks` de la API.
 - **El cliente de Temporal** se conecta una vez por proceso y se reusa
@@ -50,6 +52,15 @@ Recién con todos aceptados responde 200.
   queda antes del 200.
 - **`_in_their_conversation`** (el BSUID y los alias de teléfono) sigue en el
   webhook, porque hace falta para saber quién es el cliente al encadenar (punto 2).
+- **Qué queda en Temporal Cloud:** el input del workflow y de la activity se
+  guarda en claro (no hay codec) durante la retención del namespace (30 días):
+  - el texto, el teléfono o BSUID, el nombre de perfil, la ubicación;
+  - las tarjetas de contacto que comparta el cliente;
+  - el referral del anuncio.
+
+  El texto y el teléfono ya estaban ahí, en los signals y en el id
+  `session-wa_<tel>`. El `raw` de Meta no viaja: el ingest no lo lee. Cifrar los
+  payloads con un codec queda para cuando haga falta (toca a todos los workers).
 
 ### 2 · Orden por cliente: el mismo de hoy, ahora durable
 
@@ -59,7 +70,9 @@ uno el `wamid` del anterior del mismo cliente (`after`). El workflow, antes de
 ingerir, espera a que cierre el workflow de ese mensaje: la activity
 `wait_inbound_predecessor_activity` hace un long-poll de `handle.result()` con
 heartbeat y un tope de 2 min. Si el anterior no existe, falló o se pasa del tope,
-sigue igual. Ningún mensaje se pierde por esperar el orden.
+sigue igual. Ningún mensaje se pierde por esperar el orden. Un mensaje sin `wamid`
+no tiene workflow al que esperar: el siguiente se encadena al último que sí lo
+tiene.
 
 Esto ya no depende del proceso. Si el worker muere a mitad, la espera y el ingest
 se reintentan en el worker nuevo, en orden. Con `BackgroundTasks` eso no pasaba:
@@ -131,24 +144,37 @@ reintentos de esta fase se miden en minutos.
   o un Temporal que tarda un par de minutos en volver no deja el mensaje en
   *Failed*: Meta ya tiene su 200 y no lo re-entrega. Un worker que muere a mitad
   (deploy, OOM) se nota por el heartbeat, y el ingest se repite en el worker nuevo.
+- **Un error de programación** (`TypeError`, `KeyError`, `AttributeError`…) no se
+  reintenta. Reintentar no lo arregla y cada intento repetiría Jev, el cupón en
+  Medusa, el reloj del watchdog y analytics.
 - **Si se agotan los intentos,** el workflow queda *Failed* en Temporal, a la vista
   y reseteable desde la UI. En el ledger queda `ingest_failed`, como hoy.
 - **Lo que un reintento no puede repetir** pasa por un diario por `wamid`
   (`InboundEffects`, archivos marcadores en `vault/_ledger/inbound_effects/<día>/`,
-  creados con `O_EXCL`):
+  creados con `O_EXCL`). Se conserva y se consulta tanto como la retención de
+  Temporal (30 días), así un reset desde la UI días después tampoco repite nada:
   - `history`: la línea del cliente en el JSONL de la sesión. Se marca después de
-    escribirla; un reintento no la duplica en el panel.
-  - `turn`: el mensaje a la sesión de ventas (`LoadOrStartSalesSession.execute`).
-    Se marca después del signal; un reintento no hace que el bot conteste dos veces.
+    escribirla; un reintento no la duplica en el panel. Escribir y marcar no tiene
+    ningún `await` en medio, así que una cancelación no cae entre los dos.
+  - `turn`: el mensaje a la sesión de ventas (`LoadOrStartSalesSession.execute`),
+    una vez por `wamid`. Hay un candado por `wamid`: dos intentos que se superponen
+    (un heartbeat vencido con el primero vivo) pasan de a uno, y el segundo ve la
+    marca. El aviso corre protegido de la cancelación: si el worker se apaga
+    mientras avisa, el aviso termina y deja su marca. La sesión V2 no deduplica
+    por `wamid`, así que sin esto el bot contestaba dos veces.
   - `send:<sha256(texto)[:16]>`: cada envío directo al cliente («Recibí tu
     documento», el audio que no se entendió, el comprobante recibido). Se
     **reclama antes** de enviar: un envío de cortesía sale como mucho una vez.
 
   El resto del ingest (lecturas, metadata con merge de tres vías, cupón ya marcado
-  en la sesión) se puede repetir sin daño. Entre un efecto y su marca queda una
-  ventana de milisegundos: en el peor caso se repite una línea, nunca se pierde
-  el mensaje. Un disco que falla al escribir la marca deja pasar el efecto
+  en la sesión) se puede repetir sin daño. Solo una caída del **proceso** entre un
+  efecto y su marca lo repite: milisegundos en el historial, la duración del RPC
+  en el aviso a la sesión. En el peor caso se repite una línea, nunca se pierde el
+  mensaje. Un disco que falla al escribir la marca deja pasar el efecto
   (*fail-open*, como el ledger).
+- **La foto cancelada antes de leerse** no deja `PhotoReads` trabado. Si la
+  activity se cancela entre «empieza a leerse» y lanzar la lectura, se libera; si
+  no, cada texto de ese cliente esperaría 10 s hasta reiniciar el worker.
 
   **Límite conocido:** un reintento no es un replay. Lo que el intento anterior ya
   dejó en la metadata (el episodio abierto, el referral visto, el cupón aplicado) lo
@@ -163,7 +189,39 @@ reintentos de esta fase se miden en minutos.
 El webhook sigue escribiendo `request` y `seen` del body crudo, y agrega `queued`,
 `duplicate` o `enqueue_failed`. La activity escribe `ingested` o `ingest_failed`
 (antes lo hacía `_ingest_ledgered`). En el resumen, `queued` sin desenlace cuenta
-como `pending` (está en Temporal), no como `lost`.
+como `pending` (está en Temporal), no como `lost`. Pasada media hora a la hora
+del reporte es `stuck`: ningún ingest tarda eso, el workflow está varado (ver el
+runbook).
+
+## Runbook
+
+- **Deploy:** la imagen nueva de la API ya arranca `InboundMessageWorkflow`. Hasta
+  que el worker `sales` nuevo lo registre, el worker viejo hace fallar esos workflow
+  tasks y Temporal los reintenta. No se pierde nada: se demoran hasta que el
+  worker nuevo los toma. Justo después del deploy se aplica el `terraform apply`
+  del módulo `app-instance` (patrón de CloudWatch de la API y la alarma
+  `sales-worker-down`). Entre el deploy y el apply, la serie de RSS de la API se
+  corta.
+- **Rollback:** **no** volver el worker `sales` a una imagen anterior a este cambio
+  sin drenar.
+  - Esa imagen no registra el tipo: los `inbound-*` que estén corriendo quedan
+    varados, porque sus workflow tasks fallan para siempre. Las activities ya
+    agendadas queman sus 5 intentos y quedan *Failed*.
+  - Meta no los re-entrega: ya tuvo su 200.
+  - Si hay que volver atrás, ir a otra imagen que ya registre
+    `InboundMessageWorkflow`.
+  - Si no queda otra, primero esperar a que no haya ninguno corriendo:
+    `WorkflowType="InboundMessageWorkflow" AND ExecutionStatus="Running"` en la UI de
+    Temporal.
+- **Mensajes varados** (`stuck` en el reporte del ledger, o la alarma
+  `sales-worker-down`):
+  - Buscar `inbound-<wamid>` en la UI de Temporal.
+  - Si está *Running* esperando worker: levantar el worker `sales`.
+  - Si está *Failed*: corregir la causa y hacer *Reset* al primer workflow task. El
+    diario de efectos evita repetir lo que el intento anterior ya hizo.
+- **Worker `sales` caído:** la alarma `sales-worker-down` (SNS) suena tras 5 min
+  sin métrica. Mientras está caído, los mensajes esperan en Temporal: ni el bot ni
+  el panel ni la App los ven (ver Consecuencias).
 
 ## Fase 2 (pendiente, por pasos)
 
@@ -202,12 +260,34 @@ como `pending` (está en Temporal), no como `lost`.
 - **Una caída de Temporal Cloud corta la entrada**, con 503 hasta que vuelva.
   Meta reintenta por días, así que los mensajes se demoran pero no se pierden.
   Volver a `BackgroundTasks` es revertir el commit.
-- **Por mensaje entran** 1 workflow y 1 activity (2 si viene encadenado) en la
-  facturación de Temporal Cloud.
+- **El worker `sales` pasa a ser el único camino de entrada.** Antes, con el worker
+  caído, la API igual escribía la línea del cliente en el historial y el equipo la
+  veía en el panel y en la App (podía contestar a mano). Ahora, con el worker caído
+  o en crash loop, los mensajes esperan en Temporal sin que nadie los vea, ni
+  siquiera en los hilos con el bot apagado.
+  - **Mitigación de esta fase:** la alarma `sales-worker-down` y el `stuck` del
+    ledger.
+  - **Arreglo de fondo (requiere ADR propio):** que la entrada no dependa del
+    worker del bot. Por ejemplo, un worker de ingest separado o la línea del
+    historial escrita por la API bajo el diario `history`.
+- **Costo en Temporal Cloud:** por mensaje entran
+  - el workflow;
+  - la activity del ingest (2 si viene encadenado);
+  - al menos un heartbeat facturable (`with_heartbeat` late al empezar);
+  - el input guardado dos veces en la historia.
+
+  Son ~6–8 acciones por mensaje: centavos al mes con el volumen de hoy.
 - **El primer deploy** puede levantar la API antes que el worker. Los workflows
-  esperan en la cola, sin perder nada.
+  esperan (o fallan sus workflow tasks y se reintentan) hasta que el worker nuevo
+  los toma (ver el runbook).
 - **`run_api.py`** deja de usar `reload=True` por defecto: en prod era un proceso
   supervisor y un hijo `multiprocessing.spawn` sin ninguna ganancia (el código
   vive en la imagen). Para recargar en el host se pide con `UVICORN_RELOAD=1`. El
   patrón de CloudWatch de la API (`monitoring.tf`) pasa a `run_api.py`, que cubre
-  los dos modos; requiere `terraform apply`.
+  los dos modos; requiere `terraform apply` justo después del deploy.
+- **Premortem del 2026-10-16:** 16 modos de falla; los arreglos de este ADR salen
+  de ahí.
+  - **Diferido:** el arreglo de fondo del punto único de entrada (arriba).
+  - **Lo cubre la Ola 0 (#444):** las conexiones a Temporal por mensaje dentro del
+    worker, con su cliente único por proceso.
+  - **Queda para la fase 2:** la I/O síncrona del ingest en el event loop.

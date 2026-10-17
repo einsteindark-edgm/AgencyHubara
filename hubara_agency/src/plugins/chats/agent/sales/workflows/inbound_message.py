@@ -33,6 +33,18 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.plugins.chats.agent.sales.contracts import InboundMessageInput
 
+#: Errores deterministas del código (el tipo de la excepción que lanza la activity).
+_PROGRAMMING_ERRORS = (
+    "TypeError",
+    "KeyError",
+    "AttributeError",
+    "NameError",
+    "UnboundLocalError",
+    "IndexError",
+    "AssertionError",
+    "NotImplementedError",
+)
+
 #: El ingest tarda de 1 a 10 s (Jev espera hasta 10 s, una foto anterior hasta
 #: 10 s más); 5 min es el techo de un intento. Un worker que muere a mitad se
 #: nota por el heartbeat (la activity late cada 10 s) y el intento se repite
@@ -48,6 +60,10 @@ _INGEST = {
         backoff_coefficient=3.0,
         maximum_interval=timedelta(minutes=2),
         maximum_attempts=5,
+        # Un error de programación no se arregla reintentando, y cada intento
+        # repetiría Jev, el cupón en Medusa, el reloj del watchdog y analytics
+        # (premortem PM-011): falla al primer intento, a la vista en Temporal.
+        non_retryable_error_types=list(_PROGRAMMING_ERRORS),
     ),
 }
 

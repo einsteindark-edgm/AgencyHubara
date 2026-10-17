@@ -53,11 +53,20 @@ def test_a_message_without_wamid_is_never_journaled(tmp_path) -> None:
     assert effects.claim("", "send:abc") is True
 
 
-def test_old_days_are_pruned_when_a_new_day_starts(tmp_path) -> None:
-    _effects(tmp_path, now_ms=_NOW - 10 * _DAY_MS).mark("wamid.OLD", "turn")
+def test_days_past_the_temporal_retention_are_pruned_when_a_new_day_starts(tmp_path) -> None:
+    _effects(tmp_path, now_ms=_NOW - 40 * _DAY_MS).mark("wamid.OLD", "turn")
 
     _effects(tmp_path, now_ms=_NOW).mark("wamid.NEW", "turn")
 
     days = sorted(p.name for p in (tmp_path / "inbound_effects").iterdir())
     assert len(days) == 1
     assert _effects(tmp_path).done("wamid.NEW", "turn") is True
+
+
+def test_a_workflow_reset_days_later_still_sees_the_marks(tmp_path) -> None:
+    """Premortem PM-007: el ADR ofrece resetear un workflow fallido desde la UI
+    de Temporal (retención de 30 días). Un reset 10 días después no puede
+    duplicar la línea del historial ni la respuesta del bot."""
+    _effects(tmp_path, now_ms=_NOW - 10 * _DAY_MS).mark("wamid.A", "turn")
+
+    assert _effects(tmp_path, now_ms=_NOW).done("wamid.A", "turn") is True

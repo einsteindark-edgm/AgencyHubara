@@ -40,6 +40,8 @@ El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 - THEN el webhook devuelve HTTP 503 (Meta reintenta el POST)
 - AND el mensaje queda `stage=enqueue_failed` con el error en el ledger
 - AND los mensajes del POST que ya habían entrado no se repiten en el reintento (los frena `REJECT_DUPLICATE`)
+- AND durante los 5 s siguientes a una falla el webhook responde 503 sin volver a probar (con Temporal colgado no se apilan webhooks de 8 s cada uno)
+- AND el `raw` de Meta NO viaja a Temporal (la historia guarda el input 30 días, en claro)
 
 #### Scenario: Meta re-entrega un mensaje que ya entró
 
@@ -51,7 +53,10 @@ El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 
 - GIVEN la activity del ingest se reintenta tras ingerir parte del mensaje (el worker murió a mitad)
 - THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
-- AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: entre el efecto y su marca queda una ventana de milisegundos)
+- AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: solo una caída del proceso entre el efecto y su marca lo repite)
+- AND dos intentos del mismo mensaje que se superponen avisan a la sesión UNA vez, y un intento cancelado mientras avisa termina el aviso y deja su marca
+- AND un error de programación (`TypeError`, `KeyError`…) no se reintenta
+- AND una foto cancelada antes de que arranque su lectura no deja a los textos del cliente esperándola
 
 #### Scenario: POST batcheado (varios mensajes en un mismo webhook)
 
@@ -633,7 +638,7 @@ MUST NOT afectar la respuesta al webhook.
 - THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error`
 - AND en la activity la excepción se re-lanza (Temporal reintenta, 5 intentos); en `standby` NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción
 - AND un ítem que el parser rechaza queda `stage=rejected` con el motivo en `error` (el reporte lo cuenta como `failed`)
-- AND un `seen` sin desenlace se reporta como `lost`, salvo que haya entrado a Temporal (`queued`/`duplicate`): entonces es `pending`
+- AND un `seen` sin desenlace se reporta como `lost`, salvo que haya entrado a Temporal (`queued`/`duplicate`): entonces es `pending`, y `stuck` si a la hora del reporte lleva más de media hora así
 
 #### Scenario: un POST rechazado también deja registro
 
@@ -643,7 +648,7 @@ MUST NOT afectar la respuesta al webhook.
 #### Scenario: reporte de reconciliación
 
 - WHEN el operador corre `python -m src.plugins.chats.agent.sales.inbound_ledger_report --from D --to D`
-- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed`, `lost` y `pending` (en Temporal sin desenlace), con los teléfonos enmascarados salvo `--full`
+- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed`, `lost`, `pending` (en Temporal sin desenlace) y `stuck` (así hace más de media hora), con los teléfonos enmascarados salvo `--full`
 
 ### Requirement: Cupones de descuento validados contra Medusa
 

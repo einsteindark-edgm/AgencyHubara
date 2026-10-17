@@ -11,7 +11,9 @@ ahí el mensaje sobrevive a un deploy o a un OOM de la API (antes vivía en un
 - Cualquier otra falla sube: el webhook responde 503 y Meta reintenta el POST.
 - El cliente de Temporal se conecta una vez y se reusa: ahora la conexión queda
   antes del 200, y abrir una por mensaje (lo de antes) era latencia y memoria.
-  Tras una falla se descarta y la próxima llamada reconecta.
+  Tras una falla se descarta y, pasados unos segundos de 503 inmediato
+  (``InboundUnavailable``), la próxima llamada reconecta: con Temporal colgado
+  los webhooks no se apilan de a 8 s detrás del candado (premortem PM-009).
 
 R-DIP: use case con el cliente inyectado (``client_factory``); el workflow se
 arranca por NOMBRE (string), sin importar su clase (ADR-2026-05-19).
@@ -19,6 +21,7 @@ arranca por NOMBRE (string), sin importar su clase (ADR-2026-05-19).
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
@@ -33,18 +36,39 @@ INBOUND_WORKFLOW = "InboundMessageWorkflow"
 #: Tope del RPC a Temporal: el webhook no deja a Meta esperando más que esto
 #: por mensaje (Meta corta y reintenta).
 _RPC_TIMEOUT = timedelta(seconds=8)
+#: Tras una falla, este rato de 503 inmediato: con Temporal colgado, cada webhook
+#: esperaba sus 8 s en fila detrás del candado (premortem PM-009). Meta reintenta.
+_COOLDOWN_S = 5.0
+
+
+class InboundUnavailable(RuntimeError):
+    """Temporal falló hace un momento: el webhook responde 503 sin volver a probar."""
 
 
 class InboundEntry:
-    def __init__(self, client_factory: Callable[[], Awaitable[Any]], *, task_queue: str) -> None:
+    def __init__(
+        self,
+        client_factory: Callable[[], Awaitable[Any]],
+        *,
+        task_queue: str,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._client_factory = client_factory
         self._task_queue = task_queue
+        self._clock = clock
         self._client: Any = None
         self._lock = asyncio.Lock()
+        self._failed_at: float | None = None
 
     async def accept(self, inp: InboundMessageInput) -> bool:
         """``True`` si el mensaje entró ahora; ``False`` si ya estaba (re-entrega)."""
-        client = await self._connected()
+        if self._failed_at is not None and self._clock() - self._failed_at < _COOLDOWN_S:
+            raise InboundUnavailable("temporal falló hace un momento")
+        try:
+            client = await self._connected()
+        except Exception:
+            self._failed_at = self._clock()
+            raise
         wamid = str(inp.message.get("message_id") or "")
         try:
             await client.start_workflow(
@@ -61,7 +85,9 @@ class InboundEntry:
             return False
         except Exception:
             self._client = None
+            self._failed_at = self._clock()
             raise
+        self._failed_at = None
         return True
 
     async def _connected(self) -> Any:
