@@ -80,9 +80,19 @@ def _persist_args_with_wamids(args: list, delivered: object) -> list:
     guardaba: Temporal recuerda el primer resultado del run, y en un run que
     venía de antes ese primer resultado era el False de reproducir un toque
     viejo (3.er toque «sin confirmación», 2026-10-15). `deprecate_patch` deja
-    reproducir los runs que ya grabaron la marca."""
+    reproducir los runs que ya grabaron la marca.
+
+    5.º argumento, `"remarketing"`: el mensaje queda marcado como de este
+    agente. Ventas no lo tiene en su historial y, sin la marca, la nota de
+    «lo que pasó sin ti» se cortaba en el gancho (caso 2026-10-16). También
+    solo contenido: sin patch."""
     workflow.deprecate_patch("persist-wamids-v1")
-    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+    return [
+        *args,
+        *([None] * (3 - len(args))),
+        delivered if isinstance(delivered, list) else None,
+        "remarketing",
+    ]
 
 
 def reply_summary(message: object) -> str:

@@ -2274,3 +2274,30 @@ Si `execute_tool` agota sus reintentos por cualquier otra falla, `run_agent_turn
 - GIVEN el servicio de una tool está caído
 - WHEN el modelo la llama y `execute_tool` agota sus 2 intentos
 - THEN el workflow sigue, el modelo lee `tool_failed` y le responde al cliente sin ella
+
+### Requirement: El traspaso de remarketing trae lo que escribió el cliente (2026-10-16)
+
+Caso del 2026-10-16: un colega atendió a un cliente (le aclaró que el precio era por la caja de 12 y le ofreció hacerle el pedido) y devolvió el chat. Remarketing mandó un gancho, el cliente contestó «Si» y remarketing le pasó el chat a Ventas con su resumen. Ventas solo recibió ese resumen: su historial terminaba en un «entonces no» del cliente, no tenía nada de lo que dijo el colega ni el gancho, y el encuadre del traspaso le ofrecía `NO_MESSAGE` «si no hay mensaje del cliente». Contestó `NO_MESSAGE` y el colega tuvo que mandar el formulario a mano.
+
+- Los mensajes que escribe remarketing MUST quedar en el chat (el JSONL del dashboard) con `agent: "remarketing"` (5.º argumento de `persist_assistant_message_activity`). Ventas no los tiene en su historial: `unseen_team_exchange` los cuenta como «Mensaje automático» y no se corta en ellos.
+- Al leer un traspaso, Ventas V2 SHALL leer también lo que el cliente escribió al final del chat (`read_handoff_reply`, gate `handoff-customer-reply-v1` en `workflows/handoff_v2.py`). Si escribió, su mensaje entra al turno tal cual (sin recortar ni aplanar: después suelen venir los datos de envío), con la nota de lo que pasó después del último mensaje de Ventas (colega, respuestas del cliente, avisos y gancho); el resumen de remarketing queda como contexto (`[HANDOFF_REMARKETING]`). Un mensaje que también llegó por señal (antes, durante o después de la lectura, o con otro traspaso de la misma corrida) se contesta una sola vez, y lo que el cliente le escribió a remarketing va antes de lo que escribió después.
+- Si el turno trae lo que escribió el cliente y el modelo contesta `NO_MESSAGE`, SHALL haber UNA ronda más con la nota de que el cliente espera respuesta (`contract_policy_of(..., customer_waits=True)`).
+- Sin mensaje del cliente al final del chat, el turno del traspaso sigue como antes (encuadre, `NO_MESSAGE` permitido). Si la lectura falla, también. El V1 no cambia.
+
+#### Scenario: El cliente contesta al gancho después de que un colega lo atendió (caso del 2026-10-16)
+
+- GIVEN el chat: la última respuesta de Ventas, mensajes del colega y del cliente, el gancho de remarketing y el «Si» del cliente
+- WHEN remarketing le pasa el chat a Ventas
+- THEN el turno de Ventas es «Si» con la nota adelante: lo que dijo el colega, lo que le contestó el cliente y el gancho
+- AND si el modelo contesta `NO_MESSAGE`, tiene una ronda más y el cliente recibe la respuesta
+
+#### Scenario: Traspaso sin mensaje del cliente
+
+- GIVEN remarketing pasa el chat sin que el cliente haya escrito después del último mensaje
+- THEN el turno es el encuadre del traspaso y `NO_MESSAGE` sigue suprimiendo el envío
+
+#### Scenario: El mensaje llega también por señal
+
+- GIVEN el «Si» ya entró en el turno del traspaso
+- WHEN llega por señal el mismo mensaje (mismo wamid)
+- THEN no hay un segundo turno para él

@@ -10,6 +10,7 @@ historial del LLM, que arranca limpio.
 from __future__ import annotations
 
 from src.plugins.chats.agent.sales.use_cases.episode_memory import (
+    handoff_reply_of,
     previous_episode_summary,
     quote_team_exchange_in_turn,
     quote_template_in_turn,
@@ -17,6 +18,7 @@ from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     unseen_template_text,
     with_previous_episode,
 )
+from src.plugins.chats.shared.team_exchange import our_lines_in_turn
 
 
 def _cubo_love_order() -> dict:
@@ -228,3 +230,147 @@ def test_the_exchange_goes_before_the_customer_text_in_a_single_note() -> None:
     assert "«Claro que sí (el de la web)»" in note
     assert "«¿y el envío?»" in note
     assert "no contradigas" in note
+
+
+# --- El gancho de remarketing tampoco lo vio Ventas (caso del 2026-10-16) -----
+# Un colega corrigió el precio (la caja de 12, no una unidad), devolvió el chat
+# y remarketing mandó un gancho. El gancho se guardaba igual que un mensaje de
+# Ventas: la nota se cortaba ahí y Ventas no supo nada de lo que dijo el colega.
+
+_HOOK = {
+    "role": "assistant",
+    "agent": "remarketing",
+    "content": "Hola de nuevo, quedó pendiente lo de la caja de 12. ¿Te ayudo a cerrar el pedido?",
+}
+
+
+def test_the_remarketing_hook_is_not_a_message_the_bot_saw() -> None:
+    events = [
+        _BOT_OFFER,
+        _COLLEAGUE,
+        {"role": "user", "content": "¿Entonces cada una vale eso?"},
+        {"role": "assistant", "sender": "human", "content": "Es la caja de 12 por ese precio"},
+        _HOOK,
+    ]
+
+    assert unseen_team_exchange(events) == [
+        ("colega", "Claro que sí, el descuento de la página te lo aplicamos"),
+        ("cliente", "¿Entonces cada una vale eso?"),
+        ("colega", "Es la caja de 12 por ese precio"),
+        ("aviso", "Hola de nuevo, quedó pendiente lo de la caja de 12. ¿Te ayudo a cerrar el pedido?"),
+    ]
+
+
+def test_a_hook_alone_still_needs_a_colleague_to_be_quoted_at_the_ingest() -> None:
+    # Sin colega, el ingest no cambia: el gancho lo maneja remarketing.
+    assert unseen_team_exchange([_BOT_OFFER, _HOOK]) is None
+
+
+# --- El turno del traspaso de remarketing a Ventas (caso del 2026-10-16) ------
+# Ventas solo recibía el resumen que escribió remarketing: arrancó sin el «Si»
+# del cliente, sin lo que dijo el colega y sin el gancho, y contestó NO_MESSAGE.
+# El turno ahora lleva lo que escribió el cliente, tal cual, con la nota de lo
+# que pasó después del último mensaje de Ventas.
+
+
+def _customer(text: str, wamid: str) -> dict:
+    return {"role": "user", "content": text, "wamid": wamid, "timestamp": "2026-10-16T21:09:01.034010+00:00"}
+
+
+def test_the_handoff_turn_is_what_the_customer_wrote_after_what_ventas_did_not_see() -> None:
+    events = [
+        _BOT_OFFER,
+        _COLLEAGUE,
+        {"role": "user", "content": "¿Entonces cada una vale eso?"},
+        {"role": "assistant", "sender": "human", "content": "Es la caja de 12 por ese precio"},
+        _HOOK,
+        _customer("Si", "wamid.in9"),
+    ]
+
+    reply = handoff_reply_of(events)
+
+    assert reply is not None
+    note, said = reply.text.rsplit("\n", 1)
+    assert said == "Si"
+    assert "colega del equipo" in note
+    assert "«Es la caja de 12 por ese precio»" in note
+    assert "«¿Entonces cada una vale eso?»" in note
+    assert "«Hola de nuevo, quedó pendiente lo de la caja de 12. ¿Te ayudo a cerrar el pedido?»" in note
+    assert reply.customer_text == "Si"
+    assert reply.wamids == ["wamid.in9"]
+    assert reply.ts_ms == 1792184941034
+
+
+def test_only_the_hook_before_the_reply_gets_its_own_note() -> None:
+    reply = handoff_reply_of([_BOT_OFFER, _HOOK, _customer("Sí, me interesa", "wamid.in1")])
+
+    assert reply is not None
+    note, said = reply.text.rsplit("\n", 1)
+    assert said == "Sí, me interesa"
+    assert note.startswith("[") and note.endswith("]") and note.count("]") == 1
+    assert "colega" not in note
+    assert "«Hola de nuevo, quedó pendiente lo de la caja de 12. ¿Te ayudo a cerrar el pedido?»" in note
+
+
+def test_several_messages_of_the_customer_go_together() -> None:
+    reply = handoff_reply_of([_BOT_OFFER, _HOOK, _customer("Si", "w1"), _customer("¿y el envío?", "w2")])
+
+    assert reply is not None
+    assert reply.text.endswith("\nSi\n¿y el envío?")
+    assert reply.customer_text == "Si\n¿y el envío?"
+    assert reply.wamids == ["w1", "w2"]
+
+
+def test_what_the_customer_wrote_goes_whole_even_long_and_in_lines() -> None:
+    # Después del traspaso vienen los datos de envío: una dirección larga y en
+    # varias líneas no se recorta ni se aplana (la nota sí recorta SUS líneas).
+    address = "Ana Pérez\nCalle 59b sur # 38-12, apto 301, torre 4, conjunto " + "Los Pinos " * 30 + "\nPago contraentrega"
+    reply = handoff_reply_of([_BOT_OFFER, _HOOK, _customer(address, "w1")])
+
+    assert reply is not None
+    assert reply.customer_text == address
+    assert reply.text.endswith("\n" + address)
+
+
+def test_a_photo_without_caption_still_counts_as_what_the_customer_wrote() -> None:
+    photo = {"role": "user", "content": "", "image_url": "media/in/x.jpg", "wamid": "w1"}
+
+    reply = handoff_reply_of([_BOT_OFFER, _HOOK, photo])
+
+    assert reply is not None
+    assert reply.customer_text == "(una foto)"
+
+
+def test_without_anything_ventas_missed_the_turn_is_just_the_customer() -> None:
+    reply = handoff_reply_of([_BOT_OFFER, _customer("Si", "w1")])
+
+    assert reply is not None
+    assert reply.text == "Si"
+
+
+def test_no_handoff_turn_when_the_customer_did_not_write_last() -> None:
+    assert handoff_reply_of([_BOT_OFFER, _HOOK]) is None
+    assert handoff_reply_of([_BOT_OFFER, _customer("Si", "w1"), _COLLEAGUE]) is None
+    assert handoff_reply_of([_BOT_OFFER]) is None
+    assert handoff_reply_of([]) is None
+
+
+def test_a_message_that_already_reached_ventas_does_not_go_twice() -> None:
+    events = [_BOT_OFFER, _HOOK, _customer("Si", "w1"), _customer("¿y el envío?", "w2")]
+
+    reply = handoff_reply_of(events, already_pending=["w2"])
+
+    assert reply is not None
+    assert reply.customer_text == "Si"
+    assert reply.wamids == ["w1"]
+    assert handoff_reply_of(events, already_pending=["w1", "w2"]) is None
+
+
+def test_the_grading_reads_the_hook_of_the_note_as_ours() -> None:
+    # La calificación no le cobra al bot repetir lo que dijimos nosotros.
+    reply = handoff_reply_of([_BOT_OFFER, _HOOK, _customer("Si", "w1")])
+
+    assert reply is not None
+    assert our_lines_in_turn(reply.text) == [
+        "Hola de nuevo, quedó pendiente lo de la caja de 12. ¿Te ayudo a cerrar el pedido?"
+    ]

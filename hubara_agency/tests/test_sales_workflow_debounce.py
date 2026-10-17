@@ -42,7 +42,7 @@ from src.platform.plugin_manifest import get_task_queue
 from src.platform.llm_history_reset import ResetLLMHistoryInput
 from src.platform.observability.cost_attribution import RecordEpisodeLLMUsageInput
 from src.plugins.chats.agent.sales.context import build_bogota_context_string
-from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.contracts import HandoffReply, SalesSessionInput
 from src.plugins.chats.agent.sales.decisions.egress_activities import decide_egress_activity
 from src.plugins.chats.agent.sales.workflows.sales_session import HubaraSalesSessionWorkflow
 from tests.sales_workflow_versions import sales_workflow_versions
@@ -105,6 +105,9 @@ class Tracker:
         self.episode_llm_usage: list[tuple[str, int]] = []
         # Costo real (2026-10-06): lo que el turno le manda al registro del episodio.
         self.usage_records: list[RecordEpisodeLLMUsageInput] = []
+        # Traspaso de remarketing (caso 2026-10-16): los wamids que ya habían
+        # llegado por señal en cada lectura de lo que escribió el cliente.
+        self.handoff_reply_calls: list[list[str]] = []
 
 
 # Burbuja 1 del guion de apertura (etapa_descubrimiento) — lo que la activity
@@ -139,6 +142,8 @@ def _make_fake_activities(
     variant_guard_result: bool = False,
     send_returns_none: bool = False,
     flush_results: list[dict] | None = None,
+    handoff_reply: HandoffReply | None = None,
+    handoff_reply_hook: object | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -175,6 +180,22 @@ def _make_fake_activities(
         if _handoff_state["queue"]:
             return _handoff_state["queue"].pop(0)
         return None
+
+    # Lo que el cliente le escribió a remarketing (caso 2026-10-16): una vez,
+    # salvo que alguno de sus mensajes ya le haya llegado a Ventas por señal.
+    _reply_state = {"reply": handoff_reply}
+
+    @activity.defn(name="read_handoff_reply")
+    async def fake_read_handoff_reply(session_id: str, already_pending: list[str]) -> HandoffReply | None:
+        tracker.handoff_reply_calls.append(list(already_pending))
+        # Gancho: el cliente escribe MIENTRAS se lee el chat (la señal queda
+        # en la history antes de que termine esta activity).
+        if handoff_reply_hook is not None:
+            await handoff_reply_hook()  # type: ignore[operator]
+        reply, _reply_state["reply"] = _reply_state["reply"], None
+        if reply is None or set(reply.wamids) & set(already_pending):
+            return None
+        return reply
 
     @activity.defn(name="read_order_draft_note")
     async def fake_read_order_draft_note(session_id: str) -> str | None:
@@ -396,6 +417,7 @@ def _make_fake_activities(
         fake_bogota_clock,
         fake_bootstrap,
         fake_read_handoff,
+        fake_read_handoff_reply,
         fake_read_order_draft_note,
         fake_read_idle_timeout,
         fake_flush_ui_intents,

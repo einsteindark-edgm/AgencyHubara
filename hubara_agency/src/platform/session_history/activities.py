@@ -26,6 +26,7 @@ async def persist_assistant_message_activity(
     content: str,
     tools_used: list[str] | None = None,
     delivered: list[dict[str, str]] | None = None,
+    agent: str | None = None,
 ) -> None:
     """Append ``role=assistant`` event al JSONL de la sesion.
 
@@ -39,6 +40,10 @@ async def persist_assistant_message_activity(
     ``send_whatsapp_message_activity`` — ``[{wamid, text}]`` de cada burbuja
     que Meta aceptó. El evento guarda esos ``wamids``: el chat les une el
     estado que informe WhatsApp (doble check, caso 2026-10-15).
+
+    ``agent`` (param posicional 5, opcional): el agente que lo escribió si no
+    es ventas (``"remarketing"``); queda en el evento (caso 2026-10-16). Solo
+    payload: los callers viejos con 2–4 args siguen funcionando.
     """
     if not content:
         # Empty/None content -> el agente decidio no responder (ej. tool-only
@@ -47,4 +52,4 @@ async def persist_assistant_message_activity(
 
     store = FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR)
     wamids = [b.get("wamid") or "" for b in delivered or () if isinstance(b, dict)]
-    store.append_assistant_event(session_id, content, tools_used=tools_used, wamids=wamids)
+    store.append_assistant_event(session_id, content, tools_used=tools_used, wamids=wamids, agent=agent)

@@ -12,12 +12,16 @@ Tuteo colombiano (REGLA #1, guard test_no_voseo_in_agent_strings.py).
 """
 from __future__ import annotations
 
+from collections.abc import Collection
+from datetime import datetime
 from typing import Any
 
+from src.plugins.chats.agent.sales.contracts import HandoffReply
 from src.plugins.chats.shared.draft_items import draft_items
 from src.plugins.chats.shared.team_exchange import (
     quote_team_exchange_in_turn as quote_team_exchange_in_turn,
 )
+from src.plugins.chats.shared.team_exchange import quote_unseen_in_turn
 
 #: Cómo terminó el episodio, por tag de cierre (`episode_lifecycle`).
 _OUTCOMES: dict[str, str] = {
@@ -129,8 +133,12 @@ def _team_speaker(event: dict[str, Any]) -> str | None:
     if event.get("sender") == "human":
         return "colega"
     # Una plantilla (aviso del ETA, gancho de remarketing) sale por fuera del
-    # historial del LLM; cualquier otro mensaje sin `sender` es del bot.
-    return "aviso" if event.get("kind") == "template" else None
+    # historial del LLM, y también el gancho de texto libre de remarketing
+    # (`agent`, caso 2026-10-16: sin contarlo, la nota se cortaba en él).
+    # Cualquier otro mensaje sin `sender` es del bot.
+    if event.get("kind") == "template" or event.get("agent") == "remarketing":
+        return "aviso"
+    return None
 
 
 def _team_text(event: dict[str, Any]) -> str:
@@ -155,6 +163,14 @@ def unseen_team_exchange(events: list[dict[str, Any]]) -> list[tuple[str, str]] 
     mensaje actual (como `unseen_template_text`). La nota la arma
     `quote_team_exchange_in_turn` (`chats/shared/team_exchange.py`).
     """
+    tail = _unseen_tail(events)
+    if not any(_team_speaker(event) == "colega" for event in tail):
+        return None
+    return _exchange_lines(tail) or None
+
+
+def _unseen_tail(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Los eventos después del último mensaje del bot de ventas, en orden."""
     tail: list[dict[str, Any]] = []
     for event in reversed(events):
         if not isinstance(event, dict):
@@ -163,11 +179,75 @@ def unseen_team_exchange(events: list[dict[str, Any]]) -> list[tuple[str, str]] 
             break  # el último mensaje del bot: de ahí para atrás ya lo vio
         tail.append(event)
     tail.reverse()
-    if not any(_team_speaker(event) == "colega" for event in tail):
-        return None
+    return tail
+
+
+def _exchange_lines(tail: list[dict[str, Any]]) -> list[tuple[str, str]]:
     lines = [
         (speaker, text)
         for event in tail
         if (speaker := _team_speaker(event)) is not None and (text := _team_text(event))
     ]
-    return lines[-TEAM_EXCHANGE_MAX_LINES:] or None
+    return lines[-TEAM_EXCHANGE_MAX_LINES:]
+
+
+def _said(event: dict[str, Any]) -> str:
+    """Lo que escribió el cliente, tal cual (sin recortar ni aplanar: después
+    del traspaso suelen venir los datos de envío). Una foto o un documento sin
+    texto, como en la nota."""
+    content = event.get("content")
+    text = content.strip() if isinstance(content, str) else ""
+    return text or _team_text(event)
+
+
+def _event_ms(event: dict[str, Any]) -> int | None:
+    stamp = event.get("timestamp")
+    if not isinstance(stamp, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(stamp).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def handoff_reply_of(
+    events: list[dict[str, Any]], *, already_pending: Collection[str] = ()
+) -> HandoffReply | None:
+    """El turno de Ventas que sigue al traspaso de remarketing (caso
+    2026-10-16), o ``None`` si el cliente no escribió después de lo último.
+
+    Lo que el cliente escribió al final del chat (sus mensajes después del
+    último que no es suyo), tal cual, con la nota de lo que pasó después del
+    último mensaje de Ventas: lo que escribió un colega, lo que le contestó el
+    cliente, los avisos y el gancho de remarketing. Ventas no tiene nada de
+    eso en su historial; antes solo recibía el resumen de remarketing.
+
+    `already_pending`: wamids de mensajes del cliente que ya le llegaron a
+    Ventas por señal (traen su foto o su nota del ingest): no se repiten acá.
+    """
+    tail = _unseen_tail(events)
+    split = len(tail)
+    while split and tail[split - 1].get("role") == "user":
+        split -= 1
+    pending = set(already_pending)
+    replies = [
+        event
+        for event in tail[split:]
+        if _said(event) and str(event.get("wamid") or "") not in pending
+    ]
+    if not replies:
+        return None
+    said = "\n".join(_said(event) for event in replies)
+    lines = _exchange_lines(tail[:split])
+    if not lines:
+        text = said
+    elif any(who == "colega" for who, _ in lines):
+        text = quote_team_exchange_in_turn(lines, said)
+    else:
+        text = quote_unseen_in_turn(lines, said)
+    return HandoffReply(
+        text=text,
+        customer_text=said,
+        wamids=[str(event["wamid"]) for event in replies if event.get("wamid")],
+        ts_ms=_event_ms(replies[-1]),
+    )
