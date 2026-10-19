@@ -30,10 +30,13 @@ from src.plugins.chats.agent.remarketing.use_cases.context import (
     hook_number_sources,
     named_products,
 )
+from src.plugins.chats.shared import sales_campaigns
 from src.plugins.chats.shared.agent_decisions import decide_catalog_context, decide_contact
+from src.plugins.chats.shared.payment_terms import CASH_ON_DELIVERY_MIN_PRODUCTS_COP
 from src.plugins.chats.shared.product_truth import unavailable_terms
-from src.plugins.chats.shared.store_pack import vocabulary
+from src.plugins.chats.shared.store_pack import store_domain, vocabulary
 from src.sdk.catalogkit import CatalogError, get_catalog_client
+from src.sdk.connectorkit import coupon_problem, get_promotions_port
 from src.sdk.messagingkit import effective_max_touches
 
 #: el snapshot publicado son ~30 productos; el tope solo evita un prompt
@@ -106,6 +109,7 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
         total_touches=effective_max_touches(Path(WORKSPACE_VAULT_DIR)),
     )
     products = await _catalog_products()
+    context = await _with_campaign_script(context, metadata or {}, events, products)
     if not products:
         return _with_allowed_numbers(context)
     mentioned = f"{context.tag_motivo}\n{context.transcript}"
@@ -145,6 +149,80 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
     ))
 
 
+async def _with_campaign_script(
+    context: RemarketingContext, metadata: dict[str, Any], events: list[dict[str, Any]], products: list[Any]
+) -> RemarketingContext:
+    """El guion de la campaña de venta del episodio para ESTE toque (operador,
+    2026-10-19), con los precios del catálogo y el cupón si rige para este
+    cliente. Sin campaña, o si algo falla, el contexto tal cual: el gancho de
+    siempre."""
+    try:
+        return await _campaign_script(context, metadata, products)
+    except Exception as exc:  # noqa: BLE001 — una campaña rota deja el gancho de siempre
+        activity.logger.warning("remarketing: guion de campaña no disponible: %r", exc)
+        return context
+
+
+async def _campaign_script(
+    context: RemarketingContext, metadata: dict[str, Any], products: list[Any]
+) -> RemarketingContext:
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    episodes = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
+    episode = episodes[-1] if episodes else None
+    today = datetime.now(ZoneInfo("America/Bogota")).date()
+    # Sin el texto del cliente: el ingest de Ventas ya marcó el episodio con lo
+    # que dijo al abrirlo; aquí cuentan la marca, el anuncio y el pedido.
+    campaign = sales_campaigns.campaign_for(episode, today=today)
+    if campaign is None:
+        return context
+    try:
+        boxes = store_domain().get("sold_by_box")
+    except Exception:  # noqa: BLE001 — sin el dominio, los precios van por unidad
+        boxes = None
+    bought_before = any(e.get("order_id") for e in episodes[:-1])
+    block = sales_campaigns.remarketing_block(
+        campaign, products, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP, boxes=boxes,
+        touch_number=context.touch_number,
+        coupon_discount=await _coupon_discount(campaign.cupon, bought_before=bought_before),
+    )
+    return replace(
+        context,
+        sales_campaign_script=block,
+        sales_campaign_examples=sales_campaigns.remarketing_examples(campaign),
+    )
+
+
+#: El tope de la consulta del cupón: la activity tiene 15 s y ya espera a Jev.
+_COUPON_TIMEOUT_S = 3.0
+
+
+async def _coupon_discount(code: str | None, *, bought_before: bool) -> str | None:
+    """«5 %» (o «$5.000») si el cupón rige hoy (`coupon_problem`, la misma vara
+    de `list_promotions`: Medusa lo deja «active» al vencer) y, si es solo para
+    la primera compra, el cliente no compró antes en esta conversación. None
+    si no rige o no se sabe a tiempo: el toque no lo nombra."""
+    import asyncio
+
+    if not code:
+        return None
+    try:
+        promotion = await asyncio.wait_for(get_promotions_port().get_by_code(code), timeout=_COUPON_TIMEOUT_S)
+    except Exception as exc:  # noqa: BLE001 — sin promociones, el toque no nombra el cupón
+        activity.logger.warning("remarketing: promociones no disponibles para el guion: %r", exc)
+        return None
+    if promotion is None or coupon_problem(promotion, now_ms=int(time.time() * 1000)) is not None:
+        return None
+    if getattr(promotion, "first_purchase_only", False) and bought_before:
+        return None
+    if promotion.discount_type == "percentage":
+        return f"{promotion.value} %"
+    if promotion.discount_type == "fixed":
+        return "$" + f"{int(promotion.value):,}".replace(",", ".")
+    return None
+
+
 def _with_allowed_numbers(context: RemarketingContext) -> RemarketingContext:
     """Los números que el gancho puede escribir (`hook_number_sources`)."""
     practical_facts = str(vocabulary().get("practical_facts") or "")
@@ -181,6 +259,8 @@ async def build_remarketing_trigger_v2_activity(input: RemarketingTriggerInput) 
         post_purchase=input.post_purchase,
         silent_after_catalog=input.silent_after_catalog,
         catalog_described=input.catalog_described,
+        sales_campaign_script=input.sales_campaign_script,
+        sales_campaign_examples=list(input.sales_campaign_examples),
         # Contexto legacy sin el tope: el de siempre (5).
         **({"total_touches": input.total_touches} if input.total_touches else {}),
     )

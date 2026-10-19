@@ -41,6 +41,8 @@ def build_remarketing_trigger(
     post_purchase: str = "",
     silent_after_catalog: bool = False,
     catalog_described: bool = False,
+    sales_campaign_script: str = "",
+    sales_campaign_examples: list[str] | None = None,
 ) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
 
@@ -50,6 +52,12 @@ def build_remarketing_trigger(
     resuelve envío, tiempos y pago con los datos de la tienda
     (`domain.yaml: vocabulary.practical_facts`). Sin esos datos, el gancho de
     siempre.
+
+    `sales_campaign_script` (operador, 2026-10-19): el guion de la campaña de venta del
+    episodio, ya redactado para este toque (precios del catálogo, combo,
+    cupón vigente); sus ejemplos reemplazan a los de la tienda y su cupón es
+    la excepción a la regla 3. "" = el gancho de siempre, sin un carácter
+    distinto.
 
     `campaign_context` (runs edbb0d8b / 8e73b7dc): la campaña que abrió el
     episodio activo. El gancho es sobre ESA campaña — sin esto retomó la
@@ -188,6 +196,14 @@ def build_remarketing_trigger(
         if campaign_context
         else ""
     )
+    script_block = f"{sales_campaign_script}\n\n" if sales_campaign_script else ""
+    coupon_exception = (
+        " La única excepción es el cupón de bienvenida que trae el GUION DE LA "
+        "CAMPAÑA, tal como viene y solo para su primera compra: no cambies su "
+        "valor ni le sumes envío gratis u otro beneficio."
+        if sales_campaign_script
+        else ""
+    )
     # Incidente 2026-09-25: sin catálogo, la escalera ("un detalle concreto")
     # empujó al LLM a inventar: «el Cubo Love también viene en vaso», «las de
     # vaso son las más pedidas», ofrecer «la del dragón» (no la vendemos).
@@ -213,7 +229,9 @@ def build_remarketing_trigger(
         else ""
     )
     catalog_source = (
-        "en el CATÁLOGO REAL de arriba"
+        "en el CATÁLOGO REAL de arriba o en el GUION DE LA CAMPAÑA"
+        if catalog_facts and sales_campaign_script
+        else "en el CATÁLOGO REAL de arriba"
         if catalog_facts
         else "en ningún lado: no tienes el catálogo, así que no afirmes ningún "
         "atributo de producto y ofrece ayuda para elegir"
@@ -285,6 +303,21 @@ def build_remarketing_trigger(
         )
         numbers_rule = ""
         examples = list(store["hook_examples"])
+    if sales_campaign_script:
+        # El toque de la campaña dice qué contar y cómo cerrar; sus precios y
+        # su combo son datos del catálogo (los armó la activity).
+        format_rule = (
+            "5. **Formato**: 2 a 4 líneas cortas y cálidas. No empieces con "
+            "«Hola de nuevo». Haz lo que dice el GUION DE LA CAMPAÑA para este "
+            "toque.\n\n"
+        )
+        numbers_rule = (
+            "9. **Números**: los precios y el combo del GUION DE LA CAMPAÑA los "
+            "escribes tal como vienen. Cualquier otro número (horas, tamaños, "
+            "días, valores) solo si está en la ficha o en la conversación; si "
+            "escribes uno que no esté ahí, el mensaje NO se envía.\n\n"
+        )
+        examples = list(sales_campaign_examples or []) or examples
     examples_block = (
         "**EJEMPLOS de buen gancho** (referencia, no copies literal):\n"
         + "\n".join(f"- '{example}'" for example in examples)
@@ -294,6 +327,7 @@ def build_remarketing_trigger(
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
         f"{situacion}\n\n"
+        f"{script_block}"
         f"{campaign_block}"
         f"MOTIVO REGISTRADO DE CIERRE (uso interno): '{motivo}'.\n"
         f"MEMORIA DE EVENTOS PASADOS (uso interno):{memory_context}\n\n"
@@ -314,8 +348,8 @@ def build_remarketing_trigger(
         "3. **Descuentos** (AGENTS.md → Prohibición absoluta de descuentos): "
         "NUNCA ofrezcas envío gratis, descuentos ni beneficios extra, "
         "tampoco si el motivo menciona 'caro' o una queja de precio (el "
-        "envío lo cobra la transportadora a su tarifa). Retoma con un "
-        "saludo casual.\n\n"
+        "envío lo cobra la transportadora a su tarifa)."
+        f"{coupon_exception} Retoma con un saludo casual.\n\n"
         f"{topic_rule}"
         f"{format_rule}"
         "6. **PROHIBIDO ABSOLUTO**: NO expliques tu razonamiento, NO "

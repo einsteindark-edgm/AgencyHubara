@@ -87,6 +87,11 @@ class RemarketingContext:
     #: Los números que el gancho puede escribir (ficha, charla, campaña, datos
     #: de la tienda): la guarda de salida bloquea los demás.
     allowed_numbers: list[str] = field(default_factory=list)
+    #: El guion de la campaña de venta del episodio (`chats/shared/campaigns`,
+    #: operador 2026-10-19), ya redactado para ESTE toque con los precios del
+    #: catálogo, y sus ejemplos. "" = la conversación no es de una campaña.
+    sales_campaign_script: str = ""
+    sales_campaign_examples: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -111,3 +116,6 @@ class RemarketingTriggerInput:
     silent_after_catalog: bool = False
     catalog_described: bool = False
     total_touches: int | None = None
+    #: Ver `RemarketingContext.sales_campaign_script` (2026-10-19).
+    sales_campaign_script: str = ""
+    sales_campaign_examples: list[str] = field(default_factory=list)

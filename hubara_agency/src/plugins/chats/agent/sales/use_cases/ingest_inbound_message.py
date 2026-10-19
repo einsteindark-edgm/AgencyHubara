@@ -1456,6 +1456,15 @@ class IngestInboundMessage:
         # «no están todas» y el bot negó lo verificado). La foto que reentra
         # ya lleva su propia nota.
         photo_facts_note = None if from_photo else build_photo_facts_note(metadata)
+        # El guion de la campaña de este episodio (operador, 2026-10-19: «el
+        # guion de venta por producto o campaña»), con los precios del catálogo.
+        campaign_script_note = (
+            await self._campaign_script_note(
+                session_id, metadata, base, effective.text, message_id=parsed.message_id
+            )
+            if metadata.get("active_route") != ROUTE_HUMANO
+            else None
+        )
         # El carrito: el handle de cada producto, para seguir la venta.
         cart_note = build_cart_note(
             (parsed.order or {}).get("product_items") or [] if isinstance(parsed.order, dict) else [],
@@ -1496,6 +1505,7 @@ class IngestInboundMessage:
                     note
                     for note in (
                         campaign_reply_note,
+                        campaign_script_note,
                         episode_boundary_note,
                         deferral_note,
                         web_cart_note,
@@ -1860,6 +1870,73 @@ class IngestInboundMessage:
         códigos, como antes)."""
         order = parsed.order if isinstance(parsed.order, dict) else None
         return await self._catalog_lines((order or {}).get("product_items") or [])
+
+    async def _campaign_script_note(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        base: dict[str, Any],
+        text: str | None,
+        *,
+        message_id: str | None,
+    ) -> str | None:
+        """El guion de la campaña del episodio activo (`chats/shared/campaigns`),
+        o None si no es de ninguna. Marca el episodio la primera vez (así los
+        turnos siguientes y el remarketing la siguen sin volver a adivinarla).
+        Sin catálogo a tiempo, el guion sin precios. Nunca rompe el ingest."""
+        try:
+            return await self._campaign_script(session_id, metadata, base, text, message_id=message_id)
+        except Exception as exc:  # noqa: BLE001 — una campaña rota deja el guion de siempre
+            logger.warning("sales_campaign_failed", session=session_id, reason=repr(exc))
+            return None
+
+    async def _campaign_script(
+        self,
+        session_id: str,
+        metadata: dict[str, Any],
+        base: dict[str, Any],
+        text: str | None,
+        *,
+        message_id: str | None,
+    ) -> str | None:
+        import asyncio
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from src.plugins.chats.agent.sales.config.shipping import CASH_ON_DELIVERY_MIN_PRODUCTS_COP
+        from src.plugins.chats.shared import sales_campaigns
+        from src.plugins.chats.shared.store_pack import store_domain
+
+        episode = get_active_episode(metadata)
+        today = datetime.fromtimestamp(_now_ms() / 1000, tz=ZoneInfo("America/Bogota")).date()
+        # Las palabras del anuncio solo cuentan en el mensaje que abrió el
+        # episodio (el prellenado): «noche de velitas» en la mitad de la charla
+        # es de temporada, no de la campaña (revisión del 2026-10-19).
+        opening = bool(episode) and message_id is not None and episode.get("started_inbound_message_id") == message_id
+        campaign = sales_campaigns.campaign_for(episode, today=today, text=(text or "") if opening else "")
+        if campaign is None or episode is None:
+            return None
+        if episode.get(sales_campaigns.EPISODE_KEY) != campaign.id:
+            episode[sales_campaigns.EPISODE_KEY] = campaign.id
+            self._safe_write_metadata(session_id, metadata, base)
+            logger.info("sales_campaign_matched", session=session_id, campaign=campaign.id)
+        products: list[Any] = []
+        if self._catalog is not None:
+            try:
+                result = await asyncio.wait_for(
+                    self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
+                    timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
+                )
+                products = list(result.results)
+            except Exception as exc:  # noqa: BLE001 — sin precios, el guion igual sale
+                logger.warning("sales_campaign_prices_unavailable", reason=type(exc).__name__)
+        try:
+            boxes = store_domain().get("sold_by_box")
+        except Exception:  # noqa: BLE001 — sin el dominio, los precios van por unidad
+            boxes = None
+        return sales_campaigns.sales_note(
+            campaign, products, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP, boxes=boxes
+        )
 
     async def _catalog_lines(self, items: list[Any]) -> dict[str, CartLine | None] | None:
         """Cada `product_retailer_id` → su línea del catálogo (SKU, id de la
