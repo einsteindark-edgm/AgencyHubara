@@ -207,6 +207,14 @@ def _same(a: Any, b: Any) -> bool:
     )
 
 
+def _settings_field_same(ours: Any, theirs: Any) -> bool:
+    """Un bloque apagado (``{"enabled": false, …}``) equivale al ``null`` con el
+    que Meta lo devuelve (visto en prod con ``followup``): no es un cambio."""
+    if theirs is None and isinstance(ours, dict) and not ours.get("enabled", True):
+        return True
+    return _same(ours, theirs)
+
+
 def _project(remote: Mapping[str, Any], body: Mapping[str, Any]) -> dict[str, Any]:
     """El remoto restringido a las claves que enviamos (Meta agrega ``id``,
     ``created_at``…, que no cuentan como diferencia)."""
@@ -536,7 +544,7 @@ def build_plan(
         ) != body_hash(phrases)
         remote_settings = remote.settings or {}
         fields_changed = remote.settings is None or any(
-            not _same(
+            not _settings_field_same(
                 send.get(f),
                 _project(remote_settings, {f: send[f]}).get(f)
                 if isinstance(send.get(f), dict)
