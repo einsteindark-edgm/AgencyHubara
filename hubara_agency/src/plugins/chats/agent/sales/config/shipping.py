@@ -24,18 +24,15 @@ from __future__ import annotations
 import os
 
 from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
+from src.plugins.chats.shared.payment_terms import CASH_ON_DELIVERY_MIN_PRODUCTS_COP as _COD_MIN
 
 SHIPPING_RATE_BOGOTA_COP = 7_900
 SHIPPING_RATE_NATIONAL_COP = 16_940
 
-# Contra entrega: solo pedidos con productos DESDE este monto (política de
-# margen vs costo del envío). Umbral INCLUSIVO — incidente run ebbc203d
-# (2026-09-16): el guion decía "desde $45.000", el bot se lo afirmó al
-# cliente, y el código usaba `> 45000` estricto → el formulario de envío
-# ocultó "Contra entrega" para un pedido de $45.000 exactos y la clienta
-# abandonó el Flow. Este es el ÚNICO lugar donde vive el umbral; el
-# formulario, el fallback de texto y los prompts lo citan desde acá.
-CASH_ON_DELIVERY_MIN_PRODUCTS_COP = 45_000
+# Contra entrega: el umbral vive en `chats/shared/payment_terms.py` (lo lee
+# también el remarketing, 2026-10-19); el formulario, el fallback de texto y
+# los prompts lo citan desde acá.
+CASH_ON_DELIVERY_MIN_PRODUCTS_COP = _COD_MIN
 
 
 def cash_on_delivery_available(products_subtotal_cop: int) -> bool:

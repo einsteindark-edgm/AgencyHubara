@@ -291,6 +291,11 @@ class RemarketingSessionWorkflow:
             silent_after_catalog=self._catalog_silent,
             catalog_described=self._catalog_silent and bool(getattr(context, "catalog_described", False)),
             total_touches=getattr(context, "total_touches", None) if self._catalog_silent_patch else None,
+            # El guion de la campaña de venta (2026-10-19). Solo cambia el
+            # input de la activity, no los comandos → replay-safe sin patch;
+            # historias viejas traen el result sin el campo ("" = sin guion).
+            sales_campaign_script=str(getattr(context, "sales_campaign_script", "") or ""),
+            sales_campaign_examples=list(getattr(context, "sales_campaign_examples", None) or []),
         )
         return await self._render_trigger(self._trigger_input)
 
