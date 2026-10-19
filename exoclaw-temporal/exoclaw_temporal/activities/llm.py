@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 
 import litellm
 import structlog
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from temporalio import activity
 
-from exoclaw_temporal.config import LLMChatInput, LLMResponseData, ToolCallData
+from exoclaw_temporal.config import LLMChatInput, LLMConfig, LLMResponseData, ToolCallData
 
 logger = structlog.get_logger()
 
@@ -83,6 +84,23 @@ def _detach_baggage(token) -> None:
         _oc.detach(token)
     except Exception:  # noqa: BLE001 — la observabilidad nunca rompe el turno
         pass
+
+
+def _api_key(llm: LLMConfig) -> str | None:
+    """La llave de la llamada, para el principal y el respaldo: la del payload
+    si la trae (inputs agendados antes de que la llave saliera del payload), si
+    no la de la variable ``api_key_env`` del entorno del worker."""
+    if llm.api_key:
+        return llm.api_key
+    if not llm.api_key_env:
+        return None
+    key = os.environ.get(llm.api_key_env)
+    if not key:
+        # Sin llave, `litellm_proxy/` falla en el cliente si el proceso no tiene
+        # `OPENAI_API_KEY`: el worker mal configurado se ve acá, con el nombre
+        # de la variable.
+        logger.warning("llm_api_key_missing", env=llm.api_key_env, model=llm.model)
+    return key or None
 
 
 async def _chat(
@@ -165,7 +183,7 @@ async def llm_chat(input: LLMChatInput) -> LLMResponseData:
     _baggage_token = _attach_baggage(input.baggage)
     try:
         provider = _CacheAwareLiteLLMProvider(
-            api_key=input.llm.api_key,
+            api_key=_api_key(input.llm),
             api_base=input.llm.api_base,
             default_model=input.llm.model,
             extra_headers=input.llm.extra_headers or None,

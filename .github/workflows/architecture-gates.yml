@@ -246,12 +246,15 @@ jobs:
           tests/sdk/test_decisions_cli.py
           tests/plugins/chats/test_store_domain.py
 
-      - name: Guards del proxy LLM (ids upstream revisados + thinking + DeepSeek colgado + multimodal + resumen)
+      - name: Guards del proxy LLM (ids upstream revisados + thinking + DeepSeek colgado + multimodal + resumen + llave fuera de Temporal)
         # `tests/platform/` NO corre completo acá (cuelga con los dummies de Medusa),
         # así que los guards que cargan el `litellm_config.yaml` REAL se nombran uno
         # por uno: sin este step solo valían en la máquina de quien corriera la suite.
         # Son YAML/JSON + un litellm.Router contra servidores HTTP en loopback: no
         # salen a internet ni piden keys.
+        # La llave del proxy no viaja en los payloads de Temporal (lección L-37):
+        # `llm_chat` la lee del worker (test_llm_chat_worker_key.py) y un turno real
+        # de ventas V2 no la deja en su historia (test_llm_key_not_in_temporal_history.py).
         # OJO: test_litellm_model_ids_stable.py tiene VENCIMIENTOS fechados a
         # propósito (permisos de ids `-preview`, avisos de apagado). Si se pone rojo
         # por fecha, el mensaje dice qué tabla del proveedor mirar y qué fechas
@@ -268,6 +271,8 @@ jobs:
           tests/platform/test_llm_thinking_disabled.py
           tests/platform/test_llm_hang_falls_over.py
           tests/platform/test_llm_chat_deadline_fallback.py
+          tests/platform/test_llm_chat_worker_key.py
+          tests/plugins/test_llm_key_not_in_temporal_history.py
           tests/platform/test_llm_fallback_wiring.py
           tests/platform/test_multimodal_via_proxy.py
           tests/platform/customer_scoring/test_llm_summary.py

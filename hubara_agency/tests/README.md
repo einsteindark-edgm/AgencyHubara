@@ -30,7 +30,7 @@ importarse y caen a defaults benignos:
 | `TEMPORAL_NAMESPACE`    | `default`             |                                        |
 | `TEMPORAL_TLS_CERT_PATH`| `""`                  | mTLS opcional (Temporal Cloud)         |
 | `TEMPORAL_TLS_KEY_PATH` | `""`                  |                                        |
-| `DEEPSEEK_API_KEY`      | `mispolainas`         | Mock-safe                              |
+| `DEEPSEEK_API_KEY`      | (sin default)         | La lee `llm_chat` al llamar, no la config; los tests usan un LLM falso |
 | `API_BASE_LLMLITE`      | `http://localhost:4000` |                                      |
 | `WORKSPACE_VAULT_DIR`   | `./hubara_vault`      | Tests usan `tmp_path`                  |
 

@@ -78,11 +78,13 @@ class _FakeProxy:
 
     ``ok`` contesta; ``error`` da 500; ``silencio`` no manda nada;
     ``lineas-vacias`` manda 200 y una línea vacía cada 0,1 s, sin JSON nunca.
-    Registra cada body y si el cliente cerró la conexión colgada.
+    Registra cada body, su ``Authorization`` y si el cliente cerró la conexión
+    colgada.
     """
 
     def __init__(self, modes: dict[str, str]) -> None:
         self.bodies: list[dict[str, Any]] = []
+        self.authorizations: list[str | None] = []
         self.hung_connection_closed = threading.Event()
         self._release = threading.Event()
         outer = self
@@ -102,6 +104,7 @@ class _FakeProxy:
             def do_POST(self) -> None:  # noqa: N802 — API de BaseHTTPRequestHandler
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
                 outer.bodies.append(body)
+                outer.authorizations.append(self.headers.get("Authorization"))
                 mode = modes.get(body.get("model"), "error")
                 if mode == "ok":
                     payload = _completion(body["model"])
