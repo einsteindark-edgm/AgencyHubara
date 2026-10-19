@@ -369,6 +369,8 @@ def hook_number_sources(context: RemarketingContext, *, practical_facts: str) ->
         context.transcript,
         context.campaign_context,
         context.tag_motivo,
+        # Los precios y el combo del guion de la campaña (salen del catálogo).
+        context.sales_campaign_script,
         practical_facts if practical else "",
     ))
     return numbers_in(sources)
