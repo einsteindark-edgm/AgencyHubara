@@ -97,6 +97,15 @@ _DEFERRAL_CUE = re.compile(
     r"paso|pasamos|vemos|luego|despues|ahora no)\b"
 )
 
+#: Lo que el cliente dice que ÉL hará ese día ("el lunes LO COMPLETO", "el
+#: lunes HAGO la consignación"): primera persona, presente o futuro. Solo en
+#: afirmaciones: "¿el lunes me MANDAN…?" es una pregunta (caso 2026-10-17).
+#: Sin «pago» ni «depósito»: también son sustantivos («el pago se hace el
+#: lunes», sin «?»); «el lunes lo pago» ya pausa por corto.
+_DO_LATER_CUE = re.compile(
+    r"\b(complet|llen|termin|mand|hag|consign|transfier)(o|are|aria)\b"
+)
+
 #: El cliente dice que ÉL vuelve a escribir.
 _OPEN_DEFERRAL = re.compile(
     r"\b(te|les|le) (escribo|aviso|confirmo|hablo|cuento)\b"
@@ -209,7 +218,8 @@ def parse_reengagement_deferral(
     if resume is not None:
         words = norm.split()
         date_only = len(words) <= _SHORT_DATE_ONLY_MAX_WORDS and "?" not in norm
-        if _DEFERRAL_CUE.search(norm) or _OPEN_DEFERRAL.search(norm) or date_only:
+        do_later = "?" not in norm and _DO_LATER_CUE.search(norm) is not None
+        if _DEFERRAL_CUE.search(norm) or _OPEN_DEFERRAL.search(norm) or date_only or do_later:
             resume_at = datetime(
                 resume.year, resume.month, resume.day, RESUME_HOUR_LOCAL, tzinfo=tz
             )

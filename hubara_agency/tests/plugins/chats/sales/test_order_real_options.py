@@ -152,6 +152,56 @@ async def test_a_product_without_real_options_does_not_wait(tmp_path: Path) -> N
     assert resolve_funnel_stage(_meta(tmp_path)) == STAGE_DATOS_ENVIO
 
 
+#: Caso 2026-10-17/18 (4 conversaciones): las dos cajas seguían en el
+#: catálogo con 11 etiquetas «Color:» de plantilla, además de la opción real
+#: «Color» de Medusa. Las etiquetas ganaban: «Multicolor» salía rechazado, el
+#: bot volvía a preguntar el color y el selector mostraba Blanco, Rosado,
+#: Lila… colores que la caja no tiene.
+TEMPLATE_COLORS = ["gris", "Amarillo", "verde", "Naranja", "Morado", "Azul", "Negro", "Blanco", "Lila", "Rosado", "Café"]
+DESEOS_TEMPLATE = CatalogProductDTO(
+    id="prod_deseos", handle="velas-de-deseos-cuadradas", title="Velas de deseos cuadradas", status="published",
+    tags=["Aroma: Navidad", *(f"Color: {c}" for c in TEMPLATE_COLORS)],
+    options={"Color": ["Rojo y verde", "Multicolor"]},
+)
+
+
+class _TemplateCatalog(_Catalog):
+    async def search(self, q: str, *, limit: int = 10) -> SearchResult:
+        return SearchResult(
+            query=q, count=1, truncated=False, stale=False,
+            manifest=CatalogManifestDTO(version="v1", fetched_at="2026-10-18T00:00:00Z", product_count=1),
+            results=[DESEOS_TEMPLATE],
+        )
+
+
+def _template_tool(tmp_path: Path) -> SetOrderSlotTool:
+    return SetOrderSlotTool(workspace=tmp_path, vault_dir=tmp_path / "vault", catalog=_TemplateCatalog())
+
+
+@pytest.mark.asyncio
+async def test_the_real_color_option_wins_over_template_color_tags(tmp_path: Path) -> None:
+    tool = _template_tool(tmp_path)
+    added = await _set(tool, producto="Velas de deseos cuadradas", cantidad="1")
+    assert "Multicolor" in added["summary"] and "Blanco" not in added["summary"]
+
+    result = await _set(tool, producto="Velas de deseos cuadradas", color="Multicolor")
+
+    assert not result.get("rejected")
+    (item,) = draft_items(_draft(tmp_path))
+    assert item.get("color") == "Multicolor"
+    assert resolve_funnel_stage(_meta(tmp_path)) == STAGE_DATOS_ENVIO
+
+
+@pytest.mark.asyncio
+async def test_a_template_color_tag_is_not_a_color_of_the_box(tmp_path: Path) -> None:
+    tool = _template_tool(tmp_path)
+    await _set(tool, producto="Velas de deseos cuadradas", cantidad="1")
+
+    result = await _set(tool, producto="Velas de deseos cuadradas", color="Blanco")
+
+    assert result.get("rejected") and not draft_items(_draft(tmp_path))[0].get("color")
+
+
 def test_a_draft_from_before_the_fix_reads_as_before() -> None:
     """Sin `por_elegir` (borradores viejos), la etapa se lee como siempre."""
     item = {"producto": "Velas de deseos cuadradas", "aroma": "Navidad", "cantidad": "2"}
