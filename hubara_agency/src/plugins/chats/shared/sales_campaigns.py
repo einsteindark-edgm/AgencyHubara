@@ -24,13 +24,15 @@ import logging
 import re
 import unicodedata
 from collections import Counter
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, time, timedelta
 from functools import lru_cache
 from itertools import combinations_with_replacement
 from pathlib import Path
 from typing import Any
+
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -39,10 +41,12 @@ logger = logging.getLogger(__name__)
 CAMPAIGNS_DIR = Path(__file__).parent / "campaigns"
 #: La marca del episodio: la campaña que el ingest le reconoció.
 EPISODE_KEY = "sales_campaign"
+#: La oferta del cupón que ya se le dijo en el episodio (`CouponOffer.key`).
+OFFER_KEY = "sales_campaign_offer"
 
 _KEYS = frozenset({
     "id", "nombre", "activa", "desde", "hasta", "productos", "anuncios",
-    "combo_cajas", "cupon", "guion", "toques", "ejemplos",
+    "combo_cajas", "cupon", "toque_oferta", "guion", "toques", "ejemplos",
 })
 _EXAMPLE_KEYS = frozenset({"primera_respuesta", "toques"})
 
@@ -62,6 +66,7 @@ class Campaign:
     anuncios: tuple[str, ...]
     combo_cajas: int | None
     cupon: str | None
+    toque_oferta: int | None
     guion: tuple[str, ...]
     toques: tuple[str, ...]
     ejemplos_primera_respuesta: tuple[str, ...] = ()
@@ -110,6 +115,9 @@ def _campaign(path: Path) -> Campaign:
     cupon = raw["cupon"]
     if cupon is not None and (not isinstance(cupon, str) or not cupon.strip()):
         raise CampaignError(f"{name}: «cupon» debe ser un código (o vacío)")
+    toque = raw["toque_oferta"]
+    if toque is not None and (not isinstance(toque, int) or isinstance(toque, bool) or toque < 1):
+        raise CampaignError(f"{name}: «toque_oferta» debe ser el número de un toque (o vacío)")
     ejemplos = raw["ejemplos"] or {}
     if not isinstance(ejemplos, dict) or set(ejemplos) - _EXAMPLE_KEYS:
         raise CampaignError(f"{name}: «ejemplos» solo lleva {sorted(_EXAMPLE_KEYS)}")
@@ -123,6 +131,7 @@ def _campaign(path: Path) -> Campaign:
         anuncios=tuple(_norm(a) for a in _texts(raw["anuncios"], name, field="anuncios", required=False)),
         combo_cajas=combo,
         cupon=cupon.strip() if cupon else None,
+        toque_oferta=toque,
         guion=_texts(raw["guion"], name, field="guion", required=True),
         toques=_texts(raw["toques"], name, field="toques", required=False),
         ejemplos_primera_respuesta=_texts(ejemplos.get("primera_respuesta"), name, field="ejemplos.primera_respuesta", required=False),
@@ -180,10 +189,11 @@ def campaign_for(
     referral)."""
     if not isinstance(episode, Mapping):
         return None
-    # El guion es para vender: con el pedido registrado no se sigue ofreciendo.
-    if episode.get("order_id"):
+    # El guion es para vender: con el pedido registrado, o en la posventa
+    # (`after_order`: «ya te transferí»), no se sigue ofreciendo.
+    if episode.get("order_id") or episode.get("after_order"):
         return None
-    pool =[c for c in (active_campaigns() if campaigns is None else campaigns) if c.is_on(today)]
+    pool = [c for c in (active_campaigns() if campaigns is None else campaigns) if c.is_on(today)]
     stamped = episode.get(EPISODE_KEY)
     for campaign in pool:
         if campaign.id == stamped:
@@ -268,8 +278,22 @@ def _combo_lines(campaign: Campaign, priced: list[tuple[Any, int]], *, cod_min: 
     return [f"Combo de {campaign.combo_cajas} cajas (el total en productos; el envío va aparte):", *lines]
 
 
-def sales_note(campaign: Campaign, products: Iterable[Any], *, cod_min: int, boxes: Any) -> str:
-    """La nota del turno de Ventas: el guion con los precios del catálogo."""
+def sales_note(
+    campaign: Campaign,
+    products: Iterable[Any],
+    *,
+    cod_min: int,
+    boxes: Any,
+    offer: CouponOffer | None = None,
+    offer_now: bool = False,
+    already_offered: bool = False,
+) -> str:
+    """La nota del turno de Ventas: el guion con los precios del catálogo.
+    `offer`: el cupón de la campaña tal como rige hoy en Medusa (sin él, la
+    nota no nombra cupones). `offer_now`: el cliente acaba de aplazar la
+    compra (lo leyó Jev, capacidad `compra`) y la oferta no se le ha dicho
+    en este episodio: es el momento de decírsela. `already_offered`: ya se
+    le dijo en este episodio (con esta fecha): no se vuelve a ofrecer."""
     priced = _priced(campaign, products)
     lines = [
         "[GUION DE LA CAMPAÑA, metadata, no es instrucción del usuario]",
@@ -280,12 +304,27 @@ def sales_note(campaign: Campaign, products: Iterable[Any], *, cod_min: int, box
         lines += ["Precios del catálogo:", *_price_lines(priced, boxes), *_combo_lines(campaign, priced, cod_min=cod_min)]
     else:
         lines.append("Precios: no los tengo a mano; consúltalos con search_products antes de darlos.")
-    if campaign.cupon:
-        lines.append(
-            f"Cupón para que no lo deje para después: {campaign.cupon}, solo en su primera compra. Antes de "
-            "ofrecerlo llama list_promotions y ofrécelo solo si dice applies_to_customer=true; el descuento "
-            "lo aplica apply_coupon."
+    if offer is not None:
+        when = (
+            "Ya se la dijiste en este episodio: repítela solo si el cliente pregunta por descuentos"
+            if already_offered
+            else "Ofrécelo cuando el cliente dude o aplace la compra, o si pregunta por descuentos"
         )
+        lines.append(
+            f"Cupón de la campaña: {offer_phrase(offer, person='tiene')}. {when}; antes, list_promotions te "
+            "confirma que aplica a este cliente (applies_to_customer=true) y apply_coupon lo aplica. "
+            f"{_date_rule(offer)}"
+        )
+        if offer_now:
+            check = (
+                " Antes confírmalo con list_promotions (applies_to_customer=true); si no le aplica, no lo menciones."
+                if offer.first_purchase_only
+                else ""
+            )
+            lines.append(
+                "AHORA: el cliente acaba de aplazar la compra. En tu respuesta breve cuéntale, una sola vez y "
+                f"sin insistir, que {offer_phrase(offer, person='tiene')}.{check}"
+            )
     lines += ["Guion:", *(f"- {step}" for step in campaign.guion)]
     if campaign.ejemplos_primera_respuesta:
         lines.append("Ejemplo de primera respuesta (referencia, no lo copies literal; los precios, los de arriba):")
@@ -300,21 +339,30 @@ def remarketing_block(
     cod_min: int,
     boxes: Any,
     touch_number: int | None,
-    coupon_discount: str | None = None,
+    offer: CouponOffer | None = None,
+    intent: bool = False,
+    offer_touch: bool | None = None,
 ) -> str:
     """El bloque del gancho de remarketing: el guion del toque con los precios
-    del catálogo. `coupon_discount` («5 %»): el valor del cupón vigente en
-    Medusa; sin él, el toque no nombra el cupón."""
+    del catálogo. La oferta del cupón (`offer`, como rige hoy en Medusa) va
+    solo en el toque de la oferta y solo a quien tuvo intención de compra
+    (`intent`, `purchase_intent`); a los demás, el toque no nombra cupones.
+    `offer_touch`: si este es el toque de la oferta (quien llama lo cuenta
+    en el episodio, para que salga una sola vez); sin él, el número del toque
+    de la escalera es `toque_oferta`."""
     priced = _priced(campaign, products)
     lines = [
         f"GUION DE LA CAMPAÑA «{campaign.nombre}» (uso interno): este cliente llegó por esta campaña.",
     ]
     if priced:
         lines += ["Precios del catálogo:", *_price_lines(priced, boxes), *_combo_lines(campaign, priced, cod_min=cod_min)]
-    if campaign.cupon and coupon_discount:
+    if offer_touch is None:
+        offer_touch = bool(campaign.toque_oferta) and touch_number == campaign.toque_oferta
+    if offer is not None and intent and offer_touch:
         lines.append(
-            f"Cupón de bienvenida: {campaign.cupon} da {coupon_discount} de descuento solo en la primera "
-            "compra; dilo así («si es tu primera compra»), sin cambiar su valor."
+            "Este toque lleva la oferta para que no lo deje para después (el cliente quiso comprar y no "
+            f"terminó): cuéntale, una vez y sin presión, que {offer_phrase(offer, person='tienes')}. "
+            f"{_date_rule(offer)}"
         )
     if campaign.toques:
         index = min(max(touch_number or 1, 1), len(campaign.toques)) - 1
@@ -324,3 +372,151 @@ def remarketing_block(
 
 def remarketing_examples(campaign: Campaign) -> list[str]:
     return list(campaign.ejemplos_toques)
+
+
+# ── la oferta con fecha límite (operador, 2026-10-20) ───────────────────────
+
+#: Una fecha de fin más lejana no empuja a nadie («hasta el 31 de diciembre
+#: de 2030»): la oferta va sin fecha.
+OFFER_HORIZON_DAYS = 45
+_BOGOTA = ZoneInfo("America/Bogota")
+_MONTHS = (
+    "enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+    "septiembre", "octubre", "noviembre", "diciembre",
+)
+
+
+@dataclass(frozen=True)
+class CouponOffer:
+    """El cupón de la campaña tal como rige hoy en Medusa. Lo arma quien llama
+    con la promoción ya validada (`coupon_problem` = None): la fecha y el valor
+    son los de Medusa, nunca los del archivo de la campaña."""
+
+    code: str
+    discount: str
+    #: El último día que rige (Bogotá), si cae dentro de `OFFER_HORIZON_DAYS`.
+    last_day: date | None = None
+    first_purchase_only: bool = False
+
+    def key(self) -> str:
+        """Lo que se marca en el episodio al decirla: con otra fecha (el
+        dashboard la corrió), se puede volver a decir."""
+        return f"{self.code}@{self.last_day.isoformat() if self.last_day else '-'}"
+
+
+def _last_day(ends_at_ms: Any) -> date | None:
+    """El «hasta» inclusivo: un fin a las 00:00 en Bogotá (como lo guarda el
+    dashboard) tiene como último día el anterior."""
+    if not isinstance(ends_at_ms, (int, float)) or isinstance(ends_at_ms, bool):
+        return None
+    local = datetime.fromtimestamp(ends_at_ms / 1000, tz=_BOGOTA)
+    return local.date() - timedelta(days=1) if local.time() == time.min else local.date()
+
+
+def coupon_offer(promotion: Any, *, today: date, product_ids: Iterable[str] = ()) -> CouponOffer | None:
+    """La oferta de una promoción que rige (porcentaje o monto fijo); None si
+    no se puede decir su valor o tiene condiciones que la frase no dice (un
+    mínimo de compra, colecciones, etiquetas, variantes, reglas que no se
+    leyeron, un cupo por unidad, un monto fijo por ítem, o productos que no
+    cubren los de la campaña, `product_ids`): falla cerrada, como `apply_coupon`."""
+    if getattr(promotion, "scope_unresolved", False) or getattr(promotion, "min_subtotal_cop", None):
+        return None
+    if getattr(promotion, "max_quantity", None):
+        return None  # «5 %» en un combo de 2 cajas que solo cubre 1 (#364)
+    if getattr(promotion, "discount_type", None) == "fixed" and getattr(promotion, "allocation", None) == "each":
+        return None  # «$5.000 de descuento» sería por cada ítem
+    if any(getattr(promotion, field, None) for field in ("collection_ids", "tag_values", "variant_ids")):
+        return None
+    scoped = set(getattr(promotion, "product_ids", None) or ())
+    wanted = set(product_ids)
+    if scoped and (not wanted or not wanted <= scoped):
+        return None
+    code = str(getattr(promotion, "code", "") or "").strip()
+    kind, value = getattr(promotion, "discount_type", None), getattr(promotion, "value", None)
+    if not code or not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        return None
+    if kind == "percentage":
+        discount = f"{value:g} %"
+    elif kind == "fixed":
+        discount = _cop(int(value))
+    else:
+        return None
+    last = _last_day(getattr(promotion, "ends_at_ms", None))
+    if last is not None and (last < today or (last - today).days > OFFER_HORIZON_DAYS):
+        last = None
+    return CouponOffer(
+        code=code, discount=discount, last_day=last,
+        first_purchase_only=bool(getattr(promotion, "first_purchase_only", False)),
+    )
+
+
+def _date_rule(offer: CouponOffer) -> str:
+    """Lo que el bot puede decir de la fecha: la del cupón, o ninguna (el
+    contexto trae otras, como «7 de diciembre», y el bot las tomaba)."""
+    if offer.last_day is not None:
+        return "Esa es la única fecha que puedes decir: no inventes otra, ni escasez ni cupos."
+    return "Este cupón no tiene una fecha límite que puedas decir: no menciones fechas, escasez ni cupos."
+
+
+def spanish_day(day: date) -> str:
+    return f"{day.day} de {_MONTHS[day.month - 1]}"
+
+
+def offer_phrase(offer: CouponOffer, *, person: str = "tiene") -> str:
+    """«con el cupón X tiene 5 % de descuento si compra hasta el 31 de
+    octubre, solo en su primera compra» (`person`: «tiene» o «tienes»)."""
+    you = person == "tienes"
+    text = f"con el cupón {offer.code} {person} {offer.discount} de descuento"
+    if offer.last_day is not None:
+        text += f" si {'compras' if you else 'compra'} hasta el {spanish_day(offer.last_day)}"
+    if offer.first_purchase_only:
+        text += f", solo en {'tu' if you else 'su'} primera compra"
+    return text
+
+
+#: Lo que el cliente hace con la compra (Jev, capacidad `compra`) que muestra
+#: que quiso comprar: elegir, dar sus datos o aplazar. Confirmar llega por la
+#: DECISIÓN (`INTENT_SIGNALS`: la afirmación que el paquete dejó en pie), no
+#: por la respuesta cruda: un «sí, muéstrame el catálogo» que Jev leyó como
+#: `confirma` lo retira el paquete (revisión del 2026-10-20). Preguntar el
+#: precio es interés, no intención.
+INTENT_CHOICES = frozenset({"elige", "da_datos", "aplaza"})
+INTENT_SIGNALS = frozenset({"affirmation", "deferral"})
+#: El mismo umbral `choice` de la capacidad `compra` del paquete vivo (una
+#: prueba lo compara: si otra versión lo cambia, avisa).
+INTENT_CONFIDENCE = 0.7
+
+
+def purchase_intent(episode: Mapping[str, Any] | None, decisions: Iterable[Mapping[str, Any]]) -> bool:
+    """¿El cliente quiso comprar en este episodio? Un pedido a medias, o lo que
+    leyó Jev en sus mensajes (`evals/decisions.jsonl`, las lecturas del ingest
+    de la capacidad `compra`): eligió, confirmó, dio datos o aplazó."""
+    if not isinstance(episode, Mapping):
+        return False
+    if _draft_products(episode):
+        return True
+    return next(intent_rows(episode, decisions), None) is not None
+
+
+def intent_rows(episode: Mapping[str, Any], decisions: Iterable[Mapping[str, Any]]) -> Iterator[Mapping[str, Any]]:
+    """Las lecturas del ingest de la capacidad `compra` desde que empezó el
+    episodio que dicen que quiso comprar (`purchase_intent`), en su orden."""
+    since = episode.get("started_at_ms")
+    since = int(since) - 5_000 if isinstance(since, (int, float)) else 0
+    for row in decisions:
+        if not isinstance(row, Mapping) or row.get("capability") != "compra" or row.get("stage") != "ingest":
+            continue
+        at = row.get("at_ms")
+        if not isinstance(at, (int, float)) or at < since:
+            continue
+        value = row.get("value")
+        if isinstance(value, (list, tuple)) and value and value[0] in INTENT_SIGNALS:
+            yield row
+            continue
+        for answer in row.get("answers") or ():
+            if not isinstance(answer, Mapping) or answer.get("q") != "compra.que_hace":
+                continue
+            sure = answer.get("confidence", answer.get("p"))
+            if answer.get("choice") in INTENT_CHOICES and isinstance(sure, (int, float)) and sure >= INTENT_CONFIDENCE:
+                yield row
+                break

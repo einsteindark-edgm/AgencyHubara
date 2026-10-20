@@ -24,13 +24,58 @@ Las demás conversaciones no reciben nada nuevo. Lo prueban
 ## Qué recibe el bot
 
 - **Ventas**, en cada turno: una nota con el guion, los precios del catálogo de
-  cada producto, el total de cada combo (con si paga contra entrega o no) y el
-  cupón. El cupón lo ofrece solo si `list_promotions` dice que aplica a ese
-  cliente.
+  cada producto y el total de cada combo (con si paga contra entrega o no).
 - **Remarketing**, en cada toque: el texto de `toques` de ese número de toque
-  (del último en adelante se repite el último), con los mismos precios y el cupón
-  si está vigente en Medusa (el valor sale de Medusa). Sus `ejemplos.toques`
-  reemplazan a los de la tienda.
+  (del último en adelante se repite el último), con los mismos precios. Sus
+  `ejemplos.toques` reemplazan a los de la tienda.
+
+## La oferta del cupón, con su fecha límite
+
+El `cupon` de la campaña es el incentivo para no dejar la compra para después.
+Su valor y su fecha límite salen de Medusa (dashboard → Marketing → Cupones):
+si el cupón vence el 31 de octubre, el bot dice «hasta el 31 de octubre»; si le
+cambias el «hasta» al 15 de noviembre, dice eso, sin deploy. Vencido,
+desactivado o de primera compra para quien ya compró, no se ofrece. Con una
+fecha a más de 45 días, se ofrece sin fecha. El bot nunca dice una fecha que el
+cupón no tenga.
+
+- **Ventas:** cuando el cliente aplaza la compra («te aviso», «hay tiempo», «más
+  adelante»; lo lee Jev con la capacidad `compra`), el bot se la dice una vez
+  por episodio y por fecha, en su respuesta breve. Si el cliente pregunta por
+  descuentos, también la puede dar.
+- **Remarketing:** solo el toque `toque_oferta` del episodio (cuentan los toques
+  que le llegaron al cliente), y solo a quien quiso comprar y no compró. Quiso
+  comprar = un pedido a medias, o Jev leyó en sus mensajes que eligió un
+  producto, dio datos, aplazó o confirmó. Preguntar el precio no cuenta.
+- Límite conocido: el toque con la oferta no deja marca en el episodio. Si
+  después el cliente aplaza, Ventas la dice una vez más: a lo sumo dos veces
+  por episodio, y la segunda solo como respuesta a un aplazamiento.
+- No se ofrecen cupones con cupo por unidad, con un monto fijo por ítem ni con
+  condiciones que la frase no dice (mínimo de compra, colecciones, etiquetas,
+  variantes u otros productos). Tampoco en la posventa ni con un cupón ya
+  aplicado.
+
+## El perfil «interesado sin compra» (público de las campañas de WhatsApp)
+
+A quien quiso comprar (lo mismo que arriba: eligió, aplazó, dio datos,
+confirmó, o tiene un pedido a medias), Ventas le marca en vivo el perfil
+`profile_tags.interesado_sin_compra`, con el episodio, de dónde salió y la
+campaña. No depende de la etiqueta de la conversación, que cambia sola.
+
+En Marketing → Campañas → Audiencia aparece como el segmento **Interesados sin
+compra**. Se suma a los otros sin repetir a nadie; quien compró después por el
+chat ya no cuenta (un pedido hecho solo en la tienda web no queda en la
+conversación y no lo saca), y humano, baja y pruebas quedan fuera como siempre. Sirve para la tanda
+de «5 % hasta tal fecha»: pon la fecha del cupón también en el mensaje de la
+campaña.
+
+Para marcar las conversaciones de antes de este cambio, en la caja, dentro del
+contenedor de la API (solo devuelve números):
+
+```bash
+python scripts/backfill_interest_profile.py           # cuenta, no escribe
+python scripts/backfill_interest_profile.py --apply   # marca
+```
 
 ## Reglas
 

@@ -2330,3 +2330,51 @@ Caso del 2026-10-16: un colega atendió a un cliente (le aclaró que el precio e
 - GIVEN el «Si» ya entró en el turno del traspaso
 - WHEN llega por señal el mismo mensaje (mismo wamid)
 - THEN no hay un segundo turno para él
+
+### Requirement: La oferta del cupón de la campaña, con su fecha límite (2026-10-20)
+
+Cuando el episodio tiene guion de campaña (`sales_campaign`) con `cupon`, el
+ingest SHALL leer el cupón en Medusa (hasta 3 s; si no responde, el turno
+sigue sin oferta) y ofrecerlo solo si está vigente, sin condiciones que el bot
+no puede cumplir (colecciones, etiquetas, variantes, mínimo de compra, cupo
+por unidad, un descuento fijo por ítem, o productos que no cubren los de la
+campaña) y, si es de primera compra, solo a quien no ha comprado. La fecha
+que dice el bot MUST ser la del cupón en Medusa (último día = `ends_at` menos
+un día, hora de Bogotá) y solo si vence en 45 días o menos; sin una fecha
+que pueda decir, la nota MUST prohibir mencionar fechas, escasez o cupos.
+Cuando el último mensaje es un aplazamiento («te aviso», «hay tiempo»; lo lee
+Jev con `compra`), la nota del aplazamiento SHALL pedir contar la oferta en
+esa misma frase, una vez por episodio y por fecha (`sales_campaign_offer`);
+ya dicha, solo se repite si el cliente pregunta por descuentos. Con un cupón
+ya aplicado, o con la conversación en manos del remarketing, no se ofrece.
+
+#### Scenario: «Lo pienso y te aviso» con el cupón vigente hasta el 31 de octubre
+
+- GIVEN un episodio de la campaña `velitas-7-dic` y su cupón del 5 % con `ends_at` el 1 de noviembre a las 00:00 de Bogotá
+- WHEN el cliente aplaza la compra
+- THEN la nota pide contar en esa misma frase el 5 % «hasta el 31 de octubre», una sola vez
+- AND un segundo aplazamiento en el mismo episodio no la repite
+
+#### Scenario: El operador mueve la fecha al 15 de noviembre
+
+- WHEN el operador cambia el «hasta» del cupón en Marketing → Cupones
+- THEN el bot dice la fecha nueva sin deploy, y como es otra fecha la puede decir otra vez
+
+### Requirement: El perfil «interesado sin compra» (2026-10-20)
+
+El ingest SHALL marcar `profile_tags.interesado_sin_compra` (`first_at_ms`,
+`at_ms`, `episode_id`, `source`, `campaign`) cuando la lectura de este mensaje
+muestra intención de compra (Jev con `compra`: eligió, dio datos o aplazó con
+confianza de 0,7 o más; o la decisión final es una afirmación o un
+aplazamiento) o el episodio tiene un pedido a medias. MUST NOT marcar un
+episodio con su pedido ni uno de posventa (`after_order`, o el anterior cerró
+con su pedido hace 30 días o menos). Preguntar el precio no es intención. Si
+un humano toma la conversación mientras se esperaba a Jev y el mensaje rotó
+el episodio, la marca se descarta con el episodio.
+
+#### Scenario: «Ya te transferí» después de comprar
+
+- GIVEN el episodio anterior cerró con su pedido hace 2 días
+- WHEN el cliente vuelve a escribir y Jev lee `da_datos`
+- THEN el perfil no se marca y la campaña del 5 % no le llega
+

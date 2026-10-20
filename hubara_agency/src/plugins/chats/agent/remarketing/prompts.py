@@ -198,9 +198,9 @@ def build_remarketing_trigger(
     )
     script_block = f"{sales_campaign_script}\n\n" if sales_campaign_script else ""
     coupon_exception = (
-        " La única excepción es el cupón de bienvenida que trae el GUION DE LA "
-        "CAMPAÑA, tal como viene y solo para su primera compra: no cambies su "
-        "valor ni le sumes envío gratis u otro beneficio."
+        " La única excepción es el cupón que trae el GUION DE LA CAMPAÑA, tal "
+        "como viene (su valor, su fecha límite y sus condiciones): no cambies su "
+        "valor ni su fecha, ni le sumes envío gratis u otro beneficio."
         if sales_campaign_script
         else ""
     )
