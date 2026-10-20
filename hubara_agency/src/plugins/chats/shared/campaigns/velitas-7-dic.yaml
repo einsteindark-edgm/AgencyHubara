@@ -40,7 +40,9 @@ combo_cajas: 2
 # allá: si el cupón vence el 31 de octubre, dice «hasta el 31 de octubre»; si
 # en el dashboard le cambias el «hasta» al 15 de noviembre, dice eso, sin
 # deploy. Vencido o desactivado, no lo ofrece. Nunca se escribe una fecha aquí.
-cupon: BIENVENIDA
+# Es un cupón propio de la campaña (decisión del operador, 2026-10-20): así la
+# fecha límite no vence el cupón de bienvenida de toda la tienda.
+cupon: VELITAS5
 # El toque de remarketing que lleva la oferta del cupón, solo para quien tuvo
 # intención de compra y no compró (eligió un producto, dio datos, aplazó o
 # confirmó: lo que leyó Jev en sus mensajes, o un pedido a medias).

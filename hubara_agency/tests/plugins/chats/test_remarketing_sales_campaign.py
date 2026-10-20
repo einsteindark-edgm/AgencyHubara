@@ -378,3 +378,19 @@ async def test_only_the_touches_that_reached_the_customer_count(_isolate_vault_d
 
     assert ("BIENVENIDA" in ctx.sales_campaign_script) is offered
 
+
+async def test_a_coupon_for_everyone_reaches_who_bought_before(_isolate_vault_dir, monkeypatch, _env) -> None:
+    """VELITAS5 (cupón propio de la campaña, 2026-10-20) puede no ser de primera
+    compra: el toque con la oferta también le llega a quien ya compró."""
+    from temporalio.testing import ActivityEnvironment
+
+    context_mod, campaign = _env
+    monkeypatch.setattr(context_mod, "get_promotions_port", lambda: _Promotions(found=True, first_purchase_only=False))
+    sid = "wa_10000000030"
+    _seed(_isolate_vault_dir, sid, stamped=True, touch=campaign.toque_oferta, intent=True, bought_before=True)
+
+    ctx = await ActivityEnvironment().run(context_mod.read_remarketing_context_activity, sid)
+
+    offer = next(x for x in ctx.sales_campaign_script.splitlines() if "BIENVENIDA" in x)
+    assert "primera compra" not in offer
+

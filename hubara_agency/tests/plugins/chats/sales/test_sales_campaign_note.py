@@ -259,6 +259,26 @@ async def test_a_customer_who_bought_before_is_not_offered_a_first_purchase_coup
     assert "acaba de aplazar" not in _script(notes[1]) and "BIENVENIDA" not in _script(notes[1])
 
 
+@pytest.mark.asyncio
+async def test_a_coupon_for_everyone_is_offered_to_who_bought_before(monkeypatch) -> None:
+    """El cupón propio de la campaña (VELITAS5, decisión del operador del
+    2026-10-20) puede no ser de primera compra: entonces también le llega a
+    quien ya compró, sin la frase «solo en su primera compra»."""
+    def _bought_before(store: FakeMetadataStore) -> None:
+        (sid,) = store.store
+        old = {"episode_id": "ep_000", "started_at_ms": 1, "closed_at_ms": 2, "closing_tag": "COMPRA_EXITOSA",
+               "order_id": "order_old"}
+        store.store[sid]["episodes"].insert(0, old)
+
+    notes, _ = await _conversation(
+        monkeypatch, _live_coupon(first_purchase_only=False), PREFILLED, "Lo pienso y te aviso", before=_bought_before
+    )
+
+    now = next(x for x in _script(notes[1]).splitlines() if x.startswith("AHORA"))
+    assert "BIENVENIDA" in now and f"hasta el {LAST_DAY.day} de " in now
+    assert "primera compra" not in now and "list_promotions" not in now
+
+
 
 # ── revisión del 2026-10-20 ──────────────────────────────────────────────────
 
