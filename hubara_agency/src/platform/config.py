@@ -190,7 +190,12 @@ TEMPORAL_API_KEY = os.getenv("TEMPORAL_API_KEY", "")
 
 # Modelos y Proveedores Base
 DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "deepseek/deepseek-v4-flash")
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "mispolainas")
+# La llave del proxy LLM NO se lee acá: `llm_chat` la toma del entorno del
+# worker al llamar (`LLMConfig.api_key_env`). Si el `LLMConfig` la llevara,
+# quedaría en la historia de Temporal Cloud (cada input de `build_prompt`,
+# `llm_chat` y `record_turn`, y el resultado del bootstrap). Guard:
+# tests/plugins/test_llm_key_not_in_temporal_history.py.
+LLM_API_KEY_ENV = "DEEPSEEK_API_KEY"
 API_BASE_LLMLITE = os.getenv("API_BASE_LLMLITE", "http://localhost:4000")
 
 # Modelo para tareas de SÍNTESIS corta de texto (no-agente, no-reasoning):
