@@ -3,8 +3,9 @@
 
 Cubren los caminos defensivos pre-mortem:
   - terminate falla por uno → sigue con el otro.
-  - start_workflow race con WorkflowAlreadyStartedError → swallow.
+  - start_workflow con WorkflowAlreadyStartedError → swallow.
   - terminate race entre describe y terminate → swallow + sigue.
+  - el reemplazo del remarketing es UN start con TERMINATE_EXISTING.
 """
 from __future__ import annotations
 
@@ -41,8 +42,10 @@ class _Handle:
         self._describe_raises = describe_raises
         self._terminate_raises = terminate_raises
         self.terminated = False
+        self.describe_calls = 0
 
     async def describe(self) -> _Desc:
+        self.describe_calls += 1
         if self._describe_raises is not None:
             raise self._describe_raises
         return _Desc(self._describe_status)
@@ -204,7 +207,11 @@ async def test_start_remarketing_arranca_limpio_sin_previo():
 
 @pytest.mark.asyncio
 async def test_start_remarketing_termina_zombie_previo():
-    """Con zombie RUNNING, lo terminamos antes de arrancar el nuevo."""
+    """Con zombie RUNNING, el nuevo lo reemplaza: el server lo termina en el
+    mismo start (TERMINATE_EXISTING). Ya no hay terminate del lado del cliente
+    — ni la carrera describe → terminate que tenía su propio test."""
+    from temporalio.common import WorkflowIDConflictPolicy
+
     zombie = _Handle()
     client = _Client(handles={"remarketing-wa_z": zombie})
     await start_remarketing_for_session(
@@ -212,33 +219,15 @@ async def test_start_remarketing_termina_zombie_previo():
         session_id="wa_z",
         motivo="zombie test",
     )
-    assert zombie.terminated is True
-    assert len(client.start_calls) == 1
-
-
-@pytest.mark.asyncio
-async def test_start_remarketing_swallows_terminate_race():
-    """Si el zombie reporta RUNNING pero terminate falla (race a COMPLETED
-    entre describe y terminate), igualmente arrancamos el nuevo workflow."""
-    zombie = _Handle(
-        terminate_raises=RPCError(
-            "workflow already closed", RPCStatusCode.NOT_FOUND, b""
-        ),
-    )
-    client = _Client(handles={"remarketing-wa_r": zombie})
-    await start_remarketing_for_session(
-        client,
-        session_id="wa_r",
-        motivo="race test",
-    )
-    # No explotó. start_workflow corrió.
-    assert len(client.start_calls) == 1
+    assert [c["kwargs"].get("id_conflict_policy") for c in client.start_calls] == [
+        WorkflowIDConflictPolicy.TERMINATE_EXISTING
+    ]
 
 
 @pytest.mark.asyncio
 async def test_start_remarketing_swallows_already_started_race():
-    """Si entre nuestro terminate y start_workflow otro caller arrancó uno,
-    swallow WorkflowAlreadyStartedError — la sesión está cubierta."""
+    """Un server que no honra `id_conflict_policy` (lo trata como FAIL) responde
+    WorkflowAlreadyStartedError: swallow — la sesión está cubierta."""
     client = _Client()
     client.start_raises = WorkflowAlreadyStartedError(
         "remarketing-wa_q", "RemarketingWorkflow"
@@ -251,3 +240,25 @@ async def test_start_remarketing_swallows_already_started_race():
     )
     # Llamamos start_workflow una vez aunque haya explotado.
     assert len(client.start_calls) == 1
+
+
+
+@pytest.mark.asyncio
+async def test_start_remarketing_replaces_in_one_start_with_terminate_existing():
+    """describe → terminate → start era tres RPCs con carrera entre cada uno.
+    Ahora el server reemplaza al zombie en el mismo start (TERMINATE_EXISTING),
+    con el start_delay de siempre para el nuevo."""
+    from datetime import timedelta
+
+    from temporalio.common import WorkflowIDConflictPolicy
+
+    zombie = _Handle()
+    client = _Client(handles={"remarketing-wa_z": zombie})
+    await start_remarketing_for_session(client, session_id="wa_z", motivo="zombie", delay_seconds=90)
+
+    [call] = client.start_calls
+    assert call["kwargs"].get("id_conflict_policy") == WorkflowIDConflictPolicy.TERMINATE_EXISTING
+    assert call["kwargs"]["start_delay"] == timedelta(seconds=90)
+    assert zombie.describe_calls == 0 and zombie.terminated is False, (
+        "el reemplazo lo hace el server en el start, no describe+terminate del cliente"
+    )

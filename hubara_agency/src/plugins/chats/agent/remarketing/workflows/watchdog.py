@@ -197,6 +197,9 @@ class ServiceWindowWatchdogWorkflow:
                     eligibility.resolved_template_variables or {},
                 ],
                 start_to_close_timeout=timedelta(seconds=60),
+                # El envío late (`@with_heartbeat`): si el worker muere a
+                # mitad, el reintento sale a los 30 s (premortem 2026-10-16).
+                heartbeat_timeout=timedelta(seconds=30),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
         except Exception as exc:

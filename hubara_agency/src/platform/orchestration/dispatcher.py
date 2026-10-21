@@ -54,7 +54,8 @@ from typing import Any
 
 import structlog
 from temporalio import activity
-from temporalio.client import Client, WorkflowExecutionStatus
+from temporalio.client import Client
+from temporalio.common import WorkflowIDConflictPolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -75,7 +76,11 @@ class DispatchedTransition:
     target_worker: str
     target_workflow: str
     workflow_id: str
-    outcome: str  # "started" | "signaled" | "noop_already_running" | "raced_already_started" | "noop_target_not_found"
+    # "started" | "signaled" | "signaled_with_start" | "noop_already_running" |
+    # "raced_already_started" | "noop_target_not_found". `noop_already_running`
+    # (ensure_running) sale de la respuesta del server al start con USE_EXISTING
+    # (`_started_new_run`); si el SDK no la trae, el outcome es "started".
+    outcome: str
 
 
 @dataclass(frozen=True)
@@ -119,7 +124,7 @@ async def dispatch_envelope_with_client(
     inside a workflow. Using the activity from there would require spinning
     up a wrapper workflow just to call one activity, defeating the purpose.
 
-    All side effects (start_workflow / signal / terminate-and-replace) go
+    All side effects (start_workflow / signal / start-with-replace) go
     through `_execute_action`, exactly like the activity. Errors at the
     level of an individual transition propagate up — same semantics as the
     activity (no per-transition swallow).
@@ -232,8 +237,12 @@ async def dispatch_event_activity(envelope: EventEnvelope) -> DispatchResult:
         3. For each match, execute ``action`` via Temporal:
               - ``start_workflow``: ``client.start_workflow(name, ...)`` — fails
                 with WorkflowAlreadyStartedError → caught, recorded as raced.
-              - ``start_workflow_with_replace``: terminate RUNNING + start.
-              - ``ensure_running``: if RUNNING → noop, else start.
+              - ``start_workflow_with_replace``: ONE start with
+                ``id_conflict_policy=TERMINATE_EXISTING`` (the server terminates
+                the RUNNING one and starts the new one atomically).
+              - ``ensure_running``: ONE start with
+                ``id_conflict_policy=USE_EXISTING`` (RUNNING → reused, outcome
+                ``noop_already_running``; absent → started).
               - ``signal``: signal handler by name on existing handle.
 
     All errors are logged but non-fatal at the level of an individual
@@ -243,12 +252,14 @@ async def dispatch_event_activity(envelope: EventEnvelope) -> DispatchResult:
     handles transient failures of the dispatcher as a whole.
 
     Implementation: thin wrapper around ``dispatch_envelope_with_client``
-    that acquires the Temporal client first. HTTP callers can use the
-    underlying function directly.
+    that acquires the Temporal client first — the worker's own client
+    (``activity.client()``), or the process client when there is none (tests
+    calling the function directly). HTTP callers can use the underlying
+    function directly.
     """
-    from src.platform.temporal.client import get_temporal_client
+    from src.platform.temporal.client import get_activity_temporal_client
 
-    client = await get_temporal_client()
+    client = await get_activity_temporal_client()
     return await dispatch_envelope_with_client(envelope, client)
 
 
@@ -442,44 +453,73 @@ async def _execute_action(
         )
         return "signaled_with_start"
 
-    if via == "ensure_running":
-        if await _is_running(client, workflow_id):
-            log.info(
-                "orchestration.dispatch_event: target already RUNNING, noop",
-                workflow_id=workflow_id,
-            )
-            return "noop_already_running"
-        # fall through to start
-
-    if via == "start_workflow_with_replace":
-        await _terminate_if_running(
-            client, workflow_id, reason="Replaced by orchestration transition"
-        )
-
+    # start_workflow / ensure_running / start_workflow_with_replace: UN start
+    # atómico. Qué pasa si el id ya corre lo resuelve el server con
+    # `id_conflict_policy` (antes: describe → start y describe → terminate →
+    # start, con carrera entre cada RPC).
     try:
-        await client.start_workflow(
+        handle = await client.start_workflow(
             target_workflow,
             target_input,
             id=workflow_id,
             task_queue=task_queue,
             start_delay=start_delay if start_delay > timedelta(seconds=0) else None,
+            id_conflict_policy=_conflict_policy_for(via),
         )
-        log.info(
-            "orchestration.dispatch_event: started",
-            workflow_id=workflow_id,
-            target_workflow=target_workflow,
-            task_queue=task_queue,
-            start_delay_seconds=int(start_delay.total_seconds()),
-        )
-        return "started"
     except WorkflowAlreadyStartedError:
-        # Race between is_running check and start_workflow (or another
-        # caller raced us). The target is covered either way; record it.
+        # `start_workflow` pelado (FAIL) con el target ya corriendo, o un server
+        # que no honra `id_conflict_policy`. El target está cubierto igual.
         log.info(
             "orchestration.dispatch_event: race — target already started",
             workflow_id=workflow_id,
         )
         return "raced_already_started"
+    if via == "ensure_running" and _started_new_run(handle) is False:
+        log.info(
+            "orchestration.dispatch_event: target already RUNNING, noop",
+            workflow_id=workflow_id,
+        )
+        return "noop_already_running"
+    log.info(
+        "orchestration.dispatch_event: started",
+        workflow_id=workflow_id,
+        target_workflow=target_workflow,
+        task_queue=task_queue,
+        start_delay_seconds=int(start_delay.total_seconds()),
+    )
+    return "started"
+
+
+def _conflict_policy_for(via: str) -> WorkflowIDConflictPolicy:
+    """Qué hace el start si el workflow_id ya tiene una ejecución RUNNING.
+
+    * ``ensure_running`` → ``USE_EXISTING``: la que corre se queda (no-op).
+    * ``start_workflow_with_replace`` → ``TERMINATE_EXISTING``: el server
+      termina la que corre y arranca la nueva en el mismo RPC; compatible con
+      ``start_delay`` (la nueva espera su delay, la vieja ya no corre).
+    * ``start_workflow`` → ``FAIL``: ``WorkflowAlreadyStartedError`` →
+      ``raced_already_started``.
+    """
+    if via == "ensure_running":
+        return WorkflowIDConflictPolicy.USE_EXISTING
+    if via == "start_workflow_with_replace":
+        return WorkflowIDConflictPolicy.TERMINATE_EXISTING
+    return WorkflowIDConflictPolicy.FAIL
+
+
+def _started_new_run(handle: Any) -> bool | None:
+    """¿El start creó una ejecución nueva (True) o reusó la que corría (False)?
+
+    Lo dice el server en ``StartWorkflowExecutionResponse.started``. temporalio
+    1.25 no lo expone en público: el handle guarda la respuesta en
+    ``_start_workflow_response``. Se lee defensivo — si falta (otro SDK, un
+    fake, signal-with-start) devuelve ``None`` y el outcome queda ``started``
+    (el contrato previo cuando arrancaba). Solo alimenta la etiqueta del
+    outcome y el log; no cambia qué se ejecuta.
+    """
+    response = getattr(handle, "_start_workflow_response", None)
+    started = getattr(response, "started", None)
+    return started if isinstance(started, bool) else None
 
 
 def _session_of(target_input: Any) -> str | None:
@@ -501,38 +541,3 @@ def _is_not_found(exc: RPCError) -> bool:
         return True
     msg = str(getattr(exc, "message", "") or exc).lower()
     return "no rows in result set" in msg or "workflow not found" in msg
-
-
-async def _is_running(client: Client, workflow_id: str) -> bool:
-    """Best-effort RUNNING check. Returns False on any RPC/race error."""
-    try:
-        handle = client.get_workflow_handle(workflow_id)
-        desc = await handle.describe()
-        return desc.status == WorkflowExecutionStatus.RUNNING
-    except (RPCError, RuntimeError):
-        return False
-
-
-async def _terminate_if_running(
-    client: Client, workflow_id: str, *, reason: str
-) -> None:
-    """Best-effort terminate. Captures races between describe and terminate."""
-    try:
-        handle = client.get_workflow_handle(workflow_id)
-        desc = await handle.describe()
-        if desc.status == WorkflowExecutionStatus.RUNNING:
-            try:
-                await handle.terminate(reason=reason)
-                log.info(
-                    "orchestration.dispatch_event: terminated existing",
-                    workflow_id=workflow_id,
-                )
-            except Exception as exc:
-                log.info(
-                    "orchestration.dispatch_event: terminate race",
-                    workflow_id=workflow_id,
-                    error=str(exc),
-                )
-    except RPCError:
-        # Doesn't exist — fine, start_workflow downstream will create fresh.
-        pass

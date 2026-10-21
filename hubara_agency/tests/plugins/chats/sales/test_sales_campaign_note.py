@@ -196,8 +196,10 @@ def _messages(*texts: str) -> list[WhatsAppMessage]:
 
 
 async def _conversation(
-    monkeypatch, promotion, *texts: str, before=None, readings=None
+    monkeypatch, promotion, *texts: str, before=None, readings=None, hooks=None
 ) -> tuple[list[list[str]], FakeMetadataStore]:
+    """`before`: antes del segundo mensaje. `hooks`: {índice del mensaje: lo
+    que pasa justo antes de que llegue} (la ruta, una respuesta nuestra)."""
     import src.sdk.connectorkit as connectorkit
 
     monkeypatch.setattr(connectorkit, "get_promotions_port", lambda: promotion if hasattr(promotion, "get_by_code") else _Promotions(promotion))
@@ -213,6 +215,8 @@ async def _conversation(
     for i, message in enumerate(_messages(*texts)):
         if i == 1 and before is not None:
             before(store)
+        if hooks and i in hooks:
+            hooks[i](store)
         await ingest.execute(message)
         notes.append(list(loader.calls[-1].extra_context or []))
     return notes, store
@@ -315,18 +319,20 @@ async def test_with_a_coupon_already_applied_no_other_is_offered(monkeypatch) ->
 
 
 class _JevReadsDeferral:
-    """El proveedor de lecturas con Jev: «hay tiempo todavía» no lo lee la
-    regla de hoy, Jev sí (capacidad `compra`, «aplaza»)."""
+    """El proveedor de lecturas con Jev: «hay tiempo todavía» o «voy a
+    esperar» no los lee la regla de hoy, Jev sí (capacidad `compra`,
+    «aplaza»); «sí, quiero…» es una compra («elige»)."""
 
     async def read(self, inbound):
         from src.plugins.chats.agent.sales.decisions.readings import Readings
 
-        deferring = "hay tiempo" in (inbound.text or "").lower()
-        compra = {"capability": "compra", "by": "jev", "provider": "jev",
-                  "value": ["deferral" if deferring else None, "text"],
-                  "answers": [{"q": "compra.que_hace", "choice": "aplaza" if deferring else "pregunta", "confidence": 0.9}]}
-        return Readings(purchase=("deferral" if deferring else None, "text"), deferral=None, courtesy=False,
-                        opt_out=False, verdicts=(compra,))
+        text = (inbound.text or "").lower()
+        deferring = any(p in text for p in ("hay tiempo", "voy a esperar"))
+        kind = "deferral" if deferring else ("affirmation" if "sí, quiero" in text else None)
+        choice = {"deferral": "aplaza", "affirmation": "elige"}.get(kind or "", "pregunta")
+        compra = {"capability": "compra", "by": "jev", "provider": "jev", "value": [kind, "text"],
+                  "answers": [{"q": "compra.que_hace", "choice": choice, "confidence": 0.9}]}
+        return Readings(purchase=(kind, "text"), deferral=None, courtesy=False, opt_out=False, verdicts=(compra,))
 
 
 @pytest.mark.asyncio
@@ -336,6 +342,65 @@ async def test_a_deferral_only_jev_reads_also_brings_the_offer(monkeypatch) -> N
     )
 
     assert "acaba de aplazar" in _script(notes[1])
+
+
+# ── caso del 2026-10-21 (velitas, respuesta al toque 2 de remarketing) ──────
+#
+# «No gracias voy a esperar» contestando al toque y, 6 s después, «Feliz día y
+# bendiciones». El aplazamiento entró por la ruta de remarketing (ahí no se
+# ofrece: sus notas no le llegan a Ventas) y la despedida, sin señal, lo tapaba
+# para todo lo que viniera después. Nadie ofreció el 5 %.
+
+
+def _route(route: str):
+    def _set(store: FakeMetadataStore) -> None:
+        (sid,) = store.store
+        store.store[sid]["active_route"] = route
+
+    return _set
+
+
+def _we_replied(store: FakeMetadataStore) -> None:
+    import time
+
+    (sid,) = store.store
+    _route("ventas")(store)
+    store.store[sid]["last_outbound"] = {"sent_at_ms": int(time.time() * 1000) + 1, "kind": "text"}
+
+
+@pytest.mark.asyncio
+async def test_a_deferral_written_to_remarketing_is_offered_when_the_next_message_reaches_ventas(monkeypatch) -> None:
+    notes, store = await _conversation(
+        monkeypatch, _live_coupon(), PREFILLED, "No gracias voy a esperar", "Feliz día y bendiciones",
+        readings=_JevReadsDeferral(), hooks={1: _route("remarketing"), 2: _route("ventas")},
+    )
+
+    assert "acaba de aplazar" in _script(notes[2]) and _offered(store) is not None
+    # Las guardas del cierre siguen leyendo solo el último mensaje.
+    from src.plugins.chats.shared.purchase_signals import is_current_inbound_deferral
+
+    (sid,) = store.store
+    assert is_current_inbound_deferral(store.store[sid]) is False
+
+
+@pytest.mark.asyncio
+async def test_after_our_reply_an_old_deferral_does_not_bring_the_offer(monkeypatch) -> None:
+    notes, store = await _conversation(
+        monkeypatch, _live_coupon(), PREFILLED, "No gracias voy a esperar", "Feliz día y bendiciones",
+        readings=_JevReadsDeferral(), hooks={1: _route("remarketing"), 2: _we_replied},
+    )
+
+    assert "acaba de aplazar" not in _script(notes[2]) and _offered(store) is None
+
+
+@pytest.mark.asyncio
+async def test_a_yes_after_the_deferral_is_not_answered_with_the_offer(monkeypatch) -> None:
+    notes, store = await _conversation(
+        monkeypatch, _live_coupon(), PREFILLED, "No gracias voy a esperar", "Bueno, sí, quiero el combo",
+        readings=_JevReadsDeferral(), hooks={1: _route("remarketing"), 2: _route("ventas")},
+    )
+
+    assert "acaba de aplazar" not in _script(notes[2]) and _offered(store) is None
 
 
 class _SlowPromotions:

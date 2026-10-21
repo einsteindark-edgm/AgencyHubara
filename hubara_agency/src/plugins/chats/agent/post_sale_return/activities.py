@@ -32,6 +32,7 @@ from src.plugins.chats.agent.post_sale_return.use_cases import (
 from src.sdk.runtime import (
     WORKSPACE_VAULT_DIR,
     FilesystemMetadataStore,
+    get_activity_temporal_client,
     get_temporal_client,
 )
 
@@ -177,7 +178,9 @@ async def return_post_sale_session_to_sales_activity(session_id: str) -> str:
     Reintentos de Temporal son seguros: tras un return exitoso el predicado
     ya no matchea y el segundo intento termina en `skipped_state_changed`.
     """
-    client = await get_temporal_client()
+    # El cliente del worker (`activity.client()`); `get_temporal_client` del
+    # módulo queda como respaldo fuera de un worker.
+    client = await get_activity_temporal_client(fallback=get_temporal_client)
     for workflow_id in (f"session-{session_id}", f"remarketing-{session_id}"):
         if await _robot_running(client, workflow_id):
             activity.logger.info(

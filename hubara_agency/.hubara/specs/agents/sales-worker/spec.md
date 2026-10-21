@@ -2342,11 +2342,19 @@ campaña) y, si es de primera compra, solo a quien no ha comprado. La fecha
 que dice el bot MUST ser la del cupón en Medusa (último día = `ends_at` menos
 un día, hora de Bogotá) y solo si vence en 45 días o menos; sin una fecha
 que pueda decir, la nota MUST prohibir mencionar fechas, escasez o cupos.
-Cuando el último mensaje es un aplazamiento («te aviso», «hay tiempo»; lo lee
-Jev con `compra`), la nota del aplazamiento SHALL pedir contar la oferta en
-esa misma frase, una vez por episodio y por fecha (`sales_campaign_offer`);
-ya dicha, solo se repite si el cliente pregunta por descuentos. Con un cupón
-ya aplicado, o con la conversación en manos del remarketing, no se ofrece.
+Cuando el cliente aplazó desde nuestra última respuesta («te aviso», «hay
+tiempo»; lo lee Jev con `compra`), aunque después haya escrito algo sin señal
+de compra («Feliz día»), el guion SHALL pedir contar la oferta en la
+respuesta breve, una vez por episodio y por fecha (`sales_campaign_offer`); ya
+dicha, solo se repite si el cliente pregunta por descuentos. El aplazamiento
+lo guarda `last_inbound_deferral`: una compra lo borra y una respuesta nuestra
+lo deja atrás. El resumen del traspaso de remarketing («[EL CLIENTE APLAZÓ]»)
+lee el mismo aplazamiento; las guardas del cierre siguen leyendo solo el
+último mensaje.
+Con un cupón ya aplicado, o mientras el turno lo atiende el remarketing, no se
+ofrece. El turno de traspaso de remarketing a Ventas MUST llevar el guion de
+la campaña y, con ese aplazamiento, la oferta (`read_order_draft_note`, la
+misma regla que el ingest en `use_cases/campaign_turn.py`).
 
 #### Scenario: «Lo pienso y te aviso» con el cupón vigente hasta el 31 de octubre
 
@@ -2359,6 +2367,19 @@ ya aplicado, o con la conversación en manos del remarketing, no se ofrece.
 
 - WHEN el operador cambia el «hasta» del cupón en Marketing → Cupones
 - THEN el bot dice la fecha nueva sin deploy, y como es otra fecha la puede decir otra vez
+
+#### Scenario: Aplaza contestando a un toque de remarketing (2026-10-21)
+
+- GIVEN el toque 2 de remarketing de una conversación de la campaña
+- WHEN el cliente contesta «No gracias voy a esperar» y, 6 s después, «Feliz día y bendiciones»
+- AND remarketing le pasa la conversación a Ventas
+- THEN el turno de traspaso trae el guion con la oferta «hasta el 31 de octubre» y queda marcada como dicha
+- AND si el segundo mensaje entró ya con Ventas, el guion de ese mensaje la trae (una sola vez entre los dos)
+
+#### Scenario: Después de aplazar, el cliente compra o ya le respondimos
+
+- WHEN tras el aplazamiento el cliente escribe «sí, quiero el combo», o nosotros ya le respondimos
+- THEN no se le ofrece el cupón por ese aplazamiento
 
 ### Requirement: El perfil «interesado sin compra» (2026-10-20)
 
