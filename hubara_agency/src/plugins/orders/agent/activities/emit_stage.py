@@ -207,6 +207,20 @@ async def emit_order_stage_activity(
         )
         return "capi_only"
 
+    if shipping_cost:
+        # Envío gratis (operador, 2026-10-20): el valor real del despacho lo
+        # paga la tienda — el aviso al cliente no lo muestra ni lo suma. Si el
+        # pedido no se puede leer, el aviso sale como siempre.
+        try:
+            detail = await get_order_query_port().get(order_id)
+        except Exception as exc:  # noqa: BLE001 — leer el pedido no frena el aviso
+            activity.logger.warning(
+                "emit_order_stage: no pude leer %s para el envío gratis: %s", order_id, exc
+            )
+        else:
+            if detail is not None and getattr(detail.summary, "free_shipping", False):
+                shipping_cost = None
+
     client = await get_temporal_client()
     await dispatch_envelope_with_client(
         envelope_for(

@@ -1,7 +1,9 @@
 /**
- * Schema Zod de GET /api/marketing/segments — los 3 segmentos de audiencia
- * derivados de los tags del clasificador + costo unitario EXPLÍCITO del rate
- * card (USD micros — cost_unit_lesson). Tolerante con `.default()`.
+ * Schema Zod de GET /api/marketing/segments — los segmentos de audiencia:
+ * los que salen de la etiqueta del clasificador (clientes, interesados, fríos)
+ * y los del perfil de la persona (interesados_sin_compra), + costo unitario
+ * EXPLÍCITO del rate card (USD micros — cost_unit_lesson). Tolerante con
+ * `.default()`: un segmento nuevo del backend llega sin cambiar el schema.
  */
 
 import { z } from "zod";

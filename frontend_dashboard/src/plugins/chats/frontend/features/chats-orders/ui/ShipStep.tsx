@@ -23,6 +23,9 @@ interface Props {
   orderTotal: number | null;
   /** Tarifa mínima de envío cobrada al vender (referencia). `null` = no hay. */
   estimatedShipping?: number | null;
+  /** Envío gratis (6 cajas o más de una campaña): el valor real lo paga la
+   *  tienda — queda anotado, pero el total a cobrar no lo suma. */
+  freeShipping?: boolean;
   busy: boolean;
   onConfirm: (extras: ShipExtras) => void;
   onCancel: () => void;
@@ -31,6 +34,7 @@ interface Props {
 export function ShipStep({
   orderTotal,
   estimatedShipping = null,
+  freeShipping = false,
   busy,
   onConfirm,
   onCancel,
@@ -69,6 +73,12 @@ export function ShipStep({
 
   return (
     <div className="order-step" aria-label="Despachar">
+      {freeShipping && (
+        <p className="order-step-hint" data-testid="ship-free">
+          Este pedido tiene envío gratis (6 cajas o más): el valor real del envío
+          lo paga la tienda y no se le cobra al cliente.
+        </p>
+      )}
       <p className="order-step-hint">
         El cliente recibe por WhatsApp el aviso de que su pedido va en camino.
         Escribe el valor REAL del envío: reemplaza a la tarifa estimada y le
@@ -89,7 +99,11 @@ export function ShipStep({
         </div>
       )}
       <label className="order-step-field">
-        <span>Valor del envío real (opcional)</span>
+        <span>
+          {freeShipping
+            ? "Valor del envío real — lo paga la tienda (opcional)"
+            : "Valor del envío real (opcional)"}
+        </span>
         <input
           type="text"
           inputMode="numeric"
@@ -105,7 +119,9 @@ export function ShipStep({
       {knownTotal != null && (
         <div className="order-step-row order-step-total">
           <span>Total</span>
-          <span data-testid="ship-total">{fmtMoney(knownTotal + shippingValue)}</span>
+          <span data-testid="ship-total">
+            {fmtMoney(freeShipping ? knownTotal : knownTotal + shippingValue)}
+          </span>
         </div>
       )}
       <label className="order-step-field">

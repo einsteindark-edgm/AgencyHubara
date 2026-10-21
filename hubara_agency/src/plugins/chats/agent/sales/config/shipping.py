@@ -22,8 +22,11 @@ el cliente sale de estas constantes.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
+from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
+from src.plugins.chats.shared.sales_campaigns import Campaign, FreeShipping, bogota_today, free_shipping_for
 from src.plugins.chats.shared.payment_terms import CASH_ON_DELIVERY_MIN_PRODUCTS_COP as _COD_MIN
 
 SHIPPING_RATE_BOGOTA_COP = 7_900
@@ -99,6 +102,32 @@ def shipping_rate_for_city(city: str | None) -> int:
     return SHIPPING_RATE_NATIONAL_COP
 
 
+def order_shipping(items: Iterable[tuple[str, Any]], city: str | None) -> tuple[int, FreeShipping | None]:
+    """El envío de un pedido que arma el sistema sin el modelo («Crear pedido»
+    del dashboard y la app, el resumen del operador): $0 y el envío gratis si
+    lleva las cajas de una campaña que lo da (operador, 2026-10-20); si no, la
+    tarifa mínima de la ciudad. La misma regla que validan el resumen y el
+    registro."""
+    free = free_shipping_for(items, today=bogota_today())
+    if free is not None:
+        return 0, free
+    return shipping_rate_for_city(city), None
+
+
+def shipping_rates_message(campaign: Campaign | None = None) -> str:
+    """La tarjeta de tarifas (`SHIPPING_RATES_MESSAGE`) y, en una conversación
+    de una campaña con envío gratis desde N cajas (operador, 2026-10-20), el
+    gancho al final: la tarjeta termina el turno cuando preguntan cuánto vale
+    el envío, y es justo cuando hay que decirlo."""
+    minimum = campaign.envio_gratis_desde_cajas if campaign is not None else None
+    if not minimum:
+        return SHIPPING_RATES_MESSAGE
+    return (
+        f"{SHIPPING_RATES_MESSAGE}\n\n🎁 {campaign.nombre}: con {minimum} cajas o más (se pueden mezclar), "
+        "el envío es gratis para todo tu pedido, aunque lleves otros productos."
+    )
+
+
 def _cop(amount: int) -> str:
     return "$" + f"{amount:,}".replace(",", ".")
 
@@ -106,13 +135,15 @@ def _cop(amount: int) -> str:
 # Decisión del operador (2026-09-23): el envío lo cobra la transportadora a su
 # tarifa, SIN descuentos ni "envío gratis". El monto que manda el LLM tiene que
 # ser una tarifa mínima publicada (L-19: un monto del LLM se compara contra la
-# tabla).
+# tabla). Única excepción (operador, 2026-10-20): el envío gratis de una
+# campaña desde N cajas, que decide el sistema (`order_shipping`).
 SHIPPING_RATE_RULE = (
     f"El envío es SIEMPRE una tarifa mínima publicada: {_cop(SHIPPING_RATE_BOGOTA_COP)} "
     f"para Bogotá y municipios cercanos, {_cop(SHIPPING_RATE_NATIONAL_COP)} a nivel "
-    "nacional. No existe envío gratis ni descuento en el envío: lo cobra la "
-    "transportadora. Pasa esa tarifa también con contra entrega (el resumen "
-    "igual dice \"Por confirmar\")."
+    "nacional, salvo el envío gratis de una campaña (lo valida el sistema con las "
+    "cajas del pedido y te lo dice: ahí el envío es 0). No existe otro envío gratis "
+    "ni descuento en el envío: lo cobra la transportadora. Pasa esa tarifa también "
+    "con contra entrega (el resumen igual dice \"Por confirmar\")."
 )
 
 
@@ -123,9 +154,10 @@ SHIPPING_COP_PARAM_DESCRIPTION = (
     f"Tarifa MÍNIMA publicada de envío en COP: {SHIPPING_RATE_BOGOTA_COP} "
     f"({_cop(SHIPPING_RATE_BOGOTA_COP)}) para Bogotá y municipios cercanos, "
     f"{SHIPPING_RATE_NATIONAL_COP} ({_cop(SHIPPING_RATE_NATIONAL_COP)}) a nivel "
-    "nacional. No existe envío gratis: nunca 0. También con contra entrega "
-    "(el resumen igual dice \"Por confirmar\" y el total a registrar es "
-    "subtotal + envío − cupón)."
+    "nacional. No existe envío gratis: nunca 0, salvo cuando el pedido lleva las "
+    "cajas del envío gratis de una campaña (lo valida el sistema y te lo dice): "
+    "ahí 0. También con contra entrega (el resumen igual dice \"Por confirmar\" "
+    "y el total a registrar es subtotal + envío − cupón)."
 )
 
 
