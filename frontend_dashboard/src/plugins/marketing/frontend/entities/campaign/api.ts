@@ -45,7 +45,9 @@ function asStatus(s: string): CampaignStatus {
     s === "draft" ||
     s === "scheduled" ||
     s === "sending" ||
+    s === "paused" ||
     s === "sent" ||
+    s === "cancelled" ||
     s === "failed"
   )
     return s;
@@ -75,6 +77,20 @@ export function mapBackendCampaign(b: BackendCampaign): Campaign {
     updatedAtMs: b.updated_at_ms,
     sentAtMs: b.sent_at_ms,
     failureReason: b.failure_reason,
+    progress:
+      b.progress === null
+        ? null
+        : {
+            total: b.progress.total,
+            processed: b.progress.processed,
+            sent: b.progress.sent,
+            failed: b.progress.failed,
+            optedOut: b.progress.opted_out,
+            skipped: b.progress.skipped,
+            state: b.progress.state,
+            pauseReason: b.progress.pause_reason,
+            resumeAtMs: b.progress.resume_at_ms,
+          },
     sendResult:
       b.send_result === null
         ? null
@@ -256,9 +272,10 @@ export function useSendCampaign(campaignId: string) {
   });
 }
 
-/** POST /campaigns/{id}/cancel — aborta una campaña PROGRAMADA: cancela el
- *  workflow encolado y la devuelve a borrador (re-programar = enviar de
- *  nuevo). 409 si la campaña no está programada. */
+/** POST /campaigns/{id}/cancel — programada: cancela el workflow encolado
+ *  y la devuelve a borrador (re-programar = enviar de nuevo). Enviándose o
+ *  pausada: el lote en vuelo termina y la campaña queda cancelada con lo que
+ *  alcanzó a salir. 409 en cualquier otro estado. */
 export function useCancelCampaign(campaignId: string) {
   const qc = useQueryClient();
   return useMutation<void, Error, void>({
@@ -272,6 +289,33 @@ export function useCancelCampaign(campaignId: string) {
       qc.invalidateQueries({ queryKey: campaignKeys.list() });
     },
   });
+}
+
+/** POST /campaigns/{id}/{pause|resume} — controla el envío por lotes en
+ *  curso. 409 con el motivo si no aplica (ya pausada, versión anterior…). */
+function useSendControl(campaignId: string, action: "pause" | "resume") {
+  const qc = useQueryClient();
+  return useMutation<void, Error, void>({
+    mutationFn: async () => {
+      await apiClient.post<unknown>(
+        `/api/marketing/campaigns/${encodeURIComponent(campaignId)}/${action}`,
+        {},
+      );
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: campaignKeys.list() });
+    },
+  });
+}
+
+/** Pausa el envío: el lote en vuelo termina y no sale otro hasta reanudar. */
+export function usePauseCampaign(campaignId: string) {
+  return useSendControl(campaignId, "pause");
+}
+
+/** Reanuda un envío pausado desde el lote siguiente. */
+export function useResumeCampaign(campaignId: string) {
+  return useSendControl(campaignId, "resume");
 }
 
 /** POST /campaigns/{id}/test — prueba a UN número del operador. 404 con

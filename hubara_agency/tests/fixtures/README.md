@@ -37,10 +37,28 @@ sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
 | `history_sales_v2_promises_round_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, control positivo con el marcador de `promised-actions-round-v1` |
 | `history_sales_v2_carry_reads_prepatch_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, código anterior a `restart-carries-reads-v1` (gate forzado a «no») |
 | `history_sales_v2_carry_reads_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, control positivo con el marcador de `restart-carries-reads-v1` |
+| `history_campaign_send_v1.json` | `CampaignSendWorkflow` | sintética, el V1 del envío de campañas tal como quedó al salir el V2 (2026-10-15) |
+| `history_campaign_send_v2.json` | `CampaignSendWorkflowV2` | sintética, envío por lotes con pausa y reanudación (Updates) |
+| `history_campaign_send_batch_v1.json` | `CampaignSendBatchWorkflow` | sintética, lote hijo de la anterior: un envío y una baja de Meta (131050) |
+| `history_campaign_send_batch_failed_v1.json` | `CampaignSendBatchWorkflow` | sintética, lote hijo de la anterior: un envío fallido |
+| `history_campaign_send_v2_continue_as_new.json` | `CampaignSendWorkflowV2` | sintética, primera corrida de un envío que se renueva (continue-as-new) |
+| `history_campaign_send_v2_cancel.json` | `CampaignSendWorkflowV2` | sintética, cancelación por Update con un lote en vuelo |
+| `history_campaign_send_v2_quiet_hours.json` | `CampaignSendWorkflowV2` | sintética, lote en horario de silencio: espera (timer) y sigue solo |
 | `history_sales_continue_as_new_loop_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | sintética, regla vieja de continue-as-new (código de 16c03158) |
 | `history_sales_v2_continue_as_new_loop_prepatch_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, regla vieja de continue-as-new (código de 16c03158) |
 | `history_eta_continue_as_new_loop_prepatch_v1.json` | `HubaraEtaSessionWorkflow` | sintética, regla vieja de continue-as-new (código de 16c03158) |
 | `history_eta_rejected_text_prepatch_v1.json` | `HubaraEtaSessionWorkflow` | sintética, código actual con `eta-rejected-text-as-template-v1` forzado a «no» |
+
+**`history_campaign_send_v1.json` está CONGELADA y NO se regenera.** Es el
+`CampaignSendWorkflow` (V1) tal como quedó cuando salió `CampaignSendWorkflowV2`
+(auditoría de Temporal, 2026-10-15): las campañas programadas con el tipo viejo
+antes del deploy arrancan en el worker nuevo y tienen que terminar. Se borra
+junto con el V1, cuando ya no quede ninguna campaña programada con ese tipo. Las
+del V2 y sus lotes se regeneran con un `_v<N>` nuevo si cambia la forma a
+propósito. Campaña `mkt-1`, sesiones `wa_<n>` inventadas, identidad del worker →
+`fixture-worker`, trazas de los fallos vacías. Procedencia en
+`generate_campaign_send_fixtures.py`; replay en
+`tests/plugins/marketing/test_replay_campaign_send.py`.
 
 **`history_sales_v2_promises_prepatch_v1.json` y `history_sales_v2_promises_round_v1.json`
 también están CONGELADAS y NO se regeneran.** La ronda de lo prometido (incidente

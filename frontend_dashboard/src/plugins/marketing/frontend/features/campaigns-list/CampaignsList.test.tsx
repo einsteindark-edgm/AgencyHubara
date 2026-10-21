@@ -117,6 +117,28 @@ describe("CampaignsList", () => {
     expect(getByText("No se envió: el cupón PAPA20 está pausado.")).toBeTruthy();
   });
 
+  it("una cancelada dice por qué y las pausadas tienen su filtro", () => {
+    const cancelled = makeCampaign({
+      id: "mkt-4",
+      name: "Cancelada sola",
+      status: "cancelled",
+      failureReason: "Estuvo pausada más de 7 días sin reanudarse: se canceló sola.",
+    });
+    const paused = makeCampaign({ id: "mkt-5", name: "Frenada", status: "paused" });
+    const { getByText, getByRole, queryByText } = render(
+      <CampaignsList
+        campaigns={[cancelled, paused]}
+        selectedId={null}
+        onSelect={vi.fn()}
+        onCreated={vi.fn()}
+      />,
+    );
+    expect(getByText(/se canceló sola/)).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: /^Pausada \d+$/ }));
+    expect(queryByText("Cancelada sola")).toBeNull();
+    expect(queryByText("Frenada")).toBeTruthy();
+  });
+
   it("filtra por estado con las pills", () => {
     const { getByRole, queryByText } = render(
       <CampaignsList

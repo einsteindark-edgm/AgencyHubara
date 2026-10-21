@@ -167,10 +167,13 @@ function CarouselPreview({ handles }: { handles: string[] }) {
 
 function ValidationPanel({ campaign }: { campaign: Campaign }) {
   const items = campaignChecklist(campaign);
-  const { data: stats } = useCampaignStats(
-    campaign.id,
-    campaign.status === "sent",
-  );
+  // Enviada, cancelada o fallida a mitad: si hay resultado, se muestra lo que
+  // alcanzó a salir y lo que costó.
+  const hasResult =
+    campaign.status === "sent" ||
+    campaign.status === "cancelled" ||
+    campaign.sendResult !== null;
+  const { data: stats } = useCampaignStats(campaign.id, hasResult);
   useCampaignOrdersEvents();
 
   return (
@@ -201,7 +204,7 @@ function ValidationPanel({ campaign }: { campaign: Campaign }) {
         ))}
       </ul>
 
-      {campaign.status === "sent" ? (
+      {hasResult ? (
         stats ? (
           <div className="rounded-lg border border-line bg-sidebar/40 p-3">
             <h3 className="mb-2 text-[11px] font-bold uppercase tracking-wide text-fg-muted">
