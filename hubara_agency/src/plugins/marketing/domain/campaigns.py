@@ -35,6 +35,17 @@ ALL_SEGMENTS: tuple[str, ...] = (
     SEGMENT_FRIOS,
 )
 
+#: Segmento que sale del PERFIL de la persona, no de la etiqueta de la
+#: conversación (operador, 2026-10-20): quiso comprar y no compró desde
+#: entonces. Lo marca Ventas (`chats/shared/customer_profiles.py`, con lo que
+#: lee Jev) y la pasada `scripts/backfill_interest_profile.py`. Se suma a los
+#: segmentos de la etiqueta sin repetir a nadie.
+SEGMENT_INTERESADOS_SIN_COMPRA = "interesados_sin_compra"
+PROFILE_SEGMENTS: tuple[str, ...] = (SEGMENT_INTERESADOS_SIN_COMPRA,)
+#: El contrato con Ventas: el metadata de la persona.
+_PROFILE_KEY = "profile_tags"
+_PROFILE_INTERESADO = "interesado_sin_compra"
+
 _TAG_TO_SEGMENT: dict[str, str] = {
     "COMPRA_EXITOSA": SEGMENT_CLIENTES,
     "INTERESADO": SEGMENT_INTERESADOS,
@@ -57,6 +68,61 @@ def segment_for_metadata(metadata: dict[str, Any]) -> str | None:
     if metadata.get("marketing_opt_out"):
         return None
     return _TAG_TO_SEGMENT.get(metadata.get("tag"), SEGMENT_FRIOS)
+
+
+#: Cierres con pedido y la ventana de posventa (las de Ventas,
+#: `chats/.../after_purchase.py`): quien vuelve a escribir dentro de ella
+#: después de comprar acaba de comprar.
+_CLOSED_WITH_ORDER = frozenset({"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"})
+_POSTSALE_MS = 30 * 86_400_000
+
+
+def _bought(episode: dict[str, Any]) -> bool:
+    return bool(episode.get("order_id") or episode.get("after_order"))
+
+
+def _post_sale(episodes: list[dict[str, Any]], index: int) -> bool:
+    if episodes[index].get("after_order"):
+        return True
+    if index == 0:
+        return False
+    previous = episodes[index - 1]
+    if not (previous.get("order_id") or previous.get("closing_tag") in _CLOSED_WITH_ORDER):
+        return False
+    closed, started = previous.get("closed_at_ms"), episodes[index].get("started_at_ms")
+    if not isinstance(closed, (int, float)) or not isinstance(started, (int, float)):
+        return True
+    return started - closed <= _POSTSALE_MS
+
+
+def interested_without_purchase(metadata: dict[str, Any]) -> bool:
+    """¿Quiso comprar y no compró desde entonces? El perfil marca el episodio
+    en que mostró la intención; un pedido en ese episodio o en uno posterior
+    (por el chat o con «Crear pedido»; un pedido de la web no se pega a la
+    conversación) lo saca, y también que ese episodio sea posventa (acaba de
+    comprar: «ya te transferí», revisión del 2026-10-20)."""
+    profiles = metadata.get(_PROFILE_KEY)
+    mark = profiles.get(_PROFILE_INTERESADO) if isinstance(profiles, dict) else None
+    if not isinstance(mark, dict):
+        return False
+    episodes = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
+    index = next((i for i, e in enumerate(episodes) if e.get("episode_id") == mark.get("episode_id")), None)
+    if index is None:
+        # El episodio de la marca ya no está (una marca vieja o un episodio que
+        # se descartó): el que estaba en curso a la hora de la marca.
+        at = mark.get("at_ms") if isinstance(mark.get("at_ms"), int) else 0
+        started = [i for i, e in enumerate(episodes) if isinstance(e.get("started_at_ms"), int) and e["started_at_ms"] <= at]
+        index = started[-1] if started else 0
+    if not episodes:
+        return True
+    if _post_sale(episodes, index):
+        return False
+    return not any(_bought(e) for e in episodes[index:])
+
+
+def profile_segments_for_metadata(metadata: dict[str, Any]) -> list[str]:
+    """Los segmentos de perfil de la persona (además del de su etiqueta)."""
+    return [SEGMENT_INTERESADOS_SIN_COMPRA] if interested_without_purchase(metadata) else []
 
 
 CATEGORY_MARKETING = "marketing"
@@ -270,6 +336,7 @@ def resolve_campaign_audience(
     hours protege siempre); el nombre del vault gana sobre el del archivo.
     """
     wanted = set(campaign.get("segments") or [])
+    wanted_profiles = wanted & set(PROFILE_SEGMENTS)
     removed_ids = set(campaign.get("excluded_session_ids") or [])
     extra_ids = set(campaign.get("extra_session_ids") or [])
     imported = imported_contacts_by_session(campaign)
@@ -292,7 +359,8 @@ def resolve_campaign_audience(
             continue
         is_manual = session_id in extra_ids
         is_imported = session_id in imported
-        if not (is_manual or is_imported) and segment not in wanted:
+        profile = next((p for p in profile_segments_for_metadata(metadata) if p in wanted_profiles), None)
+        if not (is_manual or is_imported) and segment not in wanted and profile is None:
             skipped.append(SkippedRecipient(session_id, "fuera_de_segmento"))
             continue
         if is_quiet_hours is not None and is_quiet_hours(session_id):
@@ -310,6 +378,8 @@ def resolve_campaign_audience(
             continue
         if segment in wanted:
             resolved_segment = segment
+        elif profile is not None:
+            resolved_segment = profile
         elif is_manual:
             resolved_segment = SEGMENT_MANUAL
         else:
@@ -412,6 +482,9 @@ class RecipientSendPlan:
     #: Se salta el respiro de 48 h (agregado a mano o importado): el lote
     #: lo vuelve a mirar al enviar y necesita saberlo.
     bypass_cooldown: bool = False
+    #: Entró SOLO por un segmento de perfil («interesados sin compra»): si
+    #: deja de serlo antes de su lote (compró), no se le envía.
+    profile_segment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -471,6 +544,7 @@ def build_send_plan(
             session_id=r.session_id,
             variables=campaign_template_variables(campaign, customer_name=r.customer_name),
             bypass_cooldown=r.bypass_cooldown,
+            profile_segment=r.segment if r.segment in PROFILE_SEGMENTS else None,
         )
         for r in audience.recipients
     ]

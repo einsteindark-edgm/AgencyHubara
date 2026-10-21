@@ -16,6 +16,7 @@ from src.plugins.marketing.domain.campaigns import (
     SkippedRecipient,
     excluded_recipient,
     has_recent_touch_from_other_campaign,
+    profile_segments_for_metadata,
     received_campaign,
     segment_for_metadata,
 )
@@ -54,6 +55,10 @@ class CampaignSendStart:
 #: Razón de skip: el contacto ya recibió el envío real de esta campaña (un
 #: lote que se volvió a correr no se la reenvía).
 SKIP_YA_RECIBIDA = "ya_recibida"
+
+#: Razón de skip: vino solo por un segmento de perfil («interesados sin
+#: compra») y compró antes de que saliera su lote.
+SKIP_YA_COMPRO = "ya_compro"
 
 #: Estado del envío en curso entre el «Cancelar» y el cierre (el lote en
 #: vuelo termina). Los demás son los de la campaña: `sending` / `paused`.
@@ -185,6 +190,12 @@ def recheck_batch(
             skipped.append(SkippedRecipient(recipient.session_id, SKIP_YA_RECIBIDA))
         elif segment_for_metadata(metadata) is None:
             skipped.append(excluded_recipient(recipient.session_id, metadata))
+        elif recipient.profile_segment is not None and (
+            recipient.profile_segment not in profile_segments_for_metadata(metadata)
+        ):
+            # Vino solo por «interesados sin compra» y compró antes de su lote
+            # (una campaña pausada días): ya no es del público.
+            skipped.append(SkippedRecipient(recipient.session_id, SKIP_YA_COMPRO))
         elif (
             now_ms is not None
             and not recipient.bypass_cooldown

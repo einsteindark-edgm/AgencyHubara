@@ -70,6 +70,7 @@ from src.platform.medusa.client import HttpMedusaClient, MedusaAPIError
 from src.platform.medusa.service import MedusaProductService
 from src.platform.medusa.settings import MedusaSettings
 from src.platform.orders import variant_matching
+from src.platform.orders.state import META_KEY_FREE_SHIPPING
 from src.platform.orders.port import (
     OrderItem,
     OrderRegistrationResult,
@@ -176,6 +177,7 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        free_shipping: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult:
         # Premortem C1: wrap ALL the work in a single wait_for to bound the
         # worst-case latency at ~45s. The activity heartbeat (every 10s in
@@ -195,6 +197,7 @@ class MedusaOrderRegistration:
                     attribution=attribution,
                     coupon_code=coupon_code,
                     discount_cop=discount_cop,
+                    free_shipping=free_shipping,
                 ),
                 timeout=_REGISTER_ORDER_TIMEOUT_S,
             )
@@ -228,6 +231,7 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        free_shipping: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult:
         log.info(
             "MedusaOrderRegistration.register_order start",
@@ -325,6 +329,7 @@ class MedusaOrderRegistration:
                 attribution=attribution,
                 coupon_code=coupon_code,
                 discount_cop=discount_cop,
+                free_shipping=free_shipping,
             )
 
             # 4b) SEC-07 sobre el payload REAL: Medusa cobra estas líneas y
@@ -754,6 +759,7 @@ class MedusaOrderRegistration:
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        free_shipping: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Build the POST /admin/draft-orders payload per OpenAPI spec."""
         # shipping_address: country_code en lowercase per spec.
@@ -818,6 +824,14 @@ class MedusaOrderRegistration:
         if coupon_code:
             metadata["coupon_code"] = coupon_code
             metadata["discount_cop"] = int(discount_cop or 0)
+        # Envío gratis de la campaña (operador, 2026-10-20): el envío va en $0
+        # y la marca queda en el pedido — Orders, el cobro y el ETA la leen de
+        # aquí para no sumarle al cliente el envío real del despacho.
+        shipping_name = "Envío estándar"
+        if free_shipping:
+            metadata[META_KEY_FREE_SHIPPING] = dict(free_shipping)
+            min_boxes = free_shipping.get("min_boxes")
+            shipping_name = f"Envío gratis ({min_boxes} cajas o más)" if min_boxes else "Envío gratis"
 
         payload: dict[str, Any] = {
             "sales_channel_id": self._settings.sales_channel_id,
@@ -830,7 +844,7 @@ class MedusaOrderRegistration:
             "items": resolved_items,
             "shipping_methods": [
                 {
-                    "name": "Envío estándar",
+                    "name": shipping_name,
                     # Medusa v2 admin schema exige `shipping_option_id`. El nombre
                     # `option_id` (que parece natural por simetría con `option_id`
                     # de variantes) devolvió HTTP 400 en producción

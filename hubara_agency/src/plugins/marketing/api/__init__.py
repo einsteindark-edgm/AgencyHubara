@@ -32,6 +32,7 @@ from src.plugins.marketing.domain.campaigns import (
     is_test_session,
     ALL_SEGMENTS,
     IMPORTED_CONTACTS_CAP,
+    PROFILE_SEGMENTS,
     STATUS_CANCELLED,
     STATUS_DRAFT,
     STATUS_FAILED,
@@ -48,6 +49,7 @@ from src.plugins.marketing.domain.campaigns import (
     carousel_size_error,
     customer_name_from_metadata,
     new_campaign,
+    profile_segments_for_metadata,
     resolve_campaign_audience,
     segment_for_metadata,
 )
@@ -87,6 +89,11 @@ _SEGMENT_LABELS: dict[str, tuple[str, str]] = {
     "clientes": ("Clientes", "Ya compraron · alto valor"),
     "interesados": ("Interesados", "Mostraron intención o tienen pago pendiente"),
     "frios": ("Fríos", "Consultaron sin etiqueta de compra"),
+    # Del perfil de la persona (2026-10-20): se suma a los de arriba sin repetir.
+    "interesados_sin_compra": (
+        "Interesados sin compra",
+        "Quisieron comprar (eligieron, aplazaron, dieron datos) y no han comprado",
+    ),
 }
 
 #: Tipos aceptados para el archivo de contactos (CSV/TSV/texto plano). Excel
@@ -205,7 +212,7 @@ def update_campaign(campaign_id: str, body: UpdateCampaignBody) -> dict:
         )
     patch = body.model_dump(exclude_none=True)
     if "segments" in patch:
-        unknown = set(patch["segments"]) - set(ALL_SEGMENTS)
+        unknown = set(patch["segments"]) - set(ALL_SEGMENTS) - set(PROFILE_SEGMENTS)
         if unknown:
             raise HTTPException(
                 status_code=422, detail=f"Segmentos desconocidos: {sorted(unknown)}"
@@ -1108,7 +1115,7 @@ def list_segments() -> dict:
     El costo por mensaje es la tarifa marketing del rate card vigente
     (Colombia: $0.0125 USD). El frontend multiplica por la audiencia elegida.
     """
-    counts = dict.fromkeys(ALL_SEGMENTS, 0)
+    counts = dict.fromkeys((*ALL_SEGMENTS, *PROFILE_SEGMENTS), 0)
     excluded = 0
     sessions = FilesystemAttributionStore(WORKSPACE_VAULT_DIR).scan_sessions()
     for session in sessions:
@@ -1121,6 +1128,8 @@ def list_segments() -> dict:
             excluded += 1
         else:
             counts[segment] += 1
+            for profile in profile_segments_for_metadata(session.metadata):
+                counts[profile] += 1
 
     rate = get_current_rate_card().rates.get("marketing")
     unit = rate.usd_micros_per_message if rate else 0
@@ -1133,7 +1142,7 @@ def list_segments() -> dict:
                 "description": _SEGMENT_LABELS[key][1],
                 "count": counts[key],
             }
-            for key in ALL_SEGMENTS
+            for key in (*ALL_SEGMENTS, *PROFILE_SEGMENTS)
         ],
         "excluded_count": excluded,
         "unit_cost_usd_micros": unit or 0,

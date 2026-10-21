@@ -976,3 +976,30 @@ async def test_a_few_contacts_in_quiet_hours_do_not_hold_the_batch(
     assert batch.quiet_until_ms is None
     assert [(s.session_id, s.reason) for s in batch.skipped] == [("wa_+571", "quiet_hours")]
     assert len(batch.recipients) == 2
+
+
+
+@pytest.mark.asyncio
+async def test_prepare_send_brings_the_interest_profile_audience(_isolate_vault_dir: Path) -> None:
+    """El segmento «interesados sin compra» (#451) llega al plan del V2."""
+    from src.plugins.marketing.agent.campaigns.activities import prepare_campaign_send_activity
+    from src.plugins.marketing.domain.campaigns import SEGMENT_INTERESADOS_SIN_COMPRA
+
+    vault = _isolate_vault_dir
+    _seed_campaign(vault, segments=[SEGMENT_INTERESADOS_SIN_COMPRA])
+    _seed_session(
+        vault,
+        "wa_+571",
+        {
+            "tag": "SIN_RESPUESTA",
+            "episodes": [{"episode_id": "ep_001", "started_at_ms": 1_000}],
+            "profile_tags": {"interesado_sin_compra": {"at_ms": 5_000, "episode_id": "ep_001"}},
+        },
+    )
+    _seed_session(vault, "wa_+572", {"tag": "SIN_RESPUESTA"})
+
+    start = await ActivityEnvironment().run(prepare_campaign_send_activity, "mkt-1")
+
+    assert start.total == 1
+    [recipient] = _send_store(vault).plan("mkt-1").recipients
+    assert (recipient.session_id, recipient.profile_segment) == ("wa_+571", SEGMENT_INTERESADOS_SIN_COMPRA)

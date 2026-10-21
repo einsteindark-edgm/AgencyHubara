@@ -260,12 +260,15 @@ export function OrdersBoard({ orders, selectedId, onSelect }: Props) {
 function shipAmounts(order: Order | undefined): {
   orderTotal: number | null;
   estimatedShipping: number | null;
+  freeShipping: boolean;
 } {
-  if (!order) return { orderTotal: null, estimatedShipping: null };
+  if (!order) return { orderTotal: null, estimatedShipping: null, freeShipping: false };
   const shipping = order.shipping ?? 0;
   return {
     orderTotal: orderValueWithoutShipping(order),
     estimatedShipping: shipping > 0 && !order.shippingConfirmed ? shipping : null,
+    // Envío gratis: el valor real lo paga la tienda y no se suma al total.
+    freeShipping: order.freeShipping === true,
   };
 }
 

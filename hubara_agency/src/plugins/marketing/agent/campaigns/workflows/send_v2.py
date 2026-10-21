@@ -77,9 +77,15 @@ _HEARTBEAT = timedelta(seconds=30)
 #: silencio al correr).
 _SEND_TIMEOUT = timedelta(seconds=60)
 _CAROUSEL_TIMEOUT = timedelta(seconds=60)
+#: Timeout o 504 de Meta en la plantilla (`TEMPLATE_SEND_AMBIGUOUS` de la
+#: plataforma): pudo haber salido y el touch no se escribió, así que un
+#: reintento la mandaría dos veces. Cuenta como fallido con su tipo.
+_TEMPLATE_SEND_AMBIGUOUS = "TemplateSendAmbiguous"
 #: Retries acotados por destinatario: un número inválido no debe colgar la
 #: campaña (los non-retryable de Meta cortan solos en el 1er intento).
-_SEND_RETRY = RetryPolicy(maximum_attempts=3)
+_SEND_RETRY = RetryPolicy(
+    maximum_attempts=3, non_retryable_error_types=[_TEMPLATE_SEND_AMBIGUOUS]
+)
 #: Una pausa sin reanudar se cancela sola pasado este tiempo (con el motivo):
 #: nadie la olvida «enviándose» para siempre.
 PAUSE_LIMIT = timedelta(days=7)

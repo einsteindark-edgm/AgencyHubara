@@ -140,3 +140,67 @@ def test_a_contact_who_got_another_campaign_meanwhile_gets_the_48h_rest() -> Non
 
     assert [r.session_id for r in batch.recipients] == ["wa_2", "wa_3"]
     assert batch.skipped == [SkippedRecipient("wa_1", "campana_reciente")]
+
+
+_INTEREST = {"profile_tags": {"interesado_sin_compra": {"at_ms": 5_000, "episode_id": "ep_001"}}}
+_EP = {"episode_id": "ep_001", "started_at_ms": 1_000}
+
+
+def test_the_plan_remembers_who_came_only_for_the_interest_profile() -> None:
+    """«Interesados sin compra» (#451) entra al plan del V2 como cualquier
+    segmento; quien vino SOLO por el perfil queda marcado para el lote."""
+    from src.plugins.marketing.domain.campaigns import (
+        SEGMENT_INTERESADOS_SIN_COMPRA,
+        build_send_plan,
+        new_campaign,
+    )
+
+    campaign = new_campaign(campaign_id="mkt-1", name="5 % antes del 31", now_ms=1)
+    campaign["segments"] = [SEGMENT_INTERESADOS_SIN_COMPRA, "clientes"]
+
+    class _Card:
+        rates: dict = {}
+
+    plan = build_send_plan(
+        campaign,
+        [
+            ("wa_1", {"tag": "SIN_RESPUESTA", "episodes": [dict(_EP)], **_INTEREST}),
+            ("wa_2", {"tag": "COMPRA_EXITOSA", "episodes": [dict(_EP)]}),
+        ],
+        _Card(),
+        now_ms=10,
+    )
+
+    assert {r.session_id: r.profile_segment for r in plan.recipients} == {
+        "wa_1": SEGMENT_INTERESADOS_SIN_COMPRA,
+        "wa_2": None,
+    }
+
+
+def test_someone_who_bought_before_their_batch_does_not_get_the_interest_campaign() -> None:
+    """La campaña a «interesados sin compra» puede quedar pausada días: quien
+    compró mientras tanto ya no es del público y su lote no se la manda."""
+    from src.plugins.marketing.domain.campaigns import SEGMENT_INTERESADOS_SIN_COMPRA
+
+    bought = {
+        "tag": "COMPRA_EXITOSA",
+        **_INTEREST,
+        "episodes": [dict(_EP), {"episode_id": "ep_002", "started_at_ms": 9_000, "order_id": "o_1"}],
+    }
+    still = {"tag": "SIN_RESPUESTA", "episodes": [dict(_EP)], **_INTEREST}
+    by_profile = dict(variables={}, profile_segment=SEGMENT_INTERESADOS_SIN_COMPRA)
+
+    batch = recheck_batch(
+        [
+            RecipientSendPlan(session_id="wa_1", **by_profile),
+            RecipientSendPlan(session_id="wa_2", **by_profile),
+            # Vino por su etiqueta (clientes): comprar no lo saca.
+            _recipient("wa_3"),
+        ],
+        {"wa_1": bought, "wa_2": still, "wa_3": bought},
+        campaign_id="mkt-1",
+        is_quiet_hours=_never_quiet,
+    )
+
+    assert [r.session_id for r in batch.recipients] == ["wa_2", "wa_3"]
+    assert batch.skipped == [SkippedRecipient("wa_1", "ya_compro")]
