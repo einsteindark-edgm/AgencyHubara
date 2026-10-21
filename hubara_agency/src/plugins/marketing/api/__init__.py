@@ -22,6 +22,7 @@ from temporalio.service import RPCError, RPCStatusCode
 
 from src.plugins.marketing.api.coupons import router as coupons_router
 from src.plugins.marketing.campaign_coupon import check_campaign_coupon
+from src.plugins.marketing.campaign_events import start_campaign_events, stop_campaign_events
 from src.plugins.marketing.campaign_send_store import CampaignSendStore
 from src.plugins.marketing.campaign_store import CampaignStore
 from src.plugins.marketing.carousel import CarouselError, resolve_campaign_carousel
@@ -126,6 +127,21 @@ def _require_campaign(campaign_id: str) -> dict[str, Any]:
     if campaign is None:
         raise HTTPException(status_code=404, detail="Campaña no encontrada")
     return campaign
+
+
+# --- Avance en vivo -----------------------------------------------------------
+# El worker escribe el avance en el vault; la API lo muestrea y lo publica en
+# el stream del dashboard (`marketing / campaign_updated`).
+
+
+@router.on_event("startup")
+async def _start_campaign_events() -> None:
+    start_campaign_events(_store)
+
+
+@router.on_event("shutdown")
+async def _stop_campaign_events() -> None:
+    await stop_campaign_events()
 
 
 @router.get("/health")
