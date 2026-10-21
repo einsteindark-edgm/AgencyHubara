@@ -8,7 +8,9 @@ del PR #443).
   veces: la sesión V2 no deduplica por wamid).
 - PM-006: una cancelación entre «empieza a leerse la foto» y lanzar la lectura
   no deja al cliente con una foto «leyéndose» para siempre (cada texto suyo
-  esperaba 10 s hasta reiniciar el worker).
+  esperaba 10 s hasta reiniciar el worker). Desde la fase 2 no hay
+  `PhotoReads`: el texto espera a la foto en `InboundSessionWorkflow`, con
+  tope (`test_inbound_session_order.py`), y aquí ya no espera nada.
 """
 from __future__ import annotations
 
@@ -130,7 +132,7 @@ async def test_a_photo_cancelled_before_its_reading_starts_does_not_hold_the_cus
         await asyncio.Event().wait()
 
     session = _Session()
-    use_case, _ = _ingest(tmp_path, session, photo_notifier=stuck_notifier, photo_wait_s=5.0)
+    use_case, _ = _ingest(tmp_path, session, photo_notifier=stuck_notifier)
     attempt = asyncio.create_task(use_case.execute(_photo()))
     await notice.wait()
 

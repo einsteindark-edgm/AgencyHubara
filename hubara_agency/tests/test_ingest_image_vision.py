@@ -124,9 +124,11 @@ def _reset_vision_cache():
 
 
 @pytest.mark.asyncio
-async def test_image_inbound_defers_to_vision(monkeypatch):
-    """Una imagen NO delega al agente de inmediato — queda `pending_vision`
-    en metadata y se encola la descripción (igual que el audio)."""
+async def test_image_inbound_enters_only_as_its_description(monkeypatch):
+    """Una imagen NO llega al agente como imagen: entra cuando la visión la
+    describió, como texto (igual que el audio). Desde la fase 2 de la entrada
+    durable la visión es un paso del ingest, no una tarea suelta: `execute`
+    vuelve con la foto ya en el bot y sin `pending_vision` colgado."""
     monkeypatch.setenv("IMAGE_VISION_PROVIDER", "fake")
     history = FakeHistoryStore()
     loader = FakeLoadOrStart()
@@ -135,10 +137,10 @@ async def test_image_inbound_defers_to_vision(monkeypatch):
 
     await use_case.execute(_make_image("img_1"))
 
-    # En el punto de diferir: nada al agente todavía, pending_vision seteado.
-    assert history.events == []
-    assert loader.calls == []
-    assert metadata.store["wa_5491111111111"]["pending_vision"]["media_id"] == "img_1"
+    described = "[el cliente envió una foto: [FAKE VISION de media=img_1]]"
+    assert history.events == [("wa_5491111111111", described)]
+    assert [call.message for call in loader.calls] == [described]
+    assert "pending_vision" not in metadata.store["wa_5491111111111"]
 
 
 @pytest.mark.asyncio

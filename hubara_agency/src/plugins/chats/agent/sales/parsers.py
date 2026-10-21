@@ -30,7 +30,7 @@ queda como bridge mínimo del payload Meta hacia el ingestor).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from src.sdk.identitykit import address_from_user_id
@@ -157,6 +157,16 @@ def _profile_name(contacts: Any, from_number: str, user_id: str | None = None) -
     clean = " ".join("".join(ch for ch in name if ch.isprintable()).split())
     return clean[:_PROFILE_NAME_MAX] or None
 
+
+
+def message_from_dict(raw: dict[str, Any]) -> WhatsAppMessage:
+    """El `WhatsAppMessage` de un dict (`dataclasses.asdict`): así viaja por
+    Temporal entre el webhook y los pasos del ingest. Tolerante a la versión
+    que lo dejó: un campo que esta versión no conoce se ignora (un mensaje
+    queda en Temporal durante un deploy); uno nuevo con default lo completa el
+    dataclass."""
+    known = {f.name for f in fields(WhatsAppMessage)}
+    return WhatsAppMessage(**{k: v for k, v in raw.items() if k in known})
 
 @dataclass(frozen=True)
 class RejectedInbound:

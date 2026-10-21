@@ -805,24 +805,26 @@ cliente, tool calls, tool results) MUST conservarse.
 
 ### Requirement: Transcripción de audio inbound
 
-El sales-worker MUST transcribir audios inbound vía
-`transcribe_audio_activity` (Groq o OpenAI Whisper) antes de procesar el
-turn, para que el LLM reciba texto en vez de bytes.
+La entrada durable (`InboundMessageWorkflow`, worker `sales`) MUST transcribir
+las notas de voz inbound en su propio paso (`transcribe_inbound_audio`, que
+corre `IngestInboundMessage.transcribe_audio`) antes de entregarlas, para que el
+LLM reciba texto en vez de bytes. La nota de voz entra como un mensaje de texto
+sintético (`<wamid>_transcribed`) por los mismos pasos del ingest.
 
 #### Scenario: Audio en español
 
-- GIVEN un inbound con `type="audio"` y `media_url` válida
-- WHEN el workflow procesa
-- THEN `transcribe_audio_activity` descarga el audio, lo manda a Groq/OpenAI, devuelve transcript
-- AND el turn se persiste con `content=transcript` y `metadata={original_type: "audio", duration_sec, ...}`
-- AND el LLM ve el texto como si fuera un mensaje texto normal
+- GIVEN un inbound con `type="audio"` y su `media_id`
+- WHEN el workflow de entrada lo procesa
+- THEN el paso de la nota de voz la baja de Meta (resuelve el `media_id` en ese momento), la transcribe y deja el resultado en `recent_transcriptions` (sacando SOLO su `pending_transcription`: el de otra nota de voz que llegó mientras tanto se queda)
+- AND el texto entra al historial y a la sesión como un mensaje normal del cliente (`<wamid>_transcribed`), con la llegada de la nota de voz como reloj
+- AND el costo queda en `audio_usage` del episodio
 
 #### Scenario: Transcripción falla
 
-- GIVEN el provider de transcripción devuelve error o timeout
-- WHEN la activity falla N=3 intentos
-- THEN el workflow envía mensaje fallback `"No pude entender el audio, ¿podés escribirlo?"` y queda esperando
-- AND el incident se loguea con `audio_media_id` para debug
+- GIVEN el proveedor devuelve error, vacío o un audio demasiado largo
+- THEN el cliente recibe UNA vez el pedido de que lo escriba (`send:` reclamado antes de enviar: un reintento no lo repite)
+- AND la nota de voz no llega al bot y queda en `transcription_failures`
+- AND si el paso lanza, se reintenta hasta 3 veces (sin reintentar errores de programación)
 
 ### Requirement: Memoria persistente del agente
 

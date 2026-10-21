@@ -23,7 +23,9 @@ El sistema MUST exponer `POST /api/webhook` que reciba mensajes inbound
 de WhatsApp Cloud API y los deje en Temporal ANTES de responder 200
 (entrada durable, `docs/adr/2026-10-15-durable-inbound-entry.md`): un deploy
 o un OOM de la API MUST NOT perder un mensaje que Meta ya dio por entregado.
-El ingest (`IngestInboundMessage`) corre en el worker `sales`.
+El ingest (`IngestInboundMessage`) corre en el worker `sales`, un paso por
+activity (fase 2), y la entrega a la sesión va en orden de llegada por cliente
+(`InboundSessionWorkflow`, `docs/adr/2026-10-16-inbound-session-workflow.md`).
 
 #### Scenario: Mensaje de texto válido
 
@@ -32,7 +34,8 @@ El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 - THEN parsea con `parse_whatsapp_inbound_all` (el POST ENTERO)
 - AND arranca `InboundMessageWorkflow` con id `inbound-<wamid>` y `REJECT_DUPLICATE` en la cola del worker `sales`, con el mensaje parseado y ya en la dirección de su conversación
 - AND recién entonces devuelve `{status: "ok"}` con HTTP 200
-- AND el workflow corre `IngestInboundMessage.execute(parsed)` en una activity (heartbeat, 5 intentos repartidos en ~3 min) que eventualmente arranca/signalea el workflow apropiado (sales o remarketing)
+- AND el workflow corre los pasos del ingest, cada uno en su activity (heartbeat, 5 intentos repartidos en ~3 min): el estado de la sesión con sus lecturas (`read_inbound_state`), el turno (`prepare_inbound_turn`), el historial (`write_inbound_history`) y la entrega, que eventualmente arranca/signalea el workflow apropiado (sales o remarketing) (`deliver_inbound_turn`)
+- AND un paso que ya terminó no se repite si falla uno posterior: su resultado queda en el historial del workflow (la entrega reintentada no vuelve a leer con Jev ni a escribir la línea del panel)
 
 #### Scenario: Temporal no acepta el mensaje
 
@@ -51,12 +54,43 @@ El ingest (`IngestInboundMessage`) corre en el worker `sales`.
 
 #### Scenario: Un reintento del ingest no repite efectos
 
-- GIVEN la activity del ingest se reintenta tras ingerir parte del mensaje (el worker murió a mitad)
+- GIVEN un paso del ingest se reintenta tras hacer parte de su trabajo (el worker murió a mitad)
 - THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
+- AND lo que decidió el paso del estado (la nota de frontera del episodio nuevo, la respuesta a campaña, el resumen del episodio anterior —sin los datos de envío de su borrador, que no salen del vault—) llega a la entrega aunque la entrega se reintente: viaja en el resultado del paso, no se vuelve a decidir sobre un documento que ya la tiene escrita
+- AND si la escritura del estado falla, ese paso se reintenta (hasta 3 intentos); si sigue fallando, el mensaje sigue igual hasta el historial y el bot
 - AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: solo una caída del proceso entre el efecto y su marca lo repite)
 - AND dos intentos del mismo mensaje que se superponen avisan a la sesión UNA vez, y un intento cancelado mientras avisa termina el aviso y deja su marca
 - AND un error de programación (`TypeError`, `KeyError`…) no se reintenta
-- AND una foto cancelada antes de que arranque su lectura no deja a los textos del cliente esperándola
+
+#### Scenario: Foto y nota de voz como pasos
+
+- GIVEN un mensaje con una foto (o una nota de voz)
+- THEN el workflow la lee en su propio paso (`describe_inbound_image` / `transcribe_inbound_audio`, heartbeat, 3 intentos) y la hace entrar como texto (`<wamid>_vision` / `<wamid>_transcribed`) por los mismos pasos, con la llegada de la foto como reloj
+- AND al terminar la foto (también si su lectura falló) le avisa a la sesión de ventas que ya no la espere (`photo_reading` con `done=True`)
+- AND ninguna lectura queda como tarea suelta del proceso: si el worker muere a mitad, el paso se repite en otro worker
+- AND si tras sus intentos no se puede leer, el workflow queda Failed a la vista (reseteable), no se pierde en silencio
+- AND una nota de voz que no se entendió le pide al cliente que la escriba UNA vez y no llega al bot
+
+#### Scenario: Orden de entrega por cliente sin serializar las lecturas
+
+- GIVEN dos mensajes del mismo cliente en POSTs distintos («hola», cuya lectura con Jev tarda, y «quiero velas» 1 s después)
+- WHEN entran
+- THEN cada uno se anuncia al `InboundSessionWorkflow` del cliente (`inbound-wa_<número>`), que le responde con su anterior (el último anunciado con una llegada al webhook estrictamente menor)
+- AND los dos se leen en seguida, en paralelo
+- AND el segundo escribe su línea del historial y llega a la sesión DESPUÉS de que termine el primero (espera con tope de 30 s; si el anterior se traba, sale igual: se pierde el orden, nunca el mensaje)
+- AND dentro de un mismo POST manda `after` (el anterior del mismo cliente en ese POST), y ahí el paso del estado también espera al anterior: los dos verían el mismo episodio cerrado o la misma campaña sin responder
+- AND lo que las lecturas dicen del ÚLTIMO mensaje (la señal de compra, la pausa por aplazamiento, la cortesía) se escribe en el paso del historial, en orden, con `last_inbound_message_id`: la foto que reentra tarde no borra la señal del «luego te escribo» que el cliente mandó detrás
+
+#### Scenario: El texto escrito detrás de una foto la espera
+
+- GIVEN una foto cuya visión tarda y un «¿tienes esta?» que el cliente manda detrás (otro POST)
+- THEN la foto entra primero al chat y al bot, y el texto justo después
+- AND la espera vive en Temporal, no en memoria de un proceso: el worker `sales` puede correr con varias réplicas
+
+#### Scenario: «Llegó tarde» y «fuera de ventana» se miden con la llegada al webhook
+
+- GIVEN un mensaje que llegó a tiempo y cuyo ingest se reintenta minutos después
+- THEN no se marca como entregado tarde (`sent_at_ms`) ni como fuera de ventana: el reloj es `received_at_ms` del webhook, no la hora del intento
 
 #### Scenario: POST batcheado (varios mensajes en un mismo webhook)
 
@@ -66,8 +100,8 @@ y el resto se perdía en silencio.
 
 - GIVEN un POST con varios mensajes — en varios `entry`, varios `changes`, o varios ítems de un mismo `messages[]`
 - WHEN se procesa
-- THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por `InboundMessageWorkflow`
-- AND en el orden en que Meta los mandó: cada mensaje lleva el `wamid` del anterior del MISMO cliente en ese POST (`after`) y su workflow espera a que ese cierre (tope 2 min; si no existe o falló, sigue)
+- THEN CADA mensaje MUST llegar al ingest, uno por `InboundMessageWorkflow`
+- AND en el orden en que Meta los mandó: cada mensaje lleva el `wamid` del anterior del MISMO cliente en ese POST (`after`) y su workflow, antes de escribir el historial, espera a que ese cierre (tope 30 s; si no existe o falló, sigue); sus lecturas no esperan
 - AND el fallo de un ingest MUST NOT impedir los siguientes (cada uno es su propio workflow); el de un delivery status (background task) tampoco: se loguea con traceback (`delivery_status_ingest_failed`) y se sigue
 - AND cada mensaje deja su desenlace en el ledger de inbound (ver "Ledger durable de inbound del webhook")
 

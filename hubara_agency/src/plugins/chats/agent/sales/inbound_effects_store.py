@@ -1,11 +1,13 @@
 """Diario de efectos de la entrada durable (ADR 2026-10-15 §6).
 
-El ingest de un mensaje corre en una activity con reintentos: si el worker muere
-a mitad, el mensaje se ingiere de nuevo en el worker que lo reemplaza. Lo que ese
-reintento NO puede repetir — la línea del cliente en el historial, el mensaje a
-la sesión de ventas, un envío directo al cliente — queda marcado acá por
-``wamid``: un archivo vacío por (mensaje, efecto), creado con ``O_EXCL``, bajo el
-vault (sobrevive al proceso y al deploy).
+Desde la fase 2 cada paso del ingest es una activity, y lo que un paso ya hizo
+queda en el historial del workflow: un paso terminado no se repite. Lo que el
+reintento de UN paso no puede repetir — la línea del cliente en el historial,
+el mensaje a la sesión de ventas, un envío directo al cliente — queda marcado
+acá por ``wamid``: un archivo vacío por (mensaje, efecto), creado con
+``O_EXCL``, bajo el vault (sobrevive al proceso y al deploy). (En la fase 1 el
+ingest entero era una activity y este diario era lo único que evitaba
+repetirlo.)
 
 Un directorio por día UTC, conservado tanto como la retención de Temporal
 (30 días): un reintento se mide en minutos, pero un workflow fallido se puede

@@ -74,7 +74,6 @@ from src.plugins.chats.agent.sales.activities import (
     read_idle_timeout_seconds_activity,
     read_order_draft_note_activity,
     read_reply_window_activity,
-    transcribe_audio_activity,
 )
 from src.plugins.chats.agent.sales.tools.catalog import (
     GetProductByHandleTool,
@@ -127,9 +126,21 @@ from src.plugins.chats.agent.sales.workflows.sales_session_v2 import (
 from src.plugins.chats.agent.sales.workflows.inbound_message import (
     InboundMessageWorkflow,
 )
+from src.plugins.chats.agent.sales.workflows.inbound_session import (
+    InboundSessionWorkflow,
+)
 from src.plugins.chats.agent.sales.activities.inbound_entry import (
+    deliver_inbound_turn_activity,
+    describe_inbound_image_activity,
     ingest_inbound_message_activity,
+    notify_inbound_photo_done_activity,
+    prepare_inbound_turn_activity,
+    read_inbound_state_activity,
+    register_inbound_arrival_activity,
+    transcribe_inbound_audio_activity,
     wait_inbound_predecessor_activity,
+    wait_inbound_workflow_activity,
+    write_inbound_history_activity,
 )
 from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 from src.plugins.chats.agent.sales.decisions.activities import (
@@ -149,14 +160,29 @@ SALES_WORKFLOWS = [HubaraSalesSessionWorkflow, HubaraSalesSessionWorkflowV2]
 # mismo vault y el mismo proceso que ya le habla a la sesión, sin un contenedor
 # más en la caja de 4 GB. Listas aparte: el sandbox del laboratorio registra
 # solo las de la sesión (`SALES_WORKFLOWS` / `SALES_ACTIVITIES`).
-# Invariante de la fase 1: este worker corre como UNA réplica (`PhotoReads` y
-# la lectura de fotos/audios viven en memoria del proceso).
-INBOUND_WORKFLOWS = [InboundMessageWorkflow]
-INBOUND_ACTIVITIES = [ingest_inbound_message_activity, wait_inbound_predecessor_activity]
+# Fase 2: un paso del ingest por activity, la foto y la nota de voz con la
+# suya, y el orden por cliente en `InboundSessionWorkflow` (ADR 2026-10-16):
+# nada vive en memoria del proceso, así que el worker puede tener réplicas.
+INBOUND_WORKFLOWS = [InboundMessageWorkflow, InboundSessionWorkflow]
+INBOUND_ACTIVITIES = [
+    register_inbound_arrival_activity,
+    read_inbound_state_activity,
+    prepare_inbound_turn_activity,
+    write_inbound_history_activity,
+    deliver_inbound_turn_activity,
+    describe_inbound_image_activity,
+    transcribe_inbound_audio_activity,
+    notify_inbound_photo_done_activity,
+    wait_inbound_workflow_activity,
+    # Fase 1: los runs que estaban vivos al desplegar la fase 2 terminan con
+    # estas (se retiran cuando ya no quede ninguno; un run vive minutos).
+    ingest_inbound_message_activity,
+    wait_inbound_predecessor_activity,
+]
 
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
-# (flush_pending_ui_intents_activity, transcribe_audio_activity) leen
+# (flush_pending_ui_intents_activity, los pasos del ingest) leen
 # desde `get_event_bus()` por su cuenta.
 setup_analytics()
 
@@ -585,8 +611,6 @@ SALES_ACTIVITIES = [
     # El texto final promete que un colega lo atiende y nadie escaló
     # (laboratorio caso-cortesia-1001, 2026-09-30): la red escala.
     ensure_promised_handoff_activity,
-    # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
-    transcribe_audio_activity,
     # HU dialecto colombiano: hora de Bogotá + saludo apropiado
     # inyectado al plugin_context. La usan los turnos de sistema del
     # workflow (traspaso, abandono, complemento — caso 4567 del

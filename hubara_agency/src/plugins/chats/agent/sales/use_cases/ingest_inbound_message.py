@@ -1,16 +1,21 @@
 """Use case top-level del webhook de WhatsApp.
 
 Recibe un `WhatsAppMessage` ya parseado (la decision de 4xx vs 200 vive en el
-parser, en ``api.py``) y orquesta:
+parser, en ``api.py``) y lo procesa en pasos (entrada durable, fase 2; ADR
+2026-10-15). `InboundMessageWorkflow` corre cada paso en su activity y
+``execute`` los corre uno tras otro en el proceso:
 
-1. Detectar y persistir referral CTWA si es la primera vez en la sesión.
-2. Traducir el inbound a "texto efectivo" (texto natural para el LLM).
-3. Si el mensaje requiere transcripción (audio), encolar la activity y NO
-   delegar al agente hasta tener el texto.
-4. Persistir el evento del usuario en el JSONL via
+1. ``read_state``: el estado de la sesión (referral CTWA, origen, episodio,
+   ventana) con las lecturas del cliente (Jev), en una escritura.
+2. ``prepare_turn``: carrito y cupón, el texto efectivo (texto natural para el
+   LLM), el PDF y las citas; o por qué todavía no hay turno.
+3. ``describe_image`` / ``transcribe_audio``: la foto o la nota de voz, que
+   reentran como texto (NO se delega al agente hasta tener el texto).
+4. ``write_history``: el evento del usuario en el JSONL via
    ``FilesystemMessageHistoryStore``.
-5. Emitir eventos analytics (referral_captured, wa_interaction).
-6. Delegar a ``LoadOrStartSalesSession`` para resolver ruta + signal.
+5. ``deliver``: las notas del turno y ``LoadOrStartSalesSession`` (ruta +
+   signal), con los eventos de analytics (referral_captured, wa_interaction)
+   en el paso que los produce.
 
 Backward-compat: el comportamiento para `text` solo permanece idéntico al
 legacy — los tests existentes (`test_ingest_inbound_message.py`) pasan sin
@@ -28,6 +33,7 @@ import asyncio
 import copy
 import hashlib
 import re
+from dataclasses import asdict
 from typing import Any, Awaitable, Callable, Protocol, TYPE_CHECKING
 
 import structlog
@@ -51,7 +57,17 @@ from src.platform.orchestration import (
 )
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.cart_lines import CartLine, build_cart_note, lines_from_products
-from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
+from src.plugins.chats.agent.sales.contracts import (
+    TURN_DELIVER,
+    TURN_DESCRIBE,
+    TURN_HISTORY_ONLY,
+    TURN_IGNORED,
+    TURN_TRANSCRIBE,
+    IngestRequest,
+    IngestState,
+    IngestTurn,
+)
+from src.plugins.chats.agent.sales.parsers import WhatsAppMessage, message_from_dict
 from src.plugins.chats.agent.sales.translate import (
     EffectiveText,
     translate_to_effective_text,
@@ -94,7 +110,8 @@ from src.plugins.chats.agent.sales.use_cases.episode_memory import (
     request_clean_llm_history,
     unseen_team_exchange,
     unseen_template_text,
-    with_previous_episode,
+    previous_episode_summary,
+    with_previous_episode_summary,
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     CAMPAIGN_CLOSING_TAG,
@@ -113,7 +130,9 @@ from src.plugins.chats.shared.purchase_signals import build_deferral_note
 from src.plugins.chats.shared.sales_campaigns import purchase_intent
 from src.plugins.chats.agent.sales.decisions.readings import (
     Inbound,
-    apply_readings,
+    apply_last_message_marks,
+    apply_lasting_readings,
+    last_message_marks,
     read_catalog_gap,
     read_coupon_talk,
 )
@@ -135,7 +154,6 @@ from src.plugins.chats.agent.sales.use_cases.photo_product import (
     photo_reentry_text,
 )
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer
-from src.plugins.chats.agent.sales.use_cases.photo_reads import PhotoReads
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
     build_coupon_note,
@@ -204,9 +222,6 @@ CouponUnitsReader = Callable[[dict[str, Any]], Awaitable[QuotaOffer]]
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
-#: Tope de la espera de un mensaje del cliente por su foto (visión ~1,5 s,
-#: hasta ~4,5 s comparando con el catálogo; el paso de imagen tiene tope de 6 s).
-PHOTO_WAIT_MAX_S = 10.0
 #: Tope del aviso al workflow de que una foto se está leyendo (una señal).
 _PHOTO_NOTICE_TIMEOUT_S = 2.0
 
@@ -323,10 +338,11 @@ async def catalog_gap_note_for(
 
 
 class InboundEffectsPort(Protocol):
-    """Lo que un reintento del ingest no repite, por `wamid` (ADR 2026-10-15
-    §6, `inbound_effects_store.py`): se `claim`-ea antes de un envío al
-    cliente y se `mark`-ea después de escribir el historial o avisar a la
-    sesión."""
+    """Lo que el reintento de un paso del ingest no repite, por `wamid` (ADR
+    2026-10-15 §6, `inbound_effects_store.py`): se `claim`-ea antes de un envío
+    al cliente y se `mark`-ea después de escribir el historial o avisar a la
+    sesión. Que un paso ya terminado no se repita lo da el historial del
+    workflow."""
 
     def claim(self, wamid: str, effect: str) -> bool: ...
 
@@ -371,7 +387,6 @@ class IngestInboundMessage:
         coupon_units_now: CouponUnitsReader | None = None,
         readings: InboundReadingsProvider | None = None,
         photo_identifier: PhotoIdentifierPort | None = None,
-        photo_wait_s: float = PHOTO_WAIT_MAX_S,
         photo_notifier: PhotoNotifier | None = None,
         order_facts: OrderFactsReader | None = None,
         effects: InboundEffectsPort | None = None,
@@ -389,12 +404,8 @@ class IngestInboundMessage:
         # Aviso al workflow de ventas: una foto del cliente se está leyendo (y
         # cuándo ya entró). Sin él, la foto entra como hoy.
         self._photo_notifier = photo_notifier
-        # Las fotos de cada cliente que se están leyendo: sus mensajes esperan
-        # a que la foto entre al bot (ráfaga partida, 2026-09-30).
-        self._photo_reads = PhotoReads()
         # Un candado por wamid mientras se avisa a la sesión (`_deliver_turn_once`).
         self._turn_locks: dict[str, asyncio.Lock] = {}
-        self._photo_wait_s = photo_wait_s
         # Motor de decisiones (enchufe 1): las lecturas del cliente (compra,
         # retoma, baja) las da el proveedor; el ingest escribe los MISMOS
         # campos de hoy. Sin proveedor, el del motor con el registro de bots
@@ -428,8 +439,11 @@ class IngestInboundMessage:
         customer_text: Any = _FROM_MESSAGE,
         photo_note: str | None = None,
         from_photo: bool = False,
+        received_at_ms: int | None = None,
     ) -> None:
-        """Procesa un inbound parseado.
+        """Procesa un inbound parseado: los pasos del ingest uno tras otro, en
+        este proceso (`run`). `InboundMessageWorkflow` corre los mismos pasos,
+        cada uno en su activity.
 
         ``persisted_image_url`` es un canal interno del reentry de visión: cuando
         ``_describe_image_and_reenter`` reinyecta la descripción como texto
@@ -447,43 +461,78 @@ class IngestInboundMessage:
         turno cuando la foto se reconoció como un producto nuestro
         (``photo_product.build_photo_product_note``).
 
-        ``from_photo``: el mensaje ES la foto que reentra (no espera a nada).
-        Cualquier otro mensaje del cliente que llega mientras se lee una foto
-        suya espera a que la foto entre al bot (con tope ``photo_wait_s``):
-        así la foto y el «¿tienes esta?» van en la misma ráfaga y en orden.
-        Las fotos no se esperan entre sí.
+        ``from_photo``: el mensaje ES la foto que reentra. El texto que el
+        cliente escribe detrás de una foto la espera en
+        ``InboundSessionWorkflow`` (cada mensaje entrega después del anterior
+        del mismo cliente, ADR 2026-10-16); en este proceso los pasos corren
+        en orden, así que ``execute`` vuelve con la foto ya en el bot.
+
+        ``received_at_ms``: llegada al webhook, el reloj de «llegó tarde» y
+        «fuera de ventana» (fase 2 de la entrada durable).
         """
-        session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
-        if not from_photo and not _is_photo(parsed) and self._photo_reads.reading(session_id):
-            waited_s = await self._photo_reads.wait(session_id, max_s=self._photo_wait_s)
-            logger.info(
-                "inbound_waited_for_photo",
-                session=session_id,
-                waited_ms=int(waited_s * 1000),
-                gave_up=self._photo_reads.reading(session_id),
+        await self.run(
+            IngestRequest(
+                message=asdict(parsed),
+                received_at_ms=received_at_ms or 0,
+                persisted_image_url=persisted_image_url,
+                customer_text=None if customer_text is _FROM_MESSAGE else customer_text,
+                customer_text_from_message=customer_text is _FROM_MESSAGE,
+                photo_note=photo_note,
+                from_photo=from_photo,
             )
+        )
+
+    async def run(self, request: IngestRequest) -> None:
+        """Los pasos del ingest, uno tras otro, en este proceso: lo mismo que
+        `InboundMessageWorkflow` corre con una activity por paso. Una nota de
+        voz o una foto reentran como texto (`transcribe_audio` /
+        `describe_image`) antes de volver."""
+        state = await self.read_state(request)
+        turn = await self.prepare_turn(request, state)
+        if turn.outcome == TURN_TRANSCRIBE:
+            reentry = await self.transcribe_audio(request)
+            if reentry is not None:
+                await self.run(reentry)
+            return
+        if turn.outcome == TURN_DESCRIBE:
+            try:
+                reentry = await self.describe_image(request)
+                if reentry is not None:
+                    await self.run(reentry)
+            finally:
+                await self.photo_done(request)
+            return
+        if turn.outcome in (TURN_DELIVER, TURN_HISTORY_ONLY):
+            await self.write_history(request, state, turn)
+            await self.deliver(request, state, turn)
+
+    async def read_state(self, request: IngestRequest) -> IngestState:
+        """Paso 1 · el estado de la sesión con sus lecturas.
+
+        Lee el documento de la sesión, rota el episodio si hace falta, mide la
+        ventana con la llegada al webhook, corre las lecturas del cliente
+        (Jev) y escribe todo junto: el episodio y las lecturas van en UNA
+        escritura bajo la guarda de la toma humana (#393). Devuelve lo que los
+        pasos siguientes necesitan de esa decisión (las notas del turno), así
+        un reintento de un paso posterior no la vuelve a tomar sobre un
+        documento que ya la tiene escrita."""
+        parsed = message_from_dict(request.message)
+        customer_text: Any = _FROM_MESSAGE if request.customer_text_from_message else request.customer_text
+        received_at_ms = request.received_at_ms or None
+        session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
 
         # --- 1. Read metadata UNA vez al principio (atribución + typing) ---
         # Lo que había en disco al leer (incidente 2026-10-06): cada escritura
-        # de este `execute` lleva SOLO lo que cambió desde acá (o desde su
+        # de este paso lleva SOLO lo que cambió desde acá (o desde su
         # escritura anterior), no la copia entera. Entre la lectura y la
         # escritura grande se espera a Jev varios segundos; en ese rato el
         # flush del turno anterior saca de la cola la foto que ya mandó, y la
         # copia entera la devolvía (salía otra vez en el turno siguiente).
-        try:
-            # Un error pasajero se reintenta (hasta 3 veces, sin frenar el bucle).
-            metadata = await read_retrying_transient_errors(self._metadata_store, session_id)
-            base: dict[str, Any] = copy.deepcopy(metadata)
-        except Exception as exc:  # noqa: BLE001 — best-effort: el mensaje no se pierde
-            # Sigue fallando tras los reintentos (el store lanza: nunca da una
-            # copia vieja ni `{}`). El mensaje sigue al historial y al router,
-            # que relee; lo que el ingest decida sobre `{}` NO se escribe
-            # (pisaba el origen).
-            logger.warning(
-                "ingest_metadata_unreadable", session=session_id, error=repr(exc)[:200]
-            )
-            metadata = {}
-            base = _Unread()
+        # Si sigue fallando tras los reintentos (el store lanza: nunca da una
+        # copia vieja ni `{}`), el mensaje sigue al historial y al router, que
+        # relee; lo que el ingest decida sobre `{}` NO se escribe (pisaba el
+        # origen).
+        metadata, base = await self._read_metadata(session_id)
 
         # --- 1b. Nombre de perfil de WhatsApp (`contacts[].profile.name`) ---
         # La bandeja de la app y los incendios muestran quién escribe, no solo
@@ -519,7 +568,7 @@ class IngestInboundMessage:
         # esta lista (mantenemos el contrato del HU-002).
         referral_already_seen = False
         if parsed.referral and parsed.referral.get("ctwa_clid"):
-            referral_already_seen = self._handle_referral(
+            referral_already_seen = await self._handle_referral(
                 session_id=session_id,
                 metadata=metadata,
                 base=base,
@@ -549,16 +598,20 @@ class IngestInboundMessage:
         # _now_ms() en múltiples lugares y mantiene consistencia (los
         # timestamps de un mismo inbound son idénticos).
         now_ms = _now_ms()
+        # «Llegó tarde» y «fuera de ventana» se miden con la llegada al webhook
+        # (entrada durable, fase 2): un ingest que se reintenta minutos después
+        # no vuelve tarde un mensaje que llegó a tiempo. Sin ella, el intento.
+        arrival_ms = received_at_ms if received_at_ms and received_at_ms <= now_ms else now_ms
         # La ventana de 24 h la abre el CLIENTE al escribir: sale de cuándo
         # envió el mensaje (`messages[].timestamp`), no de cuándo llegó el
         # webhook. Meta reintenta hasta ~7 días un webhook que no aceptamos
         # (clientes sin teléfono, 2026-10-09): re-entregado días después, la
         # ventana ya está cerrada y el bot no puede escribirle texto libre.
-        sent_ms = _customer_sent_ms(parsed, now_ms)
+        sent_ms = _customer_sent_ms(parsed, arrival_ms)
         # La abre el ÚLTIMO mensaje del cliente: un rezagado que Meta entrega
         # después de uno más nuevo no la cierra hacia atrás.
-        window_from_ms = _latest_inbound_ms(metadata, sent_ms, now_ms)
-        arrived_after_window = compute_service_window_expiry(window_from_ms) <= now_ms
+        window_from_ms = _latest_inbound_ms(metadata, sent_ms, arrival_ms)
+        arrived_after_window = compute_service_window_expiry(window_from_ms) <= arrival_ms
         # Re-engagement (bug run 3b3fbaee): si el último episodio ya estaba
         # CERRADO, este inbound abre uno nuevo. Capturamos el episodio cerrado
         # ANTES de que `ensure_active_episode` mute `episodes[]`, para inyectar
@@ -725,13 +778,16 @@ class IngestInboundMessage:
         #   campaña la provocó: la que citó (2026-09-25) o la del touch
         #   reciente. Una prueba citada no carga la baja.
         _quoted = quoted_campaign_touch(metadata, (parsed.context or {}).get("id"))
-        written = apply_readings(
+        # Lo que vale aunque llegue otro mensaje (la confirmación, la baja) se
+        # escribe acá; lo que describe al ÚLTIMO mensaje (la señal, la pausa,
+        # la cortesía) lo escribe el paso del historial, en el orden de llegada
+        # (`IngestState.last_message_marks`): los pasos del estado de dos
+        # mensajes del cliente corren a la vez.
+        written = apply_lasting_readings(
             metadata,
             readings,
             text=parsed.text,
             now_ms=now_ms,
-            message_id=parsed.message_id,
-            tz=tz,
             opt_out_campaign_id=(
                 _quoted["campaign_id"]
                 if _quoted is not None and not _quoted.get("test")
@@ -828,7 +884,7 @@ class IngestInboundMessage:
             if base.get("active_route") != ROUTE_HUMANO and fresh.get("active_route") == ROUTE_HUMANO:
                 _yield_to_human(metadata, base)
 
-        self._safe_write_metadata(
+        written = self._safe_write_metadata(
             session_id, metadata, base, before_merge=_yield_if_a_human_took_over
         )
 
@@ -845,6 +901,47 @@ class IngestInboundMessage:
             logger.warning(
                 "reengagement_index_update_failed", session_id=session_id
             )
+
+        return IngestState(
+            session_id=session_id,
+            now_ms=now_ms,
+            sent_ms=sent_ms,
+            arrival_ms=arrival_ms,
+            arrived_after_window=arrived_after_window,
+            closing_ack=closing_ack,
+            referral_already_seen=referral_already_seen,
+            campaign_reply_note=campaign_reply_note,
+            campaign_reply_touch=campaign_reply_touch,
+            episode_boundary_note=episode_boundary_note,
+            previous_episode_summary=(
+                previous_episode_summary(previous_episode) if previous_episode is not None else None
+            ),
+            last_message_marks=last_message_marks(readings),
+            write_failed=not written and not isinstance(base, _Unread),
+        )
+
+    async def prepare_turn(self, request: IngestRequest, state: IngestState) -> IngestTurn:
+        """Paso 2 · el carrito y el cupón: el carrito web, el producto de la web
+        o de la ficha del catálogo, el cupón de la campaña, el aviso al
+        watchdog, el texto efectivo (el carrito de WhatsApp leído en el
+        catálogo), el PDF, las citas y las notas que salen de lecturas
+        (cupón, fuera de catálogo). Relee el documento de la sesión: lo que
+        escribió el paso del estado ya está ahí.
+
+        Devuelve el turno armado, o por qué todavía no hay turno: una nota de
+        voz o una foto (su transcripción o su visión son otro paso), nada que
+        escribir, o un mensaje que solo va al chat."""
+        parsed = message_from_dict(request.message)
+        session_id, now_ms = state.session_id, state.now_ms
+        arrived_after_window = state.arrived_after_window
+        campaign_reply_note = state.campaign_reply_note
+        campaign_reply_touch = state.campaign_reply_touch
+        persisted_image_url = request.persisted_image_url
+        metadata, base = await self._read_metadata(session_id)
+        # Lo que el cliente vio ANTES de este mensaje (el historial todavía no
+        # lo tiene): la cita que resuelve y el contexto de la lectura del cupón.
+        events_before = self._session_events(session_id)
+        cart_ref = detect_cart_ref(parsed.text)
 
         # --- 2e. Web cart hot lead: hidratación best-effort (HU web-cart) ---
         # Solo la PRIMERA vez que vemos este cart_id EN este episodio (doble
@@ -915,7 +1012,7 @@ class IngestInboundMessage:
                 if updated is not None:
                     metadata = updated
                     _rebase(base, metadata)
-                self._emit_web_cart_events(
+                await self._emit_web_cart_events(
                     session_id=session_id, metadata=metadata, cart_id=cart_ref
                 )
 
@@ -1088,7 +1185,7 @@ class IngestInboundMessage:
         effective: EffectiveText = await translate_to_effective_text(
             parsed,
             catalog=None,
-            referral_already_seen=referral_already_seen,
+            referral_already_seen=state.referral_already_seen,
             cart_lines=cart_lines,
         )
 
@@ -1118,19 +1215,10 @@ class IngestInboundMessage:
                 "voice": (parsed.audio or {}).get("voice", False),
             }
             self._safe_write_metadata(session_id, metadata, base)
-            # HU-002 / A.5: spawn background transcription task (en el proceso
-            # que corre el ingest: el worker `sales` desde la entrada durable).
-            # Los 5 min de Meta son de la URL firmada, no del `media_id`: cada
-            # descarga lo vuelve a resolver (ADR 2026-10-15 §5). La fase 2 la
-            # vuelve una activity.
-            #
-            # PREMORTEM #2: spawn safe — captura excepciones y las loguea.
-            _spawn_safe(
-                self._transcribe_and_reenter(parsed),
-                label="audio.transcribe_and_reenter",
-                session_id=session_id,
-            )
-            return
+            # La transcripción es su propio paso (`transcribe_audio`). Los 5 min
+            # de Meta son de la URL firmada, no del `media_id`: cada descarga lo
+            # vuelve a resolver (ADR 2026-10-15 §5).
+            return IngestTurn(outcome=TURN_TRANSCRIBE)
 
         # --- 4.5. Imagen inbound: defer a la descripción por visión ---
         # El agente (DeepSeek) es text-only. Igual que el audio, encolamos la
@@ -1159,24 +1247,10 @@ class IngestInboundMessage:
                 "mime_type": effective.image_mime_type,
             }
             self._safe_write_metadata(session_id, metadata, base)
-            self._photo_reads.begin(session_id)
-            reading = False
-            try:
-                # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
-                await self._notify_photo(session_id, parsed.message_id, done=False)
-                _spawn_safe(
-                    self._read_photo(parsed, session_id),
-                    label="vision.describe_and_reenter",
-                    session_id=session_id,
-                )
-                reading = True
-            finally:
-                # Cancelado antes de lanzar la lectura (la activity se apagó): nadie
-                # va a llamar `end()` y los textos del cliente esperarían esta foto
-                # para siempre (premortem PM-006).
-                if not reading:
-                    self._photo_reads.end(session_id)
-            return
+            # Texto ANTES de la foto: el bot ya tiene el texto; que espere la foto.
+            await self._notify_photo(session_id, parsed.message_id, done=False)
+            # La visión es su propio paso (`describe_image`).
+            return IngestTurn(outcome=TURN_DESCRIBE)
 
         # --- 5. Sin texto efectivo: ignorar pero loguear ---
         if not effective.text:
@@ -1189,9 +1263,10 @@ class IngestInboundMessage:
             # Aún persistimos last_inbound_message_id para que el typing
             # indicator pueda referenciar este msg si el cliente reintenta.
             if parsed.message_id:
+                self._mark_last_message(metadata, request, state)
                 metadata["last_inbound_message_id"] = parsed.message_id
                 self._safe_write_metadata(session_id, metadata, base)
-            return
+            return IngestTurn(outcome=TURN_IGNORED)
 
         logger.info(
             "WhatsApp Message Received",
@@ -1303,7 +1378,7 @@ class IngestInboundMessage:
             if team_exchange is None:
                 unseen_template = unseen_template_text(events_now)
 
-        # --- 6. Persistir history (texto efectivo, NO el JSON raw) ---
+        # El evento del cliente en el JSONL (lo escribe el paso del historial).
         # `persisted_image_url` solo viene poblado desde el reentry de visión:
         # el evento del cliente queda con la foto adjunta para el dashboard.
         # Los kwargs de documento solo se pasan cuando el PDF quedó persistido
@@ -1313,82 +1388,16 @@ class IngestInboundMessage:
         # a qué foto respondía).
         reply_kwargs = {
             **_build_reply_kwargs(parsed, metadata, events_before),
-            **_late_delivery_kwargs(sent_ms, now_ms, arrived_after_window),
+            **_late_delivery_kwargs(state.sent_ms, state.arrival_ms, arrived_after_window),
         }
-        # Un reintento de la entrada no duplica la línea del cliente en el panel.
-        if self._effect_done(parsed, "history"):
-            logger.info("inbound_history_already_written", session=session_id, wamid=parsed.message_id)
-        elif persisted_document_url:
-            self._history_store.append_user_event(
-                session_id,
-                effective.text,
-                image_url=persisted_image_url,
-                document_url=persisted_document_url,
-                document_filename=effective.document_filename,
-                **reply_kwargs,
-            )
-            self._mark_effect(parsed, "history")
-        else:
-            self._history_store.append_user_event(
-                session_id,
-                effective.text,
-                image_url=persisted_image_url,
-                **reply_kwargs,
-            )
-            self._mark_effect(parsed, "history")
-
-        # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
-        # Solo la respuesta del formulario (`nfm_reply`) termina la espera de
-        # 10 min. Premortem 2026-10-09: cualquier mensaje la borraba; si el
-        # cliente preguntaba algo mientras lo llenaba y tardaba, a los 5 min el
-        # cierre por abandono lo etiquetaba, la red escalaba al humano y el
-        # formulario caía en una bandeja humana sin acuse. Si nunca llega, la
-        # marca vence sola (`read_idle_timeout_seconds`, 10 min).
+        history: dict[str, Any] = {"image_url": persisted_image_url}
+        if persisted_document_url:
+            history.update(document_url=persisted_document_url, document_filename=effective.document_filename)
+        history.update(reply_kwargs)
         is_flow_reply = (effective.structured_payload or {}).get("kind") == "nfm_reply"
-        cleared_flow_flag = is_flow_reply and (
-            metadata.pop("shipping_flow_awaiting_reply_since_ms", None) is not None
-        )
-
-        # --- 7. Persistir last_inbound_message_id para typing indicator ---
-        if parsed.message_id:
-            metadata["last_inbound_message_id"] = parsed.message_id
-            self._safe_write_metadata(session_id, metadata, base)
-        elif cleared_flow_flag:
-            # No hay message_id PERO limpiamos el flag arriba — persistimos
-            # el pop para que no quede zombie en metadata.
-            self._safe_write_metadata(session_id, metadata, base)
-
-        # Re-entrega tardía (ver 2): el mensaje ya quedó en el chat con la
-        # ventana cerrada; el bot no puede escribirle texto libre (Meta lo
-        # rechaza, 131047). No es un traspaso al humano (una falla técnica no
-        # lo es): el operador lo ve y lo reactiva con plantilla.
-        if arrived_after_window:
-            logger.warning(
-                "inbound_after_service_window",
-                session_id=session_id,
-                wa_message_id=parsed.message_id,
-                late_ms=now_ms - sent_ms,
-            )
-            return
-
-        # Acuse de la despedida (ver 2c): ya quedó en el chat; el agente no
-        # tiene nada que contestar.
-        if closing_ack:
-            logger.info(
-                "closing_ack_absorbed",
-                session_id=session_id,
-                msg_type=parsed.msg_type,
-                text_preview=effective.text[:60],
-            )
-            return
-
-        # --- 8. Analytics de interacciones (clicks) ---
-        if effective.structured_payload:
-            await self._emit_interaction_event(
-                session_id=session_id,
-                structured=effective.structured_payload,
-                wa_message_id=parsed.message_id,
-            )
+        if arrived_after_window or state.closing_ack:
+            # Solo al chat: el bot no le contesta (ver `deliver`).
+            return IngestTurn(outcome=TURN_HISTORY_ONLY, text=effective.text, history=history, is_flow_reply=is_flow_reply)
 
         # --- 8.5. Cupón aplicado: ¿este mensaje habla de él? ---
         # Prueba en vivo 2026-09-24 (15:59 Bogotá): a "¿Si tienes 2 de esa?"
@@ -1415,6 +1424,128 @@ class IngestInboundMessage:
         elif not coupon_talk and applied_coupon(metadata) is not None:
             logger.info("coupon_not_in_play", session_id=session_id)
 
+        # Lo que el cliente pidió o mostró (la foto reentra como texto) y no
+        # existe en el catálogo (incidente 2026-09-23: «¿y en vaso?» + foto de
+        # una vela de dragón, y Ventas solo reenvió el catálogo).
+        gap_note = (
+            await self._catalog_gap_note(session_id, effective.text)
+            if metadata.get("active_route") != ROUTE_HUMANO
+            else None
+        )
+
+        # El carrito: el handle de cada producto, para seguir la venta.
+        cart_note = build_cart_note(
+            (parsed.order or {}).get("product_items") or [] if isinstance(parsed.order, dict) else [],
+            cart_lines,
+        )
+
+        # Respuesta a campaña: el turno lleva la campaña citada (run edbb0d8b:
+        # la nota sola perdió contra un historial reciente sobre otro pedido).
+        turn_message = (
+            quote_campaign_in_turn(campaign_reply_touch, effective.text)
+            if campaign_reply_touch is not None
+            else effective.text
+        )
+        if unseen_template is not None:
+            turn_message = quote_template_in_turn(unseen_template, turn_message)
+        if team_exchange is not None:
+            turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
+        if state.previous_episode_summary is not None:
+            turn_message = with_previous_episode_summary(state.previous_episode_summary, turn_message)
+        return IngestTurn(
+            outcome=TURN_DELIVER,
+            text=effective.text,
+            turn_message=turn_message,
+            history=history,
+            is_flow_reply=is_flow_reply,
+            structured_payload=effective.structured_payload,
+            # Traza v2 (plan del laboratorio, PR 3): wamid, hora y tipo del
+            # mensaje; el workflow arma `inbound[]` de la ráfaga con esto. El
+            # texto crudo (sin la campaña citada ni el episodio anterior) es lo
+            # que lee el clasificador de las capas nuevas (PR 14).
+            inbound_meta={**_inbound_meta(parsed), "text": effective.text},
+            prefer_sales=bool(campaign_reply_note),
+            campaign_reply_note=campaign_reply_note,
+            coupon_talk=coupon_talk,
+            cart_note=cart_note,
+            gap_note=gap_note,
+            reply_to=reply_kwargs.get("reply_to"),
+        )
+
+    async def write_history(self, request: IngestRequest, state: IngestState, turn: IngestTurn) -> None:
+        """Paso 3 · el historial: la línea del cliente en el JSONL de la sesión
+        (lo que ve el panel) y `last_inbound_message_id`."""
+        parsed = message_from_dict(request.message)
+        session_id = state.session_id
+        # Un reintento de la entrada no duplica la línea del cliente en el panel.
+        if self._effect_done(parsed, "history"):
+            logger.info("inbound_history_already_written", session=session_id, wamid=parsed.message_id)
+        else:
+            self._history_store.append_user_event(session_id, turn.text, **turn.history)
+            self._mark_effect(parsed, "history")
+
+        # --- 6.5. Limpiar flag de Flow pendiente (sesión c4e3416f) ---
+        # Solo la respuesta del formulario (`nfm_reply`) termina la espera de
+        # 10 min. Premortem 2026-10-09: cualquier mensaje la borraba; si el
+        # cliente preguntaba algo mientras lo llenaba y tardaba, a los 5 min el
+        # cierre por abandono lo etiquetaba, la red escalaba al humano y el
+        # formulario caía en una bandeja humana sin acuse. Si nunca llega, la
+        # marca vence sola (`read_idle_timeout_seconds`, 10 min).
+        metadata, base = await self._read_metadata(session_id)
+        cleared_flow_flag = turn.is_flow_reply and (
+            metadata.pop("shipping_flow_awaiting_reply_since_ms", None) is not None
+        )
+
+        # --- 7. Persistir last_inbound_message_id para typing indicator ---
+        # …con lo que las lecturas dicen de ESTE mensaje (la señal de compra,
+        # la pausa, la cortesía): este paso va en el orden de llegada.
+        self._mark_last_message(metadata, request, state)
+        if parsed.message_id:
+            metadata["last_inbound_message_id"] = parsed.message_id
+            self._safe_write_metadata(session_id, metadata, base)
+        elif cleared_flow_flag or state.last_message_marks is not None:
+            # No hay message_id PERO limpiamos el flag o hay lecturas —
+            # persistimos para que no quede zombie en metadata.
+            self._safe_write_metadata(session_id, metadata, base)
+
+    async def deliver(self, request: IngestRequest, state: IngestState, turn: IngestTurn) -> None:
+        """Paso 4 · la entrega a la sesión: las notas que salen del documento
+        (releído: ya tiene lo que escribieron los pasos anteriores) y el
+        mensaje a la sesión que corresponda (`LoadOrStartSalesSession`)."""
+        parsed = message_from_dict(request.message)
+        session_id = state.session_id
+        if turn.outcome != TURN_DELIVER:
+            # Re-entrega tardía (ver 2): el mensaje ya quedó en el chat con la
+            # ventana cerrada; el bot no puede escribirle texto libre (Meta lo
+            # rechaza, 131047). No es un traspaso al humano (una falla técnica no
+            # lo es): el operador lo ve y lo reactiva con plantilla.
+            if state.arrived_after_window:
+                logger.warning(
+                    "inbound_after_service_window",
+                    session_id=session_id,
+                    wa_message_id=parsed.message_id,
+                    late_ms=state.arrival_ms - state.sent_ms,
+                )
+            # Acuse de la despedida (ver 2c): ya quedó en el chat; el agente no
+            # tiene nada que contestar.
+            elif state.closing_ack:
+                logger.info(
+                    "closing_ack_absorbed",
+                    session_id=session_id,
+                    msg_type=parsed.msg_type,
+                    text_preview=turn.text[:60],
+                )
+            return
+
+        # --- 8. Analytics de interacciones (clicks) ---
+        if turn.structured_payload:
+            await self._emit_interaction_event(
+                session_id=session_id,
+                structured=turn.structured_payload,
+                wa_message_id=parsed.message_id,
+            )
+
+        metadata, base = await self._read_metadata(session_id)
         # --- 9. Resolver ruta + signal al workflow correspondiente ---
         # Breadcrumb determinista del pedido: si el episodio activo tiene un
         # order_draft proyectable (slots no vacios, episodio sin order_id), lo
@@ -1437,7 +1568,7 @@ class IngestInboundMessage:
         # nuestro): caso 2026-10-09, pedido #64.
         photo_citation_note = build_photo_citation_note(
             parsed.context, metadata
-        ) or build_quote_note(reply_kwargs.get("reply_to"))
+        ) or build_quote_note(turn.reply_to)
         # HU web-cart: nota de lead caliente — se proyecta cada turno
         # mientras el episodio activo no tenga orden registrada (mismo ciclo
         # de vida que el breadcrumb del draft).
@@ -1450,10 +1581,14 @@ class IngestInboundMessage:
         # guion de venta por producto o campaña»), con los precios del catálogo.
         # Va antes de la nota del aplazamiento: si el cliente aplaza, el guion
         # le da la oferta del cupón con su fecha (operador, 2026-10-20).
+        # En este paso el documento ya tiene la señal de ESTE mensaje con su
+        # `last_inbound_message_id` y el último aplazamiento (los escribe
+        # `write_history`, en orden): el que lee `deferral_since_last_reply` es
+        # el de los mensajes del cliente en el orden en que llegaron.
         campaign_script_note, campaign_offer_now = (
             await self._campaign_script_note(
-                session_id, metadata, base, effective.text, message_id=parsed.message_id,
-                to_sales=metadata.get("active_route") != ROUTE_REMARKETING or campaign_reply_note is not None,
+                session_id, metadata, base, turn.text, message_id=parsed.message_id,
+                to_sales=metadata.get("active_route") != ROUTE_REMARKETING or turn.campaign_reply_note is not None,
             )
             if metadata.get("active_route") != ROUTE_HUMANO
             else (None, False)
@@ -1463,72 +1598,41 @@ class IngestInboundMessage:
         )
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
-        coupon_note = build_coupon_note(metadata, in_play=coupon_talk)
-        # Lo que el cliente pidió o mostró (la foto reentra como texto) y no
-        # existe en el catálogo (incidente 2026-09-23: «¿y en vaso?» + foto de
-        # una vela de dragón, y Ventas solo reenvió el catálogo).
-        gap_note = (
-            await self._catalog_gap_note(session_id, effective.text)
-            if metadata.get("active_route") != ROUTE_HUMANO
-            else None
-        )
+        coupon_note = build_coupon_note(metadata, in_play=turn.coupon_talk)
         # Las fotos del cliente ya reconocidas como productos nuestros en el
         # episodio: cada turno siguiente las recuerda (laboratorio 4567 t13:
         # «no están todas» y el bot negó lo verificado). La foto que reentra
         # ya lleva su propia nota.
-        photo_facts_note = None if from_photo else build_photo_facts_note(metadata)
-        # El carrito: el handle de cada producto, para seguir la venta.
-        cart_note = build_cart_note(
-            (parsed.order or {}).get("product_items") or [] if isinstance(parsed.order, dict) else [],
-            cart_lines,
-        )
+        photo_facts_note = None if request.from_photo else build_photo_facts_note(metadata)
         # Respuesta a campaña: la nota solo viaja por la ruta Sales (el
         # remarketing no recibe plugin_context) — el turno va a Ventas.
-        route_kwargs: dict[str, Any] = (
-            {"prefer_sales": True} if campaign_reply_note else {}
-        )
-        # …y el turno lleva la campaña citada (run edbb0d8b: la nota sola
-        # perdió contra un historial reciente sobre otro pedido).
-        turn_message = (
-            quote_campaign_in_turn(campaign_reply_touch, effective.text)
-            if campaign_reply_touch is not None
-            else effective.text
-        )
-        if unseen_template is not None:
-            turn_message = quote_template_in_turn(unseen_template, turn_message)
-        if team_exchange is not None:
-            turn_message = quote_team_exchange_in_turn(team_exchange, turn_message)
-        if previous_episode is not None:
-            turn_message = with_previous_episode(previous_episode, turn_message)
+        route_kwargs: dict[str, Any] = {"prefer_sales": True} if turn.prefer_sales else {}
+        # Un reintento de la entrada no hace que el bot conteste dos veces.
         await self._deliver_turn_once(
             parsed,
             session_id,
             lambda: self._load_session.execute(
                 session_id=session_id,
-                message=turn_message,
+                message=turn.turn_message,
                 phone_number_id=parsed.phone_number_id,
                 **route_kwargs,
-                # Traza v2 (plan del laboratorio, PR 3): wamid, hora y tipo del
-                # mensaje; el workflow arma `inbound[]` de la ráfaga con esto. El
-                # texto crudo (sin la campaña citada ni el episodio anterior) es lo
-                # que lee el clasificador de las capas nuevas (PR 14).
-                inbound_meta={**_inbound_meta(parsed), "text": effective.text},
+                inbound_meta=turn.inbound_meta,
                 extra_context=[
                     note
                     for note in (
-                        campaign_reply_note,
+                        turn.campaign_reply_note,
                         campaign_script_note,
-                        episode_boundary_note,
+                        state.episode_boundary_note,
                         deferral_note,
                         web_cart_note,
                         web_product_note,
                         order_draft_note,
                         coupon_note,
                         photo_facts_note,
-                        photo_note,
+                        request.photo_note,
                         photo_citation_note,
-                        cart_note,
-                        gap_note,
+                        turn.cart_note,
+                        turn.gap_note,
                     )
                     if note
                 ]
@@ -1539,6 +1643,23 @@ class IngestInboundMessage:
     # =========================================================================
     # Helpers
     # =========================================================================
+
+    @staticmethod
+    def _mark_last_message(metadata: dict[str, Any], request: IngestRequest, state: IngestState) -> None:
+        """Escribe en `metadata` lo que las lecturas dicen del ÚLTIMO mensaje
+        (señal de compra, pausa, cortesía; `apply_last_message_marks`). Va con
+        `last_inbound_message_id`: cada mensaje pisa las del anterior."""
+        if state.last_message_marks is None:
+            return
+        parsed = message_from_dict(request.message)
+        apply_last_message_marks(
+            metadata,
+            state.last_message_marks,
+            text=parsed.text,
+            now_ms=state.now_ms,
+            message_id=parsed.message_id,
+            tz=resolve_local_timezone(state.session_id),
+        )
 
     def _effect_done(self, parsed: WhatsAppMessage, effect: str) -> bool:
         """¿Un intento anterior de la entrada ya hizo este efecto con este mensaje?"""
@@ -2037,10 +2158,10 @@ class IngestInboundMessage:
             return ("degraded", type(exc).__name__, None)
         return ("hydrated", None, hydration)
 
-    def _emit_web_cart_events(
+    async def _emit_web_cart_events(
         self, *, session_id: str, metadata: dict[str, Any], cart_id: str
     ) -> None:
-        """Analytics del web cart (fire-and-forget, mismo patrón referral)."""
+        """Analytics del web cart (con tope, mismo patrón referral)."""
         state = metadata.get("web_cart") or {}
         status = state.get("status", "degraded")
         unmatched = state.get("unmatched_titles") or []
@@ -2066,7 +2187,7 @@ class IngestInboundMessage:
                 else None
             ),
         )
-        _spawn_safe(
+        await _best_effort(
             self._event_bus.record(captured),
             label="analytics.web_cart_captured",
             session_id=session_id,
@@ -2078,7 +2199,7 @@ class IngestInboundMessage:
                 cart_id=cart_id,
                 unmatched_titles=unmatched,
             )
-            _spawn_safe(
+            await _best_effort(
                 self._event_bus.record(mismatch),
                 label="analytics.web_cart_product_mismatch",
                 session_id=session_id,
@@ -2158,7 +2279,7 @@ class IngestInboundMessage:
         # crashee.
         self._safe_write_metadata(session_id, metadata, base)
 
-    def _handle_referral(
+    async def _handle_referral(
         self,
         *,
         session_id: str,
@@ -2200,8 +2321,7 @@ class IngestInboundMessage:
         # Persistir inmediatamente (el bus es async y puede demorar)
         self._safe_write_metadata(session_id, metadata, base)
 
-        # Emitir analytics. Fire-and-forget — si el bus falla, NO bloquea.
-        # PREMORTEM #2: spawn safe.
+        # Emitir analytics: se espera con tope; si el bus falla, NO bloquea.
         if self._event_bus is not None:
             event = make_referral_captured(
                 session_id=session_id,
@@ -2209,7 +2329,7 @@ class IngestInboundMessage:
                 referral=referral,
                 inbound_message_id=inbound_message_id,
             )
-            _spawn_safe(
+            await _best_effort(
                 self._event_bus.record(event),
                 label="analytics.referral_captured",
                 session_id=session_id,
@@ -2262,22 +2382,17 @@ class IngestInboundMessage:
             wa_message_id=wa_message_id,
             payload_extra={"structured": structured},
         )
-        _spawn_safe(
+        await _best_effort(
             self._event_bus.record(event),
             label="analytics.wa_interaction",
             session_id=session_id,
         )
 
     async def _emit_event(self, event: Any) -> None:
-        """Fire-and-forget de un evento. Tolerante a bus=None.
-
-        PREMORTEM #2: spawn safe — captura excepciones y las loguea
-        estructurado para que no se pierdan en "Task exception was never
-        retrieved" warnings genéricos del stderr.
-        """
+        """Un evento de analytics, con tope (`_best_effort`). Tolerante a bus=None."""
         if not self._event_bus:
             return
-        _spawn_safe(
+        await _best_effort(
             self._event_bus.record(event),
             label="analytics.record",
             session_id=None,
@@ -2299,6 +2414,18 @@ class IngestInboundMessage:
         except Exception:  # noqa: BLE001 — best-effort
             logger.info("profile_name_write_failed_ignored", session=session_id)
             return False
+
+    async def _read_metadata(self, session_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        """El documento de la sesión al empezar un paso y la base del merge de
+        tres vías de sus escrituras (lo que había en disco al leer). Un error
+        pasajero se reintenta (hasta 3 veces); si sigue fallando, `{}` y una
+        base `_Unread`: lo que el paso decida sobre `{}` no se escribe."""
+        try:
+            metadata = await read_retrying_transient_errors(self._metadata_store, session_id)
+        except Exception as exc:  # noqa: BLE001 — best-effort: el mensaje no se pierde
+            logger.warning("ingest_metadata_unreadable", session=session_id, error=repr(exc)[:200])
+            return {}, _Unread()
+        return metadata, copy.deepcopy(metadata)
 
     def _safe_write_metadata(
         self,
@@ -2356,22 +2483,28 @@ class IngestInboundMessage:
         )
 
     async def _transcribe_and_reenter(self, parsed: WhatsAppMessage) -> None:
-        """Transcribe el audio (Groq/OpenAI) y re-ejecuta el ingest con
-        un mensaje text sintético. Background task — el HTTP webhook ya
-        devolvió 200. Si falla, mandamos un texto pidiendo al cliente
-        que escriba en lugar del audio.
-        """
+        """Transcribe la nota de voz y la hace entrar como texto (en este proceso)."""
+        reentry = await self.transcribe_audio(IngestRequest(message=asdict(parsed)))
+        if reentry is not None:
+            await self.run(reentry)
+
+    async def transcribe_audio(self, request: IngestRequest) -> IngestRequest | None:
+        """Paso de la nota de voz: la transcribe y devuelve su reentrada como
+        texto (`<wamid>_transcribed`), o None si no salió texto. Si no se
+        entendió, le pide al cliente que lo escriba (una sola vez, aunque el
+        paso se reintente)."""
         from src.platform.audio.composition import get_audio_transcription_port
         from src.platform.audio.dtos import TranscriptionRequest
 
+        parsed = message_from_dict(request.message)
         audio_info = parsed.audio or {}
         media_id = audio_info.get("id")
         if not media_id:
-            return
+            return None
 
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
         port = get_audio_transcription_port()
-        request = TranscriptionRequest(
+        transcription = TranscriptionRequest(
             media_id=media_id,
             mime_type=audio_info.get("mime_type", "audio/ogg"),
             voice_note=bool(audio_info.get("voice", True)),
@@ -2379,24 +2512,27 @@ class IngestInboundMessage:
             max_duration_seconds=60,
         )
         try:
-            result = await port.transcribe(request)
+            result = await port.transcribe(transcription)
         except Exception as e:  # noqa: BLE001
             logger.warning(
                 "transcribe_and_reenter.exception",
                 session=session_id,
                 error=str(e),
             )
-            return
+            return None
 
         self._charge_audio(session_id, result)
 
-        # Limpiar pending_transcription
-        try:
-            metadata = self._metadata_store.read(session_id)
-            base = copy.deepcopy(metadata)
-            metadata.pop("pending_transcription", None)
+        # El resultado al documento, sobre lo fresco (candado + lectura
+        # fresca): solo se saca el pendiente de ESTA nota de voz (si mientras
+        # tanto llegó otra, el suyo se queda) y no se pisa lo que otro
+        # escritor puso mientras se transcribía.
+        def _record_transcription(fresh: dict[str, Any]) -> dict[str, Any]:
+            pending = fresh.get("pending_transcription")
+            if isinstance(pending, dict) and pending.get("media_id") == media_id:
+                fresh.pop("pending_transcription")
             if result.ok and result.text:
-                recent = list(metadata.get("recent_transcriptions") or [])
+                recent = list(fresh.get("recent_transcriptions") or [])
                 recent.append({
                     "media_id": media_id,
                     "text": result.text,
@@ -2404,18 +2540,18 @@ class IngestInboundMessage:
                     "duration_seconds": result.duration_seconds,
                     "cost_usd_estimate": result.cost_usd_estimate,
                 })
-                metadata["recent_transcriptions"] = recent[-20:]
+                fresh["recent_transcriptions"] = recent[-20:]
             else:
-                errors = list(metadata.get("transcription_failures") or [])
+                errors = list(fresh.get("transcription_failures") or [])
                 errors.append({
                     "media_id": media_id,
                     "error": result.error,
                     "provider": result.provider,
                 })
-                metadata["transcription_failures"] = errors[-20:]
-            self._safe_write_metadata(session_id, metadata, base)
-        except Exception:  # noqa: BLE001
-            pass
+                fresh["transcription_failures"] = errors[-20:]
+            return fresh
+
+        self._update_best_effort(session_id, _record_transcription, what="transcripcion")
 
         # Emit analytics
         if self._event_bus:
@@ -2458,10 +2594,10 @@ class IngestInboundMessage:
                 await self._send_once(parsed, fallback)
             except Exception:  # noqa: BLE001
                 pass
-            return
+            return None
 
-        # Re-entry: ejecutamos el ingest otra vez con un msg sintético
-        # tipo text. El workflow de sales se signaleará normal.
+        # Re-entry: el ingest corre otra vez con un mensaje sintético tipo
+        # text (la llegada sigue siendo la de la nota de voz).
         synthetic = WhatsAppMessage(
             message_id=f"{parsed.message_id}_transcribed",
             from_number=parsed.from_number,
@@ -2480,17 +2616,13 @@ class IngestInboundMessage:
             provider=result.provider,
             cost_usd=result.cost_usd_estimate,
         )
-        await self.execute(synthetic)
+        return IngestRequest(message=asdict(synthetic), received_at_ms=request.received_at_ms)
 
-    async def _read_photo(self, parsed: WhatsAppMessage, session_id: str) -> None:
-        """Lee la foto y la hace entrar al bot; al terminar (o fallar) suelta
-        los mensajes del cliente que esperaban por ella y le avisa al workflow
-        (después del mensaje de la foto) que ya no hay nada que esperar."""
-        try:
-            await self._describe_image_and_reenter(parsed)
-        finally:
-            self._photo_reads.end(session_id)
-            await self._notify_photo(session_id, parsed.message_id, done=True)
+    async def photo_done(self, request: IngestRequest) -> None:
+        """La foto ya entró al bot (o su lectura falló): le avisa a la sesión de
+        ventas, después del mensaje de la foto, que ya no hay nada que esperar."""
+        parsed = message_from_dict(request.message)
+        await self._notify_photo(f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}", parsed.message_id, done=True)
 
     async def _notify_photo(self, session_id: str, wamid: str | None, *, done: bool) -> None:
         """El aviso al workflow de ventas de que una foto del cliente se está
@@ -2505,10 +2637,17 @@ class IngestInboundMessage:
             logger.warning("photo_reading_notice_failed", session=session_id, done=done, error=repr(exc)[:200])
 
     async def _describe_image_and_reenter(self, parsed: WhatsAppMessage) -> None:
-        """Describe la imagen (Gemini visión) y re-ejecuta el ingest con un
-        mensaje text sintético. Background task — el webhook ya devolvió 200.
+        """Lee la foto y la hace entrar como texto (en este proceso)."""
+        reentry = await self.describe_image(IngestRequest(message=asdict(parsed)))
+        if reentry is not None:
+            await self.run(reentry)
 
-        Patrón espejo de ``_transcribe_and_reenter`` (audio). Reglas extra:
+    async def describe_image(self, request: IngestRequest) -> IngestRequest | None:
+        """Paso de la foto: la guarda para el panel, la describe (Gemini
+        visión), reconoce el producto y devuelve su reentrada como texto
+        (`<wamid>_vision`), o None si no hay foto.
+
+        Patrón espejo de ``transcribe_audio`` (audio). Reglas extra:
 
           * **Comprobante de pago**: si la conversación NO está ya en turno
             humano, la asigna al humano (``active_route=humano``) y le avisa al
@@ -2521,10 +2660,11 @@ class IngestInboundMessage:
         from src.platform.vision.composition import get_image_vision_port
         from src.platform.vision.dtos import VisionRequest
 
+        parsed = message_from_dict(request.message)
         media = parsed.media or {}
         media_id = media.get("id")
         if not isinstance(media_id, str) or not media_id:
-            return
+            return None
         session_id = f"{WHATSAPP_SESSION_PREFIX}{parsed.from_number}"
         caption = media.get("caption")
         caption = caption if isinstance(caption, str) and caption.strip() else None
@@ -2632,14 +2772,13 @@ class IngestInboundMessage:
             placeholder = "[el cliente envió una imagen que no pude ver bien]"
             if caption:
                 placeholder += f' con el texto: "{caption}"'
-            await self.execute(
+            # Las lecturas solo leen lo que escribió el cliente en la foto.
+            return _photo_reentry(
+                request,
                 self._synthetic_text_message(parsed, placeholder),
                 persisted_image_url=persisted_image_url,
-                # Las lecturas solo leen lo que escribió el cliente en la foto.
-                customer_text=caption or None,
-                from_photo=True,
+                caption=caption,
             )
-            return
 
         # --- Comprobante de pago + conversación aún en turno de bot: asignar a
         #     humano ANTES de reinyectar (así la reentrada no toca al agente) ---
@@ -2685,18 +2824,18 @@ class IngestInboundMessage:
             provider=result.provider,
             cost_usd=result.cost_usd_estimate,
         )
-        await self.execute(
+        # La descripción la escribió la visión: las lecturas del cliente
+        # (compra, retoma, baja) solo leen lo que él puso en la foto.
+        return _photo_reentry(
+            request,
             self._synthetic_text_message(parsed, synthetic_text),
             persisted_image_url=persisted_image_url,
-            # La descripción la escribió la visión: las lecturas del cliente
-            # (compra, retoma, baja) solo leen lo que él puso en la foto.
-            customer_text=caption or None,
+            caption=caption,
             photo_note=(
                 build_photo_product_note(product, result.description)
                 if product is not None
                 else None
             ),
-            from_photo=True,
         )
 
     def _charge_audio(self, session_id: str, result: Any) -> None:
@@ -3318,42 +3457,54 @@ def _classify_origin_channel(
     return "ad"
 
 
-def _is_photo(parsed: WhatsAppMessage) -> bool:
-    """¿El mensaje es una foto que va a la visión? (las fotos no se esperan entre sí)"""
-    media = parsed.media or {}
-    return media.get("type") == "image" and isinstance(media.get("id"), str)
+def _photo_reentry(
+    request: IngestRequest,
+    synthetic: WhatsAppMessage,
+    *,
+    persisted_image_url: str | None,
+    caption: str | None,
+    photo_note: str | None = None,
+) -> IngestRequest:
+    """La foto ya leída, como mensaje de texto (`<wamid>_vision`): la llegada
+    sigue siendo la de la foto, y las lecturas solo leen lo que el cliente
+    escribió en ella (la descripción la escribió la visión)."""
+    return IngestRequest(
+        message=asdict(synthetic),
+        received_at_ms=request.received_at_ms,
+        persisted_image_url=persisted_image_url,
+        customer_text=caption or None,
+        customer_text_from_message=False,
+        photo_note=photo_note,
+        from_photo=True,
+    )
 
 
-def _spawn_safe(coro, *, label: str, session_id: str | None) -> None:
-    """Lanza una coroutine como fire-and-forget capturando excepciones.
+#: Tope de un efecto secundario del ingest (analytics, aviso al watchdog): se
+#: espera dentro del paso que lo produce; si no responde a tiempo, el mensaje
+#: sigue su camino.
+_SIDE_EFFECT_TIMEOUT_S = 5.0
 
-    Sin esto, `asyncio.create_task(coro)` con una task que crashea genera
-    un warning genérico `Task exception was never retrieved` al stderr
-    que NO aparece en logging estructurado de la app — debug imposible.
 
-    Acá envolvemos la coro en un wrapper que catchea todo, loguea
-    estructurado (con label + session_id para correlación), y descarta.
+async def _best_effort(coro: Awaitable[Any], *, label: str, session_id: str | None) -> None:
+    """Espera un efecto secundario del ingest y loguea si falla o se pasa del
+    tope: el mensaje del cliente nunca se frena por él.
 
-    Pattern usado por el ingest para la visión y el audio. Desde la entrada
-    durable (ADR 2026-10-15) el ingest corre en una activity del worker
-    `sales`: estas tasks siguen fuera de Temporal (si el proceso muere, se
-    pierden, como antes en la API). La fase 2 las vuelve activities.
-    """
+    Reemplaza a `_spawn_safe` (entrada durable, fase 2; lección L-7): una
+    tarea suelta la puede matar el GC sin log y, dentro de una activity,
+    sobrevivía al final del intento — si el worker moría, se perdía. La
+    cancelación (el worker se apaga a mitad) sí sube: el paso se reintenta."""
     import asyncio
 
-    async def _run():
-        try:
-            await coro
-        except Exception as e:  # noqa: BLE001 — fire-and-forget safety
-            logger.warning(
-                "background_task_failed",
-                label=label,
-                session_id=session_id,
-                error_type=type(e).__name__,
-                error=str(e),
-            )
-
-    asyncio.create_task(_run())
+    try:
+        await asyncio.wait_for(coro, timeout=_SIDE_EFFECT_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001 — efecto secundario: nunca tumba el ingest
+        logger.warning(
+            "background_task_failed",
+            label=label,
+            session_id=session_id,
+            error_type=type(e).__name__,
+            error=str(e),
+        )
 
 
 async def emit_watchdog_events(
@@ -3379,10 +3530,11 @@ async def emit_watchdog_events(
        dispatcher lo rutea a `via=signal, signal_name=cancel_watchdog`
        sobre el mismo workflow_id.
 
-    Fire-and-forget bajo `_spawn_safe`:
+    Con tope, bajo `_best_effort` (entrada durable, fase 2: antes era una
+    tarea suelta):
       * Errores del dispatcher NO bloquean el routing del inbound (el
         cliente espera respuesta — no podemos demorar por un Temporal
-        transient).
+        transient más que el tope).
       * Si `temporal_client_factory` es None (tests, composition
         parcial), noopea silenciosamente.
       * Si no hay episodio activo ni ruta de bot, noopea — no hay
@@ -3456,7 +3608,7 @@ async def emit_watchdog_events(
             client,
         )
 
-    _spawn_safe(
+    await _best_effort(
         _do_emit(),
         label="watchdog.emit_events",
         session_id=session_id,

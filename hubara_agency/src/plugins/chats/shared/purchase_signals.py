@@ -199,21 +199,45 @@ def apply_inbound_purchase_signal(
     marca la confirmación de compra (`order_draft.confirmed_at_ms` +
     `confirmed_by`). El carrito confirma SIEMPRE: nombra producto y cantidad
     por sí mismo, no depende de que el draft ya tenga `producto`.
+
+    Son dos escrituras distintas (`mark_inbound_signal` y
+    `confirm_inbound_purchase`): la entrada durable escribe la primera en el
+    orden de llegada de los mensajes y la segunda apenas lee.
     """
+    mark_inbound_signal(metadata, kind, now_ms=now_ms, message_id=message_id, text=text)
+    return confirm_inbound_purchase(metadata, kind, confirmed_by, now_ms=now_ms)
+
+
+def mark_inbound_signal(
+    metadata: dict[str, Any], kind: str | None, *, now_ms: int, message_id: str | None, text: str | None
+) -> None:
+    """La señal del ÚLTIMO mensaje (`SIGNAL_KEY`; la lee `current_signal`
+    solo si es del `last_inbound_message_id`). Sin señal, se borra."""
     if kind is None:
         metadata.pop(SIGNAL_KEY, None)
-        return None
-
+        return
     metadata[SIGNAL_KEY] = {
         "kind": kind,
         "at_ms": now_ms,
         "message_id": message_id,
         "text": (text or "")[:120],
     }
+    # El último aplazamiento (caso del 2026-10-21): no lo borra un mensaje sin
+    # señal que llegue después, solo una compra. Va con la señal: también
+    # describe a los últimos mensajes y se escribe en su orden de llegada.
     if kind == "deferral":
         metadata[DEFERRAL_KEY] = dict(metadata[SIGNAL_KEY])
     else:
         metadata.pop(DEFERRAL_KEY, None)
+
+
+def confirm_inbound_purchase(
+    metadata: dict[str, Any], kind: str | None, confirmed_by: str, *, now_ms: int
+) -> str | None:
+    """La confirmación de compra en el borrador del episodio activo (vale
+    aunque después llegue otro mensaje). Devuelve la señal."""
+    if kind is None:
+        return None
     if kind == "affirmation":
         episode = active_episode(metadata)
         if episode and confirmed_by == "cart":

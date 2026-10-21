@@ -37,9 +37,6 @@ from src.plugins.chats.agent.sales.activities.inject_context import (
 from src.plugins.chats.agent.sales.activities.reply_window import (
     read_reply_window_activity,
 )
-from src.plugins.chats.agent.sales.activities.transcribe_audio import (
-    transcribe_audio_activity,
-)
 from src.plugins.chats.agent.sales.activities.turn_trace import (
     persist_turn_trace_activity,
 )
@@ -60,5 +57,4 @@ __all__ = [
     "read_reply_window_activity",
     "flush_pending_ui_intents_activity",
     "persist_turn_trace_activity",
-    "transcribe_audio_activity",
 ]

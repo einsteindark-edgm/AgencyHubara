@@ -130,12 +130,15 @@ agent:
       # consulta el enrutador).
       # Entrada durable (ADR 2026-10-15, docs/adr/2026-10-15-durable-inbound-entry.md):
       # el webhook arranca `InboundMessageWorkflow` por nombre (`inbound-<wamid>`)
-      # en esta cola y este worker ingiere el mensaje. Va al final: el índice 0
-      # sigue siendo la sesión de ventas.
+      # en esta cola y este worker ingiere el mensaje, un paso por activity.
+      # `InboundSessionWorkflow` (`inbound-wa_<número>`, ADR 2026-10-16) dice
+      # qué mensaje del cliente llegó antes: la entrega va en orden de llegada.
+      # Van al final: el índice 0 sigue siendo la sesión de ventas.
       workflow_classes:
         - HubaraSalesSessionWorkflow
         - HubaraSalesSessionWorkflowV2
         - InboundMessageWorkflow
+        - InboundSessionWorkflow
       emits:
         - SalesSessionCompletionEvent
         # HU-WA24H-001 Sprint 2: service-window lifecycle events.

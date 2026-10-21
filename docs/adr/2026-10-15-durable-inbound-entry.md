@@ -1,6 +1,6 @@
-# ADR 2026-10-15 · Entrada durable de los mensajes de WhatsApp (fase 1)
+# ADR 2026-10-15 · Entrada durable de los mensajes de WhatsApp (fases 1 y 2)
 
-**Estado:** aceptado (fase 1 implementada; fase 2 pendiente).
+**Estado:** aceptado (fase 1 y fase 2 implementadas; la fase 2 está en la sección «Fase 2»).
 **Origen:** auditoría de Temporal del 2026-10-15: el hueco más grande de durable execution está en la puerta de entrada.
 
 ## Contexto
@@ -111,10 +111,18 @@ k8s, que no es prod. Si ese camino se usara antes de la fase 2, el texto que
 llega detrás de una foto dejaría de esperarla: el comportamiento de antes del
 2026-09-30, sin perder mensajes.
 
+> **Fase 2:** el invariante cae. Ya no hay estado en memoria del proceso: la foto,
+> la nota de voz y el orden viven en Temporal.
+
 En local, el compose del worker `sales` suma `MEDUSA_PUBLISHABLE_API_KEY`,
 porque el ingest lee el carrito web. En prod el `.env` ya es compartido.
 
 ### 4 · `PhotoReads` en memoria
+
+> **Fase 2:** reemplazado. «Foto en lectura» es el workflow abierto de la foto, y el
+> texto que la sigue la espera en `InboundSessionWorkflow`
+> (`docs/adr/2026-10-16-inbound-session-workflow.md`). Cae el invariante de una
+> réplica (punto 3). Lo que sigue describe la fase 1.
 
 Se queda como está, ahora en el proceso del worker `sales`. El caso de uso es un
 singleton por proceso (`build_ingest_use_case()`), así que la foto que se lee y
@@ -176,7 +184,7 @@ reintentos de esta fase se miden en minutos.
   activity se cancela entre «empieza a leerse» y lanzar la lectura, se libera; si
   no, cada texto de ese cliente esperaría 10 s hasta reiniciar el worker.
 
-  **Límite conocido:** un reintento no es un replay. Lo que el intento anterior ya
+  **Límite conocido (fase 1; lo cierra la fase 2):** un reintento no es un replay. Lo que el intento anterior ya
   dejó en la metadata (el episodio abierto, el referral visto, el cupón aplicado) lo
   ve el nuevo intento como ya hecho. Si el worker murió justo entre abrir el
   episodio y avisar a la sesión, el turno puede salir sin la nota de primer
@@ -223,33 +231,172 @@ runbook).
   sin métrica. Mientras está caído, los mensajes esperan en Temporal: ni el bot ni
   el panel ni la App los ven (ver Consecuencias).
 
-## Fase 2 (pendiente, por pasos)
+## Fase 2 (implementada el 2026-10-16)
 
-1. **Partir el ingest en activities** dentro de `InboundMessageWorkflow`:
-   - leer el estado de la sesión;
-   - las lecturas (Jev);
-   - cupón y carrito;
-   - escribir el historial;
-   - entregar a la sesión.
+`InboundMessageWorkflow` corre el camino nuevo detrás de
+`workflow.patched("inbound-steps-v1")`. Los runs de la fase 1 que estén vivos al
+desplegar lo reproducen sin la marca y terminan por el camino viejo: el ingest
+entero en `ingest_inbound_message`. Por eso esa activity y
+`wait_inbound_predecessor` siguen registradas. Las cubre la fixture
+`history_inbound_message_chained_v1.json`.
 
-   Cada efecto queda con su propia activity idempotente, y el diario de efectos
-   pasa a ser el historial del workflow.
-2. **La visión y el audio como activities** (`describe_image`, `transcribe_audio`),
-   con su heartbeat. Con eso se retiran `_spawn_safe` y el `transcribe_audio_activity`
-   muerto del worker `sales`.
-3. **Reemplazar `PhotoReads` por estado de un workflow por cliente.** Hay dos
-   formas posibles:
-   - un `InboundSessionWorkflow` (`inbound-{sesión}`) que recibe los mensajes por
-     signal y lleva «foto en lectura» como estado;
-   - delegarlo en la sesión de ventas, que ya recibe `photo_reading`.
+### 1 · El ingest en pasos
 
-   Con eso cae el invariante de una réplica.
-4. **Orden entre POSTs sin serializar las lecturas.** Las lecturas corren en
-   paralelo y la entrega a la sesión va en orden de llegada (o por el `timestamp`
-   de Meta dentro de la ráfaga). Así la ráfaga entera llega junta y en orden.
-5. **Pasar `received_at_ms` al ingest** para que «llegó tarde» y «fuera de
-   ventana» usen la hora de llegada al webhook y no la del intento. Hoy un
-   reintento de minutos casi no cambia nada (el umbral de «llegó tarde» es de 5 min).
+`IngestInboundMessage` expone los pasos. Cada uno toma y devuelve un DTO chico,
+frozen y JSON (`contracts.py`). El documento de la sesión se queda en el vault y
+cada paso lo relee. Así no viajan a Temporal Cloud la metadata (PII y tamaño) ni
+una copia que otro escritor haya cambiado mientras tanto.
+
+| Paso (activity) | Hace | Devuelve |
+|---|---|---|
+| `read_inbound_state` | lee la sesión; origen y referral; acuse de despedida y lecturas con Jev; rota el episodio; mide la ventana; escribe todo **en una escritura** | `IngestState`: las notas que salen de esa decisión |
+| `prepare_inbound_turn` | carrito web, producto de la web o de la ficha, cupón de la campaña, aviso al watchdog, texto efectivo, PDF, citas, lectura del cupón, «fuera de catálogo» | `IngestTurn`: el turno armado, o por qué no hay (foto, nota de voz, nada que escribir, solo al chat) |
+| `write_inbound_history` | la línea del cliente en el JSONL y `last_inbound_message_id` | — |
+| `deliver_inbound_turn` | las notas que salen del documento ya releído y el mensaje a la sesión | — |
+
+`execute` sigue existiendo: corre los mismos pasos en el proceso (`run`) para los
+tests y quien llame al caso de uso directo.
+
+**Desviación del plan:** «leer el estado» y «las lecturas con Jev» son **un solo
+paso**. El episodio que rota el mensaje y lo que escriben las lecturas van en una
+sola escritura, bajo la guarda de la toma humana (#393).
+
+- Si se separan, la metadata tendría que viajar en el historial de Temporal (PII
+  y tamaño).
+- O la rotación quedaría escrita antes de esperar a Jev, y una persona que toma el
+  chat durante esa espera ya no podría deshacerla.
+
+Lo que el estado decide queda en el resultado del paso: la nota de frontera, la
+campaña y el resumen del episodio anterior (nunca el episodio entero, que lleva
+los datos de envío del borrador). Un reintento de un paso **posterior** ya no lo
+pierde: era el «límite conocido» de la fase 1.
+
+Sigue abierto en el propio paso del estado. Si el worker muere después de su
+escritura y antes de devolver, el reintento decide sobre el documento ya rotado
+y el turno sale sin la nota de frontera: milisegundos de ventana.
+
+**Las lecturas que describen al último mensaje se escriben en orden.** La señal
+de compra (`SIGNAL_KEY`), la pausa por aplazamiento y la cortesía las pisa cada
+mensaje nuevo. Por eso las escribe el paso del historial, que va en orden,
+junto con `last_inbound_message_id`; viajan como `IngestState.last_message_marks`.
+
+En el paso del estado quedan solo las que valen aunque llegue otro mensaje: la
+confirmación de compra en el borrador y la baja.
+
+Sin esto, la foto que reentra tarde borraba la señal del «luego te escribo» que
+el cliente mandó detrás. El turno salía sin la nota de aplazamiento y la pausa
+se levantaba (revisión del PR).
+
+**Dentro de un POST, el estado espera al anterior** (como en la fase 1). Si no,
+los dos mensajes verían el mismo episodio cerrado o la misma campaña sin
+responder, y los dos turnos llevarían la nota de frontera y la campaña, con el
+cupón validado dos veces. Entre POSTs las lecturas corren en paralelo, como en
+la fase 1; esa carrera ya existía y queda anotada abajo.
+
+**El diario de efectos** deja de ser lo que evita repetir pasos ya hechos; eso lo
+hace el historial del workflow. Sigue dentro de cada activity para lo que su
+propio reintento no puede repetir:
+
+- `send:` reclama antes de enviar. Una cortesía sale como mucho una vez.
+- `turn` lleva el candado por `wamid` y el aviso protegido de la cancelación
+  (PM-003).
+- `history` cubre los milisegundos entre escribir la línea y que la activity
+  termine.
+
+El paso del estado se reintenta si su escritura falla (`write_failed`), hasta 3
+intentos. Después el mensaje sigue igual, como en la fase 1: mejor un turno sin
+el episodio rotado que un mensaje que no llega. Los demás pasos escriben de mejor
+esfuerzo.
+
+### 2 · La foto y la nota de voz, cada una su paso
+
+`describe_inbound_image` y `transcribe_inbound_audio` laten cada 10 s, con 3
+intentos (cada uno cuesta) y sin reintentar errores de programación.
+
+- Devuelven la **reentrada como texto** (`<wamid>_vision` / `<wamid>_transcribed`).
+  El workflow la corre por los mismos pasos, con la llegada de la foto como reloj.
+- Al terminar la foto (también si su lectura falló), `notify_inbound_photo_done`
+  le avisa a la sesión de ventas. Así su ráfaga deja de esperarla.
+- Si la foto o la nota de voz no se pueden leer tras sus intentos, el workflow
+  queda *Failed*, a la vista y reseteable como cualquier otro paso. Antes se
+  perdían en silencio en `_spawn_safe`.
+- Un reintento repite la llamada al proveedor y su cobro a la conversación; son 3
+  intentos como mucho y solo tras una falla.
+- Se retiraron:
+  - `_spawn_safe`: los eventos de analytics y el aviso al watchdog se esperan con
+    tope de 5 s (`_best_effort`), sin tareas sueltas (L-7);
+  - `PhotoReads` y `use_cases/photo_reads.py`;
+  - `transcribe_audio_activity`, que estaba muerta (del worker y del
+    laboratorio). El módulo queda como código muerto, sin `@activity.defn`
+    (así el gate de coherencia del worker no la exige registrada). Sus imports
+    de `src.platform` están congelados en la allowlist P-28, bajo
+    `tests/architecture/` (ruta protegida); borrarlo es drenar esas líneas en
+    un PR con el label `architecture-change`.
+- La transcripción viva saca **solo su pendiente**, con un `update()` atómico. Si
+  mientras tanto llegó otra nota de voz, la suya se queda.
+
+### 3 · `PhotoReads` → `InboundSessionWorkflow` y 4 · orden entre POSTs
+
+Ver `docs/adr/2026-10-16-inbound-session-workflow.md`.
+
+- Cada mensaje se anuncia al workflow de su cliente (`inbound-wa_<número>`), que le
+  responde con su anterior.
+- Las lecturas corren en seguida.
+- Antes de `write_inbound_history`, el mensaje espera (tope de 30 s) a que termine
+  el workflow de su anterior: el del mismo POST (`after`) y el que dijo el workflow
+  del cliente.
+
+La ráfaga llega junta y en orden de llegada al webhook, también entre POSTs. El
+texto escrito detrás de una foto entra después de la foto. Cae el invariante de
+una réplica del worker `sales`.
+
+### 5 · El reloj del ingest
+
+`received_at_ms` (la llegada al webhook) mide «llegó tarde» (`sent_at_ms`) y
+«fuera de ventana» (`arrived_after_window`). Un ingest que se reintenta minutos
+después no vuelve tarde un mensaje que llegó a tiempo. Las demás horas del
+ingest (episodio, cupón) siguen siendo las del paso del estado, una sola para
+todos los pasos.
+
+### Runbook de la fase 2
+
+- **Deploy:** la API no cambia. El worker `sales` nuevo toma los runs nuevos por
+  pasos; los de la fase 1 que estén vivos terminan por su camino.
+- **Rollback:** **no** volver el worker a una imagen de la fase 1 con
+  `InboundMessageWorkflow` corriendo.
+  - Sus histories ya tienen la marca `inbound-steps-v1` y las activities nuevas, y
+    el código viejo no las reproduce.
+  - Antes, drenar: `WorkflowType="InboundMessageWorkflow" AND
+    ExecutionStatus="Running"`.
+  - Los `InboundSessionWorkflow` que queden se pueden terminar sin perder nada: no
+    guardan mensajes.
+- **Mensajes varados:**
+  - Un paso *Failed* se ve con su nombre en la UI de Temporal.
+  - *Reset* al workflow task anterior a ese paso: los pasos anteriores no se
+    repiten.
+- **Retirar la fase 1:** cuando ya no quede ningún `inbound-*` sin la marca
+  (minutos después del deploy), un PR aparte puede:
+  - quitar `_whole_ingest`, `ingest_inbound_message` y `wait_inbound_predecessor`;
+  - pasar el patch a `workflow.deprecate_patch`;
+  - retirar la fixture v1.
+
+### Lo que la fase 2 no hace
+
+- **La I/O síncrona del ingest en el event loop** (lo anotó el premortem para esta
+  fase): lecturas y escrituras del vault, `count_session_jsonl_lines`. Siguen
+  bloqueando el loop del worker mientras duran. Queda para un cambio aparte.
+- **El punto único de entrada** (el worker `sales` caído deja los mensajes sin ver)
+  sigue diferido a su propio ADR.
+- **El orden usa la llegada al webhook, no el `timestamp` de Meta** (que viene en
+  segundos). Un rezagado de días ya lo marca «llegó tarde».
+- **Dos mensajes de POSTs distintos que llegan casi juntos** corren sus pasos del
+  estado a la vez, como en la fase 1. Si la conversación estaba cerrada, los dos
+  pueden ver el episodio cerrado y llevar la nota de frontera; los dos pueden
+  responder a la misma campaña.
+  - Las lecturas del último mensaje ya no se pisan (van en orden).
+  - Cerrar del todo esta carrera es separar la lectura con Jev (en paralelo) de
+    la escritura del estado (en orden), que fue el corte que proponía el plan.
+    Queda como mejora.
 
 ## Consecuencias
 
@@ -277,6 +424,10 @@ runbook).
   - el input guardado dos veces en la historia.
 
   Son ~6–8 acciones por mensaje: centavos al mes con el volumen de hoy.
+
+  **Fase 2:** son el anuncio, los 4 pasos (6 con una foto o una nota de voz), sus
+  heartbeats, las dos señales con el workflow del cliente y la espera al anterior
+  cuando lo hay. Quedan ~15–20 acciones por mensaje, 2–3 veces las de la fase 1.
 - **El primer deploy** puede levantar la API antes que el worker. Los workflows
   esperan (o fallan sus workflow tasks y se reintentan) hasta que el worker nuevo
   los toma (ver el runbook).
@@ -290,4 +441,5 @@ runbook).
   - **Diferido:** el arreglo de fondo del punto único de entrada (arriba).
   - **Lo cubre la Ola 0 (#444):** las conexiones a Temporal por mensaje dentro del
     worker, con su cliente único por proceso.
-  - **Queda para la fase 2:** la I/O síncrona del ingest en el event loop.
+  - **Quedaba para la fase 2:** la I/O síncrona del ingest en el event loop.
+    La fase 2 no la tocó (ver «Lo que la fase 2 no hace»).

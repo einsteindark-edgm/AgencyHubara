@@ -419,3 +419,43 @@ async def test_a_slow_medusa_does_not_hold_the_turn(monkeypatch) -> None:
 
     assert time.monotonic() - started < 15
     assert "acaba de aplazar" not in _script(notes[1])
+
+
+@pytest.mark.asyncio
+async def test_the_offer_and_the_interest_profile_also_come_out_of_the_durable_steps(monkeypatch) -> None:
+    """Entrada durable (fase 2): `InboundMessageWorkflow` corre el ingest en
+    pasos, cada uno en su activity, con su resultado serializado en el
+    historial de Temporal. El perfil «interesado sin compra» sale del paso del
+    estado (lo lee Jev); la oferta del cupón al aplazar sale de la entrega,
+    que ya ve la señal de ESTE mensaje (la escribe el historial, en orden)."""
+    from dataclasses import asdict
+
+    from temporalio.converter import DataConverter
+
+    import src.sdk.connectorkit as connectorkit
+    from src.plugins.chats.agent.sales.contracts import IngestRequest, IngestState, IngestTurn
+    from src.plugins.chats.shared import customer_profiles as cp
+
+    async def across(value, type_):
+        [decoded] = await DataConverter.default.decode(await DataConverter.default.encode([value]), [type_])
+        return decoded
+
+    monkeypatch.setattr(connectorkit, "get_promotions_port", lambda: _Promotions(_live_coupon()))
+    loader, store = FakeLoadOrStart(), FakeMetadataStore()
+    ingest = IngestInboundMessage(
+        history_store=FakeHistoryStore(),  # type: ignore[arg-type]
+        load_session=loader,  # type: ignore[arg-type]
+        metadata_store=store,  # type: ignore[arg-type]
+        catalog=_Catalog(),  # type: ignore[arg-type]
+        readings=_JevReadsDeferral(),
+    )
+    for message in _messages(PREFILLED, "Gracias, hay tiempo todavía"):
+        request = await across(IngestRequest(message=asdict(message)), IngestRequest)
+        state = await across(await ingest.read_state(request), IngestState)
+        turn = await across(await ingest.prepare_turn(request, state), IngestTurn)
+        await ingest.write_history(request, state, turn)
+        await ingest.deliver(request, state, turn)
+
+    (session_id,) = store.store
+    assert "acaba de aplazar" in _script(list(loader.calls[-1].extra_context or []))
+    assert store.store[session_id][cp.PROFILE_KEY][cp.INTERESADO_SIN_COMPRA]["source"] == "jev"
