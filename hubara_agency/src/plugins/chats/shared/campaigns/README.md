@@ -55,6 +55,28 @@ cupón no tenga.
   variantes u otros productos). Tampoco en la posventa ni con un cupón ya
   aplicado.
 
+## Envío gratis desde N cajas
+
+`envio_gratis_desde_cajas: 6` (operador, 2026-10-20): con 6 cajas o más de los
+productos de la campaña (se pueden mezclar), el pedido entero va sin costo de
+envío, a cualquier ciudad y con cualquier medio de pago, mientras la campaña
+esté vigente. Con menos cajas se cobra la tarifa de siempre. Vacío = sin envío
+gratis.
+
+- **Lo saben Ventas y remarketing:** el guion trae la línea del envío gratis;
+  la tarjeta de tarifas («¿cuánto vale el envío?») la suma al final en las
+  conversaciones de la campaña; el remarketing lo puede decir tal cual.
+- **La cuenta la hace el sistema, no el bot:** el resumen, el registro y
+  «Crear pedido» (dashboard y app) ponen el envío en $0 cuando el pedido lleva
+  las cajas, y rechazan otro valor. El pedido queda en Medusa con el envío en
+  $0, la línea «Envío gratis (6 cajas o más)» y la marca `hubara_free_shipping`.
+- **Al despachar:** el costo real que escribe el operador lo paga la tienda.
+  Queda anotado (aparte, «Envío que paga la tienda»), pero no se le suma al
+  cliente: ni al total, ni al cobro de contra entrega, ni a Ads, ni al aviso de
+  «va en camino».
+- Solo pedidos del bot y de «Crear pedido»: la tienda web (Medusa) no cambia.
+- Se suma al cupón de la campaña (el cupón descuenta los productos).
+
 ## El perfil «interesado sin compra» (público de las campañas de WhatsApp)
 
 A quien quiso comprar (lo mismo que arriba: eligió, aplazó, dio datos,

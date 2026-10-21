@@ -39,7 +39,8 @@
           },
           "empty": { "type": "empty", "icon": "inventory", "title": "Sin productos", "body": "No se encontraron productos en la conversación. Crea este pedido desde el dashboard." }
         },
-        { "type": "key_value", "label": "Envío (tarifa mínima)", "value": "{{pedido.shipping_cop | money}}" },
+        { "type": "key_value", "label": "Envío (tarifa mínima)", "value": "{{pedido.shipping_cop | money}}", "visible": "{{pedido.free_shipping | not}}" },
+        { "type": "key_value", "label": "Envío", "value": "gratis (6 cajas o más de la campaña)", "visible": "{{pedido.free_shipping | present}}" },
         { "type": "key_value", "label": "Descuento del cupón", "value": "-{{pedido.discount_cop | money}}", "visible": "{{pedido.discount_cop | gt:0}}" },
         { "type": "key_value", "label": "Total", "value": "{{pedido.total_cop | money}}" }
       ]

@@ -472,3 +472,91 @@ def test_a_reading_logged_by_the_engine_round_trips_into_intent(tmp_path: Path) 
 
     episode = {"episode_id": "ep_001", "started_at_ms": 1_000}
     assert sc.purchase_intent(episode, read_decisions(tmp_path, "wa_10000000001")) is True
+
+
+# ── envío gratis desde 6 cajas (operador, 2026-10-20) ───────────────────────
+#
+# «Otro gancho de venta: a partir de 6 cajas envío gratis, para que Ventas y
+# remarketing lo sepan y para que se haga bien la cuenta si hacen el pedido por
+# 6 cajas o más.»
+
+
+@pytest.mark.parametrize("bad", ["1", "0", "true", '"6"'])
+def test_free_shipping_from_must_be_a_number_of_boxes(tmp_path: Path, bad: str) -> None:
+    source = (FIXTURES / "velitas-7-dic.yaml").read_text(encoding="utf-8")
+    assert "envio_gratis_desde_cajas: 6" in source
+    (tmp_path / "velitas-7-dic.yaml").write_text(
+        source.replace("envio_gratis_desde_cajas: 6", f"envio_gratis_desde_cajas: {bad}"), encoding="utf-8"
+    )
+
+    with pytest.raises(sc.CampaignError, match="envio_gratis_desde_cajas"):
+        sc.load_campaigns(tmp_path)
+
+
+def test_the_sales_note_says_free_shipping_from_six_boxes(velitas: sc.Campaign) -> None:
+    note = sc.sales_note(velitas, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES)
+
+    line = next(x for x in note.splitlines() if "Envío gratis" in x)
+    assert "desde 6 cajas" in line and "menos de 6" in line
+
+
+def test_the_remarketing_block_knows_free_shipping_from_six_boxes(velitas: sc.Campaign) -> None:
+    block = sc.remarketing_block(velitas, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES, touch_number=1)
+
+    line = next(x for x in block.splitlines() if "Envío gratis" in x)
+    assert "desde 6 cajas" in line and "menos de 6" in line
+
+
+def test_without_the_rule_nothing_promises_free_shipping(velitas: sc.Campaign) -> None:
+    from dataclasses import replace
+
+    campaign = replace(velitas, envio_gratis_desde_cajas=None)
+
+    assert "gratis" not in sc.sales_note(campaign, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES).lower()
+    assert "gratis" not in sc.remarketing_block(
+        campaign, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES, touch_number=1
+    ).lower()
+
+
+# La regla de la cuenta: pura, por los productos y cantidades del pedido (no
+# por cómo se marcó la conversación: también vale en «Crear pedido» y en un
+# reintento del registro, cuando el episodio ya tiene su pedido).
+
+ONDULADA, CUADRADA = "velas-de-deseos-onduladas", "velas-de-deseos-cuadradas"
+
+
+def test_six_boxes_of_the_campaign_ship_free_even_mixed(velitas: sc.Campaign) -> None:
+    free = sc.free_shipping_for([(ONDULADA, 3), (CUADRADA, 3)], today=TODAY, campaigns=[velitas])
+
+    assert free == sc.FreeShipping(campaign="velitas-7-dic", min_boxes=6, boxes=6)
+
+
+def test_five_boxes_pay_shipping(velitas: sc.Campaign) -> None:
+    assert sc.free_shipping_for([(ONDULADA, 2), (CUADRADA, 3)], today=TODAY, campaigns=[velitas]) is None
+
+
+def test_other_products_do_not_count_toward_the_boxes(velitas: sc.Campaign) -> None:
+    assert sc.free_shipping_for([(CUADRADA, 5), ("trilogia-del-terror", 3)], today=TODAY, campaigns=[velitas]) is None
+    # Con las 6 cajas, el pedido entero va sin costo de envío.
+    assert sc.free_shipping_for([(CUADRADA, 6), ("trilogia-del-terror", 1)], today=TODAY, campaigns=[velitas]) is not None
+
+
+@pytest.mark.parametrize("today", [date(2026, 9, 30), date(2026, 12, 8)])
+def test_out_of_the_campaign_dates_shipping_is_charged(velitas: sc.Campaign, today: date) -> None:
+    assert sc.free_shipping_for([(ONDULADA, 6)], today=today, campaigns=[velitas]) is None
+
+
+def test_a_campaign_without_the_rule_never_ships_free(velitas: sc.Campaign) -> None:
+    from dataclasses import replace
+
+    campaign = replace(velitas, envio_gratis_desde_cajas=None)
+
+    assert sc.free_shipping_for([(ONDULADA, 20)], today=TODAY, campaigns=[campaign]) is None
+
+
+def test_the_free_shipping_mark_survives_its_json(velitas: sc.Campaign) -> None:
+    free = sc.free_shipping_for([(ONDULADA, 7)], today=TODAY, campaigns=[velitas])
+
+    assert sc.FreeShipping.from_json(free.to_json()) == free
+    assert sc.FreeShipping.from_json(None) is None and sc.FreeShipping.from_json({"campaign": "x"}) is None
+

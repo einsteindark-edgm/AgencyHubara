@@ -46,7 +46,7 @@ OFFER_KEY = "sales_campaign_offer"
 
 _KEYS = frozenset({
     "id", "nombre", "activa", "desde", "hasta", "productos", "anuncios",
-    "combo_cajas", "cupon", "toque_oferta", "guion", "toques", "ejemplos",
+    "combo_cajas", "envio_gratis_desde_cajas", "cupon", "toque_oferta", "guion", "toques", "ejemplos",
 })
 _EXAMPLE_KEYS = frozenset({"primera_respuesta", "toques"})
 
@@ -67,6 +67,8 @@ class Campaign:
     combo_cajas: int | None
     cupon: str | None
     toque_oferta: int | None
+    #: Envío gratis desde esta cantidad de cajas de la campaña (operador, 2026-10-20).
+    envio_gratis_desde_cajas: int | None
     guion: tuple[str, ...]
     toques: tuple[str, ...]
     ejemplos_primera_respuesta: tuple[str, ...] = ()
@@ -118,6 +120,9 @@ def _campaign(path: Path) -> Campaign:
     toque = raw["toque_oferta"]
     if toque is not None and (not isinstance(toque, int) or isinstance(toque, bool) or toque < 1):
         raise CampaignError(f"{name}: «toque_oferta» debe ser el número de un toque (o vacío)")
+    free_from = raw["envio_gratis_desde_cajas"]
+    if free_from is not None and (not isinstance(free_from, int) or isinstance(free_from, bool) or free_from < 2):
+        raise CampaignError(f"{name}: «envio_gratis_desde_cajas» debe ser una cantidad de cajas, 2 o más (o vacío)")
     ejemplos = raw["ejemplos"] or {}
     if not isinstance(ejemplos, dict) or set(ejemplos) - _EXAMPLE_KEYS:
         raise CampaignError(f"{name}: «ejemplos» solo lleva {sorted(_EXAMPLE_KEYS)}")
@@ -132,6 +137,7 @@ def _campaign(path: Path) -> Campaign:
         combo_cajas=combo,
         cupon=cupon.strip() if cupon else None,
         toque_oferta=toque,
+        envio_gratis_desde_cajas=free_from,
         guion=_texts(raw["guion"], name, field="guion", required=True),
         toques=_texts(raw["toques"], name, field="toques", required=False),
         ejemplos_primera_respuesta=_texts(ejemplos.get("primera_respuesta"), name, field="ejemplos.primera_respuesta", required=False),
@@ -278,6 +284,26 @@ def _combo_lines(campaign: Campaign, priced: list[tuple[Any, int]], *, cod_min: 
     return [f"Combo de {campaign.combo_cajas} cajas (el total en productos; el envío va aparte):", *lines]
 
 
+def _free_shipping_line(campaign: Campaign, *, remarketing: bool = False) -> list[str]:
+    """El gancho del envío gratis desde N cajas de la campaña (operador,
+    2026-10-20), o nada si la campaña no lo tiene."""
+    n = campaign.envio_gratis_desde_cajas
+    if not n:
+        return []
+    if remarketing:
+        return [
+            f"Envío gratis desde {n} cajas de esta campaña (se pueden mezclar): dilo tal cual si le sirve (para "
+            f"regalar a varias personas, o si lo frenó el envío). Con menos de {n} cajas el envío se cobra como "
+            "siempre: no lo prometas."
+        ]
+    return [
+        f"Envío gratis desde {n} cajas de esta campaña (se pueden mezclar): con {n} o más el envío no se cobra, y "
+        "el sistema lo deja en cero al registrar el pedido. Úsalo como gancho cuando pregunte por el envío, cuando "
+        f"lo frene el costo del envío o cuando lleve varias cajas (para regalar). Con menos de {n} cajas el envío "
+        "se cobra como siempre: no lo prometas."
+    ]
+
+
 def sales_note(
     campaign: Campaign,
     products: Iterable[Any],
@@ -304,6 +330,7 @@ def sales_note(
         lines += ["Precios del catálogo:", *_price_lines(priced, boxes), *_combo_lines(campaign, priced, cod_min=cod_min)]
     else:
         lines.append("Precios: no los tengo a mano; consúltalos con search_products antes de darlos.")
+    lines += _free_shipping_line(campaign)
     if offer is not None:
         when = (
             "Ya se la dijiste en este episodio: repítela solo si el cliente pregunta por descuentos"
@@ -356,6 +383,7 @@ def remarketing_block(
     ]
     if priced:
         lines += ["Precios del catálogo:", *_price_lines(priced, boxes), *_combo_lines(campaign, priced, cod_min=cod_min)]
+    lines += _free_shipping_line(campaign, remarketing=True)
     if offer_touch is None:
         offer_touch = bool(campaign.toque_oferta) and touch_number == campaign.toque_oferta
     if offer is not None and intent and offer_touch:
@@ -520,3 +548,81 @@ def intent_rows(episode: Mapping[str, Any], decisions: Iterable[Mapping[str, Any
             if answer.get("choice") in INTENT_CHOICES and isinstance(sure, (int, float)) and sure >= INTENT_CONFIDENCE:
                 yield row
                 break
+
+
+# ── envío gratis desde N cajas (operador, 2026-10-20) ───────────────────────
+
+
+@dataclass(frozen=True)
+class FreeShipping:
+    """El envío gratis de un pedido: lleva `boxes` cajas de los productos de
+    la campaña `campaign`, que no cobra el envío desde `min_boxes`. Viaja como
+    dato (`to_json`) en el pedido de Medusa: Orders y el ETA lo leen de ahí
+    sin importar este plugin."""
+
+    campaign: str
+    min_boxes: int
+    boxes: int
+
+    @property
+    def label(self) -> str:
+        """Lo que dicen la tarjeta del pedido y el cobro: «gratis (6 cajas o más)»."""
+        return f"gratis ({self.min_boxes} cajas o más)"
+
+    def to_json(self) -> dict[str, Any]:
+        return {"campaign": self.campaign, "min_boxes": self.min_boxes, "boxes": self.boxes}
+
+    @classmethod
+    def from_json(cls, raw: Any) -> FreeShipping | None:
+        if not isinstance(raw, Mapping):
+            return None
+        campaign, min_boxes, boxes = raw.get("campaign"), raw.get("min_boxes"), raw.get("boxes")
+        if not isinstance(campaign, str) or not campaign:
+            return None
+        if not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in (min_boxes, boxes)):
+            return None
+        return cls(campaign=campaign, min_boxes=min_boxes, boxes=boxes)
+
+
+def _boxes(quantity: Any) -> int:
+    if isinstance(quantity, bool):
+        return 0
+    if isinstance(quantity, int):
+        return max(quantity, 0)
+    if isinstance(quantity, str) and quantity.strip().isdigit():
+        return int(quantity.strip())
+    return 0
+
+
+def free_shipping_for(
+    items: Iterable[tuple[str, Any]], *, today: date, campaigns: Sequence[Campaign] | None = None
+) -> FreeShipping | None:
+    """¿El pedido va sin costo de envío? `items`: (handle, cantidad) de cada
+    línea; para los productos de la campaña la cantidad es en cajas (su precio
+    en Medusa es el de la caja). Lo da la campaña vigente hoy (`today`, día de
+    Bogotá) con `envio_gratis_desde_cajas` cuando la suma de las cajas de sus
+    productos (se pueden mezclar) llega al mínimo; el pedido entero va gratis.
+    Por el contenido del pedido y no por la conversación: vale igual en
+    «Crear pedido», en el registro y en su reintento."""
+    lines = [(str(handle), _boxes(quantity)) for handle, quantity in items]
+    for campaign in active_campaigns() if campaigns is None else campaigns:
+        minimum = campaign.envio_gratis_desde_cajas
+        if not minimum or not campaign.is_on(today):
+            continue
+        boxes = sum(quantity for handle, quantity in lines if handle in campaign.productos)
+        if boxes >= minimum:
+            return FreeShipping(campaign=campaign.id, min_boxes=minimum, boxes=boxes)
+    return None
+
+
+def campaign_by_id(campaign_id: Any, *, today: date) -> Campaign | None:
+    """La campaña vigente hoy con ese id, o None."""
+    if not isinstance(campaign_id, str) or not campaign_id:
+        return None
+    return next((c for c in active_campaigns() if c.id == campaign_id and c.is_on(today)), None)
+
+
+def bogota_today() -> date:
+    """El día de hoy en Bogotá (las fechas de las campañas son de allá)."""
+    return datetime.now(_BOGOTA).date()
+

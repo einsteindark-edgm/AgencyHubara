@@ -75,6 +75,11 @@ META_KEY_TEST_ORDER = "hubara_test_order"
 # camino". El envío del registro es una tarifa mínima estimada; este valor lo
 # reemplaza en todo Hubara (ver `effective_amounts`).
 META_KEY_SHIPPING_COST = "hubara_shipping_cost_cop"
+# Envío gratis del pedido (operador, 2026-10-20): `{"campaign", "min_boxes",
+# "boxes"}` que escribe el registro cuando el pedido lleva las cajas de una
+# campaña que no cobra el envío. Con ella, el envío real que el operador
+# escribe al despachar lo paga la tienda: nunca se le suma al cliente.
+META_KEY_FREE_SHIPPING = "hubara_free_shipping"
 
 
 class InvalidStageTransitionError(ValueError):
@@ -250,6 +255,12 @@ def read_real_shipping_cost(metadata: dict[str, Any] | None) -> int | None:
     return raw
 
 
+def read_free_shipping(metadata: dict[str, Any] | None) -> dict[str, Any] | None:
+    """La marca de envío gratis del pedido (`META_KEY_FREE_SHIPPING`) o ``None``."""
+    raw = (metadata or {}).get(META_KEY_FREE_SHIPPING)
+    return raw if isinstance(raw, dict) and raw else None
+
+
 def effective_amounts(
     *, total: int, shipping_total: int, metadata: dict[str, Any] | None
 ) -> tuple[int, int, bool]:
@@ -261,7 +272,14 @@ def effective_amounts(
     Medusa v2 no permite editar el monto de un método de envío existente en
     una orden real, por eso la corrección se aplica acá — en el único punto
     de lectura (query adapter → OrderFacts) — y no en Medusa.
+
+    Envío gratis (`read_free_shipping`, operador 2026-10-20): el cliente no
+    paga envío — total = productos, envío 0 (definitivo). El valor real que
+    escribe el operador lo paga la tienda y NUNCA se le suma al cliente (ni al
+    cobro de contra entrega, ni a OrderFacts/Ads, ni al ETA).
     """
+    if read_free_shipping(metadata) is not None:
+        return total - shipping_total, 0, True
     real = read_real_shipping_cost(metadata)
     if real is None:
         return total, shipping_total, False

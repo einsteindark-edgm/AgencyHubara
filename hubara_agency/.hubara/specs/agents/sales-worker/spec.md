@@ -2378,3 +2378,32 @@ el episodio, la marca se descarta con el episodio.
 - WHEN el cliente vuelve a escribir y Jev lee `da_datos`
 - THEN el perfil no se marca y la campaña del 5 % no le llega
 
+### Requirement: Envío gratis desde N cajas de una campaña (2026-10-20)
+
+Cuando un pedido lleva `envio_gratis_desde_cajas` cajas o más de los productos
+de una campaña vigente (se pueden mezclar), el sistema SHALL cobrarlo sin
+envío: `present_order_confirmation`, `register_order` y las puertas sin LLM
+(«Crear pedido» del dashboard y la app, el resumen del operador) usan la misma
+regla (`sales_campaigns.free_shipping_for`, por el contenido del pedido y no
+por la conversación) y MUST rechazar con `shipping_mismatch` otro envío que $0
+(con la instrucción exacta al modelo). Con menos cajas, el envío es la tarifa
+mínima publicada como siempre y un $0 se rechaza. El pedido lleva la marca
+`free_shipping` hasta Medusa (`hubara_free_shipping`) y el reintento de la
+reconciliación la conserva. La tarjeta del pedido dice «Envío: gratis (6
+cajas o más)» y el total (también con contra entrega, sin envío por
+confirmar). En una conversación de la campaña, la tarjeta de tarifas suma el
+gancho al final; el texto siempre sale del código, nunca de los parámetros del
+intent. El verificador de cifras explica hasta 20 unidades por línea.
+
+#### Scenario: 3 onduladas + 3 cuadradas contra entrega
+
+- GIVEN la campaña `velitas-7-dic` con `envio_gratis_desde_cajas: 6`
+- WHEN el bot confirma 3 cajas onduladas y 3 cuadradas con contra entrega
+- THEN la tarjeta dice «Envío: gratis (6 cajas o más)» y «Total a pagar al recibir: $142.500 COP»
+- AND `register_order` registra `shipping_cop = 0`, `total_cop = 142500` y la marca de envío gratis
+
+#### Scenario: 5 cajas con envío $0
+
+- WHEN el bot pasa `shipping_cop = 0` con 5 cajas
+- THEN el resumen y el registro lo rechazan (`shipping_mismatch`) con las tarifas publicadas
+
