@@ -292,15 +292,16 @@ def _free_shipping_line(campaign: Campaign, *, remarketing: bool = False) -> lis
         return []
     if remarketing:
         return [
-            f"Envío gratis desde {n} cajas de esta campaña (se pueden mezclar): dilo tal cual si le sirve (para "
-            f"regalar a varias personas, o si lo frenó el envío). Con menos de {n} cajas el envío se cobra como "
-            "siempre: no lo prometas."
+            f"Envío gratis desde {n} cajas de esta campaña (se pueden mezclar), en un pedido solo de estas cajas: "
+            "dilo tal cual si le sirve (para regalar a varias personas, o si lo frenó el envío). Con menos de "
+            f"{n} cajas, o con otros productos en el pedido, el envío se cobra como siempre: no lo prometas."
         ]
     return [
-        f"Envío gratis desde {n} cajas de esta campaña (se pueden mezclar): con {n} o más el envío no se cobra, y "
-        "el sistema lo deja en cero al registrar el pedido. Úsalo como gancho cuando pregunte por el envío, cuando "
-        f"lo frene el costo del envío o cuando lleve varias cajas (para regalar). Con menos de {n} cajas el envío "
-        "se cobra como siempre: no lo prometas."
+        f"Envío gratis desde {n} cajas de esta campaña (se pueden mezclar), en un pedido solo de estas cajas: con "
+        f"{n} o más el envío no se cobra, y el sistema lo deja en cero al registrar el pedido. Úsalo como gancho "
+        "cuando pregunte por el envío, cuando lo frene el costo del envío o cuando lleve varias cajas (para "
+        f"regalar). Con menos de {n} cajas, o si el pedido trae otros productos, el envío se cobra como siempre: "
+        "no lo prometas."
     ]
 
 
@@ -600,14 +601,18 @@ def free_shipping_for(
     """¿El pedido va sin costo de envío? `items`: (handle, cantidad) de cada
     línea; para los productos de la campaña la cantidad es en cajas (su precio
     en Medusa es el de la caja). Lo da la campaña vigente hoy (`today`, día de
-    Bogotá) con `envio_gratis_desde_cajas` cuando la suma de las cajas de sus
-    productos (se pueden mezclar) llega al mínimo; el pedido entero va gratis.
+    Bogotá) con `envio_gratis_desde_cajas` cuando el pedido es SOLO de sus
+    productos y la suma de las cajas (se pueden mezclar) llega al mínimo: con
+    otro producto en el pedido, el envío se cobra (operador, 2026-10-20: «es
+    solo para las velas del 7 de diciembre, las onduladas y las cuadradas»).
     Por el contenido del pedido y no por la conversación: vale igual en
     «Crear pedido», en el registro y en su reintento."""
     lines = [(str(handle), _boxes(quantity)) for handle, quantity in items]
     for campaign in active_campaigns() if campaigns is None else campaigns:
         minimum = campaign.envio_gratis_desde_cajas
         if not minimum or not campaign.is_on(today):
+            continue
+        if any(handle not in campaign.productos for handle, quantity in lines if quantity > 0):
             continue
         boxes = sum(quantity for handle, quantity in lines if handle in campaign.productos)
         if boxes >= minimum:

@@ -123,8 +123,8 @@ def shipping_rates_message(campaign: Campaign | None = None) -> str:
     if not minimum:
         return SHIPPING_RATES_MESSAGE
     return (
-        f"{SHIPPING_RATES_MESSAGE}\n\n🎁 {campaign.nombre}: con {minimum} cajas o más "
-        "(se pueden mezclar), el envío es gratis."
+        f"{SHIPPING_RATES_MESSAGE}\n\n🎁 {campaign.nombre}: en un pedido solo de estas cajas, con "
+        f"{minimum} cajas o más (se pueden mezclar), el envío es gratis."
     )
 
 

@@ -27,7 +27,8 @@ from src.plugins.chats.agent.sales.tools.ui_intents import PresentOrderConfirmat
 from src.plugins.chats.shared import sales_campaigns as sc
 
 ONDULADA, CUADRADA = "velas-de-deseos-onduladas", "velas-de-deseos-cuadradas"
-PRICES = {ONDULADA: 22_500, CUADRADA: 25_000}
+TRILOGIA = "trilogia-del-terror"
+PRICES = {ONDULADA: 22_500, CUADRADA: 25_000, TRILOGIA: 45_000}
 FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sales_campaigns"
 
 
@@ -109,6 +110,22 @@ async def test_five_boxes_still_pay_the_published_rate(tmp_path: Path) -> None:
 
     assert (result["queued"], result.get("error")) == (False, "shipping_mismatch")
     assert "7.900" in result["message"] and "16.940" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_six_boxes_with_another_product_pay_the_published_rate(tmp_path: Path) -> None:
+    """Operador, 2026-10-20: el envío gratis es solo para las cajas de la
+    campaña; un pedido que además trae otro producto paga el envío."""
+    tool = PresentOrderConfirmationTool(workspace=str(tmp_path), catalog=_Boxes())
+    items = [*_items(6, 0), {"handle": TRILOGIA, "quantity": 1, "unit_price_cop": PRICES[TRILOGIA]}]
+
+    result = json.loads(await tool.execute_with_context(
+        _ctx(), items=items, shipping_cop=0, shipping_address_summary="Calle 59b sur 38, Poblado, Medellín",
+        payment_method="transfer",
+    ))
+
+    assert (result["queued"], result.get("error")) == (False, "shipping_mismatch")
+    assert "16.940" in result["message"]
 
 
 # ── la tarjeta que lee el cliente ───────────────────────────────────────────

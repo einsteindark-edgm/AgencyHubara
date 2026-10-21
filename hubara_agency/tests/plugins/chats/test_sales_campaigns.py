@@ -537,8 +537,14 @@ def test_five_boxes_pay_shipping(velitas: sc.Campaign) -> None:
 
 def test_other_products_do_not_count_toward_the_boxes(velitas: sc.Campaign) -> None:
     assert sc.free_shipping_for([(CUADRADA, 5), ("trilogia-del-terror", 3)], today=TODAY, campaigns=[velitas]) is None
-    # Con las 6 cajas, el pedido entero va sin costo de envío.
-    assert sc.free_shipping_for([(CUADRADA, 6), ("trilogia-del-terror", 1)], today=TODAY, campaigns=[velitas]) is not None
+
+
+def test_an_order_with_other_products_pays_shipping_even_with_six_boxes(velitas: sc.Campaign) -> None:
+    """Operador, 2026-10-20: «las 6 cajas sin valor de envío es solo para las
+    velas del 7 de diciembre, las onduladas y las cuadradas». Un pedido que
+    además trae otro producto paga el envío de siempre."""
+    assert sc.free_shipping_for([(CUADRADA, 6), ("trilogia-del-terror", 1)], today=TODAY, campaigns=[velitas]) is None
+    assert sc.free_shipping_for([(CUADRADA, 6)], today=TODAY, campaigns=[velitas]) is not None
 
 
 @pytest.mark.parametrize("today", [date(2026, 9, 30), date(2026, 12, 8)])

@@ -2380,9 +2380,10 @@ el episodio, la marca se descarta con el episodio.
 
 ### Requirement: Envío gratis desde N cajas de una campaña (2026-10-20)
 
-Cuando un pedido lleva `envio_gratis_desde_cajas` cajas o más de los productos
-de una campaña vigente (se pueden mezclar), el sistema SHALL cobrarlo sin
-envío: `present_order_confirmation`, `register_order` y las puertas sin LLM
+Cuando un pedido es SOLO de los productos de una campaña vigente y lleva
+`envio_gratis_desde_cajas` cajas o más (se pueden mezclar), el sistema SHALL
+cobrarlo sin envío; con otro producto en el pedido, el envío se cobra como
+siempre (operador: «es solo para las velas del 7 de diciembre»): `present_order_confirmation`, `register_order` y las puertas sin LLM
 («Crear pedido» del dashboard y la app, el resumen del operador) usan la misma
 regla (`sales_campaigns.free_shipping_for`, por el contenido del pedido y no
 por la conversación) y MUST rechazar con `shipping_mismatch` otro envío que $0
@@ -2406,4 +2407,9 @@ intent. El verificador de cifras explica hasta 20 unidades por línea.
 
 - WHEN el bot pasa `shipping_cop = 0` con 5 cajas
 - THEN el resumen y el registro lo rechazan (`shipping_mismatch`) con las tarifas publicadas
+
+#### Scenario: 6 cajas y otro producto
+
+- GIVEN un pedido con 6 cajas onduladas y una Trilogía del Terror
+- THEN el envío es la tarifa mínima publicada y un $0 se rechaza (`shipping_mismatch`)
 
