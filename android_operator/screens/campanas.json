@@ -4,7 +4,7 @@
   "schema": 1,
   "id": "campanas",
   "title": "Campañas",
-  "state": { "estados": "draft,scheduled,sending,sent,failed" },
+  "state": { "estados": "draft,scheduled,sending,paused,sent,cancelled,failed" },
   "data": {
     "campanas": { "get": "/api/marketing/campaigns", "refreshOn": ["marketing"] }
   },
@@ -15,7 +15,8 @@
     {
       "type": "chips", "bind": "state.estados",
       "options": [
-        { "value": "draft,scheduled,sending,sent,failed", "label": "Todas" },
+        { "value": "draft,scheduled,sending,paused,sent,cancelled,failed", "label": "Todas" },
+        { "value": "sending,paused", "label": "En curso" },
         { "value": "sent", "label": "Enviadas" },
         { "value": "draft,scheduled", "label": "Por enviar" }
       ]
@@ -27,8 +28,8 @@
         "icon": "campaign", "icon_tone": "bot",
         "title": "{{c.name}}",
         "subtitle": "{{c.segments | join:', ' | default:'Sin segmentos'}}",
-        "tag": "{{c.status | map:'draft=Borrador;scheduled=Programada;sending=Enviando;sent=Enviada;failed=No salió'}}",
-        "tag_tone": "{{c.status | map:'sent=success;failed=danger;scheduled=primary;sending=primary;*=neutral'}}",
+        "tag": "{{c.status | map:'draft=Borrador;scheduled=Programada;sending=Enviando;paused=Pausada;sent=Enviada;cancelled=Cancelada;failed=No salió'}}",
+        "tag_tone": "{{c.status | map:'sent=success;failed=danger;scheduled=primary;sending=primary;paused=warning;*=neutral'}}",
         "trailing_caption": "{{c.sent_at_ms | default:c.created_at_ms | date}}",
         "chevron": true,
         "action": { "type": "navigate", "screen": "campana", "params": { "campaign_id": "{{c.id}}" } }

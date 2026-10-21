@@ -31,12 +31,52 @@ const backendSent: BackendCampaign = {
     spent_usd_micros: 500_000,
   },
   failure_reason: null,
+  progress: null,
   test_sends: [{ phone: "573001234567", at_ms: 5, wa_message_id: null }],
   excluded_session_ids: ["wa_573009990000"],
   extra_session_ids: ["wa_+573008881122"],
   imported_contacts: [],
   carousel_handles: [],
 };
+
+describe("mapBackendCampaign — envío por lotes (pausa / cancelación)", () => {
+  it("mapea el avance y los estados pausada y cancelada", () => {
+    const paused = mapBackendCampaign({
+      ...backendSent,
+      status: "paused",
+      progress: {
+        total: 300,
+        processed: 100,
+        sent: 98,
+        failed: 1,
+        opted_out: 1,
+        skipped: 0,
+        state: "paused",
+        pause_reason: "Meta rechazó 60 de 100 envíos del último lote",
+        resume_at_ms: null,
+      },
+    });
+    expect(paused.status).toBe("paused");
+    expect(paused.progress).toEqual({
+      total: 300,
+      processed: 100,
+      sent: 98,
+      failed: 1,
+      optedOut: 1,
+      skipped: 0,
+      state: "paused",
+      pauseReason: "Meta rechazó 60 de 100 envíos del último lote",
+      resumeAtMs: null,
+    });
+    expect(mapBackendCampaign({ ...backendSent, status: "cancelled" }).status).toBe(
+      "cancelled",
+    );
+  });
+
+  it("sin avance (envío del V1 o campaña sin enviar) queda en null", () => {
+    expect(mapBackendCampaign(backendSent).progress).toBeNull();
+  });
+});
 
 describe("mapBackendCampaign", () => {
   it("mapea snake → camel con narrowing de status/goal", () => {

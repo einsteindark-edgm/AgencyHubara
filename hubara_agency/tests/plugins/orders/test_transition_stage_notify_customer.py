@@ -5,21 +5,21 @@ transiciones de la conversación humana — el humano YA le avisó al cliente
 por chat, la notificación ETA duplicaría el mensaje):
 
   * `notify_customer: false` → tras una transición exitosa la emisión
-    arranca IGUAL (`_spawn_emit` → EmitOrderStageWorkflow) pero marcada
+    arranca IGUAL (`_start_durable_emit` → EmitOrderStageWorkflow) pero marcada
     `notify_customer=False`: sale el evento CAPI de la etapa (Meta sí debe
     saber que se entregó) y NO el WhatsApp al cliente.
     `_publish_orders_changed` (SSE dashboard) se llama igual.
   * `notify_customer: true` u omitido → comportamiento actual intacto
-    (se llama `_spawn_emit`).
+    (se llama `_start_durable_emit`).
   * El flag NO afecta validación ni response shape.
 
 Patrón de fixtures espejado de `test_orders_api.py`: monkeypatch del
 composition factory en el IMPORT SITE (`src.plugins.orders.api.*`) + app
-FastAPI fresco + TestClient. `_spawn_emit` y `_publish_orders_changed` se
+FastAPI fresco + TestClient. `_start_durable_emit` y `_publish_orders_changed` se
 reemplazan por spies (evita tocar Temporal / event bus reales).
 
 NOTA (verificado leyendo src/plugins/orders/api/__init__.py): el endpoint
-`confirm-payment` NO llama `_spawn_emit` hoy — no hay caso análogo acá.
+`confirm-payment` NO llama `_start_durable_emit` hoy — no hay caso análogo acá.
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class FakeOrderCommandPort:
 
 @pytest.fixture
 def harness(monkeypatch):
-    """App + fake port + spies sobre _spawn_emit / _publish_orders_changed."""
+    """App + fake port + spies sobre _start_durable_emit / _publish_orders_changed."""
     fake_port = FakeOrderCommandPort(
         OrderCommandResult(
             success=True,
@@ -60,12 +60,11 @@ def harness(monkeypatch):
         "src.plugins.orders.api.get_order_command_port",
         lambda: fake_port,
     )
-    monkeypatch.setattr(
-        "src.plugins.orders.api._spawn_emit",
-        lambda order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None: (
-            spawn_emit_calls.append((order_id, to_stage, notify_customer))
-        ),
-    )
+    async def _start_emit(order_id, to_stage, tracking_url=None, notify_customer=True, shipping_cost=None):
+        spawn_emit_calls.append((order_id, to_stage, notify_customer))
+        return True  # el aviso arrancó (False = quedó en el buzón)
+
+    monkeypatch.setattr("src.plugins.orders.api._start_durable_emit", _start_emit)
     monkeypatch.setattr(
         "src.plugins.orders.api._publish_orders_changed",
         lambda order_id=None: publish_calls.append(order_id),
@@ -98,7 +97,7 @@ def test_transition_stage_notify_customer_false_emits_silently_and_publishes_sse
     assert body["current_stage"] == "ready"
     assert spawn_emit_calls == [("order_01HX", "ready", False)], (
         "notify_customer=false debe emitir la etapa SIN avisar al cliente "
-        f"(_spawn_emit fue llamado con {spawn_emit_calls!r})"
+        f"(_start_durable_emit fue llamado con {spawn_emit_calls!r})"
     )
     assert publish_calls == ["order_01HX"], (
         "el SSE del dashboard (_publish_orders_changed) debe dispararse "
@@ -119,7 +118,7 @@ def test_transition_stage_without_notify_customer_still_emits(harness):
     assert response.status_code == 200
     assert response.json()["success"] is True
     assert spawn_emit_calls == [("order_01HX", "ready", True)], (
-        "sin notify_customer en el body, _spawn_emit debe llamarse como hoy"
+        "sin notify_customer en el body, _start_durable_emit debe llamarse como hoy"
     )
     assert publish_calls == ["order_01HX"]
 
@@ -238,6 +237,44 @@ async def test_emit_activity_silent_sends_capi_but_not_whatsapp(monkeypatch):
     # Default (llamada legacy de 3 args): avisa como siempre.
     assert await emit_stage.emit_order_stage_activity("order_01HX", "delivered") == "dispatched"
     assert len(dispatched) == 1
+
+
+async def test_emit_activity_dispatches_with_the_workers_client(monkeypatch):
+    """En el worker la emisión despacha con `activity.client()` (el cliente con el
+    que el worker corre la activity), no con otro del proceso."""
+    from temporalio.testing import ActivityEnvironment
+
+    import src.platform.orchestration as orchestration
+    import src.platform.temporal.client as temporal_client
+    from src.plugins.orders import api as orders_api
+    from src.plugins.orders.agent.activities import emit_stage
+
+    used_clients: list = []
+    worker_client, process_client = object(), object()
+
+    async def fake_resolve(**kw):
+        return "wa_573001234567"
+
+    async def fake_dispatch(envelope, client):
+        used_clients.append(client)
+
+    async def fake_client():
+        return process_client
+
+    async def fake_capi(session_id, order_id, to_stage):
+        return None
+
+    monkeypatch.setattr(orders_api, "_resolve_session_for_order", fake_resolve)
+    monkeypatch.setattr(orchestration, "dispatch_envelope_with_client", fake_dispatch)
+    monkeypatch.setattr(temporal_client, "get_temporal_client", fake_client)
+    monkeypatch.setattr(emit_stage, "_emit_stage_capi", fake_capi)
+
+    result = await ActivityEnvironment(client=worker_client).run(  # type: ignore[arg-type]
+        emit_stage.emit_order_stage_activity, "order_01HX", "ready"
+    )
+
+    assert result == "dispatched"
+    assert used_clients == [worker_client], "debe despachar con el cliente del worker"
 
 
 def test_emit_workflow_input_carries_notify_customer():

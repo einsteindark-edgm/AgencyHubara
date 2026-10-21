@@ -126,10 +126,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
 from src.plugins.chats.shared.quotes import build_quote_note, resolve_quote
 from src.plugins.chats.shared.customer_profiles import intent_in_reading, stamp_interest
-from src.plugins.chats.shared.purchase_signals import (
-    build_deferral_note,
-    is_current_inbound_deferral,
-)
+from src.plugins.chats.shared.purchase_signals import build_deferral_note
 from src.plugins.chats.shared.sales_campaigns import purchase_intent
 from src.plugins.chats.agent.sales.decisions.readings import (
     Inbound,
@@ -225,8 +222,6 @@ CouponUnitsReader = Callable[[dict[str, Any]], Awaitable[QuotaOffer]]
 # HU web-cart: timeout de la hidratación inline (patrón L-2 — el webhook no
 # puede demorar el primer turno; cualquier fallo degrada en silencio).
 _WEB_CART_HYDRATION_TIMEOUT_S = 3.0
-#: El tope de la consulta del cupón de la campaña (Medusa lento no frena el turno).
-_COUPON_TIMEOUT_S = 3.0
 #: Tope del aviso al workflow de que una foto se está leyendo (una señal).
 _PHOTO_NOTICE_TIMEOUT_S = 2.0
 
@@ -1587,8 +1582,9 @@ class IngestInboundMessage:
         # Va antes de la nota del aplazamiento: si el cliente aplaza, el guion
         # le da la oferta del cupón con su fecha (operador, 2026-10-20).
         # En este paso el documento ya tiene la señal de ESTE mensaje con su
-        # `last_inbound_message_id` (los escribe `write_history`, en orden): el
-        # aplazamiento que lee `is_current_inbound_deferral` es el suyo.
+        # `last_inbound_message_id` y el último aplazamiento (los escribe
+        # `write_history`, en orden): el que lee `deferral_since_last_reply` es
+        # el de los mensajes del cliente en el orden en que llegaron.
         campaign_script_note, campaign_offer_now = (
             await self._campaign_script_note(
                 session_id, metadata, base, turn.text, message_id=parsed.message_id,
@@ -2041,107 +2037,22 @@ class IngestInboundMessage:
         message_id: str | None,
         to_sales: bool = True,
     ) -> tuple[str | None, bool]:
-        import asyncio
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        from src.plugins.chats.agent.sales.config.shipping import CASH_ON_DELIVERY_MIN_PRODUCTS_COP
-        from src.plugins.chats.agent.sales.use_cases.coupons import applied_coupon
-        from src.plugins.chats.shared import sales_campaigns
-        from src.plugins.chats.shared.store_pack import store_domain
+        from src.plugins.chats.agent.sales.use_cases.campaign_turn import campaign_turn
 
         episode = get_active_episode(metadata)
-        today = datetime.fromtimestamp(_now_ms() / 1000, tz=ZoneInfo("America/Bogota")).date()
         # Las palabras del anuncio solo cuentan en el mensaje que abrió el
         # episodio (el prellenado): «noche de velitas» en la mitad de la charla
         # es de temporada, no de la campaña (revisión del 2026-10-19).
         opening = bool(episode) and message_id is not None and episode.get("started_inbound_message_id") == message_id
-        campaign = sales_campaigns.campaign_for(episode, today=today, text=(text or "") if opening else "")
-        if campaign is None or episode is None:
-            return None, False
-        if episode.get(sales_campaigns.EPISODE_KEY) != campaign.id:
-            episode[sales_campaigns.EPISODE_KEY] = campaign.id
-            self._safe_write_metadata(session_id, metadata, base)
-            logger.info("sales_campaign_matched", session=session_id, campaign=campaign.id)
-        # El catálogo y el cupón a la vez: con Medusa lento, el turno no suma
-        # las dos esperas (revisión del 2026-10-20). Con un cupón ya aplicado
-        # en el episodio no se ofrece otro (el cliente creería que se suman).
-        coupon = None if applied_coupon(metadata) else campaign.cupon
-        products, promotion = await asyncio.gather(self._campaign_products(), self._campaign_promotion(coupon))
-        try:
-            boxes = store_domain().get("sold_by_box")
-        except Exception:  # noqa: BLE001 — sin el dominio, los precios van por unidad
-            boxes = None
-        ids = tuple(str(p.id) for p in products if getattr(p, "handle", None) in campaign.productos and getattr(p, "id", None))
-        offer = self._campaign_offer(promotion, metadata, today=today, product_ids=ids)
-        already = offer is not None and episode.get(sales_campaigns.OFFER_KEY) == offer.key()
-        # El cliente aplaza (Jev, capacidad `compra`; sin Jev, la regla de hoy) y
-        # la oferta de esta fecha no se le ha dicho en el episodio: es ahora.
-        # Solo si el turno va a Ventas: la respuesta a un toque la atiende el
-        # agente de remarketing y estas notas no le llegan (se marcaría como
-        # dicha sin decirse).
-        offer_now = bool(offer is not None and to_sales and is_current_inbound_deferral(metadata) and not already)
-        if offer_now:
-            episode[sales_campaigns.OFFER_KEY] = offer.key()
-            self._safe_write_metadata(session_id, metadata, base)
-            logger.info("sales_campaign_offer", session=session_id, campaign=campaign.id, offer=offer.key())
-        note = sales_campaigns.sales_note(
-            campaign, products, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP, boxes=boxes,
-            offer=offer, offer_now=offer_now, already_offered=already,
+        turn = await campaign_turn(
+            metadata, catalog=self._catalog, now_ms=_now_ms(), text=text, opening=opening, to_sales=to_sales,
+            session_id=session_id,
         )
-        return note, offer_now
-
-    async def _campaign_products(self) -> list[Any]:
-        """El catálogo para los precios del guion; [] si no responde a tiempo."""
-        import asyncio
-
-        if self._catalog is None:
-            return []
-        try:
-            result = await asyncio.wait_for(
-                self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
-                timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
-            )
-        except Exception as exc:  # noqa: BLE001 — sin precios, el guion igual sale
-            logger.warning("sales_campaign_prices_unavailable", reason=type(exc).__name__)
-            return []
-        return list(result.results)
-
-    async def _campaign_promotion(self, code: str | None) -> Any:
-        """La promoción del cupón de la campaña en Medusa; None si no hay o no
-        responde a tiempo (el bot no la ofrece)."""
-        import asyncio
-
-        from src.sdk.connectorkit import get_promotions_port
-
-        if not code:
-            return None
-        try:
-            return await asyncio.wait_for(get_promotions_port().get_by_code(code), timeout=_COUPON_TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001 — sin promociones, no se ofrece el cupón
-            logger.warning("sales_campaign_coupon_unavailable", reason=type(exc).__name__)
-            return None
-
-    def _campaign_offer(
-        self, promotion: Any, metadata: dict[str, Any], *, today: Any, product_ids: tuple[str, ...]
-    ) -> Any:
-        """La oferta si el cupón rige hoy (`coupon_problem`, la vara de
-        `list_promotions`: Medusa lo deja «active» al vencer), sus condiciones
-        se pueden decir y, si es de primera compra, el cliente no compró antes
-        en la conversación (`list_promotions` lo confirma contra Medusa antes
-        de decirla). None: el bot no la ofrece."""
-        import time
-
-        from src.plugins.chats.agent.sales.use_cases.first_purchase import previous_order_ids
-        from src.plugins.chats.shared import sales_campaigns
-        from src.sdk.connectorkit import coupon_problem
-
-        if promotion is None or coupon_problem(promotion, now_ms=int(time.time() * 1000)) is not None:
-            return None
-        offer = sales_campaigns.coupon_offer(promotion, today=today, product_ids=product_ids)
-        if offer is not None and offer.first_purchase_only and previous_order_ids(metadata):
-            return None
-        return offer
+        if turn is None:
+            return None, False
+        if turn.changed:
+            self._safe_write_metadata(session_id, metadata, base)
+        return turn.note, turn.offer_now
 
     async def _catalog_lines(self, items: list[Any]) -> dict[str, CartLine | None] | None:
         """Cada `product_retailer_id` → su línea del catálogo (SKU, id de la

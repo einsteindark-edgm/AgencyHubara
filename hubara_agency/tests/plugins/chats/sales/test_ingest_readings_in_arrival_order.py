@@ -129,6 +129,7 @@ async def test_a_photo_that_reenters_late_does_not_erase_the_readings_of_the_tex
     doc = metadata.store[_SID]
     assert doc["last_inbound_message_id"] == "wamid.T"
     assert (current_signal(doc) or {}).get("kind") == "deferral"
+    assert doc["last_inbound_deferral"]["message_id"] == "wamid.T"  # el aplazamiento que no borra una despedida
     assert (doc.get(DEFERRAL_KEY) or {}).get("until_ms") == _MONDAY
     assert last_inbound_is_courtesy(doc) and doc[COURTESY_KEY]["message_id"] == "wamid.T"
     assert any("EL CLIENTE APLAZÓ" in note for note in bot.notes[-1])

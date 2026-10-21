@@ -324,6 +324,31 @@ async def test_remarketing_transfer_marks_deferral_in_the_handoff(ctx, tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_remarketing_transfer_marks_a_deferral_followed_by_a_farewell(ctx, tmp_path: Path) -> None:
+    """Caso del 2026-10-21: «No gracias voy a esperar» y, 6 s después, «Feliz
+    día y bendiciones» (sin señal) antes del traspaso. El aplazamiento sigue
+    valiendo para el resumen que lee Ventas."""
+    from src.platform.tools.routing import TransferToSalesAgentTool
+    from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool
+    from src.plugins.chats.shared.purchase_signals import apply_inbound_purchase_signal
+
+    RemarketingTransferToSalesTool = deferral_aware_transfer_tool(TransferToSalesAgentTool)
+    md: dict[str, Any] = {"active_route": "remarketing", "episodes": [_episode()],
+                          "last_outbound": {"sent_at_ms": NOW - 4_000, "kind": "text"}}
+    apply_inbound_purchase_signal(md, "deferral", "text", now_ms=NOW - 2_000, message_id="wamid.a",
+                                  text="No gracias voy a esperar")
+    apply_inbound_purchase_signal(md, None, "text", now_ms=NOW, message_id="wamid.b", text="Feliz día y bendiciones")
+    md["last_inbound_message_id"] = "wamid.b"
+    _seed(tmp_path, md)
+    tool = RemarketingTransferToSalesTool(workspace=str(tmp_path), vault_dir=tmp_path)
+
+    result = json.loads(await tool.execute_with_context(ctx, resumen="El cliente agradece y se despide."))
+
+    summary = result["transfer_decision"]["summary"]
+    assert summary.startswith("[EL CLIENTE APLAZÓ]") and "No gracias voy a esperar" in summary
+
+
+@pytest.mark.asyncio
 async def test_remarketing_transfer_without_deferral_passes_summary_through(ctx, tmp_path: Path) -> None:
     from src.platform.tools.routing import TransferToSalesAgentTool
     from src.plugins.chats.agent.remarketing.tools import deferral_aware_transfer_tool

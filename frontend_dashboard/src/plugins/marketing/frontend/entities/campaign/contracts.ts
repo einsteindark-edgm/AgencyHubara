@@ -31,6 +31,23 @@ export const backendSendResultSchema = z.object({
   spent_usd_micros: z.number().int().default(0),
 });
 
+/** Avance del envío por lotes (CampaignSendWorkflowV2): lo escribe el
+ *  workflow en cada lote y al pausar/reanudar. null = sin enviar o envío del
+ *  workflow viejo (que no lo reporta). */
+export const backendSendProgressSchema = z.object({
+  total: z.number().int().default(0),
+  processed: z.number().int().default(0),
+  sent: z.number().int().default(0),
+  failed: z.number().int().default(0),
+  opted_out: z.number().int().default(0),
+  skipped: z.number().int().default(0),
+  state: z.string().default("sending"),
+  /** Por qué se pausó sola (lote que falló, Meta rechazando, horario). */
+  pause_reason: z.string().nullable().default(null),
+  /** Pausada por horario de silencio: cuándo sigue sola (epoch ms). */
+  resume_at_ms: z.number().int().nullable().default(null),
+});
+
 export const backendTestSendRecordSchema = z.object({
   phone: z.string(),
   at_ms: z.number().int(),
@@ -64,6 +81,7 @@ export const backendCampaignSchema = z.object({
   send_result: backendSendResultSchema.nullable().default(null),
   /** Por qué NO salió (p. ej. el cupón ya no servía al dispararse). */
   failure_reason: z.string().nullable().default(null),
+  progress: backendSendProgressSchema.nullable().default(null),
   test_sends: z.array(backendTestSendRecordSchema).default([]),
   // Curaduría manual del operador (PUT los REEMPLAZA completos):
   // quitados a mano del segmento / agregados a mano fuera del segmento.

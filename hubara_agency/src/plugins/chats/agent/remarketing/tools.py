@@ -4,7 +4,7 @@
 run 01a0a0eb (2026-09-14) convirtió "Voy apenas en camino a casa" en
 "siguiente paso: confirmar el pedido y tomar datos de envío". Ventas confía en
 ese resumen por diseño, así que acá se corrige de forma determinista: si el
-último inbound fue un aplazamiento, el handoff lo dice primero y prohíbe
+cliente aplazó desde nuestro último mensaje, el handoff lo dice primero y prohíbe
 avanzar el cierre. `deferral_aware_transfer_tool` envuelve la tool de
 plataforma que el worker (composition root) ya importa — P-28.
 """
@@ -15,7 +15,7 @@ from typing import Any
 
 from exoclaw.agent.tools import ToolContext
 
-from src.plugins.chats.shared.purchase_signals import current_signal
+from src.plugins.chats.shared.purchase_signals import deferral_since_last_reply
 
 
 def deferral_aware_transfer_tool(base: type) -> type:
@@ -23,8 +23,11 @@ def deferral_aware_transfer_tool(base: type) -> type:
 
     class RemarketingTransferToSalesTool(base):  # type: ignore[misc,valid-type]
         async def execute_with_context(self, ctx: ToolContext, resumen: str) -> str:
-            signal = current_signal(self._read_metadata(ctx))
-            if signal and signal.get("kind") == "deferral":
+            # El aplazamiento desde nuestro último mensaje, aunque después
+            # haya escrito algo sin señal (2026-10-21: «No gracias voy a
+            # esperar» y, 6 s después, «Feliz día y bendiciones»).
+            signal = deferral_since_last_reply(self._read_metadata(ctx))
+            if signal:
                 quoted = str(signal.get("text") or "").strip()
                 resumen = (
                     f"[EL CLIENTE APLAZÓ] Escribió \"{quoted}\": NO confirmó nada. "
