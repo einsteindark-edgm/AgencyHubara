@@ -36,10 +36,11 @@ anuncios:
 # paga contra entrega.
 combo_cajas: 2
 # Envío gratis desde esta cantidad de cajas de la campaña (se pueden mezclar), a
-# cualquier ciudad y con cualquier medio de pago, en un pedido SOLO de estas
-# cajas (operador, 2026-10-20). El sistema no cobra el envío al registrar el
-# pedido; con menos cajas, o con otros productos en el pedido, se cobra como
-# siempre. Vacío = sin envío gratis.
+# cualquier ciudad y con cualquier medio de pago (operador, 2026-10-20). Con
+# esas cajas, el pedido entero va sin envío aunque lleve otros productos; los
+# otros productos no suman para llegar a la cantidad. El sistema no cobra el
+# envío al registrar el pedido; con menos cajas se cobra como siempre. Vacío =
+# sin envío gratis.
 envio_gratis_desde_cajas: 6
 # El incentivo para comprar ya: el código del cupón en Medusa (dashboard →
 # Marketing → Cupones). El bot dice su valor y su fecha límite tal como están

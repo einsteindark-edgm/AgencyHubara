@@ -6,8 +6,9 @@ la cuenta en caso de que sí hagan el pedido por 6 cajas o más.»
 
 Hasta hoy el envío era SIEMPRE una tarifa publicada (decisión del 2026-09-23):
 el resumen y el registro rechazaban un envío $0. Con 6 cajas o más de los
-productos de la campaña (se pueden mezclar), el envío es $0 y el total es el de
-los productos; con menos, todo sigue como estaba.
+productos de la campaña (se pueden mezclar), el envío de todo el pedido es $0,
+aunque lleve otros productos, y el total es el de los productos; con menos
+cajas, todo sigue como estaba (otros productos no suman para llegar a 6).
 """
 from __future__ import annotations
 
@@ -57,13 +58,13 @@ def _ctx() -> ToolContext:
     return ToolContext(session_key="s_free", channel="whatsapp", chat_id="c")
 
 
-def _items(onduladas: int, cuadradas: int) -> list[dict]:
-    lines = [(ONDULADA, onduladas), (CUADRADA, cuadradas)]
+def _items(onduladas: int, cuadradas: int, trilogias: int = 0) -> list[dict]:
+    lines = [(ONDULADA, onduladas), (CUADRADA, cuadradas), (TRILOGIA, trilogias)]
     return [{"handle": h, "quantity": q, "unit_price_cop": PRICES[h]} for h, q in lines if q]
 
 
-def _subtotal(onduladas: int, cuadradas: int) -> int:
-    return onduladas * PRICES[ONDULADA] + cuadradas * PRICES[CUADRADA]
+def _subtotal(onduladas: int, cuadradas: int, trilogias: int = 0) -> int:
+    return onduladas * PRICES[ONDULADA] + cuadradas * PRICES[CUADRADA] + trilogias * PRICES[TRILOGIA]
 
 
 def _intents(vault: Path) -> list[dict]:
@@ -73,10 +74,12 @@ def _intents(vault: Path) -> list[dict]:
 # ── el resumen del pedido ───────────────────────────────────────────────────
 
 
-async def _confirm(tmp_path: Path, *, onduladas: int, cuadradas: int, shipping_cop: int, method: str) -> dict:
+async def _confirm(
+    tmp_path: Path, *, onduladas: int, cuadradas: int, shipping_cop: int, method: str, trilogias: int = 0
+) -> dict:
     tool = PresentOrderConfirmationTool(workspace=str(tmp_path), catalog=_Boxes())
     return json.loads(await tool.execute_with_context(
-        _ctx(), items=_items(onduladas, cuadradas), shipping_cop=shipping_cop,
+        _ctx(), items=_items(onduladas, cuadradas, trilogias), shipping_cop=shipping_cop,
         shipping_address_summary="Calle 59b sur 38, Poblado, Medellín", payment_method=method,
     ))
 
@@ -113,16 +116,28 @@ async def test_five_boxes_still_pay_the_published_rate(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_six_boxes_with_another_product_pay_the_published_rate(tmp_path: Path) -> None:
-    """Operador, 2026-10-20: el envío gratis es solo para las cajas de la
-    campaña; un pedido que además trae otro producto paga el envío."""
-    tool = PresentOrderConfirmationTool(workspace=str(tmp_path), catalog=_Boxes())
-    items = [*_items(6, 0), {"handle": TRILOGIA, "quantity": 1, "unit_price_cop": PRICES[TRILOGIA]}]
+async def test_six_boxes_with_other_products_ship_the_whole_order_free(tmp_path: Path) -> None:
+    """Operador, 2026-10-20: «después de 6 cajas el envío es gratis, ya sean
+    las 6 cajas más otras velitas»: el pedido entero va sin envío."""
+    result = await _confirm(tmp_path, onduladas=6, cuadradas=0, trilogias=1, shipping_cop=0, method="transfer")
 
-    result = json.loads(await tool.execute_with_context(
-        _ctx(), items=items, shipping_cop=0, shipping_address_summary="Calle 59b sur 38, Poblado, Medellín",
-        payment_method="transfer",
-    ))
+    assert result["queued"] is True, result
+    (intent,) = _intents(tmp_path / "isolated_vault")
+    params = intent["params"]
+    assert (params["shipping_cop"], params["total_cop"]) == (0, _subtotal(6, 0, 1))
+    assert params["free_shipping"]["boxes"] == 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("cuadradas", "trilogias"), [(0, 6), (2, 4)])
+async def test_six_products_without_the_six_boxes_pay_the_published_rate(
+    tmp_path: Path, cuadradas: int, trilogias: int
+) -> None:
+    """«Lo que no puede ser gratis es 6 productos de otros sin que lleven las 6
+    cajas de velitas cuadradas u onduladas.»"""
+    result = await _confirm(
+        tmp_path, onduladas=0, cuadradas=cuadradas, trilogias=trilogias, shipping_cop=0, method="transfer"
+    )
 
     assert (result["queued"], result.get("error")) == (False, "shipping_mismatch")
     assert "16.940" in result["message"]
@@ -174,11 +189,13 @@ _SHIPPING = {"city": "Medellín", "neighborhood": "Poblado", "address": "Calle 5
              "phone": "3001234567", "receiver_name": "Ana Pérez"}
 
 
-async def _register(vault: Path, port: _Port, *, onduladas: int, cuadradas: int, shipping_cop: int) -> dict:
+async def _register(
+    vault: Path, port: _Port, *, onduladas: int, cuadradas: int, shipping_cop: int, trilogias: int = 0
+) -> dict:
     tool = RegisterOrderTool(workspace=str(vault), vault_dir=vault, port=port, catalog=_Boxes())
-    subtotal = _subtotal(onduladas, cuadradas)
+    subtotal = _subtotal(onduladas, cuadradas, trilogias)
     return json.loads(await tool.execute_with_context(
-        _ctx(), items=_items(onduladas, cuadradas), shipping=_SHIPPING, payment_method="transfer",
+        _ctx(), items=_items(onduladas, cuadradas, trilogias), shipping=_SHIPPING, payment_method="transfer",
         subtotal_cop=subtotal, shipping_cop=shipping_cop, total_cop=subtotal + shipping_cop,
     ))
 
@@ -195,6 +212,18 @@ async def test_six_boxes_register_with_free_shipping(_isolate_vault_dir: Path) -
     assert call["free_shipping"] == {"campaign": "velitas-7-dic", "min_boxes": 6, "boxes": 6}
     record = json.loads((_isolate_vault_dir / "s_free" / "metadata.json").read_text(encoding="utf-8"))
     assert record["registered_order"]["free_shipping"] == call["free_shipping"]
+
+
+@pytest.mark.asyncio
+async def test_six_boxes_with_other_products_register_with_free_shipping(_isolate_vault_dir: Path) -> None:
+    port = _Port()
+
+    env = await _register(_isolate_vault_dir, port, onduladas=4, cuadradas=2, trilogias=2, shipping_cop=0)
+
+    assert env["registered"] is True, env
+    (call,) = port.calls
+    assert (call["shipping_cop"], call["total_cop"]) == (0, _subtotal(4, 2, 2))
+    assert call["free_shipping"]["boxes"] == 6
 
 
 @pytest.mark.asyncio
@@ -236,10 +265,14 @@ def test_the_shipping_the_system_computes_is_free_with_six_boxes_and_the_rate_ot
     from src.plugins.chats.agent.sales.config.shipping import order_shipping
 
     free_cop, free = order_shipping([(ONDULADA, 3), (CUADRADA, 3)], "Medellín")
+    mixed_cop, mixed = order_shipping([(ONDULADA, 6), (TRILOGIA, 1)], "Medellín")
     rate_cop, none = order_shipping([(ONDULADA, 5)], "Medellín")
+    others_cop, no_boxes = order_shipping([(TRILOGIA, 6)], "Medellín")
 
     assert (free_cop, free.boxes) == (0, 6)
+    assert (mixed_cop, mixed.boxes) == (0, 6)
     assert (rate_cop, none) == (16_940, None)
+    assert (others_cop, no_boxes) == (16_940, None)
 
 
 def test_crear_pedido_registers_six_boxes_without_shipping(tmp_path: Path) -> None:
@@ -297,6 +330,7 @@ async def test_in_a_campaign_conversation_the_rates_card_brings_the_free_shippin
 
     text = result["customer_text"]
     assert text.startswith(SHIPPING_RATES_MESSAGE) and "6 cajas o más" in text and "envío es gratis" in text
+    assert "aunque lleves otros productos" in text
     (intent,) = _intents(tmp_path / "isolated_vault")
     assert intent["params"] == {"campaign": "velitas-7-dic"}  # nunca texto: el flush lo arma
 

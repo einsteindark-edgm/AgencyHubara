@@ -57,12 +57,13 @@ cupón no tenga.
 
 ## Envío gratis desde N cajas
 
-`envio_gratis_desde_cajas: 6` (operador, 2026-10-20): un pedido SOLO de los
-productos de la campaña (las cajas onduladas y cuadradas, se pueden mezclar)
-con 6 cajas o más va sin costo de envío, a cualquier ciudad y con cualquier
-medio de pago, mientras la campaña esté vigente. Con menos cajas, o si el
-pedido trae otros productos, se cobra la tarifa de siempre (operador: «es solo
-para las velas del 7 de diciembre»). Vacío = sin envío gratis.
+`envio_gratis_desde_cajas: 6` (operador, 2026-10-20): con 6 cajas o más de los
+productos de la campaña (las cajas onduladas y cuadradas, se pueden mezclar),
+el pedido entero va sin costo de envío aunque lleve otros productos, a
+cualquier ciudad y con cualquier medio de pago, mientras la campaña esté
+vigente. Solo cuentan esas cajas: 6 productos de otros sin las 6 cajas pagan la
+tarifa de siempre, igual que con menos cajas (operador: «ya sean las 6 cajas
+más otras velitas»). Vacío = sin envío gratis.
 
 - **Lo saben Ventas y remarketing:** el guion trae la línea del envío gratis;
   la tarjeta de tarifas («¿cuánto vale el envío?») la suma al final en las

@@ -498,6 +498,7 @@ def test_the_sales_note_says_free_shipping_from_six_boxes(velitas: sc.Campaign) 
 
     line = next(x for x in note.splitlines() if "Envío gratis" in x)
     assert "desde 6 cajas" in line and "menos de 6" in line
+    assert "aunque lleve otros productos" in line and "otros productos no suman" in line
 
 
 def test_the_remarketing_block_knows_free_shipping_from_six_boxes(velitas: sc.Campaign) -> None:
@@ -505,6 +506,7 @@ def test_the_remarketing_block_knows_free_shipping_from_six_boxes(velitas: sc.Ca
 
     line = next(x for x in block.splitlines() if "Envío gratis" in x)
     assert "desde 6 cajas" in line and "menos de 6" in line
+    assert "aunque lleve otros productos" in line and "otros productos no suman" in line
 
 
 def test_without_the_rule_nothing_promises_free_shipping(velitas: sc.Campaign) -> None:
@@ -536,15 +538,21 @@ def test_five_boxes_pay_shipping(velitas: sc.Campaign) -> None:
 
 
 def test_other_products_do_not_count_toward_the_boxes(velitas: sc.Campaign) -> None:
+    """Operador, 2026-10-20: «lo que no puede ser gratis es 6 productos de otros
+    sin que lleven las 6 cajas de velitas cuadradas u onduladas»."""
     assert sc.free_shipping_for([(CUADRADA, 5), ("trilogia-del-terror", 3)], today=TODAY, campaigns=[velitas]) is None
+    assert sc.free_shipping_for([("trilogia-del-terror", 6)], today=TODAY, campaigns=[velitas]) is None
+    assert sc.free_shipping_for([(CUADRADA, 2), ("trilogia-del-terror", 4)], today=TODAY, campaigns=[velitas]) is None
 
 
-def test_an_order_with_other_products_pays_shipping_even_with_six_boxes(velitas: sc.Campaign) -> None:
-    """Operador, 2026-10-20: «las 6 cajas sin valor de envío es solo para las
-    velas del 7 de diciembre, las onduladas y las cuadradas». Un pedido que
-    además trae otro producto paga el envío de siempre."""
-    assert sc.free_shipping_for([(CUADRADA, 6), ("trilogia-del-terror", 1)], today=TODAY, campaigns=[velitas]) is None
-    assert sc.free_shipping_for([(CUADRADA, 6)], today=TODAY, campaigns=[velitas]) is not None
+def test_with_six_boxes_the_whole_order_ships_free_even_with_other_products(velitas: sc.Campaign) -> None:
+    """Operador, 2026-10-20: «después de 6 cajas el envío es gratis, ya sean las
+    6 cajas más otras velitas»."""
+    free = sc.free_shipping_for(
+        [(ONDULADA, 3), (CUADRADA, 3), ("trilogia-del-terror", 2)], today=TODAY, campaigns=[velitas]
+    )
+
+    assert free == sc.FreeShipping(campaign="velitas-7-dic", min_boxes=6, boxes=6)
 
 
 @pytest.mark.parametrize("today", [date(2026, 9, 30), date(2026, 12, 8)])

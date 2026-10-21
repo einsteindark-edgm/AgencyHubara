@@ -2380,10 +2380,12 @@ el episodio, la marca se descarta con el episodio.
 
 ### Requirement: Envío gratis desde N cajas de una campaña (2026-10-20)
 
-Cuando un pedido es SOLO de los productos de una campaña vigente y lleva
-`envio_gratis_desde_cajas` cajas o más (se pueden mezclar), el sistema SHALL
-cobrarlo sin envío; con otro producto en el pedido, el envío se cobra como
-siempre (operador: «es solo para las velas del 7 de diciembre»): `present_order_confirmation`, `register_order` y las puertas sin LLM
+Cuando un pedido lleva `envio_gratis_desde_cajas` cajas o más de los productos
+de una campaña vigente (se pueden mezclar), el sistema SHALL cobrar el pedido
+entero sin envío, aunque lleve otros productos; los otros productos no suman
+para llegar al mínimo (operador: «ya sean las 6 cajas más otras velitas; lo que
+no puede ser gratis es 6 productos de otros sin las 6 cajas»):
+`present_order_confirmation`, `register_order` y las puertas sin LLM
 («Crear pedido» del dashboard y la app, el resumen del operador) usan la misma
 regla (`sales_campaigns.free_shipping_for`, por el contenido del pedido y no
 por la conversación) y MUST rechazar con `shipping_mismatch` otro envío que $0
@@ -2411,5 +2413,10 @@ intent. El verificador de cifras explica hasta 20 unidades por línea.
 #### Scenario: 6 cajas y otro producto
 
 - GIVEN un pedido con 6 cajas onduladas y una Trilogía del Terror
+- THEN el envío del pedido entero es $0 y el total es el de los productos
+
+#### Scenario: 6 productos sin las 6 cajas
+
+- GIVEN un pedido con 2 cajas cuadradas y 4 Trilogías del Terror (o 6 Trilogías)
 - THEN el envío es la tarifa mínima publicada y un $0 se rechaza (`shipping_mismatch`)
 
