@@ -17,7 +17,7 @@ from src.plugins.reengagement.agent.cycle.workflows.cycle import (
 )
 from src.sdk import ensure_plugin_enabled, get_task_queue
 from src.sdk.eventkit import dispatch_event_activity
-from src.sdk.runtime import get_temporal_client, setup_logging
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, get_temporal_client, run_worker, setup_logging
 
 setup_logging()
 
@@ -38,10 +38,12 @@ async def main() -> None:
             poll_window_strategist_activity,
             dispatch_event_activity,
         ],
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
 
     logger.info("🔁 reengagement cycle worker arriba. Cola: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

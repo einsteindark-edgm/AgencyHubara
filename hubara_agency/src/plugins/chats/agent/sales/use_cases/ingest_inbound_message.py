@@ -108,9 +108,9 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 )
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
 from src.plugins.chats.shared.quotes import build_quote_note, resolve_quote
-from src.plugins.chats.shared.purchase_signals import (
-    build_deferral_note,
-)
+from src.plugins.chats.shared.customer_profiles import intent_in_reading, stamp_interest
+from src.plugins.chats.shared.purchase_signals import build_deferral_note
+from src.plugins.chats.shared.sales_campaigns import purchase_intent
 from src.plugins.chats.agent.sales.decisions.readings import (
     Inbound,
     apply_readings,
@@ -738,6 +738,15 @@ class IngestInboundMessage:
                 else opt_out_campaign_id(metadata, now_ms)
             ),
         )
+        # El perfil «interesado sin compra» (operador, 2026-10-20): quiso comprar
+        # (lo leyó Jev con `compra`, o la regla de hoy) o tiene un pedido a
+        # medias, y el episodio no tiene pedido. Es el público de las campañas
+        # (marketing lo lee del metadata; un pedido en la conversación lo saca).
+        _interest = intent_in_reading(readings) or (
+            "pedido_a_medias" if purchase_intent(get_active_episode(metadata) or {}, ()) else None
+        )
+        if _interest is not None and stamp_interest(metadata, now_ms=now_ms, source=_interest):
+            logger.info("customer_profile_interest", session_id=session_id, source=_interest)
         # El cliente solo agradece o saluda (capacidad `cortesia`): el episodio
         # nuevo no abre venta (caso del 2026-09-29, «pedido listo»).
         if episode_boundary_note is not None and _prev_closed_episode is not None and readings.courtesy_only:
@@ -1437,8 +1446,20 @@ class IngestInboundMessage:
         # Aplazamiento del cliente ("voy en camino", "luego"): el LLM responde
         # texto breve y no avanza el cierre (las tools de cierre también lo
         # rechazan — defensa en profundidad).
+        # El guion de la campaña de este episodio (operador, 2026-10-19: «el
+        # guion de venta por producto o campaña»), con los precios del catálogo.
+        # Va antes de la nota del aplazamiento: si el cliente aplaza, el guion
+        # le da la oferta del cupón con su fecha (operador, 2026-10-20).
+        campaign_script_note, campaign_offer_now = (
+            await self._campaign_script_note(
+                session_id, metadata, base, effective.text, message_id=parsed.message_id,
+                to_sales=metadata.get("active_route") != ROUTE_REMARKETING or campaign_reply_note is not None,
+            )
+            if metadata.get("active_route") != ROUTE_HUMANO
+            else (None, False)
+        )
         deferral_note = build_deferral_note(
-            metadata, resume_label=fresh_resume_label(metadata)
+            metadata, resume_label=fresh_resume_label(metadata), campaign_offer=campaign_offer_now
         )
         # Cupón aplicado en el episodio: el LLM lo recuerda cada turno y sabe
         # que el monto lo calcula el sistema (no promete otro descuento).
@@ -1456,15 +1477,6 @@ class IngestInboundMessage:
         # «no están todas» y el bot negó lo verificado). La foto que reentra
         # ya lleva su propia nota.
         photo_facts_note = None if from_photo else build_photo_facts_note(metadata)
-        # El guion de la campaña de este episodio (operador, 2026-10-19: «el
-        # guion de venta por producto o campaña»), con los precios del catálogo.
-        campaign_script_note = (
-            await self._campaign_script_note(
-                session_id, metadata, base, effective.text, message_id=parsed.message_id
-            )
-            if metadata.get("active_route") != ROUTE_HUMANO
-            else None
-        )
         # El carrito: el handle de cada producto, para seguir la venta.
         cart_note = build_cart_note(
             (parsed.order or {}).get("product_items") or [] if isinstance(parsed.order, dict) else [],
@@ -1879,16 +1891,20 @@ class IngestInboundMessage:
         text: str | None,
         *,
         message_id: str | None,
-    ) -> str | None:
-        """El guion de la campaña del episodio activo (`chats/shared/campaigns`),
-        o None si no es de ninguna. Marca el episodio la primera vez (así los
-        turnos siguientes y el remarketing la siguen sin volver a adivinarla).
-        Sin catálogo a tiempo, el guion sin precios. Nunca rompe el ingest."""
+        to_sales: bool = True,
+    ) -> tuple[str | None, bool]:
+        """(el guion de la campaña del episodio activo, ¿le toca la oferta del
+        cupón ahora?), o (None, False) si no es de ninguna campaña. Marca el
+        episodio la primera vez (así los turnos siguientes y el remarketing la
+        siguen sin volver a adivinarla). Sin catálogo a tiempo, el guion sin
+        precios. Nunca rompe el ingest."""
         try:
-            return await self._campaign_script(session_id, metadata, base, text, message_id=message_id)
+            return await self._campaign_script(
+                session_id, metadata, base, text, message_id=message_id, to_sales=to_sales
+            )
         except Exception as exc:  # noqa: BLE001 — una campaña rota deja el guion de siempre
             logger.warning("sales_campaign_failed", session=session_id, reason=repr(exc))
-            return None
+            return None, False
 
     async def _campaign_script(
         self,
@@ -1898,45 +1914,24 @@ class IngestInboundMessage:
         text: str | None,
         *,
         message_id: str | None,
-    ) -> str | None:
-        import asyncio
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
-        from src.plugins.chats.agent.sales.config.shipping import CASH_ON_DELIVERY_MIN_PRODUCTS_COP
-        from src.plugins.chats.shared import sales_campaigns
-        from src.plugins.chats.shared.store_pack import store_domain
+        to_sales: bool = True,
+    ) -> tuple[str | None, bool]:
+        from src.plugins.chats.agent.sales.use_cases.campaign_turn import campaign_turn
 
         episode = get_active_episode(metadata)
-        today = datetime.fromtimestamp(_now_ms() / 1000, tz=ZoneInfo("America/Bogota")).date()
         # Las palabras del anuncio solo cuentan en el mensaje que abrió el
         # episodio (el prellenado): «noche de velitas» en la mitad de la charla
         # es de temporada, no de la campaña (revisión del 2026-10-19).
         opening = bool(episode) and message_id is not None and episode.get("started_inbound_message_id") == message_id
-        campaign = sales_campaigns.campaign_for(episode, today=today, text=(text or "") if opening else "")
-        if campaign is None or episode is None:
-            return None
-        if episode.get(sales_campaigns.EPISODE_KEY) != campaign.id:
-            episode[sales_campaigns.EPISODE_KEY] = campaign.id
-            self._safe_write_metadata(session_id, metadata, base)
-            logger.info("sales_campaign_matched", session=session_id, campaign=campaign.id)
-        products: list[Any] = []
-        if self._catalog is not None:
-            try:
-                result = await asyncio.wait_for(
-                    self._catalog.search("", limit=_CATALOG_GAP_LIMIT),
-                    timeout=_WEB_CART_HYDRATION_TIMEOUT_S,
-                )
-                products = list(result.results)
-            except Exception as exc:  # noqa: BLE001 — sin precios, el guion igual sale
-                logger.warning("sales_campaign_prices_unavailable", reason=type(exc).__name__)
-        try:
-            boxes = store_domain().get("sold_by_box")
-        except Exception:  # noqa: BLE001 — sin el dominio, los precios van por unidad
-            boxes = None
-        return sales_campaigns.sales_note(
-            campaign, products, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP, boxes=boxes
+        turn = await campaign_turn(
+            metadata, catalog=self._catalog, now_ms=_now_ms(), text=text, opening=opening, to_sales=to_sales,
+            session_id=session_id,
         )
+        if turn is None:
+            return None, False
+        if turn.changed:
+            self._safe_write_metadata(session_id, metadata, base)
+        return turn.note, turn.offer_now
 
     async def _catalog_lines(self, items: list[Any]) -> dict[str, CartLine | None] | None:
         """Cada `product_retailer_id` → su línea del catálogo (SKU, id de la
@@ -3043,8 +3038,9 @@ def _rebase(base: dict[str, Any], data: dict[str, Any]) -> None:
 _HUMAN_OWNED_KEYS = ("tag", "motivo", "status_history")
 #: Lo que solo se descarta si este mensaje rotó el episodio (cerró el anterior
 #: o abrió uno nuevo): si no rotó, lo que las lecturas escribieron en el
-#: episodio activo se queda.
-_ROTATION_KEYS = ("episodes", "capi_outbox")
+#: episodio activo se queda. El perfil (`profile_tags`) apunta al episodio
+#: en que se marcó: con el episodio descartado, la marca también.
+_ROTATION_KEYS = ("episodes", "capi_outbox", "profile_tags")
 
 
 def _episode_marks(metadata: dict[str, Any]) -> list[tuple[Any, Any]]:

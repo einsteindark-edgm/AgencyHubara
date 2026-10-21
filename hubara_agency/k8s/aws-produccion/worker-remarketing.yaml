@@ -17,6 +17,9 @@ spec:
       labels:
         app: hubara-worker-remarketing
     spec:
+      # Apagado ordenado: el worker espera 30 s a sus activities
+      # (WORKER_GRACEFUL_SHUTDOWN); el default de k8s (30 s) lo cortaba.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: worker
           image: hubara-agency-prod:latest

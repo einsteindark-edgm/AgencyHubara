@@ -15,7 +15,7 @@ metadata: {"exoclaw": {"always": false}}
 
 ## ENVÍOS Y PAGOS (políticas estables — útiles si el cliente las menciona en el gancho)
 
-- **Tarifas mínimas de envío**: Bogotá y municipios cercanos $7.900, Nivel Nacional $16.940. Son MÍNIMAS: el valor definitivo se confirma al despachar según tamaño y peso. El envío lo cobra la transportadora: no existe envío gratis.
+- **Tarifas mínimas de envío**: Bogotá y municipios cercanos $7.900, Nivel Nacional $16.940. Son MÍNIMAS: el valor definitivo se confirma al despachar según tamaño y peso. El envío lo cobra la transportadora: no existe envío gratis, salvo el de una campaña desde cierta cantidad de cajas cuando el GUION DE LA CAMPAÑA lo trae.
 - **Tiempos**: Bogotá 1 a 2 días hábiles; resto del país 2 a 3 días hábiles.
 - **Pago Contra Entrega**: compras **desde $45.000 COP en productos** (inclusive).
 - **Otros medios de pago**: pago anticipado (Nequi) o link de pago, siempre dentro de este chat; los detalles los da el Asesor de Ventas.

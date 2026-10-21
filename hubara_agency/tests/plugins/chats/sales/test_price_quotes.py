@@ -2,6 +2,8 @@
 anuncio y detección de montos sin respaldo en el catálogo (run ebbc203d)."""
 from __future__ import annotations
 
+import pytest
+
 from src.plugins.chats.agent.sales.price_quotes import (
     PRICE_MASK,
     extract_cop_amounts,
@@ -85,3 +87,30 @@ def test_a_product_quote_loses_the_policy_context() -> None:
         text, catalog_prices={49500}, policy_amounts={45000}, product_quotes={"Desde $45.000 tienes el Cubo Love 🤍."}
     )
     assert [h.amount for h in hits] == [45000]
+
+
+# ── envío gratis desde 6 cajas (operador, 2026-10-20) ───────────────────────
+#
+# El gancho empuja pedidos de 6 cajas o más: el total de esas cantidades es un
+# precio del catálogo por su cantidad, no un precio inventado. Antes solo se
+# explicaban 1..5 unidades por línea y el mensaje con el total se retenía.
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Las 6 cajas onduladas te quedan en $135.000 y el envío es gratis 🤍",
+        "3 onduladas y 3 cuadradas: $142.500 en total, con envío gratis.",
+        "Con 12 cajas cuadradas son $300.000.",
+    ],
+)
+def test_the_total_of_six_or_more_boxes_is_explained_by_the_catalog(text: str) -> None:
+    assert find_unexplained_amounts(text, catalog_prices={22_500, 25_000}, policy_amounts={45_000}) == []
+
+
+def test_a_wrong_box_price_is_still_caught() -> None:
+    hits = find_unexplained_amounts("Cada caja te queda en $21.000", catalog_prices={22_500, 25_000},
+                                    policy_amounts={45_000})
+
+    assert [h.amount for h in hits] == [21_000]
+

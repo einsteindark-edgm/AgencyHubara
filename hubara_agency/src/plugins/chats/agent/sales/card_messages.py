@@ -247,7 +247,12 @@ def order_card_text(params: Mapping[str, Any]) -> str:
     * Cupo por unidad (premortem B4): qué unidades llevan el descuento, o por
       qué no, al final y solo si cabe en `MAX_CARD_BODY` (la tarjeta termina
       el turno del bot: el cliente lo lee acá).
+    * Envío gratis de la campaña (`free_shipping`, 6 cajas o más; operador,
+      2026-10-20): «Envío: gratis (6 cajas o más)» y el total de los
+      productos, también con contra entrega (no hay envío por confirmar).
     """
+    from src.plugins.chats.shared.sales_campaigns import FreeShipping
+
     items = params.get("items") or []
     lines = [
         (
@@ -272,7 +277,11 @@ def order_card_text(params: Mapping[str, Any]) -> str:
     if isinstance(discount_cop, int) and discount_cop > 0:
         coupon = params.get("coupon_code")
         body_lines.append(f"Descuento{f' ({coupon})' if coupon else ''}: −{_amount(discount_cop, currency)}")
-    if payment_method == "cash_on_delivery":
+    free = FreeShipping.from_json(params.get("free_shipping"))
+    if free is not None:
+        to_pay = "Total a pagar al recibir" if payment_method == "cash_on_delivery" else "Total"
+        body_lines.extend([f"Envío: {free.label}", f"{to_pay}: {_amount(total, currency)}"])
+    elif payment_method == "cash_on_delivery":
         body_lines.extend(["", ORDER_SUMMARY_SHIPPING_LINE])
     else:
         shipping_line = (
@@ -285,7 +294,7 @@ def order_card_text(params: Mapping[str, Any]) -> str:
         "",
         f"💳 Medio de pago: {payment_label(payment_method)}",
     ])
-    if payment_method == "cash_on_delivery":
+    if payment_method == "cash_on_delivery" and free is None:
         body_lines.extend(["", ORDER_SUMMARY_SHIPPING_NOTE])
     body = "\n".join(body_lines)
     note = params.get("coupon_note")

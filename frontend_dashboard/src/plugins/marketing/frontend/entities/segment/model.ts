@@ -24,6 +24,8 @@ const FALLBACK_LABELS: Record<string, string> = {
   clientes: "Clientes",
   interesados: "Interesados",
   frios: "Fríos",
+  // Segmento del perfil de la persona (quiso comprar y no compró), 2026-10-20.
+  interesados_sin_compra: "Interesados sin compra",
   manual: "Manual",
   importados: "Importado",
 };

@@ -186,6 +186,16 @@ describe("ChatsOrdersPanel", () => {
     expect(screen.getByTestId("ship-total")).toHaveTextContent(/62[.,]000/);
   });
 
+  it("despachar un pedido con envío gratis anota el envío real sin sumárselo al cliente", () => {
+    // 6 cajas de la campaña (operador, 2026-10-20): el envío lo paga la tienda.
+    withOrder({ id: "order_01HX", status: "ready", total_cop: 135000, shipping_cop: 0, free_shipping: true });
+    render(<ChatsOrdersPanel sessionId="wa_1" />, { wrapper: Wrapper });
+    fireEvent.click(screen.getByRole("button", { name: /despachar/i }));
+    expect(screen.getByText(/envío gratis/i)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/lo paga la tienda/i), { target: { value: "18.000" } });
+    expect(screen.getByTestId("ship-total")).toHaveTextContent(/135[.,]000/);
+  });
+
   it("despachar sin guía ni valor mueve el pedido igual", async () => {
     transitionMutateAsync.mockResolvedValue({ success: true, current_stage: "shipping" });
     withOrder({ id: "order_01HX", status: "ready" });
