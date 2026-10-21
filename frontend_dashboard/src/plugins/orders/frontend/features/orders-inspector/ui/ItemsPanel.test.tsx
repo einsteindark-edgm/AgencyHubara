@@ -171,4 +171,20 @@ describe("ItemsPanel — desglose del cobro", () => {
     expect(screen.queryByText(/estimado/)).not.toBeInTheDocument();
     expect(row(/^Envío$/)).toMatch(/7[.,]900/);
   });
+
+  it("con envío gratis dice gratis y muestra aparte lo que paga la tienda, fuera del total", () => {
+    // 6 cajas de la campaña (operador, 2026-10-20).
+    const detail = {
+      items_detail: [item({})],
+      subtotal_cop: 135000,
+      shipping_cop: 0,
+      discount_total_cop: 0,
+      tax_total_cop: 0,
+      summary: { total_cop: 135000, shipping_confirmed: true, free_shipping: true, store_shipping_cost_cop: 18000 },
+    } as unknown as OrderDetail;
+    render(<ItemsPanel detail={detail} />);
+    expect(row(/^Envío$/)).toMatch(/gratis/);
+    expect(row(/^Envío que paga la tienda$/)).toMatch(/18[.,]000/);
+    expect(row(/^Total$/)).toMatch(/135[.,]000/);
+  });
 });

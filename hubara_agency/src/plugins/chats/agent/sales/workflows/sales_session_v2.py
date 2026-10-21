@@ -124,6 +124,9 @@ with workflow.unsafe.imports_passed_through():
     )
     # El aviso del cierre por abandono con red (premortem 2026-10-09).
     from src.plugins.chats.agent.sales.workflows.ghosting_v2 import ghost_trigger as ghost_trigger_of
+    # Lo que el cliente le escribió a remarketing entra al turno del traspaso
+    # (caso 2026-10-16); su gate vive en el helper.
+    from src.plugins.chats.agent.sales.workflows.handoff_v2 import handoff_reply, reply_message
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
@@ -218,6 +221,11 @@ class HubaraSalesSessionWorkflowV2:
         # continuación (solo payload).
         self._continues: list[str] = []
         self._continued: list[PendingMessage] = []
+        # Traspaso de remarketing (caso 2026-10-16): lo que el cliente le
+        # escribió entra al turno (los mismos objetos de la bandeja), y sus
+        # wamids no se contestan otra vez si también llegan por señal.
+        self._handoff_replies: list[PendingMessage] = []
+        self._handoff_wamids: set[str] = set()
 
     @workflow.signal
     async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
@@ -246,12 +254,16 @@ class HubaraSalesSessionWorkflowV2:
             self._perception_mode = mode
         if profile is not None:
             self._perception_profile = profile
+        meta = _clean_inbound_meta(inbound_meta)
+        if meta and meta.get("wamid") in self._handoff_wamids:
+            # Ya entró con el traspaso de remarketing: no se contesta dos veces.
+            return
         self._pending.append(
             PendingMessage(
                 message=message,
                 media=media,
                 plugin_context=plugin_context,
-                inbound_meta=_clean_inbound_meta(inbound_meta),
+                inbound_meta=meta,
             )
         )
 
@@ -288,6 +300,35 @@ class HubaraSalesSessionWorkflowV2:
             start_to_close_timeout=timedelta(seconds=10),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
+
+    async def _queue_handoff(self, session_id: str, summary: str, plugin_context: list[str] | None) -> None:
+        """Encola el traspaso (el resumen va como contexto del turno) y, si el
+        cliente le escribió a remarketing, su mensaje tal cual con la nota de
+        lo que Ventas no vio (caso 2026-10-16: solo con el resumen, Ventas se
+        calló). Lo que ya llegó por señal no se repite."""
+        self._pending.append(PendingMessage(message=summary, is_handoff=True, plugin_context=plugin_context))
+        # Lo que ya está en la bandeja y lo que ya entró con otro traspaso de
+        # esta corrida (ordenado: un set no tiene orden estable entre procesos).
+        signaled = [str(w) for p in self._pending if (w := (p.inbound_meta or {}).get("wamid"))]
+        reply = await handoff_reply(session_id, [*signaled, *sorted(self._handoff_wamids)])
+        if reply is None:
+            return
+        message = reply_message(reply)
+        self._handoff_wamids.update(reply.wamids)
+        self._handoff_replies.append(message)
+        # Lo que llegó por señal mientras se leía el chat y ya viene en el
+        # traspaso, sale de la bandeja (una sola vez). Lo que el cliente le
+        # escribió a remarketing va antes que lo que escribió después.
+        self._pending[:] = [
+            p for p in self._pending if p.is_handoff or (p.inbound_meta or {}).get("wamid") not in reply.wamids
+        ]
+        later = next((i for i, p in enumerate(self._pending) if not p.is_handoff), len(self._pending))
+        self._pending.insert(later, message)
+
+    def _customer_waits(self, batch: list[PendingMessage]) -> bool:
+        """¿El turno trae lo que el cliente le escribió a remarketing? Entonces
+        espera respuesta: un `NO_MESSAGE` tiene una ronda más (la fachada)."""
+        return any(p is r for p in batch for r in self._handoff_replies)
 
     async def _perceive(self, inp: PerceiveInput) -> PerceiveOutput:
         """Capa ①: nunca tumba el turno (fail-open)."""
@@ -384,12 +425,8 @@ class HubaraSalesSessionWorkflowV2:
         # Handoff Remarketing→Ventas: viaja por metadata y entra como marcador.
         initial_handoff = await self._read_handoff(session.session_id)
         if initial_handoff:
-            self._pending.append(
-                PendingMessage(
-                    message=initial_handoff,
-                    is_handoff=True,
-                    plugin_context=await self._handoff_context(session.session_id),
-                )
+            await self._queue_handoff(
+                session.session_id, initial_handoff, await self._handoff_context(session.session_id)
             )
 
         while True:
@@ -412,12 +449,8 @@ class HubaraSalesSessionWorkflowV2:
                 # normal y NO hay ghosting este ciclo.
                 late_handoff = await self._read_handoff(session.session_id)
                 if late_handoff:
-                    self._pending.append(
-                        PendingMessage(
-                            message=late_handoff,
-                            is_handoff=True,
-                            plugin_context=await self._handoff_context(session.session_id),
-                        )
+                    await self._queue_handoff(
+                        session.session_id, late_handoff, await self._handoff_context(session.session_id)
                     )
                 elif not self._pending:
                     workflow.logger.info(
@@ -438,11 +471,7 @@ class HubaraSalesSessionWorkflowV2:
             # Handoff que llegó mientras se procesaba un turno anterior.
             handoff_refresh = await self._read_handoff(session.session_id)
             if handoff_refresh:
-                self._pending.append(
-                    PendingMessage(
-                        message=handoff_refresh, is_handoff=True, plugin_context=await _system_turn_clock() or None
-                    )
-                )
+                await self._queue_handoff(session.session_id, handoff_refresh, await _system_turn_clock() or None)
 
             # Debounce con reinicio: silencio de `_DEBOUNCE_SILENCE`, con tope.
             # `debounce_start` también es el inicio del presupuesto de la
@@ -602,8 +631,10 @@ class HubaraSalesSessionWorkflowV2:
                         align_history_with_episode=True,
                         egress=egress,
                         # Segunda puerta (F6): solo con el contrato de tools
-                        # GRABADO por el motor; sin él, el turno de hoy.
-                        turn_policy=contract_policy_of(decided),
+                        # GRABADO por el motor; sin él, el turno de hoy. Y si
+                        # el turno trae lo que el cliente le escribió a
+                        # remarketing, un NO_MESSAGE tiene una ronda más.
+                        turn_policy=contract_policy_of(decided, customer_waits=self._customer_waits(raw_batch)),
                         # Revisión antes de grabar y enviar: si el cliente
                         # escribió y el turno todavía no le mostró nada, se
                         # recompone en vez de responder a medias.

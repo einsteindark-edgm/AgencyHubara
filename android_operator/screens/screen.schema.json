@@ -1625,6 +1625,34 @@
                 ],
                 "description": "Color de la píldora."
               },
+              "title_tag": {
+                "type": [
+                  "string",
+                  "number",
+                  "boolean"
+                ],
+                "description": "Píldora chica al lado del título, sin agregar una línea (quién atiende: «Humano»)."
+              },
+              "title_tag_tone": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "neutral",
+                      "primary",
+                      "secondary",
+                      "bot",
+                      "success",
+                      "warning",
+                      "danger"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "\\{\\{"
+                  }
+                ],
+                "description": "Color de la píldora del título."
+              },
               "trailing": {
                 "type": [
                   "string",
@@ -2645,7 +2673,7 @@
                     "pattern": "\\{\\{"
                   }
                 ],
-                "description": "`[{ \"value\": \"…\", \"label\": \"…\" }]`."
+                "description": "`[{ \"value\": \"…\", \"label\": \"…\", \"badge\": \"{{…}}\" }]`. `badge` (opcional): un número en una bolita al lado del texto, como los no leídos de la bandeja (vacío o 0: sin bolita). Con bolitas los chips bajan de línea en vez de deslizarse: se ven todos."
               },
               "style": {
                 "anyOf": [

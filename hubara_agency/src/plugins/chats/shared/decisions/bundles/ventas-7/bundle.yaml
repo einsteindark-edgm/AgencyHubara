@@ -52,6 +52,16 @@
 # segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
 # Las frases que buscan las reglas viven en el `with:` de cada capacidad.
 # El catálogo las pide desde esta versión (`capabilities_since`).
+# Y, editado en el lugar el 2026-10-16 (decisión del operador: emergencia, sin un
+# paquete nuevo ni Terraform), `caja_por_unidad` (una prueba lo exige:
+# test_decisions_ventas_7_caja_por_unidad.py). Caso de producción del mismo día: el
+# cliente armó un carrito con una caja de Velas de deseos cuadradas ($25.000 la caja
+# de 12), preguntó si cada vela valía eso y el bot le dijo que el precio era por
+# unidad («cada velita vale $25.000»); un colega tuvo que corregirlo. `precio_ajeno`
+# no lo vio: el monto es el del catálogo; lo falso es a qué se lo pone. Con un
+# producto que se cobra por caja en foco, la regla (frases del paquete) propone una
+# cláusula que dice un precio por unidad sin nombrar la caja y Jev decide. Sin Jev no
+# revisa. La traza lo distingue por la capacidad (antes no existía), no por la versión.
 # Y ③ del catálogo en el turno (anuncio de velitas, 2026-10-13, 16:53 Bogotá;
 # una prueba lo exige: test_decisions_ventas_7_verifica.py). El bot mandó botones
 # y después el catálogo completo a quien pidió las velitas del 7 de diciembre; ③
@@ -138,6 +148,7 @@ capabilities:
   - aroma_ajeno
   - baja
   - caja_nombrada
+  - caja_por_unidad
   - cajas
   - cantidad
   - categoria

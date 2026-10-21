@@ -1691,6 +1691,35 @@ texto final suelto por `send_reply`.
 - THEN el texto sale (Jev: 0,13–0,18 en la sonda)
 - AND «más el envío de $7.900» no se le pregunta a Jev: la tarifa es una cifra cierta
 
+### Requirement: Lo que se cobra por caja no se cotiza por unidad (`ventas-7`, 2026-10-16)
+
+En la misma revisión de los hechos (y la misma retención única), con un producto
+que la tienda cobra por caja en foco (`domain.yaml: sold_by_box`, hoy las velas
+de deseos), `caja_por_unidad` SHALL revisar si el texto le pone a cada vela o
+unidad el precio de la caja. `precio_ajeno` no lo ve: el monto es el del
+catálogo; lo falso es a qué se lo pone. La regla (frases del paquete:
+`por_unidad`, `habla_de_caja`) solo PROPONE una cláusula que dice un precio por
+unidad («cada una», «por unidad», «cada velita») sin nombrar la caja y sin
+negarlo; Jev, con lo que dice el sistema de la caja, decide (umbral 0,5; lo que
+Jev no contestó no se retiene, porque «cada una» también habla de cajas). Sin
+Jev, o sin un producto por caja en foco, no se juzga nada. Lo que quede MUST
+volver al modelo con el precio de la caja y cuántas unidades trae, sin empezar
+con «así es», y reconociendo el error si antes le dijo que era por unidad.
+
+El carrito del catálogo de WhatsApp SHALL decir la caja de lo que se cobra por
+caja («a $25.000 la caja de 12 unidades», no «c/u») y su nota, que la cantidad
+son cajas.
+
+#### Scenario: «el precio es por unidad, cada velita vale $25.000» (producción, 2026-10-16)
+
+- GIVEN una caja de Velas de deseos cuadradas ($25.000 la caja de 12) en el pedido
+- WHEN el cliente pregunta si cada vela vale eso y el bot contesta «Así es, $25.000 cada una»
+  o «el precio es por unidad, cada velita vale $25.000»
+- THEN el texto vuelve una vez con «$25.000 es el precio de la caja de 12 unidades»
+  (Jev: 0,73 y 0,94 en la sonda)
+- AND «si llevas dos cajas, te quedan a $25.000 cada una» sale (Jev: 0,05)
+- AND «cada caja trae 12 velitas y vale $25.000» no se le pregunta a Jev
+
 ### Requirement: «Enviar mensaje a la empresa» dice de qué producto le escriben (2026-09-30)
 
 Cuando el cliente escribe desde la ficha de un producto del catálogo de
@@ -2274,3 +2303,120 @@ Si `execute_tool` agota sus reintentos por cualquier otra falla, `run_agent_turn
 - GIVEN el servicio de una tool está caído
 - WHEN el modelo la llama y `execute_tool` agota sus 2 intentos
 - THEN el workflow sigue, el modelo lee `tool_failed` y le responde al cliente sin ella
+
+### Requirement: El traspaso de remarketing trae lo que escribió el cliente (2026-10-16)
+
+Caso del 2026-10-16: un colega atendió a un cliente (le aclaró que el precio era por la caja de 12 y le ofreció hacerle el pedido) y devolvió el chat. Remarketing mandó un gancho, el cliente contestó «Si» y remarketing le pasó el chat a Ventas con su resumen. Ventas solo recibió ese resumen: su historial terminaba en un «entonces no» del cliente, no tenía nada de lo que dijo el colega ni el gancho, y el encuadre del traspaso le ofrecía `NO_MESSAGE` «si no hay mensaje del cliente». Contestó `NO_MESSAGE` y el colega tuvo que mandar el formulario a mano.
+
+- Los mensajes que escribe remarketing MUST quedar en el chat (el JSONL del dashboard) con `agent: "remarketing"` (5.º argumento de `persist_assistant_message_activity`). Ventas no los tiene en su historial: `unseen_team_exchange` los cuenta como «Mensaje automático» y no se corta en ellos.
+- Al leer un traspaso, Ventas V2 SHALL leer también lo que el cliente escribió al final del chat (`read_handoff_reply`, gate `handoff-customer-reply-v1` en `workflows/handoff_v2.py`). Si escribió, su mensaje entra al turno tal cual (sin recortar ni aplanar: después suelen venir los datos de envío), con la nota de lo que pasó después del último mensaje de Ventas (colega, respuestas del cliente, avisos y gancho); el resumen de remarketing queda como contexto (`[HANDOFF_REMARKETING]`). Un mensaje que también llegó por señal (antes, durante o después de la lectura, o con otro traspaso de la misma corrida) se contesta una sola vez, y lo que el cliente le escribió a remarketing va antes de lo que escribió después.
+- Si el turno trae lo que escribió el cliente y el modelo contesta `NO_MESSAGE`, SHALL haber UNA ronda más con la nota de que el cliente espera respuesta (`contract_policy_of(..., customer_waits=True)`).
+- Sin mensaje del cliente al final del chat, el turno del traspaso sigue como antes (encuadre, `NO_MESSAGE` permitido). Si la lectura falla, también. El V1 no cambia.
+
+#### Scenario: El cliente contesta al gancho después de que un colega lo atendió (caso del 2026-10-16)
+
+- GIVEN el chat: la última respuesta de Ventas, mensajes del colega y del cliente, el gancho de remarketing y el «Si» del cliente
+- WHEN remarketing le pasa el chat a Ventas
+- THEN el turno de Ventas es «Si» con la nota adelante: lo que dijo el colega, lo que le contestó el cliente y el gancho
+- AND si el modelo contesta `NO_MESSAGE`, tiene una ronda más y el cliente recibe la respuesta
+
+#### Scenario: Traspaso sin mensaje del cliente
+
+- GIVEN remarketing pasa el chat sin que el cliente haya escrito después del último mensaje
+- THEN el turno es el encuadre del traspaso y `NO_MESSAGE` sigue suprimiendo el envío
+
+#### Scenario: El mensaje llega también por señal
+
+- GIVEN el «Si» ya entró en el turno del traspaso
+- WHEN llega por señal el mismo mensaje (mismo wamid)
+- THEN no hay un segundo turno para él
+
+### Requirement: La oferta del cupón de la campaña, con su fecha límite (2026-10-20)
+
+Cuando el episodio tiene guion de campaña (`sales_campaign`) con `cupon`, el
+ingest SHALL leer el cupón en Medusa (hasta 3 s; si no responde, el turno
+sigue sin oferta) y ofrecerlo solo si está vigente, sin condiciones que el bot
+no puede cumplir (colecciones, etiquetas, variantes, mínimo de compra, cupo
+por unidad, un descuento fijo por ítem, o productos que no cubren los de la
+campaña) y, si es de primera compra, solo a quien no ha comprado. La fecha
+que dice el bot MUST ser la del cupón en Medusa (último día = `ends_at` menos
+un día, hora de Bogotá) y solo si vence en 45 días o menos; sin una fecha
+que pueda decir, la nota MUST prohibir mencionar fechas, escasez o cupos.
+Cuando el último mensaje es un aplazamiento («te aviso», «hay tiempo»; lo lee
+Jev con `compra`), la nota del aplazamiento SHALL pedir contar la oferta en
+esa misma frase, una vez por episodio y por fecha (`sales_campaign_offer`);
+ya dicha, solo se repite si el cliente pregunta por descuentos. Con un cupón
+ya aplicado, o con la conversación en manos del remarketing, no se ofrece.
+
+#### Scenario: «Lo pienso y te aviso» con el cupón vigente hasta el 31 de octubre
+
+- GIVEN un episodio de la campaña `velitas-7-dic` y su cupón del 5 % con `ends_at` el 1 de noviembre a las 00:00 de Bogotá
+- WHEN el cliente aplaza la compra
+- THEN la nota pide contar en esa misma frase el 5 % «hasta el 31 de octubre», una sola vez
+- AND un segundo aplazamiento en el mismo episodio no la repite
+
+#### Scenario: El operador mueve la fecha al 15 de noviembre
+
+- WHEN el operador cambia el «hasta» del cupón en Marketing → Cupones
+- THEN el bot dice la fecha nueva sin deploy, y como es otra fecha la puede decir otra vez
+
+### Requirement: El perfil «interesado sin compra» (2026-10-20)
+
+El ingest SHALL marcar `profile_tags.interesado_sin_compra` (`first_at_ms`,
+`at_ms`, `episode_id`, `source`, `campaign`) cuando la lectura de este mensaje
+muestra intención de compra (Jev con `compra`: eligió, dio datos o aplazó con
+confianza de 0,7 o más; o la decisión final es una afirmación o un
+aplazamiento) o el episodio tiene un pedido a medias. MUST NOT marcar un
+episodio con su pedido ni uno de posventa (`after_order`, o el anterior cerró
+con su pedido hace 30 días o menos). Preguntar el precio no es intención. Si
+un humano toma la conversación mientras se esperaba a Jev y el mensaje rotó
+el episodio, la marca se descarta con el episodio.
+
+#### Scenario: «Ya te transferí» después de comprar
+
+- GIVEN el episodio anterior cerró con su pedido hace 2 días
+- WHEN el cliente vuelve a escribir y Jev lee `da_datos`
+- THEN el perfil no se marca y la campaña del 5 % no le llega
+
+### Requirement: Envío gratis desde N cajas de una campaña (2026-10-20)
+
+Cuando un pedido lleva `envio_gratis_desde_cajas` cajas o más de los productos
+de una campaña vigente (se pueden mezclar), el sistema SHALL cobrar el pedido
+entero sin envío, aunque lleve otros productos; los otros productos no suman
+para llegar al mínimo (operador: «ya sean las 6 cajas más otras velitas; lo que
+no puede ser gratis es 6 productos de otros sin las 6 cajas»):
+`present_order_confirmation`, `register_order` y las puertas sin LLM
+(«Crear pedido» del dashboard y la app, el resumen del operador) usan la misma
+regla (`sales_campaigns.free_shipping_for`, por el contenido del pedido y no
+por la conversación) y MUST rechazar con `shipping_mismatch` otro envío que $0
+(con la instrucción exacta al modelo). Con menos cajas, el envío es la tarifa
+mínima publicada como siempre y un $0 se rechaza. El pedido lleva la marca
+`free_shipping` hasta Medusa (`hubara_free_shipping`) y el reintento de la
+reconciliación la conserva. La tarjeta del pedido dice «Envío: gratis (6
+cajas o más)» y el total (también con contra entrega, sin envío por
+confirmar). En una conversación de la campaña, la tarjeta de tarifas suma el
+gancho al final; el texto siempre sale del código, nunca de los parámetros del
+intent. El verificador de cifras explica hasta 20 unidades por línea.
+
+#### Scenario: 3 onduladas + 3 cuadradas contra entrega
+
+- GIVEN la campaña `velitas-7-dic` con `envio_gratis_desde_cajas: 6`
+- WHEN el bot confirma 3 cajas onduladas y 3 cuadradas con contra entrega
+- THEN la tarjeta dice «Envío: gratis (6 cajas o más)» y «Total a pagar al recibir: $142.500 COP»
+- AND `register_order` registra `shipping_cop = 0`, `total_cop = 142500` y la marca de envío gratis
+
+#### Scenario: 5 cajas con envío $0
+
+- WHEN el bot pasa `shipping_cop = 0` con 5 cajas
+- THEN el resumen y el registro lo rechazan (`shipping_mismatch`) con las tarifas publicadas
+
+#### Scenario: 6 cajas y otro producto
+
+- GIVEN un pedido con 6 cajas onduladas y una Trilogía del Terror
+- THEN el envío del pedido entero es $0 y el total es el de los productos
+
+#### Scenario: 6 productos sin las 6 cajas
+
+- GIVEN un pedido con 2 cajas cuadradas y 4 Trilogías del Terror (o 6 Trilogías)
+- THEN el envío es la tarifa mínima publicada y un $0 se rechaza (`shipping_mismatch`)
+

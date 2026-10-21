@@ -90,6 +90,12 @@ export const orderSuggestionSchema = z.object({
   payment_method: paymentMethodSchema.nullable().default(null),
   subtotal_cop: z.number().default(0),
   shipping_cop: z.number().default(0),
+  /** Envío gratis de una campaña (6 cajas o más, 2026-10-20): el servidor
+   *  cotiza el envío en $0. `null` = se cobra la tarifa mínima. */
+  free_shipping: z
+    .object({ campaign: z.string(), min_boxes: z.number(), boxes: z.number() })
+    .nullable()
+    .default(null),
   /** Cupón aplicado en el chat (`apply_coupon`): el registro lo descuenta. */
   discount_cop: z.number().default(0),
   /** El cupón aplicado en el episodio SIEMPRE que haya uno — también cuando

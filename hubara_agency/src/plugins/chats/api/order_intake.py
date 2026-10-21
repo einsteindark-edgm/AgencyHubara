@@ -47,7 +47,7 @@ from typing import Annotated, Any, Protocol
 from fastapi import APIRouter, Depends, HTTPException, Path as PathParam
 from loguru import logger
 
-from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
+from src.plugins.chats.agent.sales.config.shipping import order_shipping
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import resolve_item_variants
 from src.plugins.chats.agent.sales.use_cases.coupons import coupon_discount_for_items
 from src.plugins.chats.agent.sales.use_cases.order_pricing import price_order_items
@@ -331,7 +331,11 @@ async def _suggestion(session: str, deps: OrderIntakeDeps) -> dict[str, Any]:
     field_sources["payment_method"] = payment_source
 
     subtotal_cop = sum(it["line_total_cop"] for it in items)
-    shipping_cop = shipping_rate_for_city(shipping.get("city"))
+    # $0 con las cajas del envío gratis de una campaña (operador, 2026-10-20):
+    # el formulario cotiza lo mismo que va a registrar `/order`.
+    shipping_cop, free_shipping = order_shipping(
+        ((str(it["handle"]), it.get("quantity")) for it in items), shipping.get("city")
+    )
     # Cupón aplicado en el chat: el formulario muestra el mismo descuento
     # que va a exigir el registro (SEC-07).
     dict_catalog = _DictCatalog(products_by_handle)
@@ -381,6 +385,7 @@ async def _suggestion(session: str, deps: OrderIntakeDeps) -> dict[str, Any]:
         "payment_method": payment_method,
         "subtotal_cop": subtotal_cop,
         "shipping_cop": shipping_cop,
+        "free_shipping": free_shipping.to_json() if free_shipping is not None else None,
         "discount_cop": discount_cop,
         # El cupón aplicado viaja SIEMPRE (también con $0) con el motivo: el
         # operador tiene que saber que al cliente se le prometió un descuento.

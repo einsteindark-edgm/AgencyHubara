@@ -306,9 +306,12 @@ def closing_blocker(metadata: dict[str, Any], *, require_confirmation: bool) -> 
 
 
 def build_deferral_note(
-    metadata: dict[str, Any], *, resume_label: str | None = None
+    metadata: dict[str, Any], *, resume_label: str | None = None, campaign_offer: bool = False
 ) -> str | None:
-    """Nota para `plugin_context`: el LLM responde texto breve y no avanza el cierre."""
+    """Nota para `plugin_context`: el LLM responde texto breve y no avanza el cierre.
+
+    `campaign_offer`: el guion de la campaña le pasa ahora la oferta del cupón
+    con su fecha (operador, 2026-10-20): va en esa misma frase breve."""
     sig = current_signal(metadata)
     if not sig or sig.get("kind") != "deferral":
         return None
@@ -319,6 +322,11 @@ def build_deferral_note(
         "cálida y breve (sin preguntas de venta), NO muestres productos, NO "
         "pidas datos de envío ni confirmes el pedido. Espera a que retome."
     )
+    if campaign_offer:
+        note += (
+            " En esa misma frase cuéntale la oferta del cupón que te pasa el GUION "
+            "DE LA CAMPAÑA, una sola vez y sin insistir."
+        )
     # La cita: el sistema le escribe ESE día — el bot se lo confirma para que
     # sea un compromiso visible ("¡Listo! Te escribimos el lunes 28"). El
     # label lo calcula el ingest (sdk.messagingkit): este módulo lo importan
@@ -326,7 +334,7 @@ def build_deferral_note(
     if resume_label:
         note += (
             f" Confírmale que le escribimos {resume_label} "
-            "(no prometas otra fecha)."
+            "(no prometas otra fecha para escribirle)."
         )
     return note
 

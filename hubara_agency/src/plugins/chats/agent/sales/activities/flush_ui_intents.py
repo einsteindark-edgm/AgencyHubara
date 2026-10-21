@@ -177,6 +177,19 @@ def _format_cop(amount: int, currency: str) -> str:
     return f"${amount:,}".replace(",", ".") + f" {currency}"
 
 
+def _shipping_rates_text(params: dict[str, Any]) -> str:
+    """El texto de la tarjeta de tarifas, siempre desde el código: el fijo de
+    siempre y, si el intent trae la campaña de la conversación, su envío gratis
+    (operador, 2026-10-20). Un texto en los params se ignora."""
+    from src.plugins.chats.agent.sales.config.shipping import shipping_rates_message
+    from src.plugins.chats.shared.sales_campaigns import bogota_today, campaign_by_id
+
+    try:
+        return shipping_rates_message(campaign_by_id(params.get("campaign"), today=bogota_today()))
+    except Exception:  # noqa: BLE001 — una campaña rota deja la tarjeta de siempre
+        return SHIPPING_RATES_MESSAGE
+
+
 def _append_total_and_reference(
     lines: list[str],
     params: dict[str, Any],
@@ -212,10 +225,15 @@ def _append_total_and_reference(
             and shipping_cop >= 0
         )
         if has_breakdown:
+            # Envío gratis de la campaña (6 cajas o más, operador 2026-10-20):
+            # dice por qué no hay envío.
+            from src.plugins.chats.shared.sales_campaigns import FreeShipping
+
+            free = FreeShipping.from_json(params.get("free_shipping"))
             shipping_text = (
                 _format_cop(shipping_cop, currency)
                 if shipping_cop > 0
-                else "sin costo"
+                else (free.label if free is not None else "sin costo")
             )
             lines.append(f"*Productos*: {_format_cop(subtotal_cop, currency)}")
             discount_cop = params.get("discount_cop")
@@ -1276,11 +1294,10 @@ async def _dispatch_intent(
 
     if kind == "shipping_rates":
         # Mensaje estándar de tarifas de envío (regla del operador
-        # 2026-09-07). Texto FIJO desde `config/shipping.py`: los params del
-        # intent se ignoran a propósito — el LLM no redacta tarifas.
-        return await wa_client.send_text(
-            phone_number_id, to_number, SHIPPING_RATES_MESSAGE
-        )
+        # 2026-09-07). Texto FIJO desde `config/shipping.py`: el LLM no redacta
+        # tarifas. `params.text` lo escribe la tool (sin parámetros del
+        # modelo) cuando la campaña de la conversación tiene envío gratis.
+        return await wa_client.send_text(phone_number_id, to_number, _shipping_rates_text(params))
 
     if kind == "reaction":
         if not last_inbound_message_id:
@@ -1705,7 +1722,7 @@ def _build_history_event(
 
     if kind == "shipping_rates":
         # Texto fijo real que recibió el cliente — el operador lo ve tal cual.
-        return {"role": "assistant", "content": SHIPPING_RATES_MESSAGE}
+        return {"role": "assistant", "content": _shipping_rates_text(params)}
 
     if kind == "product_detail":
         caption = (params.get("caption") or "").strip()

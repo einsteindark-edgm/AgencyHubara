@@ -689,7 +689,7 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el cliente da el código o pregunta por promociones
 - THEN `apply_coupon` responde `applied=false, reason=shipping_not_supported` (el envío lo cobra la transportadora a su tarifa, sin descuentos) y no guarda nada en el episodio, y `list_promotions` no la ofrece
 - AND aunque un episodio ya tenga guardado un cupón de envío (de antes de esta decisión), `compute_discount` no descuenta nada (`shipping_not_supported`), la nota de cada turno dice `[CUPÓN SIN EFECTO: …]` en vez de `[CUPÓN APLICADO: …]`, `present_order_confirmation` explica que no aplica y `register_order` exige el total con el envío completo
-- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente
+- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente, salvo en un pedido con envío gratis de una campaña (6 cajas o más, 2026-10-20): ahí lo paga la tienda y no se le suma al cliente
 
 #### Scenario: Reglas de la promoción ilegibles
 
@@ -1069,6 +1069,26 @@ sugerido con `GET /api/chats/order-intake/{id}/form` (sin registrar nada) y regi
 - WHEN el operador lo crea
 - THEN el pedido queda registrado como con `/order` y la respuesta trae `success: true`; con un dato mal llenado o un
   producto que ya no existe, `success: false` y qué revisar (nunca un 422 crudo)
+
+### Requirement: Incendio de chat solo si el cliente espera respuesta (App Operador)
+
+Un chat con un humano al mando SHALL ser incendio (`GET /api/chats/mobile/fires`, su aviso push y el «sin responder» de
+la página «Humano» del widget) solo si, después de la última respuesta que el cliente vio, escribió algo que pide
+respuesta. No la piden una reacción (o quitarla), un sticker ni un acuse que cumpla la regla del acuse del ingest
+(`is_closing_ack`: «gracias», «ok perfecto», «listo», solo emojis; nunca con `?`). La espera se cuenta desde el primer
+mensaje que sí pide respuesta. Caso del operador 2026-10-15: un 👍 o un «gracias» era incendio grave a los 10 min.
+
+#### Scenario: Un «gracias» después de la respuesta
+
+- GIVEN el operador respondió y el cliente escribió «Muchas gracias 🙏» (o reaccionó con 👍) hace 30 min
+- WHEN la app pide los incendios
+- THEN ese chat no está, y en la página «Humano» tiene 0 sin responder
+
+#### Scenario: Una pregunta y después una reacción
+
+- GIVEN el cliente preguntó «¿y el de lavanda tiene descuento?» hace 15 min y reaccionó con 👍 hace 14
+- WHEN la app pide los incendios
+- THEN el chat es incendio grave: «15 min sin respuesta · 1 mensaje»
 
 ## Out of scope
 

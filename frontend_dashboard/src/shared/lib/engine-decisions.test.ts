@@ -149,6 +149,19 @@ describe("aromas de otro producto", () => {
     );
   });
 
+  it("el precio de la caja dicho por unidad se lee en palabras (ventas-7, 2026-10-16)", () => {
+    const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_por_unidad", rule: [] });
+
+    expect(capabilityLabel("caja_por_unidad")).toBe("Precio de la caja dicho por unidad");
+    expect(decisionSentence(box(["el precio de Velas de deseos cuadradas es por unidad"])).text).toBe(
+      "Devuelve el texto al modelo: le dijo que «el precio de Velas de deseos cuadradas es por unidad», y ese es el precio de la caja",
+    );
+    expect(decisionSentence(box([])).text).toBe("No le pone a cada unidad el precio de la caja");
+    expect(jevAnswers({ ...box([]), answers: [{ q: "caja_por_unidad.termino_1", p: 0.9 }] })[0]).toContain(
+      "¿El texto le pone a cada unidad el precio de la caja?",
+    );
+  });
+
   it("cada pregunta de Jev nombra el aroma que revisó", () => {
     const answers = jevAnswers(view([], [{ q: "aroma_ajeno.termino_2", p: 0.07 }]));
 

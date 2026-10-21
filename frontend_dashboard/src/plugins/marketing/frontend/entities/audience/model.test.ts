@@ -23,6 +23,10 @@ describe("segmentTone", () => {
   it("manual (agregado por el operador) tiene tono propio violet", () => {
     expect(segmentTone("manual")).toBe("violet");
   });
+
+  it("interesados_sin_compra (el perfil) tiene tono propio warn, no el de los fríos", () => {
+    expect(segmentTone("interesados_sin_compra")).toBe("warn");
+  });
 });
 
 describe("skippedReasonLabel", () => {

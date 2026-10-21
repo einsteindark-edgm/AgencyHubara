@@ -71,6 +71,11 @@
               "type": "column", "spacing": 12, "visible": "{{siguiente | eq:'shipping'}}",
               "children": [
                 { "type": "text_field", "bind": "form.guia", "label": "Link de la guía", "keyboard": "url" },
+                {
+                  "type": "notice", "tone": "info",
+                  "text": "Envío gratis (6 cajas o más): el costo real del envío lo paga la tienda y no se le cobra al cliente.",
+                  "visible": "{{s.free_shipping}}"
+                },
                 { "type": "text_field", "bind": "form.costo", "label": "Costo real del envío", "keyboard": "number" },
                 {
                   "type": "button", "text": "Despachar", "full_width": true,
@@ -106,7 +111,18 @@
               "type": "key_value", "label": "PAGO",
               "value": "{{pedido.payment_method_label}}{{pedido.payment_method_label | present | if:' · '}}{{s.pay_status | map:'paid=pagado ✓;partial=pago parcial;refund=reembolso;*=pago pendiente'}}"
             },
-            { "type": "key_value", "label": "TOTAL", "value": "{{s.total_cop | money}} (envío {{pedido.shipping_cop | money}})" },
+            {
+              "type": "key_value", "label": "TOTAL", "value": "{{s.total_cop | money}} (envío {{pedido.shipping_cop | money}})",
+              "visible": "{{s.free_shipping | not}}"
+            },
+            {
+              "type": "key_value", "label": "TOTAL", "value": "{{s.total_cop | money}} (envío gratis)",
+              "visible": "{{s.free_shipping}}"
+            },
+            {
+              "type": "key_value", "label": "ENVÍO QUE PAGA LA TIENDA", "value": "{{s.store_shipping_cost_cop | money}}",
+              "visible": "{{s.store_shipping_cost_cop | gt:0}}"
+            },
             {
               "type": "key_value", "label": "RECIBE", "value": "{{direccion.first_name}} {{direccion.last_name}}",
               "visible": "{{direccion.first_name | or:direccion.last_name}}"
