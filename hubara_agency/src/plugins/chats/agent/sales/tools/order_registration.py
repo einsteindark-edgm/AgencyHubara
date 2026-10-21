@@ -711,9 +711,38 @@ class RegisterOrderTool(ToolBase):
             national_id=national_id_raw or None,
         )
 
+        # Envío gratis desde N cajas de una campaña (operador, 2026-10-20): la
+        # regla del sistema con las cajas del pedido (la misma del resumen y
+        # de «Crear pedido»). Con ella el envío es $0, y se rechaza otro valor
+        # antes de SEC-07 (el modelo corrige envío y total en un solo intento).
+        from src.plugins.chats.shared.sales_campaigns import bogota_today, free_shipping_for
+
+        free = free_shipping_for(((it.handle, it.quantity) for it in order_items), today=bogota_today())
+        if free is not None and int(shipping_cop) != 0:
+            logger.warning(
+                "🧾 [TOOL register_order] FREE_SHIPPING_MISMATCH session={} boxes={} shipping_cop={}",
+                ctx.session_key, free.boxes, shipping_cop,
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "shipping_mismatch",
+                    "error": "shipping_mismatch",
+                    "summary": (
+                        f"Este pedido lleva {free.boxes} cajas de la campaña: el envío es gratis "
+                        f"(desde {free.min_boxes} cajas). El pedido NO se registró. Llama de nuevo "
+                        "`register_order` con shipping_cop=0 y total_cop = subtotal − cupón; si le "
+                        "dijiste al cliente un valor de envío, acláraselo con honestidad antes."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
         # Envío = tarifa mínima publicada para la ciudad (decisión del operador
         # 2026-09-23: el envío lo cobra la transportadora, sin descuentos ni
-        # envío gratis). SEC-07 solo caza un total desconectado; un envío $0
+        # envío gratis, salvo el de la campaña de arriba). SEC-07 solo caza un
+        # total desconectado; un envío $0
         # con el total "cuadrado" llegaba a Medusa y a las instrucciones de
         # pago como "sin costo" (L-19). Va ANTES de SEC-07: con envío 0 y el
         # total sumado con la tarifa, SEC-07 diría "total esperado = subtotal"
@@ -721,13 +750,15 @@ class RegisterOrderTool(ToolBase):
         # La zona de la ciudad la decide el motor de decisiones (capacidad
         # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice; si no,
         # valen las dos tarifas).
-        zone = await decide_for_session(
-            capability("zona_de_envio"),
-            CiudadDeEnvio(ciudad=order_shipping.city),
-            session_id=ctx.session_key,
-            vault_dir=self._vault_dir,
-        )
-        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
+        zone = None
+        if free is None:
+            zone = await decide_for_session(
+                capability("zona_de_envio"),
+                CiudadDeEnvio(ciudad=order_shipping.city),
+                session_id=ctx.session_key,
+                vault_dir=self._vault_dir,
+            )
+        if zone is not None and not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🧾 [TOOL register_order] SHIPPING_MISMATCH session={} city={} shipping_cop={}",
                 ctx.session_key,
@@ -1082,6 +1113,8 @@ class RegisterOrderTool(ToolBase):
                 currency=currency,
                 attribution=self._session_attribution(ctx.session_key),
                 **coupon_kwargs,
+                # Solo con envío gratis: los ports/fakes sin este kwarg siguen andando.
+                **({"free_shipping": free.to_json()} if free is not None else {}),
             )
 
         # Generar un fallback order_id si el port no devolvio uno (no
@@ -1122,6 +1155,8 @@ class RegisterOrderTool(ToolBase):
             "shipping_cop": shipping_cop,
             "discount_cop": discount_cop,
             "coupon_code": coupon_code,
+            # El reintento de reconciliación registra el MISMO envío gratis.
+            **({"free_shipping": free.to_json()} if free is not None else {}),
             # El reparto del cupón: el reintento de reconciliación escribe en
             # Medusa las MISMAS líneas con descuento (pedido #44).
             **(
@@ -1178,6 +1213,8 @@ class RegisterOrderTool(ToolBase):
             if coupon_code:
                 params["discount_cop"] = discount_cop
                 params["coupon_code"] = coupon_code
+            if free is not None:
+                params["free_shipping"] = free.to_json()
             reference = _order_reference(result.raw_payload)
             if reference:
                 params["order_reference"] = reference

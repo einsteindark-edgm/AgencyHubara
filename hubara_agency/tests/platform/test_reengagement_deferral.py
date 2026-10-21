@@ -82,6 +82,47 @@ def test_aplazamiento_con_fecha_da_la_fecha_de_retoma(text: str, expected: int):
     assert parsed.until_ms == expected
 
 
+#: Sábado 17-oct-2026 07:30: el cliente ya tenía 2 cajas listas para contra
+#: entrega y dijo que llenaba el formulario el lunes. La escalera le mandó 3
+#: toques ese mismo sábado: «lo completo» no era una señal de aplazamiento.
+SATURDAY = _ms(2026, 10, 17, 7, 30)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "El lunes lo completo, que ya estoy en Bogotá para recibirlas",
+        "El lunes lo hago",
+        "el lunes lo pago",
+        "el lunes lleno el formulario",
+        "el lunes termino el pedido",
+        "el lunes les mando los datos",
+        "el lunes hago la consignación",
+        "el lunes transfiero",
+    ],
+)
+def test_lo_que_el_cliente_va_a_hacer_otro_dia_pausa_hasta_ese_dia(text: str):
+    parsed = parse_reengagement_deferral(text, SATURDAY, BOGOTA)
+    assert parsed is not None, text
+    assert parsed.kind == DEFERRAL_KIND_DATED
+    assert parsed.until_ms == _ms(2026, 10, 19, 10)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "¿El lunes me mandan el pedido a la casa?",
+        "¿el pago se hace el lunes o se puede antes?",
+        # En WhatsApp la pregunta suele ir sin «?»: «pago» y «depósito» son
+        # también sustantivos (revisión del 2026-10-19).
+        "el pago se hace el lunes o se puede antes",
+        "el deposito llega el lunes",
+    ],
+)
+def test_una_pregunta_sobre_lo_que_pasa_otro_dia_no_pausa(text: str):
+    assert parse_reengagement_deferral(text, SATURDAY, BOGOTA) is None
+
+
 def test_el_cliente_que_dice_que_el_escribe_pausa_una_semana():
     parsed = parse_reengagement_deferral(
         "Yo les escribo cuando vaya a comprar", NOW, BOGOTA

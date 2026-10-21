@@ -203,6 +203,18 @@ async def test_trigger_receives_the_real_catalog_facts(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_trigger_receives_the_campaign_script(tmp_path) -> None:
+    """Operador, 2026-10-19: el toque sigue el guion de la campaña de venta
+    que armó el contexto (ver test_remarketing_sales_campaign)."""
+    tracker = Tracker()
+    script = "GUION DE LA CAMPAÑA «Velitas» (uso interno): …"
+    ctx = RemarketingContext(tag_motivo=TAG_MOTIVO, sales_campaign_script=script, sales_campaign_examples=["un ejemplo"])
+    await _run_workflow(tracker, ctx, tmp_path)
+    [inp] = tracker.trigger_v2_inputs
+    assert inp.sales_campaign_script == script and inp.sales_campaign_examples == ["un ejemplo"]
+
+
+@pytest.mark.asyncio
 async def test_trigger_receives_the_post_purchase_situation(tmp_path) -> None:
     """Caso real ···4148: el gancho sabe que el cliente ya compró y si su
     último mensaje quedó sin respuesta (ver test_remarketing_post_purchase)."""

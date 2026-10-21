@@ -72,6 +72,8 @@ export function toLegacyOrder(s: OrderSummary): Order {
     total: s.total_cop,
     shipping: s.shipping_cop ?? 0,
     shippingConfirmed: s.shipping_confirmed === true,
+    freeShipping: s.free_shipping === true,
+    storeShippingCost: s.store_shipping_cost_cop ?? null,
     dueIso: s.due_iso ?? "",
     dueTime: s.due_time ?? "—",
     overdue: s.overdue,

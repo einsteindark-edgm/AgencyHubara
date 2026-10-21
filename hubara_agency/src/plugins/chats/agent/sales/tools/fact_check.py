@@ -55,7 +55,7 @@ from src.plugins.chats.agent.sales.config.payments import (
     PAYMENT_LINK_SURCHARGE_OTHER_BANKS,
 )
 from src.plugins.chats.agent.sales.price_quotes import extract_cop_amounts
-from src.plugins.chats.agent.sales.pricing import accepted_prices, catalog_prices, catalog_unit_price, format_cop
+from src.plugins.chats.agent.sales.pricing import accepted_prices, catalog_prices, description_prices, catalog_unit_price, format_cop
 from src.plugins.chats.agent.sales.use_cases.coupons import applied_coupon, describe_promotion
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.agent.sales.use_cases.fact_rules import (
@@ -266,7 +266,12 @@ class FactCheck:
         return ReplyFacts(
             focus=tuple(focus), aromas=tuple(aromas), colors=tuple(colors), sheets=option_sheets(focus),
             single=single_sheets(focus),
-            prices=tuple(sorted(prices)), policy=POLICY_AMOUNTS,
+            # El precio por mayor que escribe la descripción (operador,
+            # 2026-10-19) es un monto CONDICIONAL, como el mínimo de contra
+            # entrega: vale en la oración que dice desde cuánto aplica, no
+            # como precio de una caja.
+            prices=tuple(sorted(prices)),
+            policy=(*POLICY_AMOUNTS, *sorted({a for p in focus for a in description_prices(p)})),
             subtotal=subtotal, order_breakdown=breakdown, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
             surcharges=(PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA, PAYMENT_LINK_SURCHARGE_OTHER_BANKS),
             order=order, stage=stage, pay_status=pay_status,

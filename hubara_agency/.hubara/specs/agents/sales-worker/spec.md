@@ -2330,3 +2330,93 @@ Caso del 2026-10-16: un colega atendió a un cliente (le aclaró que el precio e
 - GIVEN el «Si» ya entró en el turno del traspaso
 - WHEN llega por señal el mismo mensaje (mismo wamid)
 - THEN no hay un segundo turno para él
+
+### Requirement: La oferta del cupón de la campaña, con su fecha límite (2026-10-20)
+
+Cuando el episodio tiene guion de campaña (`sales_campaign`) con `cupon`, el
+ingest SHALL leer el cupón en Medusa (hasta 3 s; si no responde, el turno
+sigue sin oferta) y ofrecerlo solo si está vigente, sin condiciones que el bot
+no puede cumplir (colecciones, etiquetas, variantes, mínimo de compra, cupo
+por unidad, un descuento fijo por ítem, o productos que no cubren los de la
+campaña) y, si es de primera compra, solo a quien no ha comprado. La fecha
+que dice el bot MUST ser la del cupón en Medusa (último día = `ends_at` menos
+un día, hora de Bogotá) y solo si vence en 45 días o menos; sin una fecha
+que pueda decir, la nota MUST prohibir mencionar fechas, escasez o cupos.
+Cuando el último mensaje es un aplazamiento («te aviso», «hay tiempo»; lo lee
+Jev con `compra`), la nota del aplazamiento SHALL pedir contar la oferta en
+esa misma frase, una vez por episodio y por fecha (`sales_campaign_offer`);
+ya dicha, solo se repite si el cliente pregunta por descuentos. Con un cupón
+ya aplicado, o con la conversación en manos del remarketing, no se ofrece.
+
+#### Scenario: «Lo pienso y te aviso» con el cupón vigente hasta el 31 de octubre
+
+- GIVEN un episodio de la campaña `velitas-7-dic` y su cupón del 5 % con `ends_at` el 1 de noviembre a las 00:00 de Bogotá
+- WHEN el cliente aplaza la compra
+- THEN la nota pide contar en esa misma frase el 5 % «hasta el 31 de octubre», una sola vez
+- AND un segundo aplazamiento en el mismo episodio no la repite
+
+#### Scenario: El operador mueve la fecha al 15 de noviembre
+
+- WHEN el operador cambia el «hasta» del cupón en Marketing → Cupones
+- THEN el bot dice la fecha nueva sin deploy, y como es otra fecha la puede decir otra vez
+
+### Requirement: El perfil «interesado sin compra» (2026-10-20)
+
+El ingest SHALL marcar `profile_tags.interesado_sin_compra` (`first_at_ms`,
+`at_ms`, `episode_id`, `source`, `campaign`) cuando la lectura de este mensaje
+muestra intención de compra (Jev con `compra`: eligió, dio datos o aplazó con
+confianza de 0,7 o más; o la decisión final es una afirmación o un
+aplazamiento) o el episodio tiene un pedido a medias. MUST NOT marcar un
+episodio con su pedido ni uno de posventa (`after_order`, o el anterior cerró
+con su pedido hace 30 días o menos). Preguntar el precio no es intención. Si
+un humano toma la conversación mientras se esperaba a Jev y el mensaje rotó
+el episodio, la marca se descarta con el episodio.
+
+#### Scenario: «Ya te transferí» después de comprar
+
+- GIVEN el episodio anterior cerró con su pedido hace 2 días
+- WHEN el cliente vuelve a escribir y Jev lee `da_datos`
+- THEN el perfil no se marca y la campaña del 5 % no le llega
+
+### Requirement: Envío gratis desde N cajas de una campaña (2026-10-20)
+
+Cuando un pedido lleva `envio_gratis_desde_cajas` cajas o más de los productos
+de una campaña vigente (se pueden mezclar), el sistema SHALL cobrar el pedido
+entero sin envío, aunque lleve otros productos; los otros productos no suman
+para llegar al mínimo (operador: «ya sean las 6 cajas más otras velitas; lo que
+no puede ser gratis es 6 productos de otros sin las 6 cajas»):
+`present_order_confirmation`, `register_order` y las puertas sin LLM
+(«Crear pedido» del dashboard y la app, el resumen del operador) usan la misma
+regla (`sales_campaigns.free_shipping_for`, por el contenido del pedido y no
+por la conversación) y MUST rechazar con `shipping_mismatch` otro envío que $0
+(con la instrucción exacta al modelo). Con menos cajas, el envío es la tarifa
+mínima publicada como siempre y un $0 se rechaza. El pedido lleva la marca
+`free_shipping` hasta Medusa (`hubara_free_shipping`) y el reintento de la
+reconciliación la conserva. La tarjeta del pedido dice «Envío: gratis (6
+cajas o más)» y el total (también con contra entrega, sin envío por
+confirmar). En una conversación de la campaña, la tarjeta de tarifas suma el
+gancho al final; el texto siempre sale del código, nunca de los parámetros del
+intent. El verificador de cifras explica hasta 20 unidades por línea.
+
+#### Scenario: 3 onduladas + 3 cuadradas contra entrega
+
+- GIVEN la campaña `velitas-7-dic` con `envio_gratis_desde_cajas: 6`
+- WHEN el bot confirma 3 cajas onduladas y 3 cuadradas con contra entrega
+- THEN la tarjeta dice «Envío: gratis (6 cajas o más)» y «Total a pagar al recibir: $142.500 COP»
+- AND `register_order` registra `shipping_cop = 0`, `total_cop = 142500` y la marca de envío gratis
+
+#### Scenario: 5 cajas con envío $0
+
+- WHEN el bot pasa `shipping_cop = 0` con 5 cajas
+- THEN el resumen y el registro lo rechazan (`shipping_mismatch`) con las tarifas publicadas
+
+#### Scenario: 6 cajas y otro producto
+
+- GIVEN un pedido con 6 cajas onduladas y una Trilogía del Terror
+- THEN el envío del pedido entero es $0 y el total es el de los productos
+
+#### Scenario: 6 productos sin las 6 cajas
+
+- GIVEN un pedido con 2 cajas cuadradas y 4 Trilogías del Terror (o 6 Trilogías)
+- THEN el envío es la tarifa mínima publicada y un $0 se rechaza (`shipping_mismatch`)
+
