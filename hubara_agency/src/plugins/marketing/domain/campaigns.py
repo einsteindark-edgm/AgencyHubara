@@ -482,6 +482,9 @@ class RecipientSendPlan:
     #: Se salta el respiro de 48 h (agregado a mano o importado): el lote
     #: lo vuelve a mirar al enviar y necesita saberlo.
     bypass_cooldown: bool = False
+    #: Entró SOLO por un segmento de perfil («interesados sin compra»): si
+    #: deja de serlo antes de su lote (compró), no se le envía.
+    profile_segment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -541,6 +544,7 @@ def build_send_plan(
             session_id=r.session_id,
             variables=campaign_template_variables(campaign, customer_name=r.customer_name),
             bypass_cooldown=r.bypass_cooldown,
+            profile_segment=r.segment if r.segment in PROFILE_SEGMENTS else None,
         )
         for r in audience.recipients
     ]
