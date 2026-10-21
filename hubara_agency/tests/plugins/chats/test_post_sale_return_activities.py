@@ -309,6 +309,33 @@ async def test_return_skipea_si_hay_robot_corriendo_sin_tocar_metadata(
     assert data == original  # intacta (ni siquiera consultó orders)
 
 
+async def test_return_consulta_temporal_con_el_cliente_del_worker(
+    _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """En el worker, «¿hay robot corriendo?» se le pregunta a Temporal con el
+    cliente con el que el worker corre la activity (`activity.client()`)."""
+    _seed(
+        _isolate_vault_dir,
+        "wa_111",
+        {"active_route": "humano", "tag": "COMPRA_EXITOSA", "episodes": _paid_episodes("order_A")},
+    )
+    worker_client = _FakeClient(running_ids={"session-wa_111"})
+    process_client = _FakeClient(running_ids={"session-wa_111"})
+
+    async def _fake_client():
+        return process_client
+
+    monkeypatch.setattr(acts, "get_temporal_client", _fake_client)
+
+    result = await ActivityEnvironment(client=worker_client).run(  # type: ignore[arg-type]
+        acts.return_post_sale_session_to_sales_activity, "wa_111"
+    )
+
+    assert result == "skipped_robot_running"
+    assert worker_client.described == ["session-wa_111"], "debe consultar con el cliente del worker"
+    assert process_client.described == []
+
+
 async def test_return_propaga_rpc_transitorio_sin_tocar_metadata(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

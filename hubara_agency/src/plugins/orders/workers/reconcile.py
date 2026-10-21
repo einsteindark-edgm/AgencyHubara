@@ -36,6 +36,8 @@ from temporalio.client import (
 )
 from temporalio.worker import Worker
 
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
+
 from src.platform.logging import setup_logging
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
@@ -144,9 +146,11 @@ async def main() -> None:
             emit_order_stage_activity,
             emit_ready_photo_request_activity,
         ],
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
     logger.info("🧾 orders/reconcile worker arriba. Cola: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

@@ -54,6 +54,8 @@ from temporalio.client import (
 )
 from temporalio.worker import Worker
 
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
+
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
@@ -310,9 +312,11 @@ async def main() -> None:
             run_decisions_probe_activity,
         ],
         workflow_runner=otel_workflow_runner(),
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
     logger.info("🧪 sales-eval worker arriba (online + golden + sonda de Jev). Cola: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":
