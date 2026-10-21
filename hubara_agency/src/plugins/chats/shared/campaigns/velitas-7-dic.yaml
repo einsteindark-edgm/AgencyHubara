@@ -2,7 +2,8 @@
 # `chats/shared/sales_campaigns.py`; la guía está en `README.md` de esta carpeta.
 #
 # Solo entra a las conversaciones de esta campaña: las que vienen de uno de sus
-# anuncios, o cuyo pedido tiene uno de sus productos. Las demás conversaciones no
+# anuncios, cuyo pedido tiene uno de sus productos, o donde el cliente nombra uno
+# de sus productos o manda su foto. Las demás conversaciones no
 # cambian (una prueba lo exige). Para cambiar el guion, edita este archivo; para
 # otra campaña, crea otro archivo.
 #

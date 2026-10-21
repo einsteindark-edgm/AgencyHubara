@@ -188,11 +188,19 @@ def campaign_for(
     *,
     today: date,
     text: str = "",
+    said: str = "",
     campaigns: Sequence[Campaign] | None = None,
 ) -> Campaign | None:
-    """La campaña vigente de este episodio, o None. `text`: lo que el cliente
-    escribe ahora (el mensaje prellenado del anuncio llega a veces sin
-    referral)."""
+    """La campaña vigente de este episodio, o None. `text`: el mensaje que
+    abrió el episodio (el prellenado del anuncio llega a veces sin referral).
+    `said`: lo que el cliente escribe ahora, en cualquier mensaje: si nombra
+    un producto de la campaña, o manda su foto (entra como texto con el nombre
+    del producto que reconoció el sistema), la conversación es de la campaña
+    (caso del 2026-10-21: «Hola», la foto de la caja cuadrada y «Luego te
+    aviso», sin anuncio). Y si nombra un producto de OTRA campaña, la
+    conversación pasa a esa (operador, 2026-10-21: «si la conversación termina
+    hablando de productos que tienen el gancho o el descuento, ahí debería
+    reconocerse y hacerle el gancho sobre ese producto»)."""
     if not isinstance(episode, Mapping):
         return None
     # El guion es para vender: con el pedido registrado, o en la posventa
@@ -200,10 +208,14 @@ def campaign_for(
     if episode.get("order_id") or episode.get("after_order"):
         return None
     pool = [c for c in (active_campaigns() if campaigns is None else campaigns) if c.is_on(today)]
-    stamped = episode.get(EPISODE_KEY)
-    for campaign in pool:
-        if campaign.id == stamped:
-            return campaign
+    # El producto del que habla el cliente ahora manda: nombra uno de otra
+    # campaña y la conversación pasa a esa.
+    named = [c for c in pool if said and _names_a_product(c, [_norm(said)])]
+    current = next((c for c in pool if c.id == episode.get(EPISODE_KEY)), None)
+    if named and current not in named:
+        return named[0]
+    if current is not None:
+        return current
     referral = episode.get("referral_snapshot") if isinstance(episode.get("referral_snapshot"), Mapping) else {}
     haystack = f" {_norm(' '.join(str(referral.get(k) or '') for k in ('headline', 'body')))} {_norm(text)} "
     for campaign in pool:

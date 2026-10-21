@@ -2340,7 +2340,9 @@ ingest SHALL leer el cupón en Medusa (hasta 3 s; si no responde, el turno
 sigue sin oferta) y ofrecerlo solo si está vigente, sin condiciones que el bot
 no puede cumplir (colecciones, etiquetas, variantes, mínimo de compra, cupo
 por unidad, un descuento fijo por ítem, o productos que no cubren los de la
-campaña) y, si es de primera compra, solo a quien no ha comprado. La fecha
+campaña) y, si es de primera compra, solo a quien no ha comprado (la regla de
+`list_promotions`: un pedido de prueba o cancelado no cuenta; si Medusa no
+responde, no se ofrece). La fecha
 que dice el bot MUST ser la del cupón en Medusa (último día = `ends_at` menos
 un día, hora de Bogotá) y solo si vence en 45 días o menos; sin una fecha
 que pueda decir, la nota MUST prohibir mencionar fechas, escasez o cupos.
@@ -2377,6 +2379,22 @@ misma regla que el ingest en `use_cases/campaign_turn.py`).
 - AND remarketing le pasa la conversación a Ventas
 - THEN el turno de traspaso trae el guion con la oferta «hasta el 31 de octubre» y queda marcada como dicha
 - AND si el segundo mensaje entró ya con Ventas, el guion de ese mensaje la trae (una sola vez entre los dos)
+
+#### Scenario: Sin anuncio, la foto de la caja y «Luego te aviso» (2026-10-21)
+
+- GIVEN una conversación que empezó con «Hola», sin anuncio
+- WHEN el cliente manda la foto de la caja cuadrada (el sistema la reconoce), nombra «velas de deseos cuadradas» o abre su ficha en el catálogo
+- THEN la conversación queda en la campaña (`sales_campaign`) y el turno trae su guion
+- AND si después escribe «Luego te aviso», el guion trae la oferta
+- AND sus pedidos anteriores de prueba o cancelados no le quitan el cupón de primera compra
+
+#### Scenario: Llega por otra campaña y termina hablando de las velitas (2026-10-21)
+
+- GIVEN un episodio marcado con otra campaña (por su anuncio o su producto)
+- WHEN el cliente nombra «velas de deseos cuadradas», manda su foto o abre su ficha
+- THEN el episodio pasa a `velitas-7-dic` y el guion es el de las velitas
+- AND si después aplaza, el guion trae la oferta de VELITAS5
+- AND si vuelve a nombrar un producto de la primera campaña, vuelve a esa
 
 #### Scenario: Después de aplazar, el cliente compra o ya le respondimos
 
