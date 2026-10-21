@@ -39,6 +39,10 @@ Notas de diseño:
   algo que YA SALIÓ (un envío) es de mejor esfuerzo: nunca un reenvío por no
   poder anotarlo. Lee siempre con ``read()``, nunca el archivo directo.
   Estado process-wide NUEVO exige ``clear()`` + fixture autouse (lección L-2).
+- ``get_temporal_client()`` es el cliente de Temporal del proceso: conecta una
+  vez (por event loop) y se reusa. Dentro de una activity se usa
+  ``get_activity_temporal_client()``: el cliente con el que el worker corre la
+  activity (``activity.client()``), o el del proceso si no hay (HTTP, tests).
 - ``atomic_write_json`` es la única forma sancionada de escribir JSON al
   vault (write-rename, sin archivos a medio escribir) — para los demás
   archivos; ``metadata.json`` va por el store.
@@ -101,10 +105,17 @@ from src.platform.state import (
     is_vault_session_id as is_vault_session_id,
 )
 from src.platform.temporal.client import (
+    get_activity_temporal_client as get_activity_temporal_client,
     get_temporal_client as get_temporal_client,
 )
 from src.platform.temporal.heartbeat import (
     with_heartbeat as with_heartbeat,
+)
+from src.platform.temporal.worker_lifecycle import (
+    # Apagado ordenado de un worker: SIGTERM → deja de pedir tareas y espera a
+    # las activities en curso (auditoría de Temporal, 2026-10-15).
+    WORKER_GRACEFUL_SHUTDOWN as WORKER_GRACEFUL_SHUTDOWN,
+    run_worker as run_worker,
 )
 from src.platform.ttl_cache import (
     BoundedTTLCache as BoundedTTLCache,

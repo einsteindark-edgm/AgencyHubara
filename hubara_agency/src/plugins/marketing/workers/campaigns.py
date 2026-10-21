@@ -42,7 +42,7 @@ from src.plugins.marketing.agent.campaigns.workflows.send_v2 import (
 from src.plugins.marketing.domain.campaign_send import sends_task_queue
 from src.sdk import ensure_plugin_enabled, get_task_queue
 from src.sdk.messagingkit import send_whatsapp_template_activity
-from src.sdk.runtime import get_temporal_client, setup_logging
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, get_temporal_client, run_worker, setup_logging
 
 setup_logging()
 
@@ -73,6 +73,8 @@ def build_workers(client: Client) -> list[Worker]:
                 record_campaign_send_result_activity,
                 send_whatsapp_template_activity,
             ],
+            # SIGTERM: espera a las activities en curso antes de cancelarlas.
+            graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
         ),
         Worker(
             client,
@@ -81,6 +83,8 @@ def build_workers(client: Client) -> list[Worker]:
             # queue es el ritmo hacia Meta).
             activities=[deliver_campaign_message_activity],
             max_task_queue_activities_per_second=CAMPAIGN_SENDS_PER_SECOND,
+            # Un deploy no corta envíos a mitad: esperan a terminar (y a anotar).
+            graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
         ),
     ]
 
@@ -89,7 +93,8 @@ async def main() -> None:
     # P-21: un worker de plugin deshabilitado no debe ni conectarse a Temporal.
     ensure_plugin_enabled("marketing")
     client = await get_temporal_client()
-    await asyncio.gather(*(worker.run() for worker in build_workers(client)))
+    # SIGTERM → apagado ordenado de los dos workers (la misma señal).
+    await asyncio.gather(*(run_worker(worker) for worker in build_workers(client)))
 
 
 if __name__ == "__main__":

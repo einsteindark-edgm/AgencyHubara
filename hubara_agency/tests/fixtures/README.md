@@ -44,6 +44,10 @@ sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
 | `history_campaign_send_v2_continue_as_new.json` | `CampaignSendWorkflowV2` | sintética, primera corrida de un envío que se renueva (continue-as-new) |
 | `history_campaign_send_v2_cancel.json` | `CampaignSendWorkflowV2` | sintética, cancelación por Update con un lote en vuelo |
 | `history_campaign_send_v2_quiet_hours.json` | `CampaignSendWorkflowV2` | sintética, lote en horario de silencio: espera (timer) y sigue solo |
+| `history_sales_continue_as_new_loop_prepatch_v1.json` | `HubaraSalesSessionWorkflow` | sintética, regla vieja de continue-as-new (código de 16c03158) |
+| `history_sales_v2_continue_as_new_loop_prepatch_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, regla vieja de continue-as-new (código de 16c03158) |
+| `history_eta_continue_as_new_loop_prepatch_v1.json` | `HubaraEtaSessionWorkflow` | sintética, regla vieja de continue-as-new (código de 16c03158) |
+| `history_eta_rejected_text_prepatch_v1.json` | `HubaraEtaSessionWorkflow` | sintética, código actual con `eta-rejected-text-as-template-v1` forzado a «no» |
 
 **`history_campaign_send_v1.json` está CONGELADA y NO se regenera.** Es el
 `CampaignSendWorkflow` (V1) tal como quedó cuando salió `CampaignSendWorkflowV2`
@@ -233,3 +237,26 @@ PRs en `main`.
 - ADR-009: drain operativo cuando un cambio de shape de history despliega a
   produccion (sin esto los workflows en vuelo lanzan `NonDeterminismError`).
 - `docs/refactor/PHASE6.md` seccion F6.2.
+
+**`history_*continue_as_new_loop_prepatch_v1.json` (ventas V1, V2 y ETA) también
+están CONGELADAS y NO se regeneran.** Son el run del bug de la auditoría de
+Temporal (2026-10-15) con la regla vieja: arranca con 50 turnos acumulados (lo
+que deja un continue-as-new), un turno o aviso y continue-as-new otra vez. La
+regla nueva cuenta los turnos del run y no corta ahí: protegen el gate
+`continue-as-new-per-run-v1`, con control negativo automatizado
+(`test_the_continue_as_new_history_breaks_without_the_gate`). Sesión sintética
+`wa_can_loop`, identidad del worker → `fixture-worker`. Procedencia en
+`generate_continue_as_new_prepatch_fixtures.py` (se niega a correr si el código
+ya trae el gate). Se borran junto con
+`workflow.deprecate_patch("continue-as-new-per-run-v1")`.
+
+**`history_eta_rejected_text_prepatch_v1.json` también está CONGELADA y NO se
+regenera.** Premortem de la Ola 0 (2026-10-16): dentro de la ventana el aviso del
+ETA sale como texto, y si WhatsApp no acepta ninguna burbuja la activity no
+lanza (devuelve `[]`); antes el aviso quedaba grabado como enviado. Ahora sale
+por la plantilla (comando nuevo en un workflow que vive días). La history es la
+de antes: el texto rechazado se persiste y se graba. Control negativo
+automatizado (`test_the_rejected_text_history_breaks_without_the_gate`). Sesión
+sintética `wa_eta_rechazo`, identidad del worker → `fixture-worker`. Procedencia
+en `generate_eta_rejected_text_prepatch_fixture.py`. Se borra junto con
+`workflow.deprecate_patch("eta-rejected-text-as-template-v1")`.

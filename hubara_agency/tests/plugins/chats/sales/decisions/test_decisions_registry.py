@@ -225,7 +225,9 @@ def test_the_workers_warm_up_the_store_bundle_before_listening(module: str) -> N
     main = importlib.import_module(module).main
     source = inspect.getsource(main)
 
-    assert "warm_up" in source and source.index("warm_up") < source.index("worker.run()")
+    # El worker empieza a escuchar en `run_worker(worker)` (apagado ordenado,
+    # auditoría de Temporal 2026-10-15).
+    assert "warm_up" in source and source.index("warm_up") < source.index("run_worker(worker)")
 
 
 async def test_the_api_warms_up_the_store_bundle_off_the_event_loop(monkeypatch) -> None:

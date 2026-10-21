@@ -39,6 +39,11 @@ _CAROUSEL_TIMEOUT = timedelta(seconds=60)
 #: Retries acotados por destinatario: un número inválido no debe colgar la
 #: campaña entera (los non-retryable de Meta cortan solos en el 1er intento).
 _SEND_RETRY = RetryPolicy(maximum_attempts=3)
+#: El plan y los envíos laten (`@with_heartbeat`): si el worker muere a mitad
+#: (un deploy), Temporal los reintenta a los 30 s y no al vencer su
+#: `start_to_close` (auditoría de Temporal, 2026-10-15). Solo opciones: replay
+#: seguro.
+_HEARTBEAT = timedelta(seconds=30)
 
 
 @workflow.defn(name="CampaignSendWorkflow")
@@ -49,6 +54,7 @@ class CampaignSendWorkflow:
             load_campaign_send_plan_activity,
             campaign_id,
             start_to_close_timeout=_FAST,
+            heartbeat_timeout=_HEARTBEAT,
             retry_policy=RetryPolicy(maximum_attempts=PLAN_MAX_ATTEMPTS),
         )
         if plan.blocked_reason:
@@ -94,6 +100,7 @@ class CampaignSendWorkflow:
                     "send_whatsapp_template_activity",
                     args=send_args,
                     start_to_close_timeout=_SEND_TIMEOUT,
+                    heartbeat_timeout=_HEARTBEAT,
                     retry_policy=_SEND_RETRY,
                 )
             except ActivityError as e:

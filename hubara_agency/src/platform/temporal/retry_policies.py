@@ -29,6 +29,14 @@ _LLM_OPTIONS = {
     ),
 }
 
+#: La llamada al modelo (`llm_chat`): lo mismo, más `heartbeat_timeout`. La
+#: activity late cada 10 s mientras el modelo piensa; si el worker muere a mitad
+#: de la llamada (deploy, caja sin memoria), Temporal la reintenta en otro worker
+#: a los 30 s en vez de esperar el `start_to_close` de 5 min (auditoría de
+#: Temporal, 2026-10-15). Aparte de `_LLM_OPTIONS` porque el bootstrap de las
+#: sesiones usa ese preset y no late. Opciones de la activity: replay seguro.
+_LLM_CHAT_OPTIONS = {**_LLM_OPTIONS, "heartbeat_timeout": timedelta(seconds=30)}
+
 _TOOL_OPTIONS = {
     "start_to_close_timeout": timedelta(minutes=10),
     "heartbeat_timeout": timedelta(seconds=30),
