@@ -81,7 +81,10 @@ def vault(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _write(vault: Path, *, deferred: bool = True, replied_after: bool = False, draft: dict | None = None) -> None:
+def _write(
+    vault: Path, *, deferred: bool = True, replied_after: bool = False, draft: dict | None = None,
+    farewell: bool = True,
+) -> None:
     """La conversación al llegar el traspaso: el toque de remarketing, el
     aplazamiento y la despedida (sin señal), con la ruta ya en Ventas."""
     now = int(time.time() * 1000)
@@ -93,9 +96,10 @@ def _write(vault: Path, *, deferred: bool = True, replied_after: bool = False, d
     if deferred:
         apply_inbound_purchase_signal(metadata, "deferral", "text", now_ms=now - 13_000, message_id="wamid.A",
                                       text="No gracias voy a esperar")
-    apply_inbound_purchase_signal(metadata, None, "text", now_ms=now - 7_000, message_id="wamid.B",
-                                  text="Feliz día y bendiciones")
-    metadata["last_inbound_message_id"] = "wamid.B"
+    if farewell:
+        apply_inbound_purchase_signal(metadata, None, "text", now_ms=now - 7_000, message_id="wamid.B",
+                                      text="Feliz día y bendiciones")
+    metadata["last_inbound_message_id"] = "wamid.B" if farewell else "wamid.A"
     if replied_after:
         metadata["last_outbound"]["sent_at_ms"] = now - 1_000
     (vault / SESSION).mkdir(parents=True, exist_ok=True)
@@ -118,6 +122,19 @@ async def test_the_handoff_turn_brings_the_script_and_the_offer_once(vault: Path
     assert _episode(vault).get(sc.OFFER_KEY)
     # Una sola vez por episodio: el reintento o el turno siguiente ya no.
     assert again is not None and "[GUION DE LA CAMPAÑA" in again and "acaba de aplazar" not in again
+
+
+@pytest.mark.asyncio
+async def test_a_lone_deferral_to_remarketing_also_brings_the_offer(vault: Path) -> None:
+    """Mismo día, otra conversación de velitas: «Yo te aviso» contestando al
+    toque 1, sin nada después. Remarketing pasó el resumen «[EL CLIENTE
+    APLAZÓ]…» y Ventas se despidió sin la oferta."""
+    _write(vault, farewell=False)
+
+    note = await read_order_draft_note_activity(SESSION)
+
+    assert note is not None and "AHORA: el cliente acaba de aplazar" in note
+    assert _episode(vault).get(sc.OFFER_KEY)
 
 
 @pytest.mark.asyncio
