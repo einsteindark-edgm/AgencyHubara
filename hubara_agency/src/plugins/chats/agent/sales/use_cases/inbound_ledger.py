@@ -89,22 +89,34 @@ def message_stage_record(
 
 
 NO_REFERRAL_BUCKET = "sin_referral"
+#: Etapas del webhook con la entrada durable: el mensaje quedó en Temporal.
+_IN_TEMPORAL = frozenset({"queued", "duplicate"})
+_ENQUEUE_FAILED = "enqueue_failed"
+#: Un `pending` más viejo que esto está varado (un ingest tarda segundos y los
+#: reintentos, ~3 min).
+_STUCK_AFTER_MS = 30 * 60_000
 _BOGOTA = ZoneInfo("America/Bogota")
 
 
-def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_ledger(records: list[dict[str, Any]], *, now_ms: int | None = None) -> dict[str, Any]:
     """Resumen para reconciliar contra Meta, por día de BOGOTÁ (la zona de la
     cuenta publicitaria) y por anuncio (``referral.source_id``).
 
     Por bucket: ``sessions`` = personas distintas que escribieron (lo comparable
     con "conversaciones iniciadas" de Meta); ``ingested`` / ``failed`` / ``lost``
-    cuentan mensajes únicos (un reintento de Meta repite el wamid y no suma).
-    ``lost`` = visto en el body y sin desenlace: lo descartó el parser o el
-    proceso murió antes de ingerirlo.
+    / ``pending`` cuentan mensajes únicos (un reintento de Meta repite el wamid
+    y no suma). ``lost`` = visto en el body y sin desenlace: lo descartó el
+    parser o nunca entró a Temporal. ``pending`` = entró a Temporal (``queued``,
+    o ``duplicate`` si ya estaba) y todavía no tiene desenlace: espera worker o
+    reintenta (entrada durable, ADR 2026-10-15). ``stuck`` = ``pending`` hace más
+    de media hora a la hora del reporte (``now_ms``): ningún ingest tarda eso, el
+    workflow está varado y hay que mirarlo en Temporal. ``enqueue_failed`` no es
+    desenlace: el webhook respondió 503 y Meta reintenta el POST.
     """
     requests: dict[str, int] = {}
     seen: dict[str, dict[str, Any]] = {}
     outcome: dict[str, dict[str, Any]] = {}
+    in_temporal: dict[str, int] = {}
     for record in records:
         if record.get("kind") == "request":
             key = str(record.get("outcome"))
@@ -115,18 +127,25 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if record.get("stage") == "seen":
             seen.setdefault(wamid, record)
+        elif record.get("stage") in _IN_TEMPORAL:
+            at_ms = record.get("at_ms")
+            in_temporal.setdefault(wamid, at_ms if isinstance(at_ms, int) else 0)
+        elif record.get("stage") == _ENQUEUE_FAILED:
+            continue
         elif record.get("stage") == "ingested" or wamid not in outcome:
             outcome[wamid] = record  # un `ingested` (reintento exitoso) gana sobre el fallo
 
     by_day_ad: dict[str, dict[str, dict[str, Any]]] = {}
     lost: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    stuck: list[dict[str, Any]] = []
     for wamid, record in sorted(seen.items(), key=lambda kv: kv[1]["at_ms"]):
         source_id = (record.get("referral") or {}).get("source_id")
         day = datetime.fromtimestamp(record["at_ms"] / 1000, _BOGOTA).strftime("%Y-%m-%d")
         bucket = by_day_ad.setdefault(day, {}).setdefault(
             source_id or NO_REFERRAL_BUCKET,
-            {"sessions": set(), "ingested": 0, "failed": 0, "lost": 0},
+            {"sessions": set(), "ingested": 0, "failed": 0, "lost": 0, "pending": 0, "stuck": 0},
         )
         bucket["sessions"].add(record.get("session_id"))
         row = {
@@ -136,7 +155,13 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
             "source_id": source_id,
         }
         final = outcome.get(wamid)
-        if final is None:
+        if final is None and wamid in in_temporal and now_ms is not None and now_ms - in_temporal[wamid] >= _STUCK_AFTER_MS:
+            bucket["stuck"] += 1
+            stuck.append(row)
+        elif final is None and wamid in in_temporal:
+            bucket["pending"] += 1
+            pending.append(row)
+        elif final is None:
             bucket["lost"] += 1
             lost.append(row)
         elif final.get("stage") == "ingested":
@@ -153,6 +178,8 @@ def summarize_ledger(records: list[dict[str, Any]]) -> dict[str, Any]:
         "by_day_ad": dict(sorted(by_day_ad.items())),
         "lost": lost,
         "failed": failed,
+        "pending": pending,
+        "stuck": stuck,
     }
 
 
