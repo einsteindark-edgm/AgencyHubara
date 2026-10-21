@@ -72,6 +72,7 @@ from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError, CancelledError
 
 with workflow.unsafe.imports_passed_through():
     from exoclaw_temporal.config import SessionInput
@@ -130,6 +131,9 @@ with workflow.unsafe.imports_passed_through():
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
+    # Una respuesta que no se confirmó: el turno siguiente lo sabe (premortem
+    # de la Ola 0 de Temporal, 2026-10-16).
+    from src.plugins.chats.agent.sales.workflows.delivery_v2 import UNDELIVERED_MAX, undelivered_note
     # Las tools que solo leen: el reinicio conserva su resultado (…7392).
     from src.plugins.chats.agent.sales.read_only_tools import READ_ONLY_TOOLS
     # Caída total del LLM (2026-10-15): Temporal espera y reintenta el turno.
@@ -149,6 +153,7 @@ with workflow.unsafe.imports_passed_through():
         _await_photos_done,
         _burst_messages,
         _clean_inbound_meta,
+        _continue_as_new_input,
         _ensure_promised_handoff,
         _flush_outbound,
         _inbound_trace,
@@ -159,6 +164,7 @@ with workflow.unsafe.imports_passed_through():
         _perception_step,
         _photo_arriving,
         _reply_as_sent,
+        _restore_carried,
         _system_turn_clock,
         _text_outbound,
         _verify_step,
@@ -170,6 +176,7 @@ with workflow.unsafe.imports_passed_through():
         InboxMsg,
         PendingMessage,
         coalesce_inbox,
+        continue_as_new_due,
         is_no_message_abstention,
         persist_assistant_message_activity,
         run_agent_turn,
@@ -193,13 +200,34 @@ _EGRESS_OPTIONS: dict[str, Any] = {
     "retry_policy": RetryPolicy(maximum_attempts=2),
 }
 _VARIANT_PICKER = "present_variant_picker"
+# Envíos al cliente (texto y componentes): laten (`@with_heartbeat`), así que si
+# el worker muere a mitad, el reintento sale a los 30 s y no al vencer el
+# `start_to_close` (auditoría de Temporal, 2026-10-15). Solo opciones: replay
+# seguro.
+_SEND_OPTIONS: dict[str, Any] = {
+    "start_to_close_timeout": timedelta(seconds=90),
+    "heartbeat_timeout": timedelta(seconds=30),
+    "retry_policy": RetryPolicy(maximum_attempts=2),
+}
+_FLUSH_OPTIONS: dict[str, Any] = {**_SEND_OPTIONS, "start_to_close_timeout": timedelta(seconds=120)}
+
+
+def _delivery_failed(what: str, session_id: str, exc: ActivityError) -> None:
+    """Una entrega agotó sus intentos: la sesión sigue (una falla técnica se
+    recupera sola y avisa, no pasa al equipo) y queda el error en el log. Una
+    cancelación no es una falla de entrega: sube y la sesión se cancela
+    (premortem 2026-10-16: si no, un cancel desde Temporal se perdía)."""
+    if isinstance(exc.cause, CancelledError):
+        raise exc
+    workflow.logger.error(f"{what} falló tras sus intentos; la sesión sigue: session={session_id} err={exc.cause!r}")
 
 
 @workflow.defn(name="HubaraSalesSessionWorkflowV2")
 class HubaraSalesSessionWorkflowV2:
     """Sesión de ventas V2: misma entrada, señales y consultas que el V1."""
 
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, input: SalesSessionInput) -> None:
         self._pending: list[PendingMessage] = []
         self._last_response: str | None = None
         self._processing = False
@@ -226,6 +254,10 @@ class HubaraSalesSessionWorkflowV2:
         # wamids no se contestan otra vez si también llegan por señal.
         self._handoff_replies: list[PendingMessage] = []
         self._handoff_wamids: set[str] = set()
+        # Avisos para el turno siguiente de respuestas que no se confirmaron
+        # (`delivery_v2`, solo payload).
+        self._undelivered: list[str] = []
+        _restore_carried(self, input)
 
     @workflow.signal
     async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
@@ -408,7 +440,54 @@ class HubaraSalesSessionWorkflowV2:
             context = msg.plugin_context or []
             kept = [n for n, name in zip(context, context_note_names(context)) if name != "burst_note"]
             msg = dataclasses.replace(msg, plugin_context=[note, *kept])
+        if self._undelivered:
+            msg = dataclasses.replace(msg, plugin_context=[*(msg.plugin_context or []), *self._undelivered])
         return msg
+
+    async def _send_text(self, session_id: str, text: str) -> Any:
+        """Envía un texto del turno (3.er argumento `True`: lo decidió el
+        motor) y devuelve las burbujas que salieron. Un rechazo de WhatsApp no
+        lanza: vuelve `[]` (no salió). Si la activity agota sus intentos, lo que
+        lanzó es ambiguo (un timeout, el worker apagado, el vault después del
+        POST): la sesión sigue y el envío queda «sin confirmación» (`None`, como
+        las histories anteriores a la traza v2). En los dos casos el turno
+        siguiente lo sabe; cuando un envío vuelve a salir, el aviso se va."""
+        try:
+            delivered = await workflow.execute_activity(
+                send_whatsapp_message_activity,
+                args=[session_id, text, True],
+                **_SEND_OPTIONS,
+            )
+        except ActivityError as exc:
+            _delivery_failed("El envío de WhatsApp", session_id, exc)
+            self._remember_undelivered(undelivered_note(text, rejected=False))
+            return None
+        if isinstance(delivered, list) and not delivered:
+            self._remember_undelivered(undelivered_note(text, rejected=True))
+        elif delivered:
+            self._undelivered = []
+        return delivered
+
+    async def _persist_sent(self, session_id: str, args: list[Any]) -> None:
+        """Anota en el panel lo que salió (o quedó sin confirmar). De mejor
+        esfuerzo: el mensaje ya salió, y una falla del vault no tumba la sesión
+        ni reenvía nada (premortem 2026-10-16). Mismos comandos que antes."""
+        try:
+            await workflow.execute_activity(
+                persist_assistant_message_activity,
+                args=args,
+                start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except ActivityError as exc:
+            if isinstance(exc.cause, CancelledError):
+                raise
+            workflow.logger.error(
+                f"El panel no anotó un mensaje que ya salió; la sesión sigue: session={session_id} err={exc.cause!r}"
+            )
+
+    def _remember_undelivered(self, note: str) -> None:
+        self._undelivered = [*self._undelivered, note][-UNDELIVERED_MAX:]
 
     @workflow.run
     async def run(self, input: SalesSessionInput) -> None:
@@ -417,7 +496,10 @@ class HubaraSalesSessionWorkflowV2:
             input,
             **LLM_ACTIVITY_OPTIONS,
         )
+        # `turn_count` es el acumulado (claves de los turnos); el tope de
+        # continue-as-new cuenta los de este run (`run_turns`).
         turn_count = input.turn_count
+        run_turns = 0
 
         async def egress(final_text: str, context: dict[str, Any]) -> dict[str, Any]:
             return await self._decide_egress(session.session_id, final_text, context)
@@ -689,6 +771,7 @@ class HubaraSalesSessionWorkflowV2:
                     break
                 self._last_response = result.final_content
                 turn_count += 1
+                run_turns += 1
                 turn_key = f"run:{workflow.info().run_id}/t:{turn_count}"
                 # Los veredictos del motor para el texto final (grabados).
                 verdicts: dict[str, Any] = result.egress or {}
@@ -742,21 +825,25 @@ class HubaraSalesSessionWorkflowV2:
                         safety_net_escalated = True
 
                 if episode_closed_decision is not None:
-                    # El episodio cerró: el dispatcher cancela el watchdog.
-                    await workflow.execute_activity(
-                        dispatch_event_activity,
-                        envelope_for(
-                            EpisodeClosedEvent(
-                                session_id=episode_closed_decision.session_id,
-                                episode_id=episode_closed_decision.episode_id,
-                                closing_tag=episode_closed_decision.closing_tag,
+                    # El episodio cerró: el dispatcher cancela el watchdog. Si
+                    # no se le puede avisar, la sesión sigue (y el CAPI sale).
+                    try:
+                        await workflow.execute_activity(
+                            dispatch_event_activity,
+                            envelope_for(
+                                EpisodeClosedEvent(
+                                    session_id=episode_closed_decision.session_id,
+                                    episode_id=episode_closed_decision.episode_id,
+                                    closing_tag=episode_closed_decision.closing_tag,
+                                ),
+                                source_plugin="chats",
+                                source_worker="sales",
                             ),
-                            source_plugin="chats",
-                            source_worker="sales",
-                        ),
-                        start_to_close_timeout=timedelta(seconds=30),
-                        retry_policy=RetryPolicy(maximum_attempts=3),
-                    )
+                            start_to_close_timeout=timedelta(seconds=30),
+                            retry_policy=RetryPolicy(maximum_attempts=3),
+                        )
+                    except ActivityError as exc:
+                        _delivery_failed("El aviso del cierre al dispatcher", session.session_id, exc)
                     # Evento de Meta (CAPI) del cierre: su falla nunca bloquea.
                     capi_event_name = _map_closing_tag_to_capi_event(episode_closed_decision.closing_tag)
                     if capi_event_name is not None:
@@ -811,25 +898,18 @@ class HubaraSalesSessionWorkflowV2:
                         retry_policy=RetryPolicy(maximum_attempts=3),
                     )
                     _note_guard(trace_steps, trace_guards, "first_contact_greeting", before="", after=greeting)
-                    # El saludo es la primera salida del turno.
-                    pending_at_reply = len(self._pending)
+                    # El saludo es la primera salida del turno, si sale: uno
+                    # que WhatsApp rechazó (`[]`) no lo es.
+                    pending_before_greeting = len(self._pending)
                     # 3.er argumento `True`: lo decidió el motor (el saludo
                     # aprobado que pidió `greeting_needed`); ver `text_out`.
-                    greeting_delivered = await workflow.execute_activity(
-                        send_whatsapp_message_activity,
-                        args=[session.session_id, greeting, True],
-                        start_to_close_timeout=timedelta(seconds=90),
-                        retry_policy=RetryPolicy(maximum_attempts=2),
-                    )
+                    greeting_delivered = await self._send_text(session.session_id, greeting)
+                    if greeting_delivered != []:
+                        pending_at_reply = pending_before_greeting
                     trace_steps.append(_text_outbound(greeting, greeting_delivered))
                     # 4.º argumento: las burbujas que salieron, con su wamid
                     # (el doble check de WhatsApp en el chat se une por ahí).
-                    await workflow.execute_activity(
-                        persist_assistant_message_activity,
-                        args=[session.session_id, greeting, None, greeting_delivered],
-                        start_to_close_timeout=timedelta(seconds=10),
-                        retry_policy=RetryPolicy(maximum_attempts=2),
-                    )
+                    await self._persist_sent(session.session_id, [session.session_id, greeting, None, greeting_delivered])
                     trace_sent_texts.append(greeting)
 
                 # Selector de variantes (bug run fe86d4e4): si SALIÓ, él es el
@@ -942,25 +1022,21 @@ class HubaraSalesSessionWorkflowV2:
                             )
                             shutdown_after_send = True
                             safety_net_escalated = True
-                        # El texto es la primera salida si no hubo saludo.
-                        if pending_at_reply is None:
-                            pending_at_reply = len(self._pending)
-                        final_delivered = await workflow.execute_activity(
-                            send_whatsapp_message_activity,
-                            args=[session.session_id, text_out, True],
-                            start_to_close_timeout=timedelta(seconds=90),
-                            retry_policy=RetryPolicy(maximum_attempts=2),
-                        )
+                        # El texto es la primera salida si no hubo saludo (y si
+                        # sale: uno que WhatsApp rechazó no lo es).
+                        pending_before_reply = len(self._pending)
+                        final_delivered = await self._send_text(session.session_id, text_out)
+                        if pending_at_reply is None and final_delivered != []:
+                            pending_at_reply = pending_before_reply
                         trace_steps.append(_text_outbound(text_out, final_delivered))
                         trace_sent_texts.append(text_out)
                         # El panel del dashboard muestra solo lo que salió
-                        # (diferencia 1 con el V1). `tools_used`: evidencia
-                        # para el juez del eval (caso ep_010).
-                        await workflow.execute_activity(
-                            persist_assistant_message_activity,
-                            args=[session.session_id, text_out, list(result.tools_used or []), final_delivered],
-                            start_to_close_timeout=timedelta(seconds=10),
-                            retry_policy=RetryPolicy(maximum_attempts=2),
+                        # (diferencia 1 con el V1), «sin confirmación» si no se
+                        # sabe. `tools_used`: evidencia para el juez del eval
+                        # (caso ep_010).
+                        await self._persist_sent(
+                            session.session_id,
+                            [session.session_id, text_out, list(result.tools_used or []), final_delivered],
                         )
                     elif trace_suppressed is None:
                         # El selector ES el mensaje (run fe86d4e4).
@@ -971,12 +1047,20 @@ class HubaraSalesSessionWorkflowV2:
                 # UI intents que encolaron las tools (HU-002), después del texto.
                 if not self._force_shutdown and not admin_no_send and not gave_up:
                     pending_at_flush = len(self._pending)
-                    flush_report = await workflow.execute_activity(
-                        flush_pending_ui_intents_activity,
-                        args=[session.session_id],
-                        start_to_close_timeout=timedelta(seconds=120),
-                        retry_policy=RetryPolicy(maximum_attempts=2),
-                    )
+                    try:
+                        flush_report = await workflow.execute_activity(
+                            flush_pending_ui_intents_activity,
+                            args=[session.session_id],
+                            **_FLUSH_OPTIONS,
+                        )
+                    except ActivityError as exc:
+                        _delivery_failed("El envío de los componentes del turno", session.session_id, exc)
+                        # Ambiguo como el texto: pudo salir algo (catálogo,
+                        # selector, formulario). La traza lo dice sin confirmar.
+                        trace_steps.append(
+                            {"kind": "outbound", "at_ms": _now_ms(), "bubbles": [{"kind": "ui", "wamid": None, "delivered": None}]}
+                        )
+                        flush_report = None
                     flush_step = _flush_outbound(flush_report)
                     if flush_step is not None:
                         trace_steps.append(flush_step)
@@ -1161,6 +1245,8 @@ class HubaraSalesSessionWorkflowV2:
                 self._processing = False
 
             # continue_as_new para acotar la historia (el mismo tipo V2).
-            if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:
-                workflow.logger.info(f"Reached {_CONTINUE_AS_NEW_AFTER_TURNS} turns, continuing as new")
-                workflow.continue_as_new(SalesSessionInput(session_id=session.session_id, turn_count=turn_count))
+            if not self._pending and continue_as_new_due(
+                run_turns=run_turns, total_turns=turn_count, limit=_CONTINUE_AS_NEW_AFTER_TURNS
+            ):
+                workflow.logger.info(f"Continue-as-new tras {run_turns} turnos del run ({turn_count} en total)")
+                workflow.continue_as_new(_continue_as_new_input(self, input, session.session_id, turn_count))

@@ -109,7 +109,7 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
         total_touches=effective_max_touches(Path(WORKSPACE_VAULT_DIR)),
     )
     products = await _catalog_products()
-    context = await _with_campaign_script(context, metadata or {}, events, products)
+    context = await _with_campaign_script(context, metadata or {}, session_dir, products)
     if not products:
         return _with_allowed_numbers(context)
     mentioned = f"{context.tag_motivo}\n{context.transcript}"
@@ -150,21 +150,62 @@ async def read_remarketing_context_activity(session_id: str) -> RemarketingConte
 
 
 async def _with_campaign_script(
-    context: RemarketingContext, metadata: dict[str, Any], events: list[dict[str, Any]], products: list[Any]
+    context: RemarketingContext, metadata: dict[str, Any], session_dir: Path, products: list[Any]
 ) -> RemarketingContext:
     """El guion de la campaña de venta del episodio para ESTE toque (operador,
-    2026-10-19), con los precios del catálogo y el cupón si rige para este
-    cliente. Sin campaña, o si algo falla, el contexto tal cual: el gancho de
-    siempre."""
+    2026-10-19), con los precios del catálogo; en su toque, la oferta del
+    cupón con su fecha para quien quiso comprar (2026-10-20). Sin campaña, o
+    si algo falla, el contexto tal cual: el gancho de siempre."""
     try:
-        return await _campaign_script(context, metadata, products)
+        return await _campaign_script(context, metadata, session_dir, products)
     except Exception as exc:  # noqa: BLE001 — una campaña rota deja el gancho de siempre
         activity.logger.warning("remarketing: guion de campaña no disponible: %r", exc)
         return context
 
 
+def _purchase_readings(path: Path) -> list[dict[str, Any]]:
+    """Las lecturas de la capacidad `compra` de `evals/decisions.jsonl`, línea
+    a línea: el archivo de un cliente de meses pesa megas y solo importan esas.
+    Una línea cortada (a mitad de una «á») se salta y no tumba el toque
+    (revisión del 2026-10-20)."""
+    rows: list[dict[str, Any]] = []
+    try:
+        with path.open("rb") as handle:
+            for line in handle:
+                if b'"compra"' not in line:
+                    continue
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict):
+                    rows.append(row)
+    except OSError:
+        return rows
+    return rows
+
+
+#: Los toques que le llegaron al cliente (`_record_touch` del workflow); uno
+#: viejo sin `kind` cuenta. Abstenerse (NO_MESSAGE) o una plantilla que falló no.
+_SENT_TOUCHES = frozenset({"free_form", "template", None})
+
+
+def _episode_touches(metadata: dict[str, Any], episode: dict[str, Any]) -> int:
+    """Los toques ya enviados en este episodio (la escalera vuelve a contar
+    desde el último mensaje del cliente; la oferta va una vez por episodio)."""
+    start = episode.get("started_at_ms")
+    return sum(
+        1
+        for t in metadata.get("remarketing_touches") or []
+        if isinstance(t, dict)
+        and t.get("kind") in _SENT_TOUCHES
+        and isinstance(t.get("at_ms"), int)
+        and (not isinstance(start, int) or t["at_ms"] >= start)
+    )
+
+
 async def _campaign_script(
-    context: RemarketingContext, metadata: dict[str, Any], products: list[Any]
+    context: RemarketingContext, metadata: dict[str, Any], session_dir: Path, products: list[Any]
 ) -> RemarketingContext:
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -175,17 +216,28 @@ async def _campaign_script(
     # Sin el texto del cliente: el ingest de Ventas ya marcó el episodio con lo
     # que dijo al abrirlo; aquí cuentan la marca, el anuncio y el pedido.
     campaign = sales_campaigns.campaign_for(episode, today=today)
-    if campaign is None:
+    if campaign is None or episode is None:
         return context
     try:
         boxes = store_domain().get("sold_by_box")
     except Exception:  # noqa: BLE001 — sin el dominio, los precios van por unidad
         boxes = None
-    bought_before = any(e.get("order_id") for e in episodes[:-1])
+    # Las lecturas de Jev de la conversación (`evals/decisions.jsonl`): dicen si
+    # el cliente quiso comprar.
+    intent = sales_campaigns.purchase_intent(episode, _purchase_readings(session_dir / "evals" / "decisions.jsonl"))
+    offer_touch = bool(campaign.toque_oferta) and _episode_touches(metadata, episode) == (campaign.toque_oferta or 0) - 1
+    offer = None
+    # Con un cupón ya aplicado en el episodio no se ofrece otro.
+    if intent and offer_touch and not episode.get("applied_coupon"):
+        bought_before = any(e.get("order_id") for e in episodes[:-1])
+        ids = tuple(str(p.id) for p in products if getattr(p, "handle", None) in campaign.productos and getattr(p, "id", None))
+        offer = await _coupon_offer(campaign.cupon, bought_before=bought_before, today=today, product_ids=ids)
+        # Ventas ya se la dijo en este episodio (con esta fecha): no se repite.
+        if offer is not None and episode.get(sales_campaigns.OFFER_KEY) == offer.key():
+            offer = None
     block = sales_campaigns.remarketing_block(
         campaign, products, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP, boxes=boxes,
-        touch_number=context.touch_number,
-        coupon_discount=await _coupon_discount(campaign.cupon, bought_before=bought_before),
+        touch_number=context.touch_number, offer=offer, intent=intent, offer_touch=offer_touch,
     )
     return replace(
         context,
@@ -198,11 +250,11 @@ async def _campaign_script(
 _COUPON_TIMEOUT_S = 3.0
 
 
-async def _coupon_discount(code: str | None, *, bought_before: bool) -> str | None:
-    """«5 %» (o «$5.000») si el cupón rige hoy (`coupon_problem`, la misma vara
-    de `list_promotions`: Medusa lo deja «active» al vencer) y, si es solo para
-    la primera compra, el cliente no compró antes en esta conversación. None
-    si no rige o no se sabe a tiempo: el toque no lo nombra."""
+async def _coupon_offer(code: str | None, *, bought_before: bool, today: Any, product_ids: tuple[str, ...] = ()) -> Any:
+    """La oferta del cupón si rige hoy (`coupon_problem`, la misma vara de
+    `list_promotions`: Medusa lo deja «active» al vencer) y, si es solo para la
+    primera compra, el cliente no compró antes en esta conversación. None si
+    no rige o no se sabe a tiempo: el toque no lo nombra."""
     import asyncio
 
     if not code:
@@ -214,13 +266,10 @@ async def _coupon_discount(code: str | None, *, bought_before: bool) -> str | No
         return None
     if promotion is None or coupon_problem(promotion, now_ms=int(time.time() * 1000)) is not None:
         return None
-    if getattr(promotion, "first_purchase_only", False) and bought_before:
+    offer = sales_campaigns.coupon_offer(promotion, today=today, product_ids=product_ids)
+    if offer is not None and offer.first_purchase_only and bought_before:
         return None
-    if promotion.discount_type == "percentage":
-        return f"{promotion.value} %"
-    if promotion.discount_type == "fixed":
-        return "$" + f"{int(promotion.value):,}".replace(",", ".")
-    return None
+    return offer
 
 
 def _with_allowed_numbers(context: RemarketingContext) -> RemarketingContext:

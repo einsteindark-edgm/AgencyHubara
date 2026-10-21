@@ -22,7 +22,7 @@ from src.plugins.marketing.agent.campaigns.workflows.send import (
 )
 from src.sdk import ensure_plugin_enabled, get_task_queue
 from src.sdk.messagingkit import send_whatsapp_template_activity
-from src.sdk.runtime import get_temporal_client, setup_logging
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, get_temporal_client, run_worker, setup_logging
 
 setup_logging()
 
@@ -44,8 +44,10 @@ async def main() -> None:
             stamp_campaign_touch_activity,
             record_campaign_send_result_activity,
         ],
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

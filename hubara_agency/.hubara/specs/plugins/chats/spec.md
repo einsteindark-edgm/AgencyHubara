@@ -689,7 +689,7 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el cliente da el código o pregunta por promociones
 - THEN `apply_coupon` responde `applied=false, reason=shipping_not_supported` (el envío lo cobra la transportadora a su tarifa, sin descuentos) y no guarda nada en el episodio, y `list_promotions` no la ofrece
 - AND aunque un episodio ya tenga guardado un cupón de envío (de antes de esta decisión), `compute_discount` no descuenta nada (`shipping_not_supported`), la nota de cada turno dice `[CUPÓN SIN EFECTO: …]` en vez de `[CUPÓN APLICADO: …]`, `present_order_confirmation` explica que no aplica y `register_order` exige el total con el envío completo
-- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente
+- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente, salvo en un pedido con envío gratis de una campaña (6 cajas o más, 2026-10-20): ahí lo paga la tienda y no se le suma al cliente
 
 #### Scenario: Reglas de la promoción ilegibles
 

@@ -50,7 +50,10 @@ _POLICY_KEYWORDS = (
 # corta en el "." de miles ("$45.000 COP").
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+|\n+")
 
-_MAX_QUANTITY = 5
+#: Unidades por línea que explica un precio del catálogo. Hasta 20: el envío
+#: gratis desde 6 cajas (operador, 2026-10-20) trae pedidos de 6 a 20 cajas,
+#: y el por mayor es de más de 20 (`pack_quantity.BULK_UNITS`, pasa a un colega).
+_MAX_QUANTITY = 20
 
 
 @dataclass(frozen=True)
@@ -160,7 +163,7 @@ def find_unexplained_amounts(
 ) -> list[UnexplainedAmount]:
     """Montos del texto que NO se explican por el catálogo ni por la política.
 
-    Explicado = precio de catálogo, múltiplo por cantidad (1..5) o suma de dos
+    Explicado = precio de catálogo, múltiplo por cantidad (1..20) o suma de dos
     líneas; en oraciones con contexto de política también los montos de
     política y sus combinaciones con un monto explicado (total con envío,
     "te faltan $X para el mínimo").
