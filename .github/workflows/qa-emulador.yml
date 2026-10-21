@@ -110,6 +110,15 @@ jobs:
             !~/.android/avd/*.avd/snapshots
           key: avd-30-google_apis-x86_64-pixel_6-v2
 
+      # La exclusión de arriba no alcanza (PR #451, 2026-10-20): `~/.android/avd/*` le pasa a tar la carpeta
+      # `test.avd` entera, con su snapshot. La corrida que crea la caché la guarda con el snapshot de SU
+      # máquina, y la siguiente lo carga en otra y revienta igual («No service published for: input»): en
+      # #451 pasó la 1.ª corrida (sin caché) y falló la 2.ª (con ella). Con la caché restaurada, el snapshot
+      # se borra aquí y el emulador arranca en frío.
+      - name: Sin el snapshot de otra máquina (solo con caché)
+        if: steps.scope.outputs.app == 'true' && steps.avd-cache.outputs.cache-hit == 'true'
+        run: rm -rf ~/.android/avd/*.avd/snapshots
+
       - name: Crear el emulador y su snapshot (solo sin caché)
         if: steps.scope.outputs.app == 'true' && steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@v2

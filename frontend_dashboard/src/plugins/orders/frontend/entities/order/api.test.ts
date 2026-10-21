@@ -77,6 +77,17 @@ describe("toLegacyOrder", () => {
     expect(legacy.shippingConfirmed).toBe(false);
   });
 
+  // Envío gratis desde 6 cajas de la campaña (operador, 2026-10-20): el
+  // cliente no paga envío y el valor real del despacho lo paga la tienda.
+  it("maps the free shipping and what the store pays for it", () => {
+    const o = toLegacyOrder({ ...sampleSummary, shipping_cop: 0, free_shipping: true, store_shipping_cost_cop: 18000 });
+    expect(o.freeShipping).toBe(true);
+    expect(o.storeShippingCost).toBe(18000);
+    const legacy = toLegacyOrder(sampleSummary);
+    expect(legacy.freeShipping).toBe(false);
+    expect(legacy.storeShippingCost).toBeNull();
+  });
+
   it("renders '—' for null phone and city", () => {
     const o = toLegacyOrder({ ...sampleSummary, phone: null, city: null });
     expect(o.phone).toBe("—");

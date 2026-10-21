@@ -146,6 +146,17 @@ describe("CreateOrderAction", () => {
     expect(screen.getByText(/\$52\.000 c\/u/)).toBeInTheDocument();
   });
 
+  it("con las cajas del envío gratis de la campaña dice que el envío es gratis", async () => {
+    // 6 cajas o más (operador, 2026-10-20): el servidor cotiza el envío en $0.
+    const dialog = await openForm({
+      ...SUGGESTION,
+      shipping_cop: 0,
+      total_cop: 104000,
+      free_shipping: { campaign: "velitas-7-dic", min_boxes: 6, boxes: 6 },
+    });
+    expect(within(dialog).getByText(/envío gratis/i)).toHaveTextContent(/6 cajas de la campaña/);
+  });
+
   it("dice de dónde salió cada dato (conversación / bot / WhatsApp)", async () => {
     await openForm();
 

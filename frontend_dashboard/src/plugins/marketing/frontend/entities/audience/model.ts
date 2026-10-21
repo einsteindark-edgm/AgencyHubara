@@ -48,11 +48,15 @@ export interface AudienceConversation {
 }
 
 /** Tono del chip por segmento — claves de TONE_CLS.
- *  clientes=ok, interesados=info, manual (curaduría)=violet,
+ *  clientes=ok, interesados=info, interesados_sin_compra (el perfil: quiso
+ *  comprar y no compró)=warn, manual (curaduría)=violet,
  *  frios (y desconocidos)=neutral. */
-export function segmentTone(key: string): "ok" | "info" | "neutral" | "violet" {
+export function segmentTone(
+  key: string,
+): "ok" | "info" | "warn" | "neutral" | "violet" {
   if (key === "clientes") return "ok";
   if (key === "interesados") return "info";
+  if (key === "interesados_sin_compra") return "warn";
   if (key === "manual" || key === "importados") return "violet";
   return "neutral";
 }

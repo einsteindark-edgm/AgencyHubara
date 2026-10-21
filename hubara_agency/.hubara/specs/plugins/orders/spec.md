@@ -281,6 +281,21 @@ transiciones manuales validando el DAG permitido entre stages.
   del pedido SIN envío, `order_value_cop`, para no sumarlo dos veces)
 - AND sin valor real (vacío / 0) se mantiene el estimado
 
+#### Scenario: Con envío gratis, el envío real lo paga la tienda (2026-10-20)
+
+- GIVEN un pedido con la marca `metadata.hubara_free_shipping` (6 cajas o más
+  de una campaña) y envío $0
+- WHEN el operador lo despacha y escribe el valor real del envío ($ 18.000)
+- THEN el valor queda en `hubara_shipping_cost_cop`, pero `effective_amounts`
+  devuelve el envío del cliente en 0 y el total de los productos: lista,
+  detalle, OrderFacts (Ads, Campañas), el cobro de "Confirmar pago" y el total
+  del ETA no lo suman
+- AND el resumen expone `free_shipping = true` y `store_shipping_cost_cop =
+  18000` (lo que paga la tienda, fuera del total); el modal, el panel del
+  celular, el inspector y la app lo muestran aparte
+- AND el aviso «va en camino» sale sin el valor del envío (la activity lo
+  quita del evento); si el pedido no se puede leer, sale como siempre
+
 #### Scenario: "En preparación" y "Listo" no mencionan el precio (2026-09-22)
 
 - GIVEN un pedido contra entrega que pasa a `preparing` o a `ready`

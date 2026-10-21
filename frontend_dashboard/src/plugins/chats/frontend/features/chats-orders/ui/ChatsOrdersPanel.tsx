@@ -230,11 +230,15 @@ export default ChatsOrdersPanel;
 function shipAmounts(order: CustomerOrder): {
   orderTotal: number | null;
   estimatedShipping: number | null;
+  freeShipping: boolean;
 } {
-  if (order.total_cop == null) return { orderTotal: null, estimatedShipping: null };
+  // Envío gratis (6 cajas o más): el valor real lo paga la tienda, no se suma.
+  const freeShipping = order.free_shipping === true;
+  if (order.total_cop == null) return { orderTotal: null, estimatedShipping: null, freeShipping };
   const shipping = order.shipping_cop ?? 0;
   return {
     orderTotal: order.total_cop - shipping,
     estimatedShipping: shipping > 0 && !order.shipping_confirmed ? shipping : null,
+    freeShipping,
   };
 }
