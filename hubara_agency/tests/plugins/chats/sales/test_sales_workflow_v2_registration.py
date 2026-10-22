@@ -36,11 +36,13 @@ def test_the_sales_worker_registers_v1_first_and_v2_next_to_it() -> None:
         if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "Worker"
     ]
     workflows = {kw.arg: kw.value for call in calls for kw in call.keywords}.get("workflows")
-    assert isinstance(workflows, ast.Name) and workflows.id == "SALES_WORKFLOWS"
+    # Al lado, la entrada durable (`INBOUND_WORKFLOWS`, ADR 2026-10-15).
+    assert isinstance(workflows, ast.List)
+    assert [e.value.id for e in workflows.elts if isinstance(e, ast.Starred)][0] == "SALES_WORKFLOWS"
 
 
 def test_the_manifest_declares_v2_after_v1() -> None:
-    assert get_worker_spec("chats", "sales")["workflow_classes"] == [
+    assert get_worker_spec("chats", "sales")["workflow_classes"][:2] == [
         "HubaraSalesSessionWorkflow",
         "HubaraSalesSessionWorkflowV2",
     ]

@@ -367,9 +367,9 @@ class SetOrderSlotTool(ToolBase):
         ]
         valid_by_kind = {
             "aroma": attrs.aromas,
-            # Sin etiquetas «Color:», los valores de la opción «Color» de
-            # Medusa (las velas de deseos, 2026-10-14).
-            "color": attrs.colors or options_to_choose(product).get("color", []),
+            # La opción «Color» de Medusa gana a las etiquetas «Color:»
+            # (las velas de deseos, 2026-10-14 y 2026-10-17).
+            "color": color_values(product, attrs.colors),
             "diseno": design_values,
         }
         canonical_values: dict[str, str] = {}
@@ -1343,16 +1343,23 @@ class SetOrderSlotTool(ToolBase):
         return json.dumps(envelope, ensure_ascii=False)
 
 
+def color_values(product: Any, tag_colors: Any) -> list[str]:
+    """Los colores con que se valida y se ofrece un producto: la opción
+    «Color» de Medusa si existe (es la variante real) y, sin ella, las
+    etiquetas «Color:». 2026-10-17/18: las cajas de velas de deseos traían 11
+    etiquetas de plantilla además de la opción real y rechazaban
+    «Multicolor»."""
+    return list(options_to_choose(product).get("color") or tag_colors or [])
+
+
 def offered_options(product: Any) -> dict[str, list[str]]:
     """Las opciones que el catálogo le ofrece al cliente: aroma por tags;
-    color por la paleta real (`metadata.colores`) si existe, si no por tags y,
-    sin ellos, por la opción «Color» de Medusa (la misma lista con que
-    `_check_values` valida; 2026-10-14: las velas de deseos quedaban «sin
-    color»)."""
+    color por la paleta real (`metadata.colores`) si existe y, si no, por
+    `color_values` (la misma lista con que `_check_values` valida)."""
     attrs = parse_variant_tags(product.tags)
     variant_colors = parse_variant_colors(product.metadata)
-    colors = primary_colors(variant_colors) if variant_colors else list(attrs.colors)
-    return {"aroma": list(attrs.aromas), "color": colors or options_to_choose(product).get("color", [])}
+    colors = primary_colors(variant_colors) if variant_colors else color_values(product, attrs.colors)
+    return {"aroma": list(attrs.aromas), "color": colors}
 
 
 def _only_options(

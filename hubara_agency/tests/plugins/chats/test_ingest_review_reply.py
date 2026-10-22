@@ -84,10 +84,27 @@ def _started(envelope: Any) -> Any:
 
 
 async def _drain(use_case: IngestInboundMessage) -> None:
-    """Los reintentos y el re-despacho corren en segundo plano."""
-    for _ in range(3):
-        await asyncio.gather(*list(getattr(use_case, "_background", ())))
-        await asyncio.sleep(0)
+    """Sin tareas sueltas (L-7, entrada durable): nada corre en segundo plano."""
+    await asyncio.sleep(0)
+
+
+class _Effects:
+    """El diario de efectos por wamid de la entrada durable (en memoria)."""
+
+    def __init__(self) -> None:
+        self.marked: set[tuple[str, str]] = set()
+
+    def claim(self, wamid: str, effect: str) -> bool:
+        if (wamid, effect) in self.marked:
+            return False
+        self.marked.add((wamid, effect))
+        return True
+
+    def done(self, wamid: str, effect: str) -> bool:
+        return (wamid, effect) in self.marked
+
+    def mark(self, wamid: str, effect: str) -> None:
+        self.marked.add((wamid, effect))
 
 
 class _Dispatch:
@@ -189,36 +206,43 @@ async def test_a_review_reply_without_a_message_id_gets_its_own_workflow_id(monk
 
 @pytest.mark.asyncio
 async def test_a_transient_dispatch_failure_is_retried(monkeypatch):
-    """M1: perder la calificación es perder el cupón prometido."""
+    """M1: perder la calificación es perder el cupón prometido. En la entrada
+    durable una falla pasajera hace fallar el paso de la entrega y su activity
+    lo reintenta (sin tareas sueltas, L-7); el reintento no repite la línea
+    del chat."""
     monkeypatch.setattr(ingest_mod, "_now_ms", lambda: _NOW_MS)
-    monkeypatch.setattr(ingest_mod, "_REVIEW_DISPATCH_BACKOFF_S", (0, 0, 0))
     attempts: list[str] = []
 
     async def flaky(envelope, client):
         attempts.append(envelope.event_type)
-        if len(attempts) < 3:
+        if len(attempts) < 2:
             raise RuntimeError("temporal unavailable")
         return _started(envelope)
 
     monkeypatch.setattr(ingest_mod, "dispatch_envelope_with_client", flaky)
     metadata = _Metadata()
     metadata.store[_SID] = {"active_route": "humano", "episodes": []}
+    history = _History()
     use_case = IngestInboundMessage(
-        history_store=_History(), load_session=_LoadOrStart(), metadata_store=metadata,  # type: ignore[arg-type]
+        history_store=history, load_session=_LoadOrStart(), metadata_store=metadata,  # type: ignore[arg-type]
         temporal_client_factory=_factory,  # type: ignore[arg-type]
+        effects=_Effects(),  # type: ignore[arg-type]
     )
 
-    await use_case.execute(_review_reply())
-    await _drain(use_case)
+    with pytest.raises(RuntimeError, match="no llegó al plugin de reseñas"):
+        await use_case.execute(_review_reply())
+    assert metadata.read(_SID)["pending_review_submissions"][0]["wa_message_id"] == "wamid.REVIEW1"
 
-    assert attempts == ["ReviewSubmittedEvent"] * 3
+    await use_case.execute(_review_reply())  # el reintento de la activity
+
+    assert attempts == ["ReviewSubmittedEvent"] * 2
     assert "pending_review_submissions" not in metadata.read(_SID)
+    assert len(history.events) == 1
 
 
 @pytest.mark.asyncio
 async def test_when_dispatch_keeps_failing_the_rating_is_kept_for_recovery(monkeypatch):
     monkeypatch.setattr(ingest_mod, "_now_ms", lambda: _NOW_MS)
-    monkeypatch.setattr(ingest_mod, "_REVIEW_DISPATCH_BACKOFF_S", (0, 0, 0))
 
     async def down(envelope, client):
         raise RuntimeError("temporal unavailable")
@@ -263,7 +287,6 @@ async def test_a_rating_nobody_picked_up_is_parked_not_lost(monkeypatch, unhandl
     from src.platform.orchestration.dispatcher import DispatchResult
 
     monkeypatch.setattr(ingest_mod, "_now_ms", lambda: _NOW_MS)
-    monkeypatch.setattr(ingest_mod, "_REVIEW_DISPATCH_BACKOFF_S", (0, 0, 0))
 
     async def nobody(envelope, client):
         return DispatchResult(source_plugin="chats", source_worker="sales",
@@ -283,8 +306,8 @@ async def test_a_rating_nobody_picked_up_is_parked_not_lost(monkeypatch, unhandl
 
 @pytest.mark.asyncio
 async def test_the_webhook_does_not_sleep_through_the_retries(monkeypatch):
-    """Los mensajes que vienen detrás en el mismo webhook no esperan los
-    reintentos: el primer intento va en línea y el resto en segundo plano."""
+    """El ingest nunca duerme esperando a Temporal: un intento en línea; lo que
+    falle queda guardado (y en la entrada durable lo reintenta la activity)."""
     import time as _time
 
     monkeypatch.setattr(ingest_mod, "_now_ms", lambda: _NOW_MS)
@@ -304,8 +327,6 @@ async def test_the_webhook_does_not_sleep_through_the_retries(monkeypatch):
     assert elapsed < 0.4
     # Guardada desde antes de reintentar: un reinicio a mitad no la pierde.
     assert metadata.read(_SID)["pending_review_submissions"][0]["wa_message_id"] == "wamid.REVIEW1"
-    monkeypatch.setattr(ingest_mod, "_REVIEW_DISPATCH_BACKOFF_S", (0, 0, 0))
-    await _drain(use_case)
 
 
 @pytest.mark.asyncio
@@ -408,3 +429,27 @@ async def test_the_composed_webhook_ingest_can_reach_the_reviews_plugin(monkeypa
 
     assert clients == [fake_client]
     assert [e.payload["wa_message_id"] for e in dispatch.envelopes] == ["wamid.REVIEW9"]
+
+
+@pytest.mark.asyncio
+async def test_a_rating_heard_in_standby_never_breaks_that_path(monkeypatch):
+    """C9 (MBA al frente): la calificación que llega por el standby queda
+    guardada si Temporal falla; ese camino no se cae ni se reintenta entero
+    (sale con el próximo mensaje del cliente)."""
+    monkeypatch.setattr(ingest_mod, "_now_ms", lambda: _NOW_MS)
+
+    async def down(envelope, client):
+        raise RuntimeError("temporal unavailable")
+
+    monkeypatch.setattr(ingest_mod, "dispatch_envelope_with_client", down)
+    metadata = _Metadata()
+    metadata.store[_SID] = {"active_route": "ventas", "episodes": []}
+    use_case = IngestInboundMessage(
+        history_store=_History(), load_session=_LoadOrStart(), metadata_store=metadata,  # type: ignore[arg-type]
+        temporal_client_factory=_factory,  # type: ignore[arg-type]
+        effects=_Effects(),  # type: ignore[arg-type]
+    )
+
+    await use_case.emit_review_submitted(_SID, "wamid.STANDBY1", {"rating": "5"}, _NOW_MS)
+
+    assert metadata.read(_SID)["pending_review_submissions"][0]["wa_message_id"] == "wamid.STANDBY1"

@@ -61,7 +61,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents,
 )
-from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
+from src.plugins.chats.agent.sales.config.shipping import order_shipping
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
     REASON_QUOTA_UNAVAILABLE,
@@ -604,7 +604,10 @@ async def order(session_key: SessionKey, body: OrderBody, deps: Deps) -> dict[st
 
 
 async def _register(session: str, body: OrderBody, priced: Any, deps: SessionActionsDeps) -> dict[str, Any]:
-    shipping_cop = shipping_rate_for_city(body.shipping.city)
+    # $0 con las cajas del envío gratis de una campaña; si no, la tarifa mínima.
+    shipping_cop, _free = order_shipping(
+        ((str(it["handle"]), it["quantity"]) for it in priced.items), body.shipping.city
+    )
     subtotal_cop = priced.subtotal_cop
     store = FilesystemMetadataStore(deps.vault_dir)
     # El borrador repartido en variantes y las guardas del cierre (confirmación

@@ -46,7 +46,7 @@ from src.plugins.chats.agent.post_sale_return.workflows import (
     PostSaleReturnWorkflow,
 )
 from src.sdk import ensure_plugin_enabled, get_task_queue
-from src.sdk.runtime import get_temporal_client, setup_logging
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, get_temporal_client, run_worker, setup_logging
 
 setup_logging()
 
@@ -130,9 +130,11 @@ async def main() -> None:
             scan_post_sale_human_sessions_activity,
             return_post_sale_session_to_sales_activity,
         ],
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
     logger.info("🔁 post-sale-return worker arriba. Cola: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

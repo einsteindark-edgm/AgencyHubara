@@ -55,8 +55,9 @@ class EffectiveText:
     * `text`: el texto natural que verá el LLM. None si el mensaje no
       aporta semántica para procesar (ej: status update inesperado).
     * `requires_transcription`: True si es audio que aún no fue transcrito.
-      El ingestor encola `transcribe_audio_activity` y, cuando vuelve,
-      reinyecta un mensaje text sintético usando ese resultado.
+      El ingest lo transcribe en su paso de la nota de voz
+      (`transcribe_audio`; la activity `transcribe_inbound_audio`) y
+      reinyecta un mensaje text sintético con ese resultado.
     * `audio_media_id`: id del media en Meta para descarga (solo si
       requires_transcription).
     * `referral_attribution`: si el inbound trajo referral, se persiste

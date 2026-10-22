@@ -3,6 +3,8 @@ import asyncio
 from loguru import logger
 from temporalio.worker import Worker
 
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
+
 
 from src.platform.logging import setup_logging
 from src.platform.observability import init_otel, otel_workflow_runner
@@ -82,10 +84,12 @@ async def main() -> None:
             send_ready_photo_activity,
         ],
         workflow_runner=otel_workflow_runner(),
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
 
     logger.info("📦 ETA Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

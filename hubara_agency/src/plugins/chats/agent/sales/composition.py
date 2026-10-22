@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import os
+import time
 
 from exoclaw_temporal.config import WorkspaceConfig
 from loguru import logger
@@ -46,6 +47,8 @@ from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore
 from src.platform.temporal.client import get_temporal_client
 from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
+from src.plugins.chats.agent.sales.inbound_effects_store import FilesystemInboundEffects
+from src.sdk import get_task_queue
 from src.plugins.chats.agent.sales.inbound_ledger_store import FilesystemInboundLedger
 from src.plugins.chats.agent.sales.sender_identity_store import FilesystemSenderIdentity
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
@@ -64,6 +67,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer, quo
 from src.plugins.chats.agent.sales.use_cases.coupons import promotion_from_snapshot
 from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import emit_watchdog_events
+from src.plugins.chats.agent.sales.use_cases.inbound_entry import InboundEntry
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
 from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentifier
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
@@ -72,6 +76,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 
 
 _INGEST_USE_CASE: IngestInboundMessage | None = None
+_INBOUND_ENTRY: InboundEntry | None = None
 _DELIVERY_STATUS_USE_CASE: IngestDeliveryStatus | None = None
 _STANDBY_USE_CASE: IngestStandby | None = None
 _HANDOVER_USE_CASE: IngestHandover | None = None
@@ -95,6 +100,24 @@ def build_inbound_ledger() -> FilesystemInboundLedger:
     sobrevive a deploys, a diferencia de los logs del container). `_ledger/`
     no empieza con `wa_` → ningún scanner de sesiones lo toma por conversación."""
     return FilesystemInboundLedger(WORKSPACE_VAULT_DIR / "_ledger" / "webhook")
+
+
+def build_inbound_entry() -> InboundEntry:
+    """La entrada durable del webhook (ADR 2026-10-15): deja cada mensaje en
+    Temporal como `InboundMessageWorkflow` en la cola del worker `sales`.
+    Singleton por proceso: el cliente de Temporal se conecta una vez."""
+    global _INBOUND_ENTRY
+    if _INBOUND_ENTRY is None:
+        _INBOUND_ENTRY = InboundEntry(get_temporal_client, task_queue=get_task_queue("chats", "sales"))
+    return _INBOUND_ENTRY
+
+
+def build_inbound_effects() -> FilesystemInboundEffects:
+    """Diario de efectos de la entrada durable (ADR 2026-10-15): lo que un
+    reintento del ingest no repite, por `wamid`, junto al ledger en el vault."""
+    return FilesystemInboundEffects(
+        WORKSPACE_VAULT_DIR / "_ledger" / "inbound_effects", now_ms=lambda: int(time.time() * 1000)
+    )
 
 
 def build_sender_identity() -> FilesystemSenderIdentity:
@@ -189,6 +212,9 @@ def build_ingest_use_case() -> IngestInboundMessage:
         # La calificación llega al plugin de reseñas por el dispatcher
         # (premortem C3: sin fábrica no salía nunca).
         review_client_factory=get_temporal_client,
+        # Entrada durable: un reintento de la activity no repite historial,
+        # aviso a la sesión ni envíos al cliente.
+        effects=build_inbound_effects(),
     )
     return _INGEST_USE_CASE
 
@@ -205,7 +231,7 @@ def _order_facts_port() -> Any:
 
 def build_order_facts_reader() -> Callable[[str], Awaitable[Any]]:
     """OrderFacts de UN pedido (``None`` si Medusa no lo conoce), con tope:
-    el ingest corre en el webhook y nunca espera más que esto."""
+    el ingest nunca espera más que esto (el mensaje del cliente va detrás)."""
     import asyncio
 
     async def read(order_id: str) -> Any:

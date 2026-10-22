@@ -163,6 +163,11 @@ class OrderSummaryDTO:
     # `total_cop - shipping_cop`.
     shipping_cop: int = 0
     shipping_confirmed: bool = False
+    # Envío gratis (operador, 2026-10-20): el cliente no paga envío
+    # (`shipping_cop` = 0) y el valor real del despacho, si el operador ya lo
+    # escribió, lo paga la tienda (`store_shipping_cost_cop`, fuera del total).
+    free_shipping: bool = False
+    store_shipping_cost_cop: int | None = None
 
 
 @dataclass(frozen=True)

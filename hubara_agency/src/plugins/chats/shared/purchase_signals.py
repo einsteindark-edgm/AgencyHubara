@@ -31,6 +31,11 @@ from typing import Any
 from src.plugins.chats.shared.funnel import active_episode
 
 SIGNAL_KEY = "last_inbound_signal"
+#: El último aplazamiento del cliente: no lo borra un mensaje sin señal que
+#: llegue después («Feliz día y bendiciones»), solo una compra. Lo lee la
+#: oferta de la campaña (`deferral_since_last_reply`); las guardas del cierre
+#: siguen con el último mensaje (`SIGNAL_KEY`).
+DEFERRAL_KEY = "last_inbound_deferral"
 
 #: Frases que aplazan solas (también preguntando: «¿lo pienso y te escribo?»).
 #: Premortem 2026-10-09: la regla es el respaldo cuando Jev duda o cae, así
@@ -194,17 +199,45 @@ def apply_inbound_purchase_signal(
     marca la confirmación de compra (`order_draft.confirmed_at_ms` +
     `confirmed_by`). El carrito confirma SIEMPRE: nombra producto y cantidad
     por sí mismo, no depende de que el draft ya tenga `producto`.
+
+    Son dos escrituras distintas (`mark_inbound_signal` y
+    `confirm_inbound_purchase`): la entrada durable escribe la primera en el
+    orden de llegada de los mensajes y la segunda apenas lee.
     """
+    mark_inbound_signal(metadata, kind, now_ms=now_ms, message_id=message_id, text=text)
+    return confirm_inbound_purchase(metadata, kind, confirmed_by, now_ms=now_ms)
+
+
+def mark_inbound_signal(
+    metadata: dict[str, Any], kind: str | None, *, now_ms: int, message_id: str | None, text: str | None
+) -> None:
+    """La señal del ÚLTIMO mensaje (`SIGNAL_KEY`; la lee `current_signal`
+    solo si es del `last_inbound_message_id`). Sin señal, se borra."""
     if kind is None:
         metadata.pop(SIGNAL_KEY, None)
-        return None
-
+        return
     metadata[SIGNAL_KEY] = {
         "kind": kind,
         "at_ms": now_ms,
         "message_id": message_id,
         "text": (text or "")[:120],
     }
+    # El último aplazamiento (caso del 2026-10-21): no lo borra un mensaje sin
+    # señal que llegue después, solo una compra. Va con la señal: también
+    # describe a los últimos mensajes y se escribe en su orden de llegada.
+    if kind == "deferral":
+        metadata[DEFERRAL_KEY] = dict(metadata[SIGNAL_KEY])
+    else:
+        metadata.pop(DEFERRAL_KEY, None)
+
+
+def confirm_inbound_purchase(
+    metadata: dict[str, Any], kind: str | None, confirmed_by: str, *, now_ms: int
+) -> str | None:
+    """La confirmación de compra en el borrador del episodio activo (vale
+    aunque después llegue otro mensaje). Devuelve la señal."""
+    if kind is None:
+        return None
     if kind == "affirmation":
         episode = active_episode(metadata)
         if episode and confirmed_by == "cart":
@@ -283,6 +316,29 @@ def is_current_inbound_deferral(metadata: dict[str, Any]) -> bool:
     return bool(sig and sig.get("kind") == "deferral")
 
 
+def deferral_since_last_reply(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    """El aplazamiento vigente del cliente: su último mensaje, como siempre, o
+    uno que escribió después de nuestro último mensaje en este episodio
+    aunque después haya escrito algo sin señal (caso del 2026-10-21: «No
+    gracias voy a esperar» y, 6 s después, «Feliz día y bendiciones»). Una
+    compra lo borra; una respuesta nuestra deja atrás el de antes. Lo leen la
+    oferta de la campaña y el resumen del traspaso de remarketing; las
+    guardas del cierre leen solo el último mensaje (`is_current_inbound_deferral`)."""
+    current = current_signal(metadata)
+    if current and current.get("kind") == "deferral":
+        return current
+    sig = metadata.get(DEFERRAL_KEY)
+    if not isinstance(sig, dict) or not isinstance(sig.get("at_ms"), int):
+        return None
+    sent = (metadata.get("last_outbound") or {}).get("sent_at_ms")
+    if isinstance(sent, int) and sent >= sig["at_ms"]:
+        return None
+    started = (active_episode(metadata) or {}).get("started_at_ms")
+    if isinstance(started, int) and sig["at_ms"] < started:
+        return None
+    return sig
+
+
 def closing_blocker(metadata: dict[str, Any], *, require_confirmation: bool) -> str | None:
     """Por qué no puede avanzar el cierre ahora (resumen, registro), o None.
 
@@ -306,9 +362,12 @@ def closing_blocker(metadata: dict[str, Any], *, require_confirmation: bool) -> 
 
 
 def build_deferral_note(
-    metadata: dict[str, Any], *, resume_label: str | None = None
+    metadata: dict[str, Any], *, resume_label: str | None = None, campaign_offer: bool = False
 ) -> str | None:
-    """Nota para `plugin_context`: el LLM responde texto breve y no avanza el cierre."""
+    """Nota para `plugin_context`: el LLM responde texto breve y no avanza el cierre.
+
+    `campaign_offer`: el guion de la campaña le pasa ahora la oferta del cupón
+    con su fecha (operador, 2026-10-20): va en esa misma frase breve."""
     sig = current_signal(metadata)
     if not sig or sig.get("kind") != "deferral":
         return None
@@ -319,6 +378,11 @@ def build_deferral_note(
         "cálida y breve (sin preguntas de venta), NO muestres productos, NO "
         "pidas datos de envío ni confirmes el pedido. Espera a que retome."
     )
+    if campaign_offer:
+        note += (
+            " En esa misma frase cuéntale la oferta del cupón que te pasa el GUION "
+            "DE LA CAMPAÑA, una sola vez y sin insistir."
+        )
     # La cita: el sistema le escribe ESE día — el bot se lo confirma para que
     # sea un compromiso visible ("¡Listo! Te escribimos el lunes 28"). El
     # label lo calcula el ingest (sdk.messagingkit): este módulo lo importan
@@ -326,15 +390,17 @@ def build_deferral_note(
     if resume_label:
         note += (
             f" Confírmale que le escribimos {resume_label} "
-            "(no prometas otra fecha)."
+            "(no prometas otra fecha para escribirle)."
         )
     return note
 
 
 __all__ = [
+    "DEFERRAL_KEY",
     "SIGNAL_KEY",
     "apply_inbound_purchase_signal",
     "build_deferral_note",
+    "deferral_since_last_reply",
     "classify_inbound_purchase_signal",
     "current_signal",
     "detect_deferral",

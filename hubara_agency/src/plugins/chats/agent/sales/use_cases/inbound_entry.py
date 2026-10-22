@@ -1,0 +1,100 @@
+"""Entrada durable de los mensajes de WhatsApp (ADR 2026-10-15 §1).
+
+Lo que el webhook hace ANTES de responderle 200 a Meta: dejar cada mensaje en
+Temporal como un ``InboundMessageWorkflow`` con id ``inbound-<wamid>``. Desde
+ahí el mensaje sobrevive a un deploy o a un OOM de la API (antes vivía en un
+``BackgroundTask`` y Meta ya no reintentaba).
+
+- ``REJECT_DUPLICATE``: una re-entrega de Meta del mismo ``wamid`` choca con el
+  id (mientras dure la retención del namespace) y ``accept`` devuelve ``False``:
+  ya estaba adentro, no es un error.
+- Cualquier otra falla sube: el webhook responde 503 y Meta reintenta el POST.
+- El cliente de Temporal se conecta una vez y se reusa: ahora la conexión queda
+  antes del 200, y abrir una por mensaje (lo de antes) era latencia y memoria.
+  Tras una falla se descarta y, pasados unos segundos de 503 inmediato
+  (``InboundUnavailable``), la próxima llamada reconecta: con Temporal colgado
+  los webhooks no se apilan de a 8 s detrás del candado (premortem PM-009).
+
+R-DIP: use case con el cliente inyectado (``client_factory``); el workflow se
+arranca por NOMBRE (string), sin importar su clase (ADR-2026-05-19).
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+import uuid
+from collections.abc import Awaitable, Callable
+from datetime import timedelta
+from typing import Any
+
+from temporalio.common import WorkflowIDReusePolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
+
+from src.plugins.chats.agent.sales.contracts import InboundMessageInput, inbound_workflow_id
+
+INBOUND_WORKFLOW = "InboundMessageWorkflow"
+#: Tope del RPC a Temporal: el webhook no deja a Meta esperando más que esto
+#: por mensaje (Meta corta y reintenta).
+_RPC_TIMEOUT = timedelta(seconds=8)
+#: Tras una falla, este rato de 503 inmediato: con Temporal colgado, cada webhook
+#: esperaba sus 8 s en fila detrás del candado (premortem PM-009). Meta reintenta.
+_COOLDOWN_S = 5.0
+
+
+class InboundUnavailable(RuntimeError):
+    """Temporal falló hace un momento: el webhook responde 503 sin volver a probar."""
+
+
+class InboundEntry:
+    def __init__(
+        self,
+        client_factory: Callable[[], Awaitable[Any]],
+        *,
+        task_queue: str,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._client_factory = client_factory
+        self._task_queue = task_queue
+        self._clock = clock
+        self._client: Any = None
+        self._lock = asyncio.Lock()
+        self._failed_at: float | None = None
+
+    async def accept(self, inp: InboundMessageInput) -> bool:
+        """``True`` si el mensaje entró ahora; ``False`` si ya estaba (re-entrega)."""
+        if self._failed_at is not None and self._clock() - self._failed_at < _COOLDOWN_S:
+            raise InboundUnavailable("temporal falló hace un momento")
+        try:
+            client = await self._connected()
+        except Exception:
+            self._failed_at = self._clock()
+            raise
+        wamid = str(inp.message.get("message_id") or "")
+        try:
+            await client.start_workflow(
+                INBOUND_WORKFLOW,
+                inp,
+                # Sin wamid (el parser lo deja pasar vacío) no hay dedupe posible:
+                # un id propio para que dos mensajes así no se pisen.
+                id=inbound_workflow_id(wamid) if wamid else f"inbound-sin-wamid-{uuid.uuid4().hex}",
+                task_queue=self._task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                rpc_timeout=_RPC_TIMEOUT,
+            )
+        except WorkflowAlreadyStartedError:
+            return False
+        except Exception:
+            self._client = None
+            self._failed_at = self._clock()
+            raise
+        self._failed_at = None
+        return True
+
+    async def _connected(self) -> Any:
+        if self._client is None:
+            async with self._lock:
+                if self._client is None:
+                    self._client = await asyncio.wait_for(
+                        self._client_factory(), timeout=_RPC_TIMEOUT.total_seconds()
+                    )
+        return self._client

@@ -32,7 +32,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents,
 )
 from src.plugins.chats.agent.sales.catalog_menu import category_row_id
-from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
+from src.plugins.chats.agent.sales.config.shipping import order_shipping
 from src.plugins.chats.agent.sales.tools.coupons import ApplyCouponTool
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     PresentOrderConfirmationTool,
@@ -468,7 +468,8 @@ async def _confirmation_args(
     neighborhood = str(slots.get("barrio") or "").strip()
     return {
         "items": items,
-        "shipping_cop": shipping_rate_for_city(city),
+        # $0 con las cajas del envío gratis de una campaña; si no, la tarifa mínima.
+        "shipping_cop": order_shipping(((it["handle"], it["quantity"]) for it in items), city)[0],
         "shipping_address_summary": ", ".join(p for p in (address, neighborhood, city) if p),
         "payment_method": method,
     }

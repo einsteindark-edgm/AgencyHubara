@@ -815,6 +815,18 @@ async def send_typing_indicator_activity(session_id: str) -> None:
 # =============================================================================
 
 
+#: Tipo del `ApplicationError` de un envío de plantilla que pudo haber salido
+#: (timeout, 504): el ETA lo pone en `non_retryable_error_types`.
+TEMPLATE_SEND_AMBIGUOUS = "TemplateSendAmbiguous"
+
+
+def _is_ambiguous_send_error(error: str | None) -> bool:
+    """¿Meta pudo haber entregado? Un timeout (`timeout: …`, lo marca el cliente)
+    o un 504 (el gateway cortó con el envío en curso). Lo que seguro no salió
+    (otro 5xx, una conexión que nunca abrió) no lo es."""
+    return bool(error) and (error.startswith("timeout:") or error.startswith("http_504"))
+
+
 def _parse_meta_error_code(error: str | None) -> str | None:
     """Extrae el código Meta del string de error de `OutboundResult.error`.
 
@@ -1216,6 +1228,15 @@ async def send_template_to_session(
                 f"{result.error}",
                 non_retryable=True,
                 type=f"TemplateMetaError{error_code}",
+            )
+        # Un timeout o un 504 son AMBIGUOS: Meta pudo entregar la plantilla y
+        # la respuesta perderse (L-1). Siguen siendo reintentables, pero con su
+        # tipo: quien reintenta con paciencia (el ETA) los corta para no mandar
+        # el mismo aviso N veces (premortem de la Ola 0 de Temporal, 2026-10-16).
+        if _is_ambiguous_send_error(result.error):
+            raise ApplicationError(
+                f"WhatsApp template send ambiguous (pudo salir): {result.error}",
+                type=TEMPLATE_SEND_AMBIGUOUS,
             )
         raise ApplicationError(
             f"WhatsApp template send failed (retryable): {result.error}",

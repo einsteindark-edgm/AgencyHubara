@@ -128,9 +128,17 @@ agent:
       # el registro de bots arranca uno u otro por nombre. El V1 va PRIMERO:
       # `get_workflow_name` devuelve el índice 0 (lo que arranca quien no
       # consulta el enrutador).
+      # Entrada durable (ADR 2026-10-15, docs/adr/2026-10-15-durable-inbound-entry.md):
+      # el webhook arranca `InboundMessageWorkflow` por nombre (`inbound-<wamid>`)
+      # en esta cola y este worker ingiere el mensaje, un paso por activity.
+      # `InboundSessionWorkflow` (`inbound-wa_<número>`, ADR 2026-10-16) dice
+      # qué mensaje del cliente llegó antes: la entrega va en orden de llegada.
+      # Van al final: el índice 0 sigue siendo la sesión de ventas.
       workflow_classes:
         - HubaraSalesSessionWorkflow
         - HubaraSalesSessionWorkflowV2
+        - InboundMessageWorkflow
+        - InboundSessionWorkflow
       emits:
         - SalesSessionCompletionEvent
         # HU-WA24H-001 Sprint 2: service-window lifecycle events.
@@ -325,6 +333,10 @@ agent:
           MEDUSA_DEFAULT_SHIPPING_OPTION_ID: ${MEDUSA_DEFAULT_SHIPPING_OPTION_ID}
           MEDUSA_DEFAULT_CURRENCY: ${MEDUSA_DEFAULT_CURRENCY:-cop}
           MEDUSA_DEFAULT_COUNTRY: ${MEDUSA_DEFAULT_COUNTRY:-co}
+          # Entrada durable (ADR 2026-10-15): el ingest de los mensajes corre en
+          # este worker; la hidratación del carrito web lee la Store API con la
+          # llave publicable (sin ella degrada al flujo conversacional).
+          MEDUSA_PUBLISHABLE_API_KEY: ${MEDUSA_PUBLISHABLE_API_KEY}
         volumes:
           - hubara-vault-local:/app/hubara_vault
         depends_on:

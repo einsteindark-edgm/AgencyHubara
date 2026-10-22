@@ -1,0 +1,320 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-10-17T05:04:06.575Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "InboundSessionWorkflow"
+        },
+        "taskQueue": {
+          "name": "queue-sales-agent"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJyZWNlbnQiOltdfQ=="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "315360000s",
+        "workflowRunTimeout": "315360000s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "02b59c2c-531e-41d6-9db5-37c2bec11375",
+        "identity": "64472@192.168.0.10",
+        "firstExecutionRunId": "02b59c2c-531e-41d6-9db5-37c2bec11375",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "priority": {}
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-10-17T05:04:06.575Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "queue-sales-agent"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-10-17T05:04:06.575Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "arrived",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJyZWNlaXZlZF9hdF9tcyI6MTc4OTk5MjAwMDAwMCwid29ya2Zsb3dfaWQiOiJpbmJvdW5kLXdhbWlkLkZJWFRVUkUuQSJ9"
+            }
+          ]
+        },
+        "identity": "64472@192.168.0.10"
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-10-17T05:04:06.575Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "64472@192.168.0.10",
+        "historySizeBytes": "437"
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-10-17T05:04:06.586Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "64472@192.168.0.10",
+        "binaryChecksum": "61c7ac0b02e3eb92d71fe45666c4999a",
+        "sdkMetadata": {
+          "coreUsedFlags": [
+            2,
+            3,
+            1
+          ],
+          "sdkName": "temporal-python",
+          "sdkVersion": "1.25.0"
+        },
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-10-17T05:04:06.586Z",
+      "eventType": "EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED",
+      "signalExternalWorkflowExecutionInitiatedEventAttributes": {
+        "workflowTaskCompletedEventId": "4",
+        "namespace": "default",
+        "workflowExecution": {
+          "workflowId": "inbound-wamid.FIXTURE.A"
+        },
+        "signalName": "predecessor",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "IiI="
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-10-17T05:04:06.586Z",
+      "eventType": "EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED",
+      "externalWorkflowExecutionSignaledEventAttributes": {
+        "initiatedEventId": "6",
+        "namespace": "default",
+        "workflowExecution": {
+          "workflowId": "inbound-wamid.FIXTURE.A",
+          "runId": "17c4ddce-6b53-48c0-88ef-086f99ef55c6"
+        }
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-10-17T05:04:06.586Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "queue-sales-agent"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-10-17T05:04:06.586Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "64472@192.168.0.10",
+        "historySizeBytes": "840"
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-10-17T05:04:06.588Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "64472@192.168.0.10",
+        "binaryChecksum": "61c7ac0b02e3eb92d71fe45666c4999a",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-10-17T05:04:06.588Z",
+      "eventType": "EVENT_TYPE_TIMER_STARTED",
+      "timerStartedEventAttributes": {
+        "timerId": "2",
+        "startToFireTimeout": "600s",
+        "workflowTaskCompletedEventId": "9"
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-10-17T05:04:06.869Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED",
+      "workflowExecutionSignaledEventAttributes": {
+        "signalName": "arrived",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJyZWNlaXZlZF9hdF9tcyI6MTc4OTk5MjAwMTAwMCwid29ya2Zsb3dfaWQiOiJpbmJvdW5kLXdhbWlkLkZJWFRVUkUuQiJ9"
+            }
+          ]
+        },
+        "identity": "64472@192.168.0.10"
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-10-17T05:04:06.869Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "queue-sales-agent"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-10-17T05:04:06.869Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "13",
+        "identity": "64472@192.168.0.10",
+        "historySizeBytes": "1196"
+      }
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2026-10-17T05:04:06.872Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "13",
+        "identity": "64472@192.168.0.10",
+        "binaryChecksum": "61c7ac0b02e3eb92d71fe45666c4999a",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2026-10-17T05:04:06.872Z",
+      "eventType": "EVENT_TYPE_TIMER_CANCELED",
+      "timerCanceledEventAttributes": {
+        "timerId": "2",
+        "startedEventId": "11",
+        "workflowTaskCompletedEventId": "14"
+      }
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2026-10-17T05:04:06.872Z",
+      "eventType": "EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED",
+      "signalExternalWorkflowExecutionInitiatedEventAttributes": {
+        "workflowTaskCompletedEventId": "14",
+        "namespace": "default",
+        "workflowExecution": {
+          "workflowId": "inbound-wamid.FIXTURE.B"
+        },
+        "signalName": "predecessor",
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "ImluYm91bmQtd2FtaWQuRklYVFVSRS5BIg=="
+            }
+          ]
+        }
+      }
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2026-10-17T05:04:06.872Z",
+      "eventType": "EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED",
+      "externalWorkflowExecutionSignaledEventAttributes": {
+        "initiatedEventId": "17",
+        "namespace": "default",
+        "workflowExecution": {
+          "workflowId": "inbound-wamid.FIXTURE.B",
+          "runId": "30dc5f3c-d621-4adb-819e-e06bbf219fd5"
+        }
+      }
+    },
+    {
+      "eventId": "19",
+      "eventTime": "2026-10-17T05:04:06.872Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "queue-sales-agent"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "20",
+      "eventTime": "2026-10-17T05:04:06.873Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "19",
+        "identity": "64472@192.168.0.10",
+        "historySizeBytes": "1620"
+      }
+    },
+    {
+      "eventId": "21",
+      "eventTime": "2026-10-17T05:04:06.875Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "19",
+        "identity": "64472@192.168.0.10",
+        "binaryChecksum": "61c7ac0b02e3eb92d71fe45666c4999a",
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "22",
+      "eventTime": "2026-10-17T05:04:06.875Z",
+      "eventType": "EVENT_TYPE_TIMER_STARTED",
+      "timerStartedEventAttributes": {
+        "timerId": "3",
+        "startToFireTimeout": "600s",
+        "workflowTaskCompletedEventId": "20"
+      }
+    }
+  ]
+}

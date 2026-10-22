@@ -13,6 +13,9 @@ spec:
       labels:
         app: hubara-api
     spec:
+      # Apagado ordenado: el worker espera 30 s a sus activities
+      # (WORKER_GRACEFUL_SHUTDOWN); el default de k8s (30 s) lo cortaba.
+      terminationGracePeriodSeconds: 45
       containers:
         - name: api
           image: hubara-agency-prod:latest # Rellenar en CD con la URI real de ECR

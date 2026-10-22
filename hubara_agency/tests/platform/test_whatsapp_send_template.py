@@ -640,3 +640,33 @@ class TestSendTemplateStampsSendPolicy:
         assert policy["is_free"] is False  # sin ventanas abiertas
         # utility = 800 micros (estable entre co_2026q2 y q4).
         assert policy["expected_cost_micros"] == 800
+
+
+class TestAmbiguousSendErrors:
+    """Un timeout o un 504 de Meta son AMBIGUOS: la plantilla pudo salir y la
+    respuesta perderse (L-1). Se marcan con su propio tipo para que quien
+    reintenta con paciencia (el ETA) no mande el aviso N veces (premortem de
+    la Ola 0 de Temporal, 2026-10-16). Siguen siendo reintentables para los
+    demás, como antes."""
+
+    async def _raise_for(self, isolated_vault, monkeypatch, error: str) -> ApplicationError:
+        session_id = "wa_5491111111111"
+        _write_metadata(isolated_vault, session_id, {"phone_number_id": "PHONE", "episodes": []})
+        mock_send = AsyncMock(return_value=OutboundResult(wa_message_id=None, ok=False, error=error))
+        monkeypatch.setattr("src.platform.whatsapp.activities.whatsapp_client.send_template", mock_send)
+        with pytest.raises(ApplicationError) as exc_info:
+            await send_template_to_session(session_id, "quote_ready_utility_v2", {"product_or_quote_label": "y"})
+        return exc_info.value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", ["timeout: ReadTimeout('timed out')", 'http_504: {"error":"gateway timeout"}'])
+    async def test_an_ambiguous_failure_says_so(self, isolated_vault, monkeypatch, error: str) -> None:
+        exc = await self._raise_for(isolated_vault, monkeypatch, error)
+        assert exc.type == "TemplateSendAmbiguous"
+        assert exc.non_retryable is False
+
+    @pytest.mark.asyncio
+    async def test_a_safe_failure_keeps_its_type(self, isolated_vault, monkeypatch) -> None:
+        exc = await self._raise_for(isolated_vault, monkeypatch, 'http_503: {"error":"unavailable"}')
+        assert exc.type == "TemplateSendRetryable"
+        assert exc.non_retryable is False

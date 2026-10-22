@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.plugins.chats.inbound_entry_fakes import InlineInboundEntry
+
 _PHONE_ID = "100000000000001"
 _BSUID = "CO.9990000000000002"
 _ADDRESS = "CO9990000000000002"
@@ -59,7 +61,7 @@ def harness(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "WHATSAPP_APP_SECRET", "")
     monkeypatch.setattr(config, "HUBARA_ENV", "dev")
     ingest = _Ingest()
-    monkeypatch.setattr(api, "build_ingest_use_case", lambda: ingest)
+    monkeypatch.setattr(api, "build_inbound_entry", lambda: InlineInboundEntry(ingest))
     identity = FilesystemSenderIdentity(tmp_path / "_identity")
     monkeypatch.setattr(api, "build_sender_identity", lambda: identity)
     phones = FilesystemSenderIdentity(tmp_path / "_phones")

@@ -36,10 +36,12 @@ locals {
 
   # Nombre del proceso en CloudWatch → regex sobre la cmdline completa (procstat
   # `pattern`). Anclados con $ donde un nombre es prefijo de otro (sales vs
-  # sales_eval). La API corre uvicorn en un hijo `multiprocessing.spawn`.
+  # sales_eval). La API es `python run_api.py`: sin `reload` (ADR 2026-10-15)
+  # uvicorn atiende en ese mismo proceso; con `UVICORN_RELOAD=1` el patrón
+  # toma al supervisor (antes se medía el hijo `multiprocessing.spawn`).
   cw_processes = {
     litellm                = "bin/litellm "
-    api                    = "multiprocessing\\.spawn import spawn_main"
+    api                    = "run_api\\.py$"
     chats-sales            = "chats\\.workers\\.sales$"
     chats-sales_eval       = "chats\\.workers\\.sales_eval$"
     chats-remarketing      = "chats\\.workers\\.remarketing$"
@@ -184,6 +186,37 @@ resource "aws_cloudwatch_metric_alarm" "memory_low" {
   threshold           = var.memory_alarm_threshold_mb * 1024 * 1024
   # Congelada = el agente deja de mandar datos: eso también es la emergencia.
   treat_missing_data = "breaching"
+
+  alarm_actions = [aws_sns_topic.alarms[0].arn]
+  ok_actions    = [aws_sns_topic.alarms[0].arn]
+  tags          = { Tenant = var.tenant }
+}
+
+# ── Alarma: el worker de ventas dejó de reportar (caído o en crash loop) ─────
+# Desde la entrada durable (ADR 2026-10-15) ese worker ingiere TODOS los mensajes
+# de los clientes: caído, ni el bot ni el panel ni la App ven los mensajes nuevos
+# (esperan en Temporal hasta que vuelva). Sin proceso no hay métrica de RSS:
+# datos faltantes = alarma. 5 min para no sonar en un deploy normal. Dimensiones
+# tal como las publica el agente (InstanceId + process_name + pattern).
+resource "aws_cloudwatch_metric_alarm" "sales_worker_down" {
+  count             = var.use_local ? 0 : 1
+  alarm_name        = "agencyhubara-${var.tenant}-app-sales-worker-down"
+  alarm_description = "Caja de app ${var.tenant}: el worker chats-sales no reporta hace 5 min (caído o en crash loop). Los mensajes de los clientes esperan en Temporal sin llegar al bot ni al panel. Runbook: docs/adr/2026-10-15-durable-inbound-entry.md §Runbook."
+  namespace         = local.cw_namespace
+  metric_name       = "procstat_memory_rss"
+  dimensions = {
+    InstanceId   = aws_instance.app.id
+    process_name = "python"
+    pattern      = local.cw_processes["chats-sales"]
+  }
+
+  statistic           = "SampleCount"
+  period              = 60
+  evaluation_periods  = 5
+  datapoints_to_alarm = 5
+  comparison_operator = "LessThanThreshold"
+  threshold           = 1
+  treat_missing_data  = "breaching"
 
   alarm_actions = [aws_sns_topic.alarms[0].arn]
   ok_actions    = [aws_sns_topic.alarms[0].arn]

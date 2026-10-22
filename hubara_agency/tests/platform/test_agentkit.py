@@ -44,3 +44,13 @@ def test_agentkit_reexports_the_llm_activity_options() -> None:
 
     assert getattr(impl, "LLM_ACTIVITY_OPTIONS", None) is impl._LLM_OPTIONS
     assert getattr(kit, "LLM_ACTIVITY_OPTIONS", None) is impl._LLM_OPTIONS
+
+
+def test_agentkit_reexports_the_continue_as_new_rule() -> None:
+    """Cuándo una sesión hace continue-as-new (ventas V1/V2 y ETA): turnos del
+    run o sugerencia del servidor, detrás de su gate (auditoría de Temporal,
+    2026-10-15)."""
+    import src.platform.temporal.continue_as_new as impl
+    import src.sdk.agentkit as kit
+
+    assert getattr(kit, "continue_as_new_due", None) is impl.continue_as_new_due

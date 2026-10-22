@@ -9,6 +9,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.plugins.chats.inbound_entry_fakes import InlineInboundEntry
+
 from tests.plugins.chats import standby_payloads as P
 
 
@@ -30,7 +32,7 @@ def harness(monkeypatch):
     monkeypatch.setattr(config, "HUBARA_ENV", "dev")
     monkeypatch.setattr(config, "MBA_STANDBY_ENABLED", True)
     sales_ingest, standby_ingest, delivery = _Recorder(), _Recorder(), _Recorder()
-    monkeypatch.setattr(api, "build_ingest_use_case", lambda: sales_ingest)
+    monkeypatch.setattr(api, "build_inbound_entry", lambda: InlineInboundEntry(sales_ingest))
     monkeypatch.setattr(api, "build_ingest_standby_use_case", lambda: standby_ingest)
     monkeypatch.setattr(api, "build_ingest_delivery_status_use_case", lambda: delivery)
     monkeypatch.setattr(api, "build_ingest_handover_use_case", lambda: _HANDOVER)

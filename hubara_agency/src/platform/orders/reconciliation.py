@@ -749,4 +749,7 @@ def _rebuild_order_args(
         ]
         kwargs["coupon_code"] = str(record["coupon_code"])
         kwargs["discount_cop"] = int(record.get("discount_cop") or 0)
+    # Envío gratis de la campaña: el reintento lo registra igual (envío $0).
+    if isinstance(record.get("free_shipping"), dict):
+        kwargs["free_shipping"] = dict(record["free_shipping"])
     return items, shipping, kwargs
