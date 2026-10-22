@@ -1,6 +1,7 @@
 package com.hubara.operator.core.data.screens
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.serialization.json.JsonElement
 
 /**
@@ -13,4 +14,10 @@ interface AppSource {
     fun observe(params: Map<String, String>): Flow<JsonElement>
 
     suspend fun refresh(params: Map<String, String>): Result<Unit> = Result.success(Unit)
+
+    /**
+     * Cuando la fuente se renueva sola, sin que la pantalla la pida (la bandeja por el tiempo real o por el respaldo de la
+     * sincronización): true = llegó del servidor; false = no se pudo. La pantalla lo usa para `{{status.<id>.failed}}`.
+     */
+    fun renewals(params: Map<String, String>): Flow<Boolean> = emptyFlow()
 }

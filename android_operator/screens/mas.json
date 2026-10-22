@@ -62,6 +62,22 @@
       ]
     },
     {
+      "type": "section",
+      "title": "Este teléfono",
+      "children": [
+        {
+          "type": "list",
+          "children": [
+            {
+              "type": "list_item", "icon": "refresh", "icon_tone": "success", "chevron": true,
+              "title": "Sincronización", "subtitle": "Si los mensajes llegan en vivo y cuánto tardan",
+              "action": { "type": "navigate", "screen": "sincronizacion" }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "type": "text", "style": "caption", "tone": "muted", "align": "center",
       "text": "Estas pantallas las arma el servidor: se agregan o cambian sin publicar otra versión de la app."
     }

@@ -10,6 +10,10 @@ import kotlinx.serialization.json.JsonObject
 @Serializable
 data class SessionsResponse(val sessions: List<ChatSessionDto> = emptyList())
 
+/** `chats.sessions_delta`: las filas de la bandeja que cambiaron y los chats que ya no están. */
+@Serializable
+data class SessionsDeltaDto(val sessions: List<ChatSessionDto> = emptyList(), val removed: List<String> = emptyList())
+
 @Serializable
 data class OrderRefDto(
     @SerialName("order_id") val orderId: String,

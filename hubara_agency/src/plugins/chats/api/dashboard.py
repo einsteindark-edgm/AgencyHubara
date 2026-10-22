@@ -284,6 +284,7 @@ def _compute_order_ref(data: dict, order_facts) -> dict | None:
 
 _SAMPLE_INTERVAL_S = 2.5
 _HEARTBEAT_S = 25.0
+_STATS_EVERY_S = 300.0
 _sampler_task: asyncio.Task | None = None
 
 
@@ -433,36 +434,142 @@ def ensure_sampler() -> None:
         _sampler_task = asyncio.get_running_loop().create_task(_sampler_loop())
 
 
-async def dashboard_events_generator():
+# ── Lo que recibe cada cliente (app móvil, 2026-10-21) ──────────────────────
+#
+# Con 581 chats la bandeja completa pesa ~380 KB y sale en cada tick con
+# cambios: un teléfono en 4G no da abasto, su cola se llena de bandejas viejas
+# y lo nuevo le llegaba minutos tarde (la app decía «Sin conexión» mientras la
+# web iba al día). Por eso:
+#   - de lo que espera en la cola de un cliente se manda solo la bandeja MÁS
+#     NUEVA (las viejas ya no sirven) y un solo `session_updated` por sesión;
+#   - `?inbox=delta` (la app): la bandeja completa al conectar y después solo
+#     las filas que cambiaron respecto de lo último que recibió ESTE cliente,
+#     más las que ya no están (`chats.sessions_delta`). Comparar contra lo
+#     enviado (y no contra el tick anterior) no pierde nada aunque se omitan
+#     bandejas. La web sigue con la bandeja completa.
+#   - cada conexión deja en el log su modo, lo que mandó y cuánto se atrasó.
+
+_INBOX_MODES = {"snapshot": "bandeja completa", "delta": "cambios"}
+
+
+def _is_inbox(event: DashboardEvent) -> bool:
+    return event.domain == "chats" and event.type == "sessions_snapshot"
+
+
+def _drain(queue: asyncio.Queue) -> list[DashboardEvent]:
+    events: list[DashboardEvent] = []
+    while True:
+        try:
+            events.append(queue.get_nowait())
+        except asyncio.QueueEmpty:
+            return events
+
+
+def _coalesce(events: list[DashboardEvent]) -> tuple[list[DashboardEvent], int]:
+    """(lo que se manda, bandejas viejas omitidas). Los demás eventos van tal cual y en orden."""
+    inboxes = [i for i, event in enumerate(events) if _is_inbox(event)]
+    newest = inboxes[-1] if inboxes else None
+    updated: set[str | None] = set()
+    kept: list[DashboardEvent] = []
+    for i, event in enumerate(events):
+        if _is_inbox(event) and i != newest:
+            continue
+        if event.domain == "chats" and event.type == "session_updated":
+            if event.id in updated:
+                continue
+            updated.add(event.id)
+        kept.append(event)
+    return kept, max(0, len(inboxes) - 1)
+
+
+def _inbox_rows(snapshot: dict | None) -> dict[str, dict]:
+    sessions = (snapshot or {}).get("sessions") or []
+    return {row["session_id"]: row for row in sessions if isinstance(row, dict) and "session_id" in row}
+
+
+def _inbox_delta(sent: dict[str, dict], snapshot: dict | None) -> tuple[dict | None, dict[str, dict]]:
+    """(cambios respecto de lo enviado o None si no hay, filas que el cliente tiene después)."""
+    rows = _inbox_rows(snapshot)
+    changed = [row for session_id, row in rows.items() if sent.get(session_id) != row]
+    removed = sorted(session_id for session_id in sent if session_id not in rows)
+    if not changed and not removed:
+        return None, rows
+    return {"sessions": changed, "removed": removed}, rows
+
+
+class _StreamStats:
+    """Lo que mandó una conexión, para el log: modo, eventos, KB, bandejas omitidas y el mayor retraso en cola."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.opened = time.monotonic()
+        self.logged = self.opened
+        self.events = 0
+        self.bytes = 0
+        self.skipped = 0
+        self.max_lag_ms = 0
+
+    def sent(self, event: DashboardEvent) -> bytes:
+        chunk = event.to_sse().encode()
+        self.events += 1
+        self.bytes += len(chunk)
+        self.max_lag_ms = max(self.max_lag_ms, int(time.time() * 1000) - event.ts_ms)
+        return chunk
+
+    def summary(self) -> str:
+        return (
+            f"{_INBOX_MODES[self.mode]}, {round(time.monotonic() - self.opened)} s: {self.events} eventos, "
+            f"{self.bytes // 1024} KB, {self.skipped} bandejas viejas omitidas, retraso máx {self.max_lag_ms} ms"
+        )
+
+
+async def dashboard_events_generator(inbox: str = "snapshot"):
     ensure_sampler()
     bus = get_dashboard_event_bus()
     queue = bus.subscribe()
+    stats = _StreamStats(inbox if inbox in _INBOX_MODES else "snapshot")
+    logger.info("sse: conexión abierta ({}, {} conectados)", _INBOX_MODES[stats.mode], bus.subscriber_count)
     try:
         # Snapshot inicial: el cliente pinta al conectar (o RE-conectar tras un
         # corte) sin esperar el primer cambio del vault.
         snapshot = await list_dashboard_sessions()
-        yield DashboardEvent(
+        sent_rows = _inbox_rows(snapshot)
+        yield stats.sent(DashboardEvent(
             domain="chats",
             type="sessions_snapshot",
             payload=snapshot,
             ts_ms=int(time.time() * 1000),
-        ).to_sse()
+        ))
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
+                first = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
             except asyncio.TimeoutError:
-                yield ": ping\n\n"
+                yield b": ping\n\n"
                 continue
-            yield event.to_sse()
+            batch, skipped = _coalesce([first, *_drain(queue)])
+            stats.skipped += skipped
+            for event in batch:
+                if stats.mode == "delta" and _is_inbox(event):
+                    delta, sent_rows = _inbox_delta(sent_rows, event.payload)
+                    if delta is None:
+                        continue
+                    event = DashboardEvent(domain="chats", type="sessions_delta", payload=delta, ts_ms=event.ts_ms)
+                yield stats.sent(event)
+            if time.monotonic() - stats.logged >= _STATS_EVERY_S:
+                stats.logged = time.monotonic()
+                logger.info("sse: conexión viva ({})", stats.summary())
     finally:
         bus.unsubscribe(queue)
+        logger.info("sse: conexión cerrada ({})", stats.summary())
 
 
 @router.get("/events")
-async def stream_dashboard_events():
-    """SSE multiplexado del dashboard — eventos por dominio, no snapshots ciegos."""
+async def stream_dashboard_events(inbox: str = "snapshot"):
+    """SSE multiplexado del dashboard — eventos por dominio, no snapshots ciegos.
+
+    `inbox=delta` (la app): después de la bandeja inicial, solo los cambios (`chats.sessions_delta`)."""
     return StreamingResponse(
-        dashboard_events_generator(),
+        dashboard_events_generator(inbox),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

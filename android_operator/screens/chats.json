@@ -1,6 +1,6 @@
 {
   "$schema": "./screen.schema.json",
-  "_nota": "La bandeja. Los chats salen de Room (al día por el SSE) con lo no leído de este teléfono; cada filtro es un campo verdadero/falso de la fila.",
+  "_nota": "La bandeja. Los chats salen de Room (al día por el SSE) con lo no leído de este teléfono; cada filtro es un campo verdadero/falso de la fila. «Sin conexión» sale solo si la bandeja no llega ni por el tiempo real ni por el servidor; tirar hacia abajo la pide ya.",
   "schema": 1,
   "id": "chats",
   "title": "Chats",
@@ -37,7 +37,7 @@
       ]
     },
     { "type": "notifications_banner" },
-    { "type": "notice", "tone": "danger", "text": "Sin conexión: mostrando lo último guardado.", "visible": "{{status.chats.failed}}" },
+    { "type": "notice", "tone": "danger", "text": "Sin conexión: mostrando lo último guardado. Desliza hacia abajo para reintentar.", "visible": "{{status.chats.failed}}" },
     {
       "type": "list", "items": "{{filas}}", "as": "c", "key": "{{c.session_id}}", "style": "plain",
       "item": {

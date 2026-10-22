@@ -52,6 +52,8 @@ data class ChatUiState(
     val error: String? = null,
     /** Qué va donde va el historial: los mensajes, «Cargando…» o el error con reintentar. */
     val history: HistoryView = HistoryView.MESSAGES,
+    /** El operador tiró hacia abajo y se está pidiendo la conversación al servidor. */
+    val refreshing: Boolean = false,
 )
 
 /** Cómo va la carga del historial desde el backend. */
@@ -90,11 +92,12 @@ class ChatViewModel @AssistedInject constructor(
     private val busy = MutableStateFlow(false)
     private val error = MutableStateFlow<String?>(null)
     private val load = MutableStateFlow(HistoryLoad.LOADING)
+    private val pulling = MutableStateFlow(false)
     private val watch = sync.watch(sessionId)
 
     val state: StateFlow<ChatUiState> = combine(
-        chats.observeChat(sessionId), suggestions.observe(sessionId), busy, error, load,
-    ) { chat, set, b, e, l ->
+        chats.observeChat(sessionId), suggestions.observe(sessionId), combine(busy, pulling) { b, p -> b to p }, error, load,
+    ) { chat, set, (b, pulled), e, l ->
         val human = chat.route == Route.HUMAN
         ChatUiState(
             phone = chat.phone,
@@ -114,6 +117,7 @@ class ChatViewModel @AssistedInject constructor(
             busy = b,
             error = e,
             history = historyLoad(l, hasMessages = chat.messages.isNotEmpty()),
+            refreshing = pulled,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(history = HistoryView.LOADING))
 
@@ -141,8 +145,26 @@ class ChatViewModel @AssistedInject constructor(
             val failed = chats.refresh(sessionId).isFailure
             load.value = if (failed) HistoryLoad.FAILED else HistoryLoad.LOADED
             // Sin nada guardado, el error con reintentar ya lo dice; con mensajes, el aviso de que son los guardados.
-            if (failed && chats.observeChat(sessionId).first().messages.isNotEmpty()) error.value = "Sin conexión: mostrando lo último guardado."
+            if (failed && chats.observeChat(sessionId).first().messages.isNotEmpty()) error.value = OFFLINE
             suggestions.refresh(sessionId)
+        }
+    }
+
+    /** Tirar hacia abajo: la conversación al servidor ya y, si el tiempo real esperaba para reconectar, que reconecte. */
+    fun pull() {
+        if (pulling.value) return
+        viewModelScope.launch {
+            pulling.value = true
+            sync.reconnectNow()
+            val failed = chats.refresh(sessionId).isFailure
+            if (failed) {
+                error.value = OFFLINE
+            } else {
+                load.value = HistoryLoad.LOADED
+                if (error.value == OFFLINE) error.value = null
+            }
+            suggestions.refresh(sessionId)
+            pulling.value = false
         }
     }
 
@@ -192,3 +214,5 @@ class ChatViewModel @AssistedInject constructor(
         fun create(sessionRaw: String): ChatViewModel
     }
 }
+
+private const val OFFLINE = "Sin conexión: mostrando lo último guardado. Desliza hacia abajo para reintentar."

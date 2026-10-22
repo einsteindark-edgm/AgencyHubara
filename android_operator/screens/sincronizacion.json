@@ -1,0 +1,40 @@
+{
+  "$schema": "./screen.schema.json",
+  "_nota": "Cómo va el tiempo real en ESTE teléfono (fuente del teléfono `sync`): si los mensajes llegan en vivo, cuánto tardan y los cortes. Tirar hacia abajo reconecta y trae la bandeja del servidor. El mismo rastro queda en `adb logcat -s HubaraSync` y, en el servidor, en las líneas «sse: conexión …» del log del API.",
+  "schema": 1,
+  "id": "sincronizacion",
+  "title": "Sincronización",
+  "requires": 2,
+  "data": {
+    "sync": { "app": "sync" }
+  },
+  "body": [
+    { "type": "notice", "tone": "{{sync.tone}}", "title": "{{sync.state_label}}", "text": "{{sync.detail}}" },
+    {
+      "type": "grid", "columns": 2,
+      "children": [
+        { "type": "stat", "icon": "schedule", "label": "Último evento", "value": "{{sync.last_event}}" },
+        { "type": "stat", "icon": "bolt", "label": "Tardó en llegar", "value": "{{sync.lag}}", "caption": "Máximo: {{sync.max_lag}}" }
+      ]
+    },
+    {
+      "type": "section", "title": "Desde que abriste la app",
+      "children": [
+        {
+          "type": "card",
+          "children": [
+            { "type": "key_value", "label": "EVENTOS RECIBIDOS", "value": "{{sync.events | number}}" },
+            { "type": "key_value", "label": "DATOS RECIBIDOS", "value": "{{sync.data}}" },
+            { "type": "key_value", "label": "CORTES", "value": "{{sync.cuts | number}}" },
+            { "type": "key_value", "label": "ÚLTIMO CORTE", "value": "{{sync.last_error}}" },
+            { "type": "key_value", "label": "BANDEJA PEDIDA AL SERVIDOR", "value": "{{sync.refresh}}" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "text", "style": "caption", "tone": "muted", "align": "center",
+      "text": "Desliza hacia abajo para reconectar y traer la bandeja del servidor."
+    }
+  ]
+}

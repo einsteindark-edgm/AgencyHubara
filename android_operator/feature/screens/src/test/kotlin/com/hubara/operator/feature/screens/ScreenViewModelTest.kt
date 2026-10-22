@@ -60,6 +60,8 @@ class ScreenViewModelTest {
     private var chatsGate: CompletableDeferred<Unit>? = null
     private var nativeGate: CompletableDeferred<Unit>? = null
     private var refreshes = 0
+    /** La bandeja que se renueva sola (el tiempo real o el respaldo de la sincronización). */
+    private val chatsRenewals = MutableSharedFlow<Boolean>()
     private val nativeCalls = mutableListOf<Pair<String, JsonObject>>()
     private var nativeOutcome: NativeOutcome = NativeOutcome.Done
     private val appSources: Map<String, AppSource> = mapOf(
@@ -70,6 +72,8 @@ class ScreenViewModelTest {
                 chatsGate?.await()
                 return chatsRefresh
             }
+
+            override fun renewals(params: Map<String, String>) = chatsRenewals
         },
         "chat" to object : AppSource {
             override fun observe(params: Map<String, String>) = flowOf(json("""{"title": "chat de ${params["session"]}"}"""))
@@ -211,6 +215,38 @@ class ScreenViewModelTest {
         assertThat(vm.state.value.broken).isFalse()
         val scope = vm.state.value.scope(NOW)
         assertThat(Template.parse("{{status.chats.failed}}").evaluate(scope)).isEqualTo(JsonPrimitive(true))
+    }
+
+    private fun ScreenViewModel.offline(): Boolean =
+        Template.parse("{{status.chats.failed}}").evaluate(state.value.scope(NOW)) == JsonPrimitive(true)
+
+    @Test fun el_aviso_de_sin_conexion_se_va_cuando_la_bandeja_llega_sola() = runTest {
+        // Caso 2026-10-21: una recarga que falló al abrir dejaba «Sin conexión» para siempre, aunque el tiempo real
+        // siguiera trayendo la bandeja al día.
+        chatsRefresh = Result.failure(ScreenCallError(0, "Sin conexión con el servidor."))
+        docs.fresh["chats"] = CHATS
+        val vm = vm("chats")
+        assertThat(vm.offline()).isTrue()
+
+        chatsRenewals.emit(true)
+        assertThat(vm.offline()).isFalse()
+
+        // Sin tiempo real y sin respaldo: vuelve el aviso.
+        chatsRenewals.emit(false)
+        assertThat(vm.offline()).isTrue()
+    }
+
+    @Test fun la_bandeja_que_llega_sola_cuenta_como_cargada() = runTest {
+        chatsFlow.value = json("[]")
+        chatsGate = CompletableDeferred()  // la recarga del inicio no termina
+        docs.fresh["chats"] = CHATS
+        val vm = vm("chats")
+        assertThat(vm.state.value.waiting).isTrue()
+
+        chatsRenewals.emit(true)
+
+        assertThat(vm.state.value.waiting).isFalse()
+        assertThat(vm.state.value.data["chats"]).isEqualTo(json("[]"))
     }
 
     @Test fun una_fuente_del_telefono_con_parametros() = runTest {

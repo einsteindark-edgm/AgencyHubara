@@ -55,6 +55,7 @@ class SyncAndFiresTest {
             suggestions = suggestions,
             fires = fires,
             orders = OrderRepository(OperatorService(api)),
+            clock = { 5L },
         )
     }
 
