@@ -87,6 +87,21 @@ def test_a_date_with_a_time_is_an_error(tmp_path: Path) -> None:
         sc.load_campaigns(tmp_path)
 
 
+def test_the_velitas_script_says_they_are_not_personalized_nor_made_in_other_shapes_this_year() -> None:
+    """Operador, 2026-10-22: «están pidiendo mucho personalizarla con nombre».
+    Este año no se personalizan ni se hacen otras formas: solo los diseños que
+    le mostramos, y el bot le vende el diseño actual con lo que dice su ficha
+    («No se personalizan» está en la descripción de Medusa). Es el archivo
+    vivo: lo que recibe Ventas en producción."""
+    (velitas,) = [c for c in sc.load_campaigns() if c.id == "velitas-7-dic"]
+
+    note = sc.sales_note(velitas, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES)
+
+    line = next((x for x in note.splitlines() if "personaliz" in x), "")
+    assert "este año" in line and "otra forma" in line and "disponibles" in line
+    assert "ficha" in line and "propuesta concreta" in line
+
+
 def test_a_campaign_file_does_not_write_prices() -> None:
     """Los precios salen del catálogo; uno escrito en el YAML se desfasa de Medusa."""
     for path in [*sc.CAMPAIGNS_DIR.glob("*.yaml"), *FIXTURES.glob("*.yaml")]:
