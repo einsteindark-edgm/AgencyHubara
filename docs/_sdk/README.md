@@ -31,6 +31,7 @@
 | [16-labkit.md](16-labkit.md) | `labkit`: laboratorio de conversaciones — almacén S3 (`bench/`, `orders/`, `runs/`) y lanzador de la caja por SSM | 2026-09-23 |
 | [17-decisionkit.md](17-decisionkit.md) | `decisionkit`: paquetes de decisión — capacidades del motor como YAML tipado + CEL, certificadas con `decisions check` | 2026-10-01 |
 | [18-identitykit.md](18-identitykit.md) | `identitykit`: quién es el cliente de WhatsApp — teléfono o id de Meta (BSUID) sin teléfono; PURO (lo usa el parser del webhook) | 2026-10-09 |
+| [19-tenantkit.md](19-tenantkit.md) | `tenantkit`: de qué tienda es cada cosa — `current_tenant()` / `tenant_scope()`; la celda no tiene tienda por defecto (Acktos Stores, F1.1) | 2026-10-22 |
 
 ## El mapa mental en 30 segundos
 
