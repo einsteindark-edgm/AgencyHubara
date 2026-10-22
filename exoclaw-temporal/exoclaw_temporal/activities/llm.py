@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 
 import litellm
 import structlog
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from temporalio import activity
 
-from exoclaw_temporal.config import LLMChatInput, LLMResponseData, ToolCallData
+from exoclaw_temporal.config import LLMChatInput, LLMConfig, LLMResponseData, ToolCallData
 
 logger = structlog.get_logger()
 
@@ -85,6 +87,23 @@ def _detach_baggage(token) -> None:
         pass
 
 
+def _api_key(llm: LLMConfig) -> str | None:
+    """La llave de la llamada, para el principal y el respaldo: la del payload
+    si la trae (inputs agendados antes de que la llave saliera del payload), si
+    no la de la variable ``api_key_env`` del entorno del worker."""
+    if llm.api_key:
+        return llm.api_key
+    if not llm.api_key_env:
+        return None
+    key = os.environ.get(llm.api_key_env)
+    if not key:
+        # Sin llave, `litellm_proxy/` falla en el cliente si el proceso no tiene
+        # `OPENAI_API_KEY`: el worker mal configurado se ve acá, con el nombre
+        # de la variable.
+        logger.warning("llm_api_key_missing", env=llm.api_key_env, model=llm.model)
+    return key or None
+
+
 async def _chat(
     provider: LiteLLMProvider,
     input: LLMChatInput,
@@ -155,9 +174,39 @@ async def _chat_with_fallback(provider: LiteLLMProvider, input: LLMChatInput):
         )
 
 
+#: Cada cuánto late `llm_chat` mientras espera al modelo (el workflow le pone
+#: `heartbeat_timeout`: si el worker muere a mitad de la llamada, el reintento
+#: sale en segundos y no al vencer el `start_to_close` de 5 min).
+_HEARTBEAT_EVERY_S: float = 10
+
+
+async def _heartbeat_loop() -> None:
+    # El primer latido sale al primer intervalo, no al arrancar: cada heartbeat
+    # que llega al servidor es una acción facturable de Temporal Cloud, y una
+    # respuesta que tarda menos que el intervalo no necesita ninguno.
+    while True:
+        await asyncio.sleep(_HEARTBEAT_EVERY_S)
+        activity.heartbeat()
+
+
 @activity.defn
 async def llm_chat(input: LLMChatInput) -> LLMResponseData:
-    """Call the LLM. Runs as a Temporal activity so it's retried on failure."""
+    """Call the LLM. Runs as a Temporal activity so it's retried on failure.
+
+    Heartbeats every ``_HEARTBEAT_EVERY_S`` while the model thinks (same pattern
+    as ``execute_tool``); outside an activity (direct calls in tests) it doesn't.
+    """
+    heartbeat_task = asyncio.create_task(_heartbeat_loop()) if activity.in_activity() else None
+    try:
+        return await _llm_chat(input)
+    finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+
+
+async def _llm_chat(input: LLMChatInput) -> LLMResponseData:
     # HU-003: attach del baggage (session.id/episode.id/whatsapp.number) ANTES del
     # LLM call, para que el span gen_ai de OpenLIT lo reciba como atributos
     # (atribución de costo por conversación). Temporal NO propaga baggage
@@ -165,7 +214,7 @@ async def llm_chat(input: LLMChatInput) -> LLMResponseData:
     _baggage_token = _attach_baggage(input.baggage)
     try:
         provider = _CacheAwareLiteLLMProvider(
-            api_key=input.llm.api_key,
+            api_key=_api_key(input.llm),
             api_base=input.llm.api_base,
             default_model=input.llm.model,
             extra_headers=input.llm.extra_headers or None,

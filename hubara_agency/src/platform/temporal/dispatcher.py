@@ -15,6 +15,7 @@ from datetime import timedelta
 
 from temporalio import activity
 from temporalio.client import WorkflowExecutionStatus
+from temporalio.common import WorkflowIDConflictPolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError
 
@@ -22,7 +23,7 @@ from src.platform.config import WORKSPACE_VAULT_DIR
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.contracts import ScheduleRemarketingDecision, TransferDecision
 from src.platform.state import FilesystemMetadataStore
-from src.platform.temporal.client import get_temporal_client
+from src.platform.temporal.client import get_activity_temporal_client, get_temporal_client
 
 
 def _append_pending_handoff(session_id: str, summary: str) -> None:
@@ -108,27 +109,21 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
     # 2. Asegurar Sales workflow RUNNING. No signaleamos nada — el handoff
     #    viaja por metadata, no por signal. Si Sales ya corre, no hace falta
     #    hacer nada mas: su loop principal lee metadata en cada iteracion. Si
-    #    no corre, arrancamos uno nuevo (idempotente vs WorkflowAlreadyStartedError).
+    #    no corre, arrancamos uno nuevo. UN start con USE_EXISTING: el server
+    #    decide atómicamente (antes describe → start, con carrera en el medio).
     #
     # ADR-2026-05-20: dispatch por string del manifest (NO importamos
     # HubaraSalesSessionWorkflow). El input también se construye como dict —
     # Temporal lo deserializa al SalesSessionInput type hint del worker target.
     # ``runtime_workspace_path`` se omite del input: el bootstrap activity
     # del worker target lo resuelve via fallback a su config local.
-    client = await get_temporal_client()
+    client = await get_activity_temporal_client(fallback=get_temporal_client)
     workflow_id = f"session-{session_id}"
 
-    try:
-        handle = client.get_workflow_handle(workflow_id)
-        desc = await handle.describe()
-        if desc.status == WorkflowExecutionStatus.RUNNING:
-            return  # ya corre, bootstrap no se reejecuta pero el refresh
-                    # per-iteration vera el handoff
-    except (RPCError, RuntimeError):
-        pass
-
     # La versión del workflow por conversación la decide el plugin (motor de
-    # decisiones F2/F7); sin enrutador, la del manifiesto.
+    # decisiones F2/F7); sin enrutador, la del manifiesto. Si Ventas ya corre,
+    # USE_EXISTING la deja como está (una conversación viva no cambia de
+    # versión) y su refresh per-iteration verá el handoff.
     from src.platform.workflow_routing import route_workflow
 
     workflow_name = route_workflow("chats", "sales", get_workflow_name("chats", "sales"), session_id=session_id)
@@ -138,10 +133,11 @@ async def start_or_signal_sales_workflow_activity(decision: TransferDecision) ->
             {"session_id": session_id},
             id=workflow_id,
             task_queue=get_task_queue("chats", "sales"),
+            id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
         )
     except WorkflowAlreadyStartedError:
-        # Race entre el describe y el start_workflow — alguien mas lo arranco.
-        # Esta bien: ese workflow tambien leera el handoff de metadata.
+        # Solo con un server que no honre `id_conflict_policy` (FAIL): ya
+        # corre, y ese workflow tambien leera el handoff de metadata.
         pass
 
 
@@ -161,13 +157,16 @@ async def start_remarketing_for_session(
         elige Remarketing como destino).
 
     Maneja el caso zombie: si ya existe un Remarketing previo RUNNING para la
-    misma sesion, lo terminamos antes de arrancar el nuevo (los `start_workflow`
-    son deliberados — siempre queremos reemplazar la sesion previa).
+    misma sesion, se reemplaza (los `start_workflow` son deliberados — siempre
+    queremos reemplazar la sesion previa). UN start con
+    ``id_conflict_policy=TERMINATE_EXISTING``: el server termina el previo y
+    arranca el nuevo atómicamente — antes eran describe → terminate → start,
+    con carrera entre cada RPC. Compatible con ``start_delay``: el previo se
+    termina ya y el nuevo espera su delay.
 
-    Race: entre el `terminate` y el `start_workflow` otro caller podría arrancar
-    el mismo workflow_id. Capturamos `WorkflowAlreadyStartedError` por simetría
-    con `start_or_signal_sales_workflow_activity` — si ya hay uno corriendo, lo
-    aceptamos como buen estado y seguimos.
+    ``WorkflowAlreadyStartedError`` solo puede venir de un server que no honre
+    ``id_conflict_policy`` (lo trata como FAIL): se loguea y la sesión queda
+    cubierta por el que ya corre, como antes ante la carrera.
 
     ADR-2026-05-20: dispatch por nombre desde el manifest. NO importa
     ``RemarketingSessionWorkflow``, NO importa ``RemarketingSessionInput`` —
@@ -183,27 +182,6 @@ async def start_remarketing_for_session(
     workflow_id = f"remarketing-{session_id}"
     delay = timedelta(seconds=delay_seconds)
 
-    try:
-        existing = client.get_workflow_handle(workflow_id)
-        desc = await existing.describe()
-        if desc.status == WorkflowExecutionStatus.RUNNING:
-            try:
-                await existing.terminate(
-                    reason="Reemplazado por nuevo start_remarketing_for_session"
-                )
-            except Exception as e:
-                # El workflow puede haber completado/terminado entre describe y
-                # terminate (race). No nos importa: igual vamos a intentar
-                # start_workflow abajo.
-                log.info(
-                    "start_remarketing: terminate race",
-                    workflow_id=workflow_id,
-                    error=str(e),
-                )
-    except RPCError:
-        # No existe — ok, arranca limpio.
-        pass
-
     workflow_name = get_workflow_name("chats", "remarketing")
     try:
         await client.start_workflow(
@@ -212,12 +190,11 @@ async def start_remarketing_for_session(
             id=workflow_id,
             task_queue=get_task_queue("chats", "remarketing"),
             start_delay=delay if delay > timedelta(seconds=0) else None,
+            id_conflict_policy=WorkflowIDConflictPolicy.TERMINATE_EXISTING,
         )
     except WorkflowAlreadyStartedError:
-        # Race: alguien arrancó un workflow con el mismo ID entre nuestro
-        # terminate y el start_workflow. Aceptable — la sesión está cubierta.
         log.info(
-            "start_remarketing: workflow already started (race after terminate)",
+            "start_remarketing: workflow already started (server sin id_conflict_policy)",
             workflow_id=workflow_id,
         )
 
@@ -290,7 +267,7 @@ async def schedule_remarketing_workflow_activity(decision: ScheduleRemarketingDe
     cuando el tag era INTERESADO. Delega en `start_remarketing_for_session`
     (helper reusable desde HTTP también).
     """
-    client = await get_temporal_client()
+    client = await get_activity_temporal_client(fallback=get_temporal_client)
     await start_remarketing_for_session(
         client,
         session_id=decision.session_id,

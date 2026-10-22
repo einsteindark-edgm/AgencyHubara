@@ -55,6 +55,11 @@ export interface Order {
   /** `true` cuando `shipping` es el valor real que fijó el operador al
    *  marcar "en camino"; `false` = tarifa mínima estimada del registro. */
   shippingConfirmed?: boolean;
+  /** Envío gratis (6 cajas o más de una campaña): el cliente no paga envío. */
+  freeShipping?: boolean;
+  /** Lo que la tienda paga por el envío de un pedido con envío gratis (el
+   *  valor real del despacho); `null` = todavía no se escribió. */
+  storeShippingCost?: number | null;
   dueIso: string;
   dueTime: string;
   overdue?: boolean;

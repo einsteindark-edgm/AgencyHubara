@@ -40,11 +40,15 @@ anti-patrón que esta separación previene.
   frontend reconcilia con un poll lento de fallback.
 - **`DashboardEvent`** es un `@dataclass(frozen=True)` JSON-safe (`domain`,
   `type`, `id?`, `payload?`, `ts_ms`) con `to_sse()`. `domain` es un string
-  **opaco** que el plugin elige (`"chats" | "orders" | "eta" | "catalog"`) —
-  R-DIP: platform no conoce los plugins.
+  **opaco** que el plugin elige (`"chats" | "orders" | "eta" | "catalog" |
+  "ads" | "marketing"`) — R-DIP: platform no conoce los plugins.
 - **Los workers Temporal NO publican acá** (viven en otros contenedores). Sus
   mutaciones llegan al dashboard por el diff del vault compartido, que el
-  sampler de `chats/api/dashboard.py` detecta y republica al bus.
+  sampler de `chats/api/dashboard.py` detecta y republica al bus. Un plugin
+  cuyo worker escribe archivos propios en el vault trae su propio sampler en
+  la API: `marketing/campaign_events.py` mira `_campaigns/*.json` (solo
+  `stat`) y publica `marketing / campaign_updated` con el id de la campaña
+  que cambió — así el avance de un envío se ve en segundos.
 
 ### Límite consciente (no es un bug)
 

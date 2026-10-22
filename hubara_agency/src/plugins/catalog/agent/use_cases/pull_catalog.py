@@ -6,6 +6,7 @@ MedusaProductService.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Iterable
@@ -20,6 +21,8 @@ from src.platform.catalog.dtos import (
 )
 from src.platform.medusa.models import MedusaCollection, MedusaProduct
 from src.platform.medusa.service import MedusaProductService
+
+logger = logging.getLogger(__name__)
 
 
 # Collections de Medusa cuyos productos SI entran al catalogo conversacional.
@@ -127,7 +130,7 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
             for v in mp.variants
         ],
         images=[CatalogImageDTO(url=i.url, rank=i.rank) for i in mp.images],
-        tags=[t.value for t in mp.tags],
+        tags=_without_foreign_color_tags([t.value for t in mp.tags], product_options),
         categories=[c.handle or c.name for c in mp.categories],
         # slug → nombre real. El slug es lo que matchea el resolver; el nombre
         # es lo que se le muestra al cliente ("Velas Aromáticas", con tilde).
@@ -143,6 +146,43 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
         ),
         dimensions=_dimensions(mp),
     )
+
+
+#: Títulos de la opción de Medusa que es el color del producto (los mismos
+#: que lee el bot en `chats/.../product_options.py`).
+_COLOR_OPTION_TITLES = frozenset({"color", "colores"})
+_COLOR_TAG = "color:"
+
+
+def _key(value: str) -> str:
+    return " ".join(str(value).lower().split())
+
+
+def _without_foreign_color_tags(
+    tags: list[str], options: dict[str, list[str]] | None
+) -> list[str]:
+    """Con una opción «Color» real (dos valores o más), una etiqueta «Color:»
+    que no es uno de sus valores es de plantilla y no entra al snapshot
+    (2026-10-17/18: las cajas de velas de deseos con 11 colores de los
+    velones). Sin esa opción, las etiquetas son el color del producto."""
+    real = next(
+        (values for title, values in (options or {}).items()
+         if _key(title) in _COLOR_OPTION_TITLES and len(values) >= 2),
+        None,
+    )
+    if real is None:
+        return tags
+    allowed = {_key(v) for v in real}
+    kept = [
+        t for t in tags
+        if not _key(t).startswith(_COLOR_TAG) or _key(t)[len(_COLOR_TAG):].strip() in allowed
+    ]
+    if len(kept) != len(tags):
+        logger.warning(
+            "catalog_sync.color_tags_ignored: %d etiquetas «Color:» contradicen la opción Color (%s)",
+            len(tags) - len(kept), ", ".join(real),
+        )
+    return kept
 
 
 def _dimensions(mp: MedusaProduct) -> CatalogDimensionsDTO | None:

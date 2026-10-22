@@ -388,6 +388,23 @@ instantáneamente.)
 > debe validar que category=marketing trae `confirm_marketing_send=True`
 > en el input para prevenir sends accidentales caros.
 
+### Requirement: El toque con la oferta del cupón de la campaña (2026-10-20)
+
+Con guion de campaña y `toque_oferta: N`, el toque N del episodio (contando
+los toques enviados desde que empezó el episodio) SHALL llevar la oferta del
+cupón de la campaña, con las mismas reglas de vigencia, condiciones y fecha
+que en Ventas, solo a quien quiso comprar (un pedido a medias, o una lectura
+de intención de Jev en `evals/decisions.jsonl`), sin cupón aplicado y si Ventas
+no la dijo ya en el episodio. Los demás toques MUST NOT mencionar el cupón, y
+el toque MUST NOT cambiar su valor ni su fecha ni sumarle otro beneficio.
+
+#### Scenario: Quiso comprar y no compró
+
+- GIVEN Jev leyó `elige` en el episodio y no hay pedido
+- WHEN sale el toque 2 de la escalera de un episodio de `velitas-7-dic` (`toque_oferta: 2`)
+- THEN el guion del toque trae la oferta del 5 % con su fecha límite
+- AND a quien solo preguntó el precio el toque 2 le llega sin oferta
+
 ## Out of scope
 
 - **Cadence policy específica** (`default_b2c_v1`, `aggressive_low_ticket_v1`, `luxury_long_v1`) — vive en `src/platform/whatsapp/templates/cadences.yaml` (Sprint 4).

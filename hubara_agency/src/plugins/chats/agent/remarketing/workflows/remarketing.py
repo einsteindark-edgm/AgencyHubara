@@ -80,9 +80,19 @@ def _persist_args_with_wamids(args: list, delivered: object) -> list:
     guardaba: Temporal recuerda el primer resultado del run, y en un run que
     venía de antes ese primer resultado era el False de reproducir un toque
     viejo (3.er toque «sin confirmación», 2026-10-15). `deprecate_patch` deja
-    reproducir los runs que ya grabaron la marca."""
+    reproducir los runs que ya grabaron la marca.
+
+    5.º argumento, `"remarketing"`: el mensaje queda marcado como de este
+    agente. Ventas no lo tiene en su historial y, sin la marca, la nota de
+    «lo que pasó sin ti» se cortaba en el gancho (caso 2026-10-16). También
+    solo contenido: sin patch."""
     workflow.deprecate_patch("persist-wamids-v1")
-    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+    return [
+        *args,
+        *([None] * (3 - len(args))),
+        delivered if isinstance(delivered, list) else None,
+        "remarketing",
+    ]
 
 
 def reply_summary(message: object) -> str:
@@ -92,6 +102,22 @@ def reply_summary(message: object) -> str:
     este resumen. Solo cambia el contenido del traspaso: replay seguro."""
     return "Usuario respondió: " + str(message)[:500]
 
+
+# Lecturas y escrituras del vault (elegibilidad, política, ruta, memoria): con
+# tope. Sin `retry_policy` Temporal reintentaba sin fin y una lectura rota
+# dejaba el workflow colgado en silencio (auditoría de Temporal, 2026-10-15);
+# ahora, tras ~1 min de reintentos, la activity falla a la vista. Solo opciones
+# de la activity: replay seguro.
+# Los envíos laten (`@with_heartbeat`): si el worker muere a mitad, Temporal
+# los reintenta a los 30 s y no al vencer los 90 s (premortem de la Ola 0 de
+# Temporal, 2026-10-16). Solo opciones: replay seguro.
+_SEND_HEARTBEAT = timedelta(seconds=30)
+_VAULT_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=2.0,
+    maximum_interval=timedelta(seconds=30),
+    maximum_attempts=5,
+)
 
 @workflow.defn(name="RemarketingWorkflow")
 class RemarketingSessionWorkflow:
@@ -236,6 +262,7 @@ class RemarketingSessionWorkflow:
                 claim_conversation_routing,
                 args=[session_id, ROUTE_VENTAS],
                 start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=_VAULT_RETRY,
             )
 
     async def _build_trigger(
@@ -281,6 +308,11 @@ class RemarketingSessionWorkflow:
             silent_after_catalog=self._catalog_silent,
             catalog_described=self._catalog_silent and bool(getattr(context, "catalog_described", False)),
             total_touches=getattr(context, "total_touches", None) if self._catalog_silent_patch else None,
+            # El guion de la campaña de venta (2026-10-19). Solo cambia el
+            # input de la activity, no los comandos → replay-safe sin patch;
+            # historias viejas traen el result sin el campo ("" = sin guion).
+            sales_campaign_script=str(getattr(context, "sales_campaign_script", "") or ""),
+            sales_campaign_examples=list(getattr(context, "sales_campaign_examples", None) or []),
         )
         return await self._render_trigger(self._trigger_input)
 
@@ -362,6 +394,7 @@ class RemarketingSessionWorkflow:
             check_remarketing_eligibility,
             args=[session_id],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
         if not eligibility.eligible:
             return
@@ -369,6 +402,7 @@ class RemarketingSessionWorkflow:
             check_reengagement_policy_activity,
             args=[session_id],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
         if not policy.allowed:
             workflow.logger.info(
@@ -414,6 +448,7 @@ class RemarketingSessionWorkflow:
                 check_remarketing_eligibility,
                 args=[session_id],
                 start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=_VAULT_RETRY,
             )
             if not eligibility.eligible:
                 workflow.logger.warning(
@@ -447,6 +482,7 @@ class RemarketingSessionWorkflow:
                 check_reengagement_policy_activity,
                 args=[session_id],
                 start_to_close_timeout=timedelta(seconds=15),
+                retry_policy=_VAULT_RETRY,
             )
             if not policy.allowed:
                 workflow.logger.warning(
@@ -477,12 +513,14 @@ class RemarketingSessionWorkflow:
             claim_conversation_routing,
             args=[session_id, ROUTE_REMARKETING],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
 
         memory_context = await workflow.execute_activity(
             read_workspace_memory_activity,
             args=[session_id],
             start_to_close_timeout=timedelta(seconds=15),
+            retry_policy=_VAULT_RETRY,
         )
 
         # Contexto REAL del gancho (incidente run dc32f7fe, 2026-09-10): el
@@ -509,6 +547,7 @@ class RemarketingSessionWorkflow:
                     claim_conversation_routing,
                     args=[session_id, ROUTE_VENTAS],
                     start_to_close_timeout=timedelta(seconds=15),
+                    retry_policy=_VAULT_RETRY,
                 )
                 return
             # La plantilla cuenta como el mensaje proactivo: la PRIMERA
@@ -557,6 +596,7 @@ class RemarketingSessionWorkflow:
                     claim_conversation_routing,
                     args=[session_id, ROUTE_VENTAS],
                     start_to_close_timeout=timedelta(seconds=15),
+                    retry_policy=_VAULT_RETRY,
                 )
                 return
 
@@ -821,6 +861,7 @@ class RemarketingSessionWorkflow:
                                 send_whatsapp_message_activity,
                                 args=[session_id, pre_msg],
                                 start_to_close_timeout=timedelta(seconds=90),
+                                heartbeat_timeout=_SEND_HEARTBEAT,
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
                             if workflow.patched("persist-assistant-message-v1"):
@@ -840,6 +881,7 @@ class RemarketingSessionWorkflow:
                             send_whatsapp_message_activity,
                             args=[session_id, result.final_content],
                             start_to_close_timeout=timedelta(seconds=90),
+                            heartbeat_timeout=_SEND_HEARTBEAT,
                             retry_policy=RetryPolicy(maximum_attempts=2)
                         )
                         # Persistir DESPUES del send (mismo razonamiento que en

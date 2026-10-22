@@ -133,6 +133,22 @@ describe("backendCampaignSchema", () => {
     expect(backendCampaignSchema.parse(draftFixture).carousel_handles).toEqual([]);
   });
 
+  it("parsea el avance del envío por lotes y defaultea a null (V1 / sin enviar)", () => {
+    const progress = {
+      total: 6000,
+      processed: 1200,
+      sent: 1180,
+      failed: 10,
+      opted_out: 4,
+      skipped: 6,
+      state: "paused",
+    };
+    expect(
+      backendCampaignSchema.parse({ ...draftFixture, status: "paused", progress }).progress,
+    ).toEqual({ ...progress, pause_reason: null, resume_at_ms: null });
+    expect(backendCampaignSchema.parse(draftFixture).progress).toBeNull();
+  });
+
   it("defaultea imported_contacts a [] con un backend viejo", () => {
     expect(backendCampaignSchema.parse(draftFixture).imported_contacts).toEqual([]);
   });

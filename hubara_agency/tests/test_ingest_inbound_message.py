@@ -342,10 +342,19 @@ async def test_human_route_does_not_rotate_episode_or_reset_tag():
 
 
 @pytest.mark.asyncio
-async def test_audio_inbound_defers_to_transcription():
-    """HU-002 / A.5: audio inbound NO encola workflow — queda
-    pending_transcription en metadata. La activity de transcripción
-    procesa después y re-inyecta el texto."""
+async def test_audio_inbound_enters_only_as_its_transcription(monkeypatch):
+    """HU-002 / A.5: la nota de voz NO llega al agente como audio: entra
+    cuando está transcrita, como texto. Desde la fase 2 de la entrada durable
+    la transcripción es un paso del ingest, no una tarea suelta: `execute`
+    vuelve con el texto ya en el bot y sin `pending_transcription` colgado."""
+    from src.platform.audio import composition
+    from src.platform.audio.dtos import TranscriptionResult
+
+    class _Port:
+        async def transcribe(self, request):  # noqa: ANN001, ANN202
+            return TranscriptionResult(text="quiero velas de lavanda", ok=True)
+
+    monkeypatch.setattr(composition, "get_audio_transcription_port", lambda: _Port())
     history = FakeHistoryStore()
     loader = FakeLoadOrStart()
     metadata = FakeMetadataStore()
@@ -367,9 +376,9 @@ async def test_audio_inbound_defers_to_transcription():
     )
     await use_case.execute(audio_msg)
 
-    assert history.events == []  # no es texto LLM-ready aún
-    assert loader.calls == []  # no se signaleó el workflow
-    assert metadata.store["wa_5491111111111"]["pending_transcription"]["media_id"] == "media_xyz"
+    assert [content for _sid, content in history.events] == ["quiero velas de lavanda"]
+    assert [call.message for call in loader.calls] == ["quiero velas de lavanda"]
+    assert "pending_transcription" not in metadata.store["wa_5491111111111"]
 
 
 @pytest.mark.asyncio

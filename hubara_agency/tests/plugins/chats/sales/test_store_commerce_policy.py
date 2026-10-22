@@ -157,6 +157,27 @@ def test_another_store_tools_never_quote_the_mother_policy() -> None:
     assert [t for t in texts if _MOTHER_POLICY.search(t)] == []
 
 
+# El mínimo de contra entrega lo citan Ventas y también el guion de campaña del
+# remarketing (`chats/shared/payment_terms.py`, 2026-10-19): con el .env de otra
+# tienda, los dos dicen el de ESA tienda (en un clon, el remarketing decía $45.000).
+_COD_MIN_SEEN = """
+import json
+from src.plugins.chats.agent.remarketing.activities import context
+from src.plugins.chats.agent.sales.config import shipping
+print(json.dumps([shipping.CASH_ON_DELIVERY_MIN_PRODUCTS_COP, context.CASH_ON_DELIVERY_MIN_PRODUCTS_COP]))
+"""
+
+
+def test_sales_and_remarketing_quote_the_store_cash_on_delivery_minimum() -> None:
+    env = {**os.environ, **OTRA_TIENDA_COMPLETA, "MEDUSA_BASE_URL": "http://dummy", "MEDUSA_ADMIN_TOKEN": "dummy"}
+    proc = subprocess.run(
+        [sys.executable, "-c", _COD_MIN_SEEN], cwd=_BACKEND, env=env, capture_output=True, text=True, timeout=180
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+
+    assert json.loads(proc.stdout.strip().splitlines()[-1]) == [60_000, 60_000]
+
+
 # ── Una política mal escrita no arranca (fail-closed, nunca un precio raro) ──
 
 

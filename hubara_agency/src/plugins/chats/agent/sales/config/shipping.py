@@ -27,10 +27,13 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.retiro import en_retiro
+from src.plugins.chats.shared.payment_terms import DEFAULT_CASH_ON_DELIVERY_MIN_COP, cash_on_delivery_min_cop
+from src.plugins.chats.shared.sales_campaigns import Campaign, FreeShipping, bogota_today, free_shipping_for
 
 
 def _fold(text: str) -> str:
@@ -85,14 +88,10 @@ class ShippingPolicy:
     local_city: str = "Bogotá"
     local_cop: int = 7_900
     national_cop: int = 16_940
-    # Contra entrega: solo pedidos con productos DESDE este monto (política de
-    # margen vs costo del envío). Umbral INCLUSIVO — incidente run ebbc203d
-    # (2026-09-16): el guion decía "desde $45.000", el bot se lo afirmó al
-    # cliente, y el código usaba `> 45000` estricto → el formulario de envío
-    # ocultó "Contra entrega" para un pedido de $45.000 exactos y la clienta
-    # abandonó el Flow. Este es el ÚNICO lugar donde vive el umbral; el
-    # formulario, el fallback de texto y los prompts lo citan desde acá.
-    cod_min_products_cop: int = 45_000
+    # Contra entrega: el umbral (inclusivo) vive en `chats/shared/payment_terms.py`
+    # porque lo lee también el remarketing (2026-10-19); el formulario, el
+    # fallback de texto y los prompts lo citan desde acá.
+    cod_min_products_cop: int = DEFAULT_CASH_ON_DELIVERY_MIN_COP
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> ShippingPolicy:
@@ -102,7 +101,7 @@ class ShippingPolicy:
             local_city=_city(env, base.local_city),
             local_cop=_amount(env, "SHIPPING_RATE_LOCAL_COP", base.local_cop),
             national_cop=_amount(env, "SHIPPING_RATE_NATIONAL_COP", base.national_cop),
-            cod_min_products_cop=_amount(env, "CASH_ON_DELIVERY_MIN_COP", base.cod_min_products_cop),
+            cod_min_products_cop=cash_on_delivery_min_cop(env),
         )
 
 
@@ -181,17 +180,45 @@ def shipping_rate_for_city(city: str | None, policy: ShippingPolicy = POLICY) ->
     return policy.national_cop
 
 
+def order_shipping(items: Iterable[tuple[str, Any]], city: str | None) -> tuple[int, FreeShipping | None]:
+    """El envío de un pedido que arma el sistema sin el modelo («Crear pedido»
+    del dashboard y la app, el resumen del operador): $0 y el envío gratis si
+    lleva las cajas de una campaña que lo da (operador, 2026-10-20); si no, la
+    tarifa mínima de la ciudad. La misma regla que validan el resumen y el
+    registro."""
+    free = free_shipping_for(items, today=bogota_today())
+    if free is not None:
+        return 0, free
+    return shipping_rate_for_city(city), None
+
+
+def shipping_rates_message(campaign: Campaign | None = None) -> str:
+    """La tarjeta de tarifas (`SHIPPING_RATES_MESSAGE`) y, en una conversación
+    de una campaña con envío gratis desde N cajas (operador, 2026-10-20), el
+    gancho al final: la tarjeta termina el turno cuando preguntan cuánto vale
+    el envío, y es justo cuando hay que decirlo."""
+    minimum = campaign.envio_gratis_desde_cajas if campaign is not None else None
+    if not minimum:
+        return SHIPPING_RATES_MESSAGE
+    return (
+        f"{SHIPPING_RATES_MESSAGE}\n\n🎁 {campaign.nombre}: con {minimum} cajas o más (se pueden mezclar), "
+        "el envío es gratis para todo tu pedido, aunque lleves otros productos."
+    )
+
+
 # Decisión del operador (2026-09-23): el envío lo cobra la transportadora a su
 # tarifa, SIN descuentos ni "envío gratis". El monto que manda el LLM tiene que
 # ser una tarifa mínima publicada (L-19: un monto del LLM se compara contra la
-# tabla).
+# tabla). Única excepción (operador, 2026-10-20): el envío gratis de una
+# campaña desde N cajas, que decide el sistema (`order_shipping`).
 def rate_rule(policy: ShippingPolicy) -> str:
     return (
         f"El envío es SIEMPRE una tarifa mínima publicada: {_cop(policy.local_cop)} "
         f"para {policy.local_zone}, {_cop(policy.national_cop)} a nivel "
-        "nacional. No existe envío gratis ni descuento en el envío: lo cobra la "
-        "transportadora. Pasa esa tarifa también con contra entrega (el resumen "
-        "igual dice \"Por confirmar\")."
+        "nacional, salvo el envío gratis de una campaña (lo valida el sistema con las "
+        "cajas del pedido y te lo dice: ahí el envío es 0). No existe otro envío gratis "
+        "ni descuento en el envío: lo cobra la transportadora. Pasa esa tarifa también "
+        "con contra entrega (el resumen igual dice \"Por confirmar\")."
     )
 
 
@@ -206,9 +233,10 @@ def shipping_cop_param_description(policy: ShippingPolicy) -> str:
         f"Tarifa MÍNIMA publicada de envío en COP: {policy.local_cop} "
         f"({_cop(policy.local_cop)}) para {policy.local_zone}, "
         f"{policy.national_cop} ({_cop(policy.national_cop)}) a nivel "
-        "nacional. No existe envío gratis: nunca 0. También con contra entrega "
-        "(el resumen igual dice \"Por confirmar\" y el total a registrar es "
-        "subtotal + envío − cupón)."
+        "nacional. No existe envío gratis: nunca 0, salvo cuando el pedido lleva las "
+        "cajas del envío gratis de una campaña (lo valida el sistema y te lo dice): "
+        "ahí 0. También con contra entrega (el resumen igual dice \"Por confirmar\" "
+        "y el total a registrar es subtotal + envío − cupón)."
     )
 
 

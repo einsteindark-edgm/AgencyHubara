@@ -40,11 +40,13 @@ def _run_probe(
     events: list[dict] | None = None,
     catalog: list[dict] | None = None,
     prepare: Callable[[Path], None] | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> dict:
     """`events`: el historial del dashboard del banco (por defecto, el de
     `_bench`); `catalog`: los productos del snapshot del banco (por defecto,
     ninguno); `tool` + `tool_args`: la tool que el LLM falso llama primero;
-    `prepare`: lo que la preparación de la corrida dejó en el banco."""
+    `prepare`: lo que la preparación de la corrida dejó en el banco;
+    `extra_env`: variables del proceso del caso (están antes de importar la app)."""
     bench = _bench(tmp_path)
     if prepare is not None:
         prepare(bench)
@@ -68,6 +70,7 @@ def _run_probe(
     if tool:
         env["PROBE_TOOL"] = tool
         env["PROBE_TOOL_ARGS"] = json.dumps(tool_args or {})
+    env.update(extra_env or {})
     proc = subprocess.run(
         [sys.executable, str(_PROBE), str(case_path), str(bench), str(sandbox), str(report_path), arm],
         cwd=_HUBARA, env=env, capture_output=True, text=True, timeout=300,

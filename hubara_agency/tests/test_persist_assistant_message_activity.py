@@ -64,3 +64,36 @@ async def test_persist_appends_to_existing_log(tmp_path, monkeypatch):
     assert json.loads(lines[0])["role"] == "user"
     assert json.loads(lines[1])["role"] == "assistant"
     assert json.loads(lines[1])["content"] == "respondiendo"
+
+
+async def test_persist_marks_the_message_of_another_agent(tmp_path, monkeypatch):
+    """Caso 2026-10-16: el gancho de remarketing quedaba en el historial igual
+    que un mensaje de Ventas, y la nota «lo que pasó sin ti» se cortaba ahí
+    (Ventas nunca lo vio). El 5.º argumento dice qué agente lo escribió."""
+    monkeypatch.setattr(mod, "WORKSPACE_VAULT_DIR", tmp_path)
+
+    env = ActivityEnvironment()
+    await env.run(
+        mod.persist_assistant_message_activity,
+        "wa_test",
+        "Hola de nuevo, ¿te ayudo a cerrar el pedido?",
+        None,
+        [{"wamid": "wamid.out1", "text": "Hola de nuevo, ¿te ayudo a cerrar el pedido?"}],
+        "remarketing",
+    )
+
+    log = tmp_path / "wa_test" / "sessions" / "wa_test.jsonl"
+    parsed = json.loads(log.read_text(encoding="utf-8").strip())
+    assert parsed["agent"] == "remarketing"
+    assert parsed["wamids"] == ["wamid.out1"]
+    assert "sender" not in parsed  # no es un mensaje del equipo
+
+
+async def test_persist_without_agent_leaves_the_event_as_today(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, "WORKSPACE_VAULT_DIR", tmp_path)
+
+    env = ActivityEnvironment()
+    await env.run(mod.persist_assistant_message_activity, "wa_test", "hola", ["send_reply"])
+
+    log = tmp_path / "wa_test" / "sessions" / "wa_test.jsonl"
+    assert "agent" not in json.loads(log.read_text(encoding="utf-8").strip())

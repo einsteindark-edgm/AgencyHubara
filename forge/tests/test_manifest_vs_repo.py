@@ -111,9 +111,11 @@ def test_las_cifras_de_commerce_literals_son_las_de_la_tienda_madre():
     sales = forge.REPO / "hubara_agency/src/plugins/chats/agent/sales/config"
     shipping = (sales / "shipping.py").read_text(encoding="utf-8")
     payments = (sales / "payments.py").read_text(encoding="utf-8")
+    # el mínimo de contra entrega lo leen ventas y remarketing (chats/shared, 2026-10-19)
+    terms = (forge.REPO / "hubara_agency/src/plugins/chats/shared/payment_terms.py").read_text(encoding="utf-8")
 
-    def amount(name: str) -> str:
-        return forge.commerce_text(int(re.search(rf"{name}: int = ([\d_]+)", shipping).group(1).replace("_", "")))
+    def amount(name: str, src: str = shipping) -> str:
+        return forge.commerce_text(int(re.search(rf"{name}(?:: int)? = ([\d_]+)", src).group(1).replace("_", "")))
 
     def text(src: str, name: str) -> str:
         return re.search(rf'{name}: str = "([^"]+)"', src).group(1)
@@ -121,7 +123,7 @@ def test_las_cifras_de_commerce_literals_son_las_de_la_tienda_madre():
     expected = {
         amount("local_cop"): "shipping_rate_local_cop",
         amount("national_cop"): "shipping_rate_national_cop",
-        amount("cod_min_products_cop"): "cash_on_delivery_min_cop",
+        amount("DEFAULT_CASH_ON_DELIVERY_MIN_COP", terms): "cash_on_delivery_min_cop",
         text(payments, "link_surcharge_local"): "payment_link_surcharge_local",
         text(payments, "link_surcharge_other"): "payment_link_surcharge_other",
         text(shipping, "local_zone"): "shipping_local_zone",

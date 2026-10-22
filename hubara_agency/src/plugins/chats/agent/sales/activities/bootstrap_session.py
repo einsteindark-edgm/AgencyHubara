@@ -28,7 +28,7 @@ from src.platform.registries import (
 )
 from src.platform.state import FilesystemMetadataStore
 from src.platform.tool_extensions import apply_tool_extensions
-from src.plugins.chats.agent.sales.contracts import SalesSessionInput
+from src.plugins.chats.agent.sales.contracts import HandoffReply, SalesSessionInput
 from src.plugins.chats.agent.sales.prompts import build_decided_ghosting_prompt, build_ghosting_prompt
 
 
@@ -270,6 +270,25 @@ async def read_and_clear_pending_handoff_activity(session_id: str) -> str | None
     return summary if summary else None
 
 
+@activity.defn(name="read_handoff_reply")
+async def read_handoff_reply_activity(session_id: str, already_pending: list[str]) -> HandoffReply | None:
+    """Lo que el cliente le escribió a remarketing, leído del chat (el JSONL
+    del dashboard), para el turno de Ventas que sigue al traspaso.
+
+    Caso del 2026-10-16: el traspaso solo llevaba el resumen de remarketing.
+    Ventas arrancó sin el «Si» del cliente, sin lo que había dicho un colega y
+    sin el gancho, y contestó NO_MESSAGE. Con esto el turno trae lo que el
+    cliente escribió, tal cual, y la nota de lo que Ventas no vio
+    (`episode_memory.handoff_reply_of`). `already_pending`: wamids que ya le
+    llegaron a Ventas por señal. None si el cliente no escribió al final.
+    """
+    from src.plugins.chats.agent.sales.composition import build_session_history_reader
+    from src.plugins.chats.agent.sales.use_cases.episode_memory import handoff_reply_of
+
+    events = build_session_history_reader()(session_id)
+    return handoff_reply_of(events, already_pending=already_pending)
+
+
 #: Lo que el framing del traspaso agrega cuando el cliente solo agradeció o
 #: saludó al gancho (capacidad `cortesia`): el framing pide «si solo saludó,
 #: saluda breve y pregunta en qué puedes ayudar», y así nacía el empujón.
@@ -282,7 +301,9 @@ _COURTESY_HANDOFF_LINE = (
 
 @activity.defn(name="read_order_draft_note")
 async def read_order_draft_note_activity(session_id: str) -> str | None:
-    """Nota `[DATOS DEL PEDIDO YA CONFIRMADOS]` para el turno de HANDOFF.
+    """Las notas del turno de HANDOFF: `[DATOS DEL PEDIDO YA CONFIRMADOS]` y
+    el guion de la campaña, en ese orden (un solo texto: cambia lo que
+    devuelve la activity, no la historia del workflow).
 
     Incidente 2026-07-17 (run 019f6db3): la inyección del draft al prompt
     solo existía en el path del webhook (`ingest_inbound_message`). El turno
@@ -292,7 +313,14 @@ async def read_order_draft_note_activity(session_id: str) -> str | None:
     (destruyendo los signos elegidos) antes de descubrir el draft.
 
     Mismo gate que el path del webhook (`get_projectable_draft`): episodio
-    activo, sin order_id, slots no vacíos → note; si no, None.
+    activo, sin order_id, slots no vacíos → note.
+
+    Caso del 2026-10-21 (velitas): el cliente contestó al toque «No gracias
+    voy a esperar», remarketing le pasó la conversación a Ventas y este turno
+    no traía el guion de la campaña: Ventas se despidió sin el 5 %. Ahora
+    trae el guion y, si el cliente aplazó desde nuestra última respuesta, la
+    oferta (queda marcada como dicha en el episodio). Sin campaña ni draft,
+    None.
     """
     from src.plugins.chats.agent.sales.use_cases.order_draft import (
         build_order_draft_note,
@@ -301,12 +329,52 @@ async def read_order_draft_note_activity(session_id: str) -> str | None:
 
     store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
     metadata = read_retrying_transient_errors_sync(store, session_id)
+    notes: list[str] = []
     slots = get_projectable_draft(metadata)
-    if not slots:
+    if slots:
+        activity.logger.info(
+            "read_order_draft_note: draft proyectado al handoff session=%s slots=%s",
+            session_id,
+            sorted(slots.keys()),
+        )
+        notes.append(build_order_draft_note(slots))
+    campaign_note = await _handoff_campaign_note(store, session_id, metadata)
+    if campaign_note:
+        notes.append(campaign_note)
+    return "\n\n".join(notes) or None
+
+
+class _HandoffCatalog:
+    """El catálogo se pide solo si la conversación es de una campaña."""
+
+    async def search(self, q: str, *, limit: int = 10) -> Any:
+        from src.sdk.connectorkit import get_catalog_client
+
+        return await get_catalog_client().search(q, limit=limit)
+
+
+async def _handoff_campaign_note(store: FilesystemMetadataStore, session_id: str, metadata: dict[str, Any]) -> str | None:
+    """El guion de la campaña para el turno de traspaso (`campaign_turn`, la
+    misma regla del ingest), o None. Nunca rompe el traspaso."""
+    import copy
+    import time
+
+    from src.plugins.chats.agent.sales.use_cases.campaign_turn import campaign_turn
+
+    base = copy.deepcopy(metadata)
+    try:
+        turn = await campaign_turn(
+            metadata, catalog=_HandoffCatalog(), now_ms=int(time.time() * 1000), text=None, opening=False,
+            to_sales=True, session_id=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — una campaña rota deja el traspaso de siempre
+        activity.logger.warning("handoff_campaign_note_failed session=%s reason=%r", session_id, exc)
         return None
-    activity.logger.info(
-        "read_order_draft_note: draft proyectado al handoff session=%s slots=%s",
-        session_id,
-        sorted(slots.keys()),
-    )
-    return build_order_draft_note(slots)
+    if turn is None:
+        return None
+    if turn.changed:
+        try:
+            store.write_merged(session_id, base=base, ours=metadata)
+        except Exception as exc:  # noqa: BLE001 — sin la marca, el guion igual sale
+            activity.logger.warning("handoff_campaign_mark_failed session=%s reason=%r", session_id, exc)
+    return turn.note

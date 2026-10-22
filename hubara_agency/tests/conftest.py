@@ -206,6 +206,18 @@ def _decisions_bundle_from_the_test(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _temporal_client_cache_per_test() -> Iterator[None]:
+    """`get_temporal_client` cachea UN cliente por proceso (y por event loop):
+    estado del proceso. Cada prueba arranca sin cliente cacheado — un fake de
+    otra prueba nunca se cuela (lección L-2)."""
+    from src.platform.temporal import client
+
+    client.reset_temporal_client_cache()
+    yield
+    client.reset_temporal_client_cache()
+
+
+@pytest.fixture(autouse=True)
 def _metadata_damage_tracking_per_test() -> Iterator[None]:
     """La recuperación de un `metadata.json` dañado alerta una vez por episodio
     (`src.platform.state`): estado del proceso. Cada prueba arranca sin

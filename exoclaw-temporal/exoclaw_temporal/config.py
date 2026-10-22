@@ -21,6 +21,11 @@ class LLMConfig:
     max_iterations: int = 40
     reasoning_effort: str | None = None
     api_key: str | None = None
+    # Variable de entorno del WORKER que tiene la llave. Preferila a `api_key`:
+    # todo payload queda guardado en la historia de Temporal y la llave no
+    # tiene por qué viajar. `llm_chat` usa `api_key` si el payload la trae
+    # (inputs agendados antes) y si no, lee esta variable al llamar.
+    api_key_env: str | None = None
     api_base: str | None = None
     extra_headers: dict[str, str] = field(default_factory=dict)
     memory_window: int = 100

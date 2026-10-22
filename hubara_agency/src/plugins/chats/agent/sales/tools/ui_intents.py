@@ -1927,19 +1927,44 @@ class PresentOrderConfirmationTool(ToolBase):
                 ),
             }, ensure_ascii=False)
 
-        # Envío = tarifa mínima publicada, nunca $0 ni inventada (decisión del
-        # operador 2026-09-23: sin descuentos ni envío gratis). Con la ciudad
-        # del borrador, la misma regla que `register_order` (Bogotá solo la
-        # suya): el cliente no confirma un total que el registro rechazaría.
-        # La zona de la ciudad la decide el motor de decisiones (capacidad
-        # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice).
-        zone = await decide_for_session(
-            capability("zona_de_envio"),
-            CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
-            session_id=ctx.session_key,
-            vault_dir=WORKSPACE_VAULT_DIR,
+        # Envío gratis desde N cajas de una campaña (operador, 2026-10-20): lo
+        # decide el sistema con las cajas del pedido, la misma regla que
+        # `register_order` y «Crear pedido». Con él, el envío es $0.
+        from src.plugins.chats.shared.sales_campaigns import bogota_today, free_shipping_for
+
+        free = free_shipping_for(
+            ((str(it.get("handle")), it.get("quantity")) for it in items), today=bogota_today()
         )
-        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
+        if free is not None and int(shipping_cop) != 0:
+            logger.warning(
+                "🚨 [TOOL present_order_confirmation] free_shipping_mismatch session={} shipping_cop={}",
+                ctx.session_key, shipping_cop,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "shipping_mismatch",
+                "message": (
+                    f"Este pedido lleva {free.boxes} cajas de la campaña: el envío es gratis "
+                    f"(desde {free.min_boxes} cajas). NO se encoló la confirmación: vuelve a "
+                    "llamar present_order_confirmation con shipping_cop=0."
+                ),
+            }, ensure_ascii=False)
+        # Envío = tarifa mínima publicada, nunca $0 ni inventada (decisión del
+        # operador 2026-09-23: sin descuentos ni envío gratis, salvo el de la
+        # campaña de arriba). Con la ciudad del borrador, la misma regla que
+        # `register_order` (Bogotá solo la suya): el cliente no confirma un
+        # total que el registro rechazaría. La zona de la ciudad la decide el
+        # motor de decisiones (capacidad `zona_de_envio`; regla de hoy: Bogotá
+        # si la ciudad lo dice).
+        zone = None
+        if free is None:
+            zone = await decide_for_session(
+                capability("zona_de_envio"),
+                CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
+                session_id=ctx.session_key,
+                vault_dir=WORKSPACE_VAULT_DIR,
+            )
+        if zone is not None and not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🚨 [TOOL present_order_confirmation] shipping_mismatch session={} shipping_cop={}",
                 ctx.session_key, shipping_cop,
@@ -2014,6 +2039,7 @@ class PresentOrderConfirmationTool(ToolBase):
                     else {}
                 ),
                 **({"coupon_note": note} if note else {}),
+                **({"free_shipping": free.to_json()} if free is not None else {}),
             },
             "analytics": {
                 "component_id": "order_confirmation",
@@ -2050,7 +2076,17 @@ class PresentOrderConfirmationTool(ToolBase):
             if discount and discount_cop > 0
             else ""
         )
-        if payment_method == "cash_on_delivery":
+        if free is not None:
+            # Sin envío por confirmar: el total es el de los productos (menos
+            # el cupón), también con contra entrega.
+            amounts = {"subtotal_cop": subtotal, "total_cop": total}
+            summary = (
+                f"Confirmación enviada: productos ${subtotal:,} COP{discount_text} + envío gratis "
+                f"({free.boxes} cajas de la campaña; gratis desde {free.min_boxes}) = total ${total:,} COP"
+                + (" a pagar al recibir" if payment_method == "cash_on_delivery" else "")
+                + f". {wait_hint}"
+            )
+        elif payment_method == "cash_on_delivery":
             amounts = {"subtotal_cop": subtotal}
             summary = (
                 f"Confirmación enviada: productos ${subtotal:,} COP{discount_text}; el "
@@ -2171,9 +2207,24 @@ class SendShippingRatesTool(ToolBase):
         logger.info(
             "🚚 [TOOL send_shipping_rates] session={}", ctx.session_key
         )
+        # El gancho del envío gratis de la campaña de la conversación, si lo
+        # tiene (operador, 2026-10-20). Una campaña rota no frena las tarifas.
+        from src.plugins.chats.agent.sales.config.shipping import shipping_rates_message
+        from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+        from src.plugins.chats.shared.sales_campaigns import bogota_today, campaign_for
+
+        campaign = None
+        try:
+            episode = get_active_episode(FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key) or {})
+            campaign = campaign_for(episode, today=bogota_today())
+        except Exception as exc:  # noqa: BLE001 — las tarifas salen igual
+            logger.warning("🚚 [TOOL send_shipping_rates] campaña no disponible: {}", exc)
+        text = shipping_rates_message(campaign)
         intent = {
             "kind": "shipping_rates",
-            "params": {},
+            # Solo el id de la campaña: el flush arma el texto desde el código
+            # (nunca texto en los params: el modelo no redacta tarifas).
+            "params": {"campaign": campaign.id} if text != SHIPPING_RATES_MESSAGE else {},
             "analytics": {
                 "component_id": "shipping_rates",
                 "component_kind": "text",
@@ -2184,7 +2235,7 @@ class SendShippingRatesTool(ToolBase):
             "queued": True,
             "kind": "shipping_rates",
             # El texto fijo que lee el cliente (traza y verificación ③).
-            "customer_text": SHIPPING_RATES_MESSAGE,
+            "customer_text": text,
             "summary": (
                 "Mensaje estándar de tarifas de envío enviado al cliente. "
                 "NO repitas ni reformules las tarifas en tu texto; tu turno "

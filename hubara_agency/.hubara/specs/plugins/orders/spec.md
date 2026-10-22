@@ -149,6 +149,19 @@ transiciones manuales validando el DAG permitido entre stages.
 - WHEN se invoca
 - THEN se devuelve HTTP 422 con la lista de stages válidos en el detail
 
+#### Scenario: Temporal no acepta el aviso de la etapa
+
+- GIVEN Temporal caído, o que no responde en 5 s
+- WHEN una transición (`/stage`, `/schedule` o `/cancel`) se aplica con éxito en Medusa
+- THEN se devuelve HTTP 200 con `{success: true, notice_pending: true, ...}` y el SSE del
+  dashboard se publica igual
+- AND el aviso (`EmitOrderStageWorkflow`, con su guía y valor del envío) queda en el buzón
+  del vault (`_orders/stage_notices/`) y la API lo reintenta sola cada minuto hasta que sale
+- AND si en un día no salió, se abandona con un error en el log (un aviso de ayer ya no sirve)
+- AND nadie del equipo tiene que reintentar la etapa: es una falla técnica (auto-recuperación
+  y alerta); antes un 503 dejaba la tarjeta en la columna vieja y el aviso perdido
+  (premortem de la Ola 0 de Temporal, 2026-10-16)
+
 #### Scenario: Transición sin notificación ETA (agente order-sentinel)
 
 - GIVEN una transición inferida de la conversación humana (el cliente YA fue
@@ -280,6 +293,21 @@ transiciones manuales validando el DAG permitido entre stages.
   cobro de "Confirmar pago" y el mensaje del ETA (que desglosa con el valor
   del pedido SIN envío, `order_value_cop`, para no sumarlo dos veces)
 - AND sin valor real (vacío / 0) se mantiene el estimado
+
+#### Scenario: Con envío gratis, el envío real lo paga la tienda (2026-10-20)
+
+- GIVEN un pedido con la marca `metadata.hubara_free_shipping` (6 cajas o más
+  de una campaña) y envío $0
+- WHEN el operador lo despacha y escribe el valor real del envío ($ 18.000)
+- THEN el valor queda en `hubara_shipping_cost_cop`, pero `effective_amounts`
+  devuelve el envío del cliente en 0 y el total de los productos: lista,
+  detalle, OrderFacts (Ads, Campañas), el cobro de "Confirmar pago" y el total
+  del ETA no lo suman
+- AND el resumen expone `free_shipping = true` y `store_shipping_cost_cop =
+  18000` (lo que paga la tienda, fuera del total); el modal, el panel del
+  celular, el inspector y la app lo muestran aparte
+- AND el aviso «va en camino» sale sin el valor del envío (la activity lo
+  quita del evento); si el pedido no se puede leer, sale como siempre
 
 #### Scenario: "En preparación" y "Listo" no mencionan el precio (2026-09-22)
 

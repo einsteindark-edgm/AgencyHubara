@@ -246,6 +246,31 @@ Push a `main` (o **Actions → Terraform plan → Run**) corre el **plan**. Para
 Todos usan OIDC (rol angosto de deploy) + el secret `EC2_SSH_KEY`. **Verificás:** el
 run en verde; `curl https://api.<tenant>...` responde; los traces aparecen en SigNoz.
 
+### Revertir un deploy que cambió workflows de vida larga (solo hacia adelante)
+
+Las sesiones de ventas (`session-*`, V1 y V2) y del ETA (`eta-*`) viven horas o días. Un
+deploy que cambia sus comandos los pone detrás de `workflow.patched(...)`: los runs vivos
+siguen andando. **Revertir ese deploy no es seguro**: un run que ya grabó el marcador del
+patch (o que siguió una rama nueva) choca con el código viejo al primer replay (TMPRL1100) y
+queda trabado sin contestarle al cliente. Verificado con la Ola 0 de Temporal (#444):
+`continue-as-new-per-run-v1` (un run con 50 turnos acumulados lo graba en su primer turno),
+`eta-rejected-text-as-template-v1` y las entregas fallidas que el V2 ya no deja tumbar la
+sesión.
+
+- **Lo normal es arreglar hacia adelante** (otro PR con el arreglo, no un revert).
+- Si no queda otra que revertir: antes del deploy viejo, terminar las sesiones vivas. Su
+  estado vive en el vault y las reviven el próximo mensaje del cliente (ingest) o el
+  próximo evento del pedido (`signal_with_start`):
+
+  ```bash
+  temporal workflow terminate --namespace "$TEMPORAL_NAMESPACE" --address "$TEMPORAL_ADDRESS" \
+    --api-key "$TEMPORAL_API_KEY" --reason "rollback: drenar sesiones antes del código viejo" \
+    --query 'WorkflowType IN ("HubaraSalesSessionWorkflow","HubaraSalesSessionWorkflowV2","HubaraEtaSessionWorkflow") AND ExecutionStatus="Running"'
+  ```
+
+- El código viejo no conoce el buzón de avisos de etapa (`<vault>/_orders/stage_notices/`):
+  lo que haya ahí no sale solo después del revert.
+
 ---
 
 ## FASE 5 — GraphAgents (subsistema separado, on-demand / pay-per-use)

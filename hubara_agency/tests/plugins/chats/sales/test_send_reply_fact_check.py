@@ -431,6 +431,35 @@ async def test_the_catalog_price_by_the_quantity_goes_as_is(tmp_path: Path, ctx:
     assert (await _send(_tool(tmp_path), ctx, text)).get("reply") == {"text": text}
 
 
+async def test_the_wholesale_price_of_the_product_description_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    """Caso 2026-10-18 (operador, 2026-10-19: «usa esos precios al por mayor,
+    en la descripción de los productos está»): el precio por mayor vive en la
+    descripción de Medusa; el bot que lo cita no inventa un precio."""
+    onduladas = _product(
+        "Velas de deseos onduladas", "velas-de-deseos-onduladas", ["Noche de Navidad"],
+        options={"Color": ["Rojo y verde", "Multicolor"]}, price=22_500,
+    )
+    onduladas.description = "Precios al por mayor: velas onduladas a partir de 20 cajas 17.000."
+    catalog = _Catalog(onduladas, PLEGARIA)
+    text = "Desde 20 cajas, cada caja ondulada te queda en $17.000 🤍"
+
+    sent = await _send(_tool(tmp_path, products=("Velas de deseos onduladas",), catalog=catalog), ctx, text)
+    invented = await _send(
+        _tool(tmp_path, products=("Velas de deseos onduladas",), catalog=catalog, inbound="wamid.T7"),
+        ctx, text.replace("17.000", "18.000"),
+    )
+
+    retail = await _send(
+        _tool(tmp_path, products=("Velas de deseos onduladas",), catalog=catalog, inbound="wamid.T8"),
+        ctx, "La caja ondulada te queda en $17.000 🤍",
+    )
+
+    assert sent.get("reply") == {"text": text}
+    assert invented["error"] == "fact_check"
+    # Revisión del 2026-10-19: el precio por mayor no es el precio de una caja.
+    assert retail["error"] == "fact_check"
+
+
 
 # ── pago, estado del pedido, cupones y lo que niega ────────────────────────
 

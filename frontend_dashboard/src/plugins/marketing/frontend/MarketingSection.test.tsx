@@ -6,6 +6,7 @@
  *  - con campañas y sin selección → cae a la primera (sidebar + builder +
  *    inspector montados)
  *  - selección via useSelection("marketing") — Pages sin props (F5).
+ *  - la vista de campañas escucha el avance en vivo (`useCampaignEvents`).
  *  - selector Campañas | Cupones: cada vista conserva SU selección (claves
  *    distintas del PluginHost), "Nuevo cupón" abre el formulario y el atajo
  *    "Crear cupón" del constructor salta a Cupones con el formulario.
@@ -26,10 +27,12 @@ const selections: Record<string, string | null> = {};
 const selectionSet = vi.fn();
 const createMutate = vi.fn();
 const useCampaignsMock = vi.fn(() => ({ data: [] as unknown[] }));
+const useCampaignEventsMock = vi.fn();
 
 vi.mock("@plugins/marketing/frontend/entities/campaign", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useCampaigns: () => useCampaignsMock(),
+  useCampaignEvents: () => useCampaignEventsMock(),
   useCreateCampaign: () => ({ mutate: createMutate, isPending: false, error: null }),
 }));
 
@@ -150,6 +153,7 @@ function makeCoupon(promotionId: string) {
 
 beforeEach(() => {
   createMutate.mockClear();
+  useCampaignEventsMock.mockClear();
   selectionSet.mockClear();
   for (const k of Object.keys(selections)) delete selections[k];
   useCampaignsMock.mockReturnValue({ data: [] });
@@ -182,6 +186,14 @@ describe("MarketingSection — composición de 3 paneles", () => {
     expect(getByTestId("campaigns-list").dataset.selected).toBe("mkt-a");
     expect(getByTestId("campaign-builder").dataset.campaign).toBe("mkt-a");
     expect(getByTestId("campaign-inspector")).toBeTruthy();
+  });
+});
+
+describe("MarketingSection — avance en vivo", () => {
+  it("la vista de campañas escucha el stream del dashboard", () => {
+    useCampaignsMock.mockReturnValue({ data: [makeCampaign("mkt-a")] });
+    render(<MarketingSection />);
+    expect(useCampaignEventsMock).toHaveBeenCalled();
   });
 });
 

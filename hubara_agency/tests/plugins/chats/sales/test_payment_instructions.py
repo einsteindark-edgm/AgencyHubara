@@ -635,6 +635,22 @@ async def test_dispatch_free_shipping_says_so(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dispatch_campaign_free_shipping_says_why(monkeypatch):
+    """Envío gratis desde 6 cajas de la campaña (operador, 2026-10-20): los
+    datos de pago dicen por qué no hay envío."""
+    text = await _dispatch_text(monkeypatch, {
+        "order_id": "order_test_001",
+        "subtotal_cop": 135000,
+        "shipping_cop": 0,
+        "total_cop": 135000,
+        "currency": "COP",
+        "free_shipping": {"campaign": "velitas-7-dic", "min_boxes": 6, "boxes": 6},
+    })
+    assert "*Envío*: gratis (6 cajas o más)" in text
+    assert "*Total*: $135.000 COP" in text
+
+
+@pytest.mark.asyncio
 async def test_dispatch_without_breakdown_keeps_single_value_line(monkeypatch):
     """Intents encolados ANTES del deploy no traen subtotal/envío: el
     mensaje sigue saliendo con el valor único (no se inventa un desglose)."""
