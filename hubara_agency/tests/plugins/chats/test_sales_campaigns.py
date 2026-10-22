@@ -87,23 +87,16 @@ def test_a_date_with_a_time_is_an_error(tmp_path: Path) -> None:
         sc.load_campaigns(tmp_path)
 
 
-def test_the_velitas_script_says_they_are_not_personalized_nor_made_in_other_shapes_this_year() -> None:
-    """Operador, 2026-10-22: «están pidiendo mucho personalizarla con nombre».
-    Este año no se personalizan ni se hacen otras formas: solo los diseños que
-    le mostramos, y el bot le vende el diseño actual con lo que dice su ficha
-    («No se personalizan» está en la descripción de Medusa). Es el archivo
-    vivo: lo que recibe Ventas en producción."""
-    (velitas,) = [c for c in sc.load_campaigns() if c.id == "velitas-7-dic"]
+def test_every_line_of_the_script_of_every_live_campaign_reaches_ventas() -> None:
+    """El guion se cambia en el YAML, sin tocar código (operador, 2026-10-22:
+    «todo esto solo debería aplicar a files de configuración»): cada línea de
+    cada campaña viva llega tal cual a la nota de Ventas, diga lo que diga
+    (p. ej. la de las velitas que este año no se personalizan)."""
+    for campaign in sc.load_campaigns():
+        note = sc.sales_note(campaign, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES)
 
-    note = sc.sales_note(velitas, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES)
-
-    line = next((x for x in note.splitlines() if "personaliz" in x), "")
-    assert "este año" in line and "otra forma" in line and "disponibles" in line
-    assert "propuesta concreta" in line
-    # Operador: «lo que dice en la descripción, venderlas con el concepto que
-    # diga en la descripción». La descripción no nombra la cera: el guion
-    # tampoco, ni deja agregar lo que ella no dice.
-    assert "descripción" in line and "cera" not in line
+        for step in campaign.guion:
+            assert f"- {step}" in note, (campaign.id, step[:60])
 
 
 def test_a_campaign_file_does_not_write_prices() -> None:

@@ -73,7 +73,7 @@
                 { "type": "text_field", "bind": "form.guia", "label": "Link de la guía", "keyboard": "url" },
                 {
                   "type": "notice", "tone": "info",
-                  "text": "Envío gratis (6 cajas o más): el costo real del envío lo paga la tienda y no se le cobra al cliente.",
+                  "text": "Envío gratis por la campaña: el costo real del envío lo paga la tienda y no se le cobra al cliente.",
                   "visible": "{{s.free_shipping}}"
                 },
                 { "type": "text_field", "bind": "form.costo", "label": "Costo real del envío", "keyboard": "number" },
