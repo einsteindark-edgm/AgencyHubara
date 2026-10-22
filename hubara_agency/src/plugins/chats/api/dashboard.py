@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -736,25 +737,125 @@ def _last_message_preview(history_file: Path) -> str | None:
     return value
 
 
+# ── La bandeja sin frenar al API (2026-10-22) ────────────────────────────────
+#
+# Armar la bandeja lee el vault entero (el `metadata.json` y la cola del
+# historial de cada chat) y, si cambió el conjunto de anuncios, llama a Graph
+# con httpx síncrono. Dentro del event loop eso frenaba TODO el API —webhook de
+# WhatsApp y SSE incluidos—: medido con 600 chats, ~200 ms por llamada (~0,9 s
+# la primera) y segundos con Graph lento. La piden el muestreador en cada tick
+# con cambios, cada conexión SSE al abrir y cada `GET /sessions`. Ahora el disco
+# y Graph van en un hilo, y hay UNA lectura a la vez: quien pide mientras otra
+# corre comparte la siguiente, que empieza después de su pedido (así el
+# muestreador nunca publica una bandeja de antes del cambio que vio) y una
+# reconexión masiva no arma N lecturas del vault a la vez. Los metadata leídos
+# no se guardan entre lecturas: la caja tiene la memoria justa.
+
+
+class _SharedFreshReads:
+    """Una lectura a la vez. Cada pedido recibe una que EMPEZÓ después de él; los que esperan juntos la comparten."""
+
+    def __init__(self, read: Callable[[], Awaitable[dict]]) -> None:
+        self._read = read
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._waiting: list[asyncio.Future] = []
+        self._worker: asyncio.Task | None = None
+
+    async def get(self) -> dict:
+        loop = asyncio.get_running_loop()
+        if loop is not self._loop:  # otro event loop (tests, reinicio): lo pendiente era del anterior
+            self._loop, self._waiting, self._worker = loop, [], None
+        request = loop.create_future()
+        self._waiting.append(request)
+        if self._worker is None or self._worker.done():
+            self._worker = loop.create_task(self._work())
+        return await request
+
+    async def _work(self) -> None:
+        while self._waiting:
+            # Los que esperan ahora pidieron ANTES de que empiece esta lectura: les sirve. Los que lleguen mientras
+            # corre esperan la próxima.
+            batch, self._waiting = self._waiting, []
+            try:
+                result = await self._read()
+            except asyncio.CancelledError:
+                for request in batch + self._waiting:
+                    request.cancel()
+                self._waiting = []
+                raise
+            except Exception as exc:  # noqa: BLE001 — el error es de quienes esperaban esta lectura
+                for request in batch:
+                    if not request.done():
+                        request.set_exception(exc)
+                continue
+            for request in batch:
+                if not request.done():  # quien se fue (cliente desconectado) ya no la espera
+                    request.set_result(result)
+
+
 @router.get("/sessions")
 async def list_dashboard_sessions():
     """
-    Returns a realtime list of all active or past WhatsApp sessions, 
+    Returns a realtime list of all active or past WhatsApp sessions,
     complete with their assigned tags, route handlers, and metadata.
+
+    La lectura del vault va en un hilo y se comparte con quien la pidió a la vez (`_SharedFreshReads`).
     """
-    if not WORKSPACE_VAULT_DIR.exists():
+    return await _inbox_reads.get()
+
+
+async def _read_inbox() -> dict:
+    sessions, session_data = await asyncio.to_thread(_inbox_from_vault, WORKSPACE_VAULT_DIR)
+
+    # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
+    # verificación de pago (botón) + todo pedido vinculado a una sesión (chip
+    # de orden). El store de OrderFacts es una caché compartida con la vista
+    # Orders — lo ya visto sale al instante.
+    order_ids = {
+        s["pending_payment_order_id"] for s in sessions if s["pending_payment_order_id"]
+    }
+    for data_ in session_data.values():
+        order_ids |= _order_ref_candidate_ids(data_)
+    facts = await _pending_payment_facts(order_ids)
+    for s_ in sessions:
+        data_ = session_data.get(s_["session_id"])
+        if data_ is None:
+            continue
+        if s_["pending_payment_order_id"]:
+            s_["pending_payment_order_id"] = _compute_pending_payment_order_id(
+                data_, facts
+            )
+        s_["order_ref"] = _compute_order_ref(data_, facts)
+
+    # Nombres reales de campaña en UN batch para todo el listado (Graph es
+    # httpx síncrono: va en un hilo).
+    enriched = await asyncio.to_thread(_origins_with_names, {s["session_id"]: s["origin"] for s in sessions})
+    for s_ in sessions:
+        s_["origin"] = enriched.get(s_["session_id"])
+
+    # Sort from most recent to oldest
+    sessions.sort(key=lambda x: x["last_updated_timestamp"], reverse=True)
+    return {"sessions": sessions}
+
+
+_inbox_reads = _SharedFreshReads(_read_inbox)
+
+
+def _inbox_from_vault(vault_dir: Path) -> tuple[list[dict], dict[str, dict]]:
+    """(filas de la bandeja, metadata de cada sesión) leyendo el disco. Corre en un hilo: nada de asyncio aquí."""
+    if not vault_dir.exists():
         # Vault doesn't exist yet, return empty
-        return {"sessions": []}
-        
+        return [], {}
+
     sessions = []
-    
+
     # `metadata.json` por sesion candidata - el estado real de esos pedidos se
     # resuelve DESPUES, en una sola lectura de OrderFacts (no N por sesion).
     session_data: dict[str, dict] = {}
-    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata_store = FilesystemMetadataStore(vault_dir)
 
-    for entry in os.listdir(WORKSPACE_VAULT_DIR):
-        session_path = WORKSPACE_VAULT_DIR / entry
+    for entry in os.listdir(vault_dir):
+        session_path = vault_dir / entry
         if session_path.is_dir() and entry.startswith("wa_"):
             tag = "NO_ETIQUETADO"
             motivo = "Sin diagnóstico todavía"
@@ -824,36 +925,8 @@ async def list_dashboard_sessions():
                 "customer_name": customer_name,
                 "last_message_preview": last_message_preview,
             })
+    return sessions, session_data
 
-    # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
-    # verificación de pago (botón) + todo pedido vinculado a una sesión (chip
-    # de orden). El store de OrderFacts es una caché compartida con la vista
-    # Orders — lo ya visto sale al instante.
-    order_ids = {
-        s["pending_payment_order_id"] for s in sessions if s["pending_payment_order_id"]
-    }
-    for data_ in session_data.values():
-        order_ids |= _order_ref_candidate_ids(data_)
-    facts = await _pending_payment_facts(order_ids)
-    for s_ in sessions:
-        data_ = session_data.get(s_["session_id"])
-        if data_ is None:
-            continue
-        if s_["pending_payment_order_id"]:
-            s_["pending_payment_order_id"] = _compute_pending_payment_order_id(
-                data_, facts
-            )
-        s_["order_ref"] = _compute_order_ref(data_, facts)
-
-    # Nombres reales de campaña en UN batch para todo el listado.
-    enriched = _origins_with_names({s["session_id"]: s["origin"] for s in sessions})
-    for s_ in sessions:
-        s_["origin"] = enriched.get(s_["session_id"])
-
-    # Sort from most recent to oldest
-    sessions.sort(key=lambda x: x["last_updated_timestamp"], reverse=True)
-    return {"sessions": sessions}
-    
 
 class _empty_lines:
     """Context manager iterable vacío — mismo shape que un archivo abierto."""

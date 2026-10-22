@@ -1178,6 +1178,26 @@ cambio; el teléfono en 4G se atrasaba y la app decía «Sin conexión» mientra
 - WHEN el cliente vuelve a leer
 - THEN recibe solo la última y el log de la conexión cuenta 2 bandejas viejas omitidas
 
+### Requirement: Armar la bandeja no frena al API (2026-10-22)
+
+Leer el vault para la bandeja (`GET /api/dashboard/sessions`, el muestreador del SSE y cada conexión SSE al abrir) y
+pedir a Graph los nombres de los anuncios SHALL correr fuera del event loop del API, y SHALL haber una sola lectura a la
+vez: quien la pide mientras otra corre MUST recibir una que empezó después de su pedido (nunca una de antes de un
+cambio) y la comparte con los que esperaban con él. Medido con 600 chats sintéticos: el loop quedaba tomado ~200 ms
+por lectura (~0,9 s la primera, segundos con Graph lento), sin atender el webhook de WhatsApp ni el SSE.
+
+#### Scenario: El disco lento no frena al resto
+
+- GIVEN una lectura de la bandeja esperando al disco
+- WHEN llega otro pedido al API
+- THEN se atiende antes de que termine la lectura
+
+#### Scenario: Una reconexión masiva
+
+- GIVEN cinco clientes piden la bandeja a la vez
+- WHEN se arma
+- THEN el vault se lee una sola vez y los cinco reciben la misma
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)
