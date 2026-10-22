@@ -23,7 +23,7 @@ interface Props {
   orderTotal: number | null;
   /** Tarifa mínima de envío cobrada al vender (referencia). `null` = no hay. */
   estimatedShipping?: number | null;
-  /** Envío gratis (6 cajas o más de una campaña): el valor real lo paga la
+  /** Envío gratis (desde N cajas de una campaña): el valor real lo paga la
    *  tienda — queda anotado, pero el total a cobrar no lo suma. */
   freeShipping?: boolean;
   busy: boolean;
@@ -75,7 +75,7 @@ export function ShipStep({
     <div className="order-step" aria-label="Despachar">
       {freeShipping && (
         <p className="order-step-hint" data-testid="ship-free">
-          Este pedido tiene envío gratis (6 cajas o más): el valor real del envío
+          Este pedido tiene envío gratis por la campaña: el valor real del envío
           lo paga la tienda y no se le cobra al cliente.
         </p>
       )}

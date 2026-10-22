@@ -36,7 +36,7 @@ interface Props {
   orderTotal?: number | null;
   /** Tarifa mínima de envío que se cobró al vender (referencia). `null` = no hay. */
   estimatedShipping?: number | null;
-  /** Envío gratis (6 cajas o más de una campaña): el valor real lo paga la
+  /** Envío gratis (desde N cajas de una campaña): el valor real lo paga la
    *  tienda — queda anotado, pero el total a cobrar no lo suma. */
   freeShipping?: boolean;
   /** Transición en vuelo: deshabilita las acciones. */
@@ -128,7 +128,7 @@ export function TrackingLinkModal({
           <div className="text-[13px] font-bold text-fg">🚚 Marcar en camino · {orderId}</div>
           {freeShipping && (
             <p data-testid="ship-free" className="mt-1 text-[11.5px] font-semibold leading-snug text-fg">
-              Este pedido tiene envío gratis (6 cajas o más): el valor real del
+              Este pedido tiene envío gratis por la campaña: el valor real del
               envío lo paga la tienda y no se le cobra al cliente.
             </p>
           )}

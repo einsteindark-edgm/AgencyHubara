@@ -73,7 +73,7 @@ export const customerOrderSchema = z
     /** Envío incluido en `total_cop`; `shipping_confirmed` = ya es el real. */
     shipping_cop: z.number().nullish(),
     shipping_confirmed: z.boolean().nullish(),
-    /** Envío gratis (6 cajas o más de una campaña): el envío real lo paga la tienda. */
+    /** Envío gratis (desde N cajas de una campaña): el envío real lo paga la tienda. */
     free_shipping: z.boolean().nullish(),
     store_shipping_cost_cop: z.number().nullish(),
     currency_code: z.string().nullish(),

@@ -64,6 +64,21 @@ def _campaign_on(monkeypatch):
     import src.sdk.connectorkit as connectorkit
 
     monkeypatch.setattr(connectorkit, "get_promotions_port", lambda: _Promotions(None))
+    # Un pedido anterior es de verdad por defecto (cuenta como compra).
+    monkeypatch.setattr(connectorkit, "get_order_facts_port", lambda: _Facts())
+
+
+class _Facts:
+    """OrderFacts de prueba: todos los pedidos que se pregunten, de un tipo."""
+
+    def __init__(self, *, is_test: bool = False, stage: str = "delivered", fail: bool = False) -> None:
+        self._is_test, self._stage, self._fail = is_test, stage, fail
+
+    async def get_facts(self, ids):
+        if self._fail:
+            raise OSError("medusa caída")
+        facts = {i: SimpleNamespace(order_id=i, stage=self._stage, is_test=self._is_test) for i in ids}
+        return SimpleNamespace(facts=facts, unresolved=set())
 
 
 def _text(text: str) -> WhatsAppMessage:
@@ -250,15 +265,16 @@ async def test_without_a_live_coupon_nobody_is_offered_a_discount(monkeypatch) -
     assert "BIENVENIDA" not in _script(notes[1]) and "acaba de aplazar" not in _script(notes[1])
 
 
+def _old_order(store: FakeMetadataStore) -> None:
+    (sid,) = store.store
+    old = {"episode_id": "ep_000", "started_at_ms": 1, "closed_at_ms": 2, "closing_tag": "COMPRA_EXITOSA",
+           "order_id": "order_old"}
+    store.store[sid]["episodes"].insert(0, old)
+
+
 @pytest.mark.asyncio
 async def test_a_customer_who_bought_before_is_not_offered_a_first_purchase_coupon(monkeypatch) -> None:
-    def _bought_before(store: FakeMetadataStore) -> None:
-        (sid,) = store.store
-        old = {"episode_id": "ep_000", "started_at_ms": 1, "closed_at_ms": 2, "closing_tag": "COMPRA_EXITOSA",
-               "order_id": "order_old"}
-        store.store[sid]["episodes"].insert(0, old)
-
-    notes, _ = await _conversation(monkeypatch, _live_coupon(), PREFILLED, "Lo pienso y te aviso", before=_bought_before)
+    notes, _ = await _conversation(monkeypatch, _live_coupon(), PREFILLED, "Lo pienso y te aviso", before=_old_order)
 
     assert "acaba de aplazar" not in _script(notes[1]) and "BIENVENIDA" not in _script(notes[1])
 
@@ -401,6 +417,137 @@ async def test_a_yes_after_the_deferral_is_not_answered_with_the_offer(monkeypat
     )
 
     assert "acaba de aplazar" not in _script(notes[2]) and _offered(store) is None
+
+
+# ── caso del 2026-10-21, sin anuncio: «Hola», la foto de la caja y «Luego te aviso» ──
+#
+# El cliente no llegó por un anuncio: escribió «Hola», mandó la foto de la caja
+# cuadrada (el sistema la reconoció) y dijo «Luego te aviso». La conversación
+# no quedó en la campaña (solo la reconocían el anuncio y el pedido) y, además,
+# el número tenía 7 pedidos de prueba que el filtro de la oferta contaba como
+# compras. Ventas se despidió sin el 5 %.
+
+
+def _photo_of(handle: str, title: str) -> str:
+    from src.plugins.chats.agent.sales.use_cases.photo_product import HOW_IMAGE, PhotoProduct, photo_reentry_text
+
+    product = PhotoProduct(handle=handle, title=title, how=HOW_IMAGE)
+    return photo_reentry_text("velas rectangulares apiladas, cada una con una palabra grabada", product) + (
+        ' con el texto: "Uy esta está buena"'
+    )
+
+
+def _has_script(notes: list[str]) -> bool:
+    return any(n.startswith("[GUION DE LA CAMPAÑA") for n in notes)
+
+
+@pytest.mark.asyncio
+async def test_a_customer_who_names_a_campaign_product_gets_its_script(monkeypatch) -> None:
+    notes, store = await _conversation(monkeypatch, _live_coupon(), "Hola", "¿Cuánto valen las velas de deseos cuadradas?")
+
+    assert not _has_script(notes[0]) and _has_script(notes[1]) and "BIENVENIDA" in _script(notes[1])
+    (sid,) = store.store
+    assert store.store[sid]["episodes"][-1][sc.EPISODE_KEY] == "velitas-7-dic"
+
+
+@pytest.mark.asyncio
+async def test_the_photo_of_a_campaign_box_and_then_a_deferral_bring_the_offer(monkeypatch) -> None:
+    notes, store = await _conversation(
+        monkeypatch, _live_coupon(), "Hola", _photo_of("velas-de-deseos-cuadradas", "Caja de Velas de deseos cuadradas"),
+        "Luego te aviso",
+    )
+
+    assert _has_script(notes[1]) and "acaba de aplazar" in _script(notes[2]) and _offered(store) is not None
+
+
+def _opened_the_card(handle: str):
+    """El cliente abrió la ficha del producto en el catálogo de WhatsApp (o en la web)."""
+    def _seen(store: FakeMetadataStore) -> None:
+        (sid,) = store.store
+        episode_id = store.store[sid]["episodes"][-1]["episode_id"]
+        store.store[sid]["web_product_ref"] = {
+            "sku": f"HUB-{handle}", "origin": "catalog", "status": "resolved", "handle": handle,
+            "title": handle.replace("-", " ").capitalize(), "episode_id": episode_id,
+        }
+
+    return _seen
+
+
+@pytest.mark.asyncio
+async def test_a_customer_who_opened_the_card_of_a_campaign_box_gets_its_script(monkeypatch) -> None:
+    notes, _ = await _conversation(
+        monkeypatch, _live_coupon(), "Hola", "¿Qué precio tiene?", before=_opened_the_card("velas-de-deseos-onduladas")
+    )
+
+    assert _has_script(notes[1])
+
+
+@pytest.mark.asyncio
+async def test_the_card_of_another_episode_does_not_count(monkeypatch) -> None:
+    def _old_card(store: FakeMetadataStore) -> None:
+        _opened_the_card("velas-de-deseos-onduladas")(store)
+        (sid,) = store.store
+        store.store[sid]["web_product_ref"]["episode_id"] = "ep_viejo"
+
+    notes, _ = await _conversation(monkeypatch, _live_coupon(), "Hola", "¿Qué precio tiene?", before=_old_card)
+
+    assert not _has_script(notes[1])
+
+
+@pytest.mark.asyncio
+async def test_a_conversation_of_another_campaign_that_ends_up_on_the_boxes_gets_their_hook(monkeypatch) -> None:
+    """Operador, 2026-10-21: «aplica para campañas que sean de otros productos
+    pero la conversación termina hablando de productos que tienen el gancho o
+    el descuento: ahí debería reconocerse y hacerle el gancho sobre ese
+    producto». El producto del que habla el cliente ahora manda."""
+    from dataclasses import replace
+
+    (velitas,) = sc.active_campaigns()
+    halloween = replace(velitas, id="halloween", nombre="Halloween", productos=("trilogia-del-terror",),
+                        anuncios=("noche de brujas",), cupon=None)
+    monkeypatch.setattr(sc, "active_campaigns", lambda: (halloween, velitas))
+
+    notes, store = await _conversation(
+        monkeypatch, _live_coupon(), "Hola, ¿cuánto vale la Trilogía del Terror?",
+        "¿Y las velas de deseos cuadradas?", "Luego te aviso",
+    )
+
+    assert "«Halloween»" in _script(notes[0])
+    assert "«Velitas del 7 de diciembre»" in _script(notes[1])
+    assert "acaba de aplazar" in _script(notes[2]) and _offered(store) is not None
+    (sid,) = store.store
+    assert store.store[sid]["episodes"][-1][sc.EPISODE_KEY] == "velitas-7-dic"
+
+
+@pytest.mark.asyncio
+async def test_another_product_does_not_make_it_a_campaign_conversation(monkeypatch) -> None:
+    notes, store = await _conversation(monkeypatch, _live_coupon(), "Hola", "¿Cuánto vale la Trilogía del Terror?")
+
+    assert not _has_script(notes[1])
+
+
+@pytest.mark.asyncio
+async def test_old_test_orders_do_not_block_a_first_purchase_offer(monkeypatch) -> None:
+    """La regla del cupón (`list_promotions`, `bought_before`): un pedido de
+    prueba o cancelado no es una compra."""
+    import src.sdk.connectorkit as connectorkit
+
+    monkeypatch.setattr(connectorkit, "get_order_facts_port", lambda: _Facts(is_test=True))
+
+    notes, _ = await _conversation(monkeypatch, _live_coupon(), PREFILLED, "Lo pienso y te aviso", before=_old_order)
+
+    assert "acaba de aplazar" in _script(notes[1])
+
+
+@pytest.mark.asyncio
+async def test_if_medusa_cannot_tell_whether_an_old_order_counts_there_is_no_offer(monkeypatch) -> None:
+    import src.sdk.connectorkit as connectorkit
+
+    monkeypatch.setattr(connectorkit, "get_order_facts_port", lambda: _Facts(fail=True))
+
+    notes, _ = await _conversation(monkeypatch, _live_coupon(), PREFILLED, "Lo pienso y te aviso", before=_old_order)
+
+    assert "acaba de aplazar" not in _script(notes[1])
 
 
 class _SlowPromotions:

@@ -2,7 +2,8 @@
 # `chats/shared/sales_campaigns.py`; la guía está en `README.md` de esta carpeta.
 #
 # Solo entra a las conversaciones de esta campaña: las que vienen de uno de sus
-# anuncios, o cuyo pedido tiene uno de sus productos. Las demás conversaciones no
+# anuncios, cuyo pedido tiene uno de sus productos, o donde el cliente nombra uno
+# de sus productos o manda su foto. Las demás conversaciones no
 # cambian (una prueba lo exige). Para cambiar el guion, edita este archivo; para
 # otra campaña, crea otro archivo.
 #
@@ -63,6 +64,8 @@ guion:
   - "Para que no lo deje para última hora: el cupón de la campaña, tal como te lo paso arriba (su valor y, si la tiene, su fecha límite; solo cuando rige). Ofrécelo cuando dude o aplace la compra («te aviso», «hay tiempo», «más adelante»); cuando el cliente aplaza, el sistema te lo avisa. Va con el argumento del anuncio: mejor dejar listas las velitas desde ya y no a última hora. No inventes otra fecha, escasez ni cupos."
   - "Si es para vender, para un negocio o un emprendimiento: dale el precio por mayor que dice la descripción del producto (get_product_by_handle) y desde cuántas cajas aplica. Si quiere esa cantidad, pásalo con un colega como siempre."
   - "Los aromas y las presentaciones son los de la ficha del producto: no ofrezcas otros."
+  # Operador, 2026-10-22: «están pidiendo mucho personalizarla con nombre».
+  - "Si pide otra forma, otro tamaño o un diseño distinto, o personalizarlas con su nombre, una dedicatoria o una palabra suya: dile con calidez que este año no las estamos personalizando ni haciendo otras formas, que las que tenemos disponibles son estas dos cajas, y no ofrezcas excepciones, pedidos especiales ni consultarlo con un colega. En ese mismo mensaje véndele el diseño actual con el concepto de su descripción (get_product_by_handle): las intenciones que trae cada caja en relieve con su símbolo, el mensaje que llevan y para qué son, el aroma, que son hechas a mano y los colores para escoger, todo como lo dice la descripción; no le agregues materiales ni otros datos que ella no diga. Ayúdale a escoger (para quién es, qué intenciones quiere regalar) y cierra con una propuesta concreta: la caja que más le sirva o el combo."
 # Un texto por toque de remarketing; del último en adelante se repite el último.
 toques:
   - "Cuéntale en una o dos líneas qué son, con lo que dice su ficha, el precio de las dos cajas, y propónle el combo (si su línea dice que paga contra entrega, díselo). Termina preguntándole si le apartas una caja o el combo."

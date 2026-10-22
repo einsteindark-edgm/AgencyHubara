@@ -13,6 +13,7 @@ precios del catálogo. Las demás conversaciones no cambian.
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -86,6 +87,18 @@ def test_a_date_with_a_time_is_an_error(tmp_path: Path) -> None:
         sc.load_campaigns(tmp_path)
 
 
+def test_every_line_of_the_script_of_every_live_campaign_reaches_ventas() -> None:
+    """El guion se cambia en el YAML, sin tocar código (operador, 2026-10-22:
+    «todo esto solo debería aplicar a files de configuración»): cada línea de
+    cada campaña viva llega tal cual a la nota de Ventas, diga lo que diga
+    (p. ej. la de las velitas que este año no se personalizan)."""
+    for campaign in sc.load_campaigns():
+        note = sc.sales_note(campaign, [ONDULADAS, CUADRADAS], cod_min=45_000, boxes=BOXES)
+
+        for step in campaign.guion:
+            assert f"- {step}" in note, (campaign.id, step[:60])
+
+
 def test_a_campaign_file_does_not_write_prices() -> None:
     """Los precios salen del catálogo; uno escrito en el YAML se desfasa de Medusa."""
     for path in [*sc.CAMPAIGNS_DIR.glob("*.yaml"), *FIXTURES.glob("*.yaml")]:
@@ -151,6 +164,34 @@ def test_the_stamp_of_the_episode_keeps_the_campaign() -> None:
     episode = {**_episode(), sc.EPISODE_KEY: "velitas-7-dic"}
 
     assert sc.campaign_for(episode, today=TODAY, text="ok gracias", campaigns=_FIXTURE).id == "velitas-7-dic"
+
+
+# Operador, 2026-10-21: «si la conversación termina hablando de productos que
+# tienen el gancho o el descuento, ahí debería reconocerse y hacerle el gancho
+# sobre ese producto». El producto del que habla el cliente AHORA manda.
+
+
+def _halloween() -> sc.Campaign:
+    (velitas,) = _FIXTURE
+    return replace(velitas, id="halloween", nombre="Halloween", productos=("trilogia-del-terror",),
+                   anuncios=("noche de brujas",), cupon=None)
+
+
+def test_naming_a_product_of_the_campaign_makes_it_a_campaign_conversation() -> None:
+    found = sc.campaign_for(_episode(), today=TODAY, said="¿Y las velas de deseos cuadradas?", campaigns=_FIXTURE)
+
+    assert found.id == "velitas-7-dic"
+
+
+def test_a_conversation_of_another_campaign_moves_to_the_product_it_ends_up_talking_about() -> None:
+    campaigns = [_halloween(), *_FIXTURE]
+    episode = {**_episode(headline="Noche de brujas"), sc.EPISODE_KEY: "halloween"}
+
+    moved = sc.campaign_for(episode, today=TODAY, said="¿Y las velas de deseos onduladas?", campaigns=campaigns)
+    stays = sc.campaign_for(episode, today=TODAY, said="ok, ¿y la Trilogía del Terror?", campaigns=campaigns)
+    quiet = sc.campaign_for(episode, today=TODAY, said="Luego te aviso", campaigns=campaigns)
+
+    assert (moved.id, stays.id, quiet.id) == ("velitas-7-dic", "halloween", "halloween")
 
 
 def test_an_episode_with_its_order_registered_gets_no_script() -> None:

@@ -227,7 +227,8 @@ class RealScreensTest {
         }
     }
 
-    // Envío gratis desde 6 cajas de la campaña (operador, 2026-10-20): el costo real del despacho lo paga la tienda.
+    // Envío gratis de una campaña (desde las cajas que dice su archivo; operador, 2026-10-20): el costo real del
+    // despacho lo paga la tienda. La pantalla no escribe el número (operador, 2026-10-22: «no debería ir código quemado»).
     @Test fun la_ficha_de_un_pedido_con_envio_gratis_dice_que_el_envio_lo_paga_la_tienda() {
         data.ok("/api/orders/orders/order_40", """{"summary": {"id": "order_40", "display_id": "#40", "customer": "Juan Prueba",
             "status": "ready", "pay_status": "pending", "total_cop": 135000, "free_shipping": true, "store_shipping_cost_cop": 18000},
@@ -236,7 +237,7 @@ class RealScreensTest {
             "shipping_cop": 0, "payment_method_label": "Contra entrega"}""")
         open("pedido", mapOf("order_id" to "order_40"))
         compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToNode(hasText("lo paga la tienda", substring = true))
-        compose.onNodeWithText("Envío gratis (6 cajas o más)", substring = true).assertExists()
+        compose.onNodeWithText("Envío gratis por la campaña", substring = true).assertExists()
         compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToNode(hasText("(envío gratis)", substring = true))
         compose.onNodeWithText("(envío gratis)", substring = true).assertExists()
         node("ENVÍO QUE PAGA LA TIENDA").assertExists()

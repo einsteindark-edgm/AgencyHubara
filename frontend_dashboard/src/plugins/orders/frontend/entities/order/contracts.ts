@@ -55,7 +55,7 @@ export const orderSummarySchema = z.object({
   // (`shipping_confirmed`). Opcionales: un backend viejo no los manda.
   shipping_cop: z.number().int().optional(),
   shipping_confirmed: z.boolean().optional(),
-  // Envío gratis (6 cajas o más de una campaña, 2026-10-20): el cliente no
+  // Envío gratis (desde N cajas de una campaña, 2026-10-20): el cliente no
   // paga envío; el valor real del despacho lo paga la tienda. Opcionales.
   free_shipping: z.boolean().optional(),
   store_shipping_cost_cop: z.number().int().nullish(),

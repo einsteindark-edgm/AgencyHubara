@@ -21,9 +21,9 @@ export function ItemsPanel({ detail }: { detail: OrderDetail }) {
         <KV k="Subtotal productos" v={fmtMoney(detail.subtotal_cop)} />
         {detail.summary.free_shipping ? (
           <>
-            {/* Envío gratis (6 cajas o más de la campaña): el cliente no lo
+            {/* Envío gratis de la campaña (desde N cajas): el cliente no lo
                 paga; lo que cuesta el despacho es de la tienda, fuera del total. */}
-            <KV k="Envío" v="gratis (6 cajas o más)" />
+            <KV k="Envío" v="gratis por la campaña" />
             {detail.summary.store_shipping_cost_cop != null && detail.summary.store_shipping_cost_cop > 0 && (
               <KV k="Envío que paga la tienda" v={fmtMoney(detail.summary.store_shipping_cost_cop)} />
             )}

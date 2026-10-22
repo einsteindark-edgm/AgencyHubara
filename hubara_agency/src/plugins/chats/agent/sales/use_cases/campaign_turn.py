@@ -65,7 +65,10 @@ async def campaign_turn(
 
     episode = get_active_episode(metadata)
     today = datetime.fromtimestamp(now_ms / 1000, tz=ZoneInfo("America/Bogota")).date()
-    campaign = sales_campaigns.campaign_for(episode, today=today, text=(text or "") if opening else "")
+    # Lo que el cliente escribe o muestra ahora (la foto entra como texto con
+    # el producto que se reconoció) y la ficha que abrió en este episodio.
+    said = " ".join(part for part in (text or "", _card_handle(metadata, episode)) if part)
+    campaign = sales_campaigns.campaign_for(episode, today=today, text=(text or "") if opening else "", said=said)
     if campaign is None or episode is None:
         return None
     changed = False
@@ -73,17 +76,20 @@ async def campaign_turn(
         episode[sales_campaigns.EPISODE_KEY] = campaign.id
         changed = True
         logger.info("sales_campaign_matched", session=session_id, campaign=campaign.id)
-    # El catálogo y el cupón a la vez: con Medusa lento, el turno no suma las
-    # dos esperas (revisión del 2026-10-20). Con un cupón ya aplicado en el
-    # episodio no se ofrece otro (el cliente creería que se suman).
+    # El catálogo, el cupón y los pedidos anteriores a la vez: con Medusa
+    # lento, el turno no suma las esperas (revisión del 2026-10-20). Con un
+    # cupón ya aplicado en el episodio no se ofrece otro (el cliente creería
+    # que se suman).
     coupon = None if applied_coupon(metadata) else campaign.cupon
-    products, promotion = await asyncio.gather(_campaign_products(catalog), _campaign_promotion(coupon))
+    products, promotion, bought = await asyncio.gather(
+        _campaign_products(catalog), _campaign_promotion(coupon), _bought_before(metadata) if coupon else _no()
+    )
     try:
         boxes = store_domain().get("sold_by_box")
     except Exception:  # noqa: BLE001 — sin el dominio, los precios van por unidad
         boxes = None
     ids = tuple(str(p.id) for p in products if getattr(p, "handle", None) in campaign.productos and getattr(p, "id", None))
-    offer = _campaign_offer(promotion, metadata, today=today, product_ids=ids)
+    offer = _campaign_offer(promotion, today=today, product_ids=ids, bought_before=bought)
     already = offer is not None and episode.get(sales_campaigns.OFFER_KEY) == offer.key()
     # El cliente aplazó desde nuestra última respuesta (Jev, capacidad
     # `compra`; sin Jev, la regla de hoy), aunque después escribiera otra
@@ -99,6 +105,17 @@ async def campaign_turn(
         offer=offer, offer_now=offer_now, already_offered=already,
     )
     return CampaignTurn(note=note, offer_now=offer_now, changed=changed)
+
+
+def _card_handle(metadata: dict[str, Any], episode: dict[str, Any] | None) -> str:
+    """El producto cuya ficha abrió el cliente en este episodio (catálogo de
+    WhatsApp o la web, `web_product_ref` ya resuelto), o ''."""
+    ref = metadata.get("web_product_ref")
+    if not isinstance(ref, dict) or ref.get("status") != "resolved" or episode is None:
+        return ""
+    if ref.get("episode_id") != episode.get("episode_id"):
+        return ""
+    return str(ref.get("handle") or "")
 
 
 async def _campaign_products(catalog: Any) -> list[Any]:
@@ -127,19 +144,47 @@ async def _campaign_promotion(code: str | None) -> Any:
         return None
 
 
-def _campaign_offer(promotion: Any, metadata: dict[str, Any], *, today: Any, product_ids: tuple[str, ...]) -> Any:
+def _campaign_offer(promotion: Any, *, today: Any, product_ids: tuple[str, ...], bought_before: bool) -> Any:
     """La oferta si el cupón rige hoy (`coupon_problem`, la vara de
     `list_promotions`: Medusa lo deja «active» al vencer), sus condiciones
     se pueden decir y, si es de primera compra, el cliente no compró antes
     en la conversación (`list_promotions` lo confirma contra Medusa antes
     de decirla). None: el bot no la ofrece."""
-    from src.plugins.chats.agent.sales.use_cases.first_purchase import previous_order_ids
     from src.plugins.chats.shared import sales_campaigns
     from src.sdk.connectorkit import coupon_problem
 
     if promotion is None or coupon_problem(promotion, now_ms=int(time.time() * 1000)) is not None:
         return None
     offer = sales_campaigns.coupon_offer(promotion, today=today, product_ids=product_ids)
-    if offer is not None and offer.first_purchase_only and previous_order_ids(metadata):
+    if offer is not None and offer.first_purchase_only and bought_before:
         return None
     return offer
+
+
+async def _no() -> bool:
+    return False
+
+
+async def _bought_before(metadata: dict[str, Any]) -> bool:
+    """¿Un pedido anterior de la conversación es una compra? La regla del
+    cupón (`bought_before`, la de `list_promotions`): uno de prueba o
+    cancelado no cuenta (caso del 2026-10-21: un número con 7 pedidos, todos
+    de prueba, nunca recibía la oferta). Sin pedidos anteriores no pregunta a
+    Medusa; si Medusa no responde, cuenta (no se adivina)."""
+    from src.plugins.chats.agent.sales.use_cases.first_purchase import (
+        FirstPurchaseUnknown,
+        bought_before,
+        previous_order_ids,
+    )
+
+    if not previous_order_ids(metadata):
+        return False
+    try:
+        from src.sdk.connectorkit import get_order_facts_port
+
+        return await bought_before(metadata, get_order_facts_port())
+    except FirstPurchaseUnknown:
+        return True
+    except Exception as exc:  # noqa: BLE001 — sin OrderFacts, como antes: cuenta
+        logger.warning("sales_campaign_first_purchase_unknown", reason=type(exc).__name__)
+        return True

@@ -10,10 +10,18 @@ Solo a las conversaciones de la campaña. Una conversación es de la campaña si
 
 - viene de uno de sus anuncios (las palabras de `anuncios` en el título o el texto
   del anuncio, o en el mensaje prellenado), o
-- su pedido tiene uno de sus `productos`.
+- su pedido tiene uno de sus `productos`, o
+- el cliente nombra uno de sus `productos`, manda su foto y el sistema la
+  reconoce, o abre su ficha en el catálogo de WhatsApp o en la web (caso del
+  2026-10-21: «Hola», la foto de la caja cuadrada y «Luego te aviso», sin
+  anuncio).
 
 La primera vez, el ingest marca el episodio (`sales_campaign: <id>`): desde ahí,
-Ventas y el remarketing siguen esa campaña en ese episodio. Fuera de las fechas
+Ventas y el remarketing siguen esa campaña en ese episodio. Manda el producto
+del que habla el cliente ahora: si una conversación de una campaña termina
+hablando de un producto de OTRA campaña (lo nombra, manda su foto o abre su
+ficha), pasa a esa, y sus ganchos (cupón al aplazar, envío gratis, toque con la
+oferta) aplican sobre ese producto (operador, 2026-10-21). Fuera de las fechas
 (`desde`/`hasta`) o con `activa: false`, el guion no le llega a nadie.
 
 Las demás conversaciones no reciben nada nuevo. Lo prueban

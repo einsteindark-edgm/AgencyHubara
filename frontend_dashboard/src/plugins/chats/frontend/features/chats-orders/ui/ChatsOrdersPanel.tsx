@@ -232,7 +232,7 @@ function shipAmounts(order: CustomerOrder): {
   estimatedShipping: number | null;
   freeShipping: boolean;
 } {
-  // Envío gratis (6 cajas o más): el valor real lo paga la tienda, no se suma.
+  // Envío gratis de la campaña: el valor real lo paga la tienda, no se suma.
   const freeShipping = order.free_shipping === true;
   if (order.total_cop == null) return { orderTotal: null, estimatedShipping: null, freeShipping };
   const shipping = order.shipping_cop ?? 0;
