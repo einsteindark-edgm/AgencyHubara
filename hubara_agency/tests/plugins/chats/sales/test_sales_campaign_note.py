@@ -88,6 +88,8 @@ async def _turn(text: str, *, catalog: _Catalog | None = None) -> tuple[list[str
 
 @pytest.mark.asyncio
 async def test_a_customer_of_the_campaign_gets_its_script_with_the_catalog_prices() -> None:
+    if not (Path(__file__).resolve().parents[5] / "forge").is_dir():
+        pytest.skip("clon de forge: las cajas (las velas de deseos) son de la tienda madre")
     notes, metadata = await _turn(PREFILLED)
 
     (note,) = [n for n in notes if "GUION DE LA CAMPAÑA" in n]
