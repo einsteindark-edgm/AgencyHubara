@@ -99,7 +99,11 @@ def test_the_velitas_script_says_they_are_not_personalized_nor_made_in_other_sha
 
     line = next((x for x in note.splitlines() if "personaliz" in x), "")
     assert "este año" in line and "otra forma" in line and "disponibles" in line
-    assert "ficha" in line and "propuesta concreta" in line
+    assert "propuesta concreta" in line
+    # Operador: «lo que dice en la descripción, venderlas con el concepto que
+    # diga en la descripción». La descripción no nombra la cera: el guion
+    # tampoco, ni deja agregar lo que ella no dice.
+    assert "descripción" in line and "cera" not in line
 
 
 def test_a_campaign_file_does_not_write_prices() -> None:
