@@ -51,6 +51,22 @@ def test_connector_router_is_public_but_fails_closed_without_a_key(
     )
 
 
+def test_connector_fails_closed_while_the_key_is_still_the_ssm_placeholder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Terraform crea la llave con el relleno de SSM, y ese texto está en el repo
+    público: mientras nadie ponga la llave real, el conector no atiende a nadie,
+    tampoco a quien presente el relleno como llave."""
+    monkeypatch.setenv("HUBARA_MBA_API_KEY", "PLACEHOLDER_set_out_of_band")
+    c = _client()
+    r = c.get(
+        "/api/mba/tools/search_products",
+        headers={"X-API-Key": "PLACEHOLDER_set_out_of_band"},
+    )
+    assert r.status_code == 503
+    assert "HUBARA_MBA_API_KEY" not in r.text
+
+
 def test_connector_tools_exist_for_every_declared_tool_and_require_the_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
