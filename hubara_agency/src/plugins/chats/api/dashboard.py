@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -284,6 +285,7 @@ def _compute_order_ref(data: dict, order_facts) -> dict | None:
 
 _SAMPLE_INTERVAL_S = 2.5
 _HEARTBEAT_S = 25.0
+_STATS_EVERY_S = 300.0
 _sampler_task: asyncio.Task | None = None
 
 
@@ -433,36 +435,142 @@ def ensure_sampler() -> None:
         _sampler_task = asyncio.get_running_loop().create_task(_sampler_loop())
 
 
-async def dashboard_events_generator():
+# ── Lo que recibe cada cliente (app móvil, 2026-10-21) ──────────────────────
+#
+# Con 581 chats la bandeja completa pesa ~380 KB y sale en cada tick con
+# cambios: un teléfono en 4G no da abasto, su cola se llena de bandejas viejas
+# y lo nuevo le llegaba minutos tarde (la app decía «Sin conexión» mientras la
+# web iba al día). Por eso:
+#   - de lo que espera en la cola de un cliente se manda solo la bandeja MÁS
+#     NUEVA (las viejas ya no sirven) y un solo `session_updated` por sesión;
+#   - `?inbox=delta` (la app): la bandeja completa al conectar y después solo
+#     las filas que cambiaron respecto de lo último que recibió ESTE cliente,
+#     más las que ya no están (`chats.sessions_delta`). Comparar contra lo
+#     enviado (y no contra el tick anterior) no pierde nada aunque se omitan
+#     bandejas. La web sigue con la bandeja completa.
+#   - cada conexión deja en el log su modo, lo que mandó y cuánto se atrasó.
+
+_INBOX_MODES = {"snapshot": "bandeja completa", "delta": "cambios"}
+
+
+def _is_inbox(event: DashboardEvent) -> bool:
+    return event.domain == "chats" and event.type == "sessions_snapshot"
+
+
+def _drain(queue: asyncio.Queue) -> list[DashboardEvent]:
+    events: list[DashboardEvent] = []
+    while True:
+        try:
+            events.append(queue.get_nowait())
+        except asyncio.QueueEmpty:
+            return events
+
+
+def _coalesce(events: list[DashboardEvent]) -> tuple[list[DashboardEvent], int]:
+    """(lo que se manda, bandejas viejas omitidas). Los demás eventos van tal cual y en orden."""
+    inboxes = [i for i, event in enumerate(events) if _is_inbox(event)]
+    newest = inboxes[-1] if inboxes else None
+    updated: set[str | None] = set()
+    kept: list[DashboardEvent] = []
+    for i, event in enumerate(events):
+        if _is_inbox(event) and i != newest:
+            continue
+        if event.domain == "chats" and event.type == "session_updated":
+            if event.id in updated:
+                continue
+            updated.add(event.id)
+        kept.append(event)
+    return kept, max(0, len(inboxes) - 1)
+
+
+def _inbox_rows(snapshot: dict | None) -> dict[str, dict]:
+    sessions = (snapshot or {}).get("sessions") or []
+    return {row["session_id"]: row for row in sessions if isinstance(row, dict) and "session_id" in row}
+
+
+def _inbox_delta(sent: dict[str, dict], snapshot: dict | None) -> tuple[dict | None, dict[str, dict]]:
+    """(cambios respecto de lo enviado o None si no hay, filas que el cliente tiene después)."""
+    rows = _inbox_rows(snapshot)
+    changed = [row for session_id, row in rows.items() if sent.get(session_id) != row]
+    removed = sorted(session_id for session_id in sent if session_id not in rows)
+    if not changed and not removed:
+        return None, rows
+    return {"sessions": changed, "removed": removed}, rows
+
+
+class _StreamStats:
+    """Lo que mandó una conexión, para el log: modo, eventos, KB, bandejas omitidas y el mayor retraso en cola."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        self.opened = time.monotonic()
+        self.logged = self.opened
+        self.events = 0
+        self.bytes = 0
+        self.skipped = 0
+        self.max_lag_ms = 0
+
+    def sent(self, event: DashboardEvent) -> bytes:
+        chunk = event.to_sse().encode()
+        self.events += 1
+        self.bytes += len(chunk)
+        self.max_lag_ms = max(self.max_lag_ms, int(time.time() * 1000) - event.ts_ms)
+        return chunk
+
+    def summary(self) -> str:
+        return (
+            f"{_INBOX_MODES[self.mode]}, {round(time.monotonic() - self.opened)} s: {self.events} eventos, "
+            f"{self.bytes // 1024} KB, {self.skipped} bandejas viejas omitidas, retraso máx {self.max_lag_ms} ms"
+        )
+
+
+async def dashboard_events_generator(inbox: str = "snapshot"):
     ensure_sampler()
     bus = get_dashboard_event_bus()
     queue = bus.subscribe()
+    stats = _StreamStats(inbox if inbox in _INBOX_MODES else "snapshot")
+    logger.info("sse: conexión abierta ({}, {} conectados)", _INBOX_MODES[stats.mode], bus.subscriber_count)
     try:
         # Snapshot inicial: el cliente pinta al conectar (o RE-conectar tras un
         # corte) sin esperar el primer cambio del vault.
         snapshot = await list_dashboard_sessions()
-        yield DashboardEvent(
+        sent_rows = _inbox_rows(snapshot)
+        yield stats.sent(DashboardEvent(
             domain="chats",
             type="sessions_snapshot",
             payload=snapshot,
             ts_ms=int(time.time() * 1000),
-        ).to_sse()
+        ))
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
+                first = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_S)
             except asyncio.TimeoutError:
-                yield ": ping\n\n"
+                yield b": ping\n\n"
                 continue
-            yield event.to_sse()
+            batch, skipped = _coalesce([first, *_drain(queue)])
+            stats.skipped += skipped
+            for event in batch:
+                if stats.mode == "delta" and _is_inbox(event):
+                    delta, sent_rows = _inbox_delta(sent_rows, event.payload)
+                    if delta is None:
+                        continue
+                    event = DashboardEvent(domain="chats", type="sessions_delta", payload=delta, ts_ms=event.ts_ms)
+                yield stats.sent(event)
+            if time.monotonic() - stats.logged >= _STATS_EVERY_S:
+                stats.logged = time.monotonic()
+                logger.info("sse: conexión viva ({})", stats.summary())
     finally:
         bus.unsubscribe(queue)
+        logger.info("sse: conexión cerrada ({})", stats.summary())
 
 
 @router.get("/events")
-async def stream_dashboard_events():
-    """SSE multiplexado del dashboard — eventos por dominio, no snapshots ciegos."""
+async def stream_dashboard_events(inbox: str = "snapshot"):
+    """SSE multiplexado del dashboard — eventos por dominio, no snapshots ciegos.
+
+    `inbox=delta` (la app): después de la bandeja inicial, solo los cambios (`chats.sessions_delta`)."""
     return StreamingResponse(
-        dashboard_events_generator(),
+        dashboard_events_generator(inbox),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -629,25 +737,125 @@ def _last_message_preview(history_file: Path) -> str | None:
     return value
 
 
+# ── La bandeja sin frenar al API (2026-10-22) ────────────────────────────────
+#
+# Armar la bandeja lee el vault entero (el `metadata.json` y la cola del
+# historial de cada chat) y, si cambió el conjunto de anuncios, llama a Graph
+# con httpx síncrono. Dentro del event loop eso frenaba TODO el API —webhook de
+# WhatsApp y SSE incluidos—: medido con 600 chats, ~200 ms por llamada (~0,9 s
+# la primera) y segundos con Graph lento. La piden el muestreador en cada tick
+# con cambios, cada conexión SSE al abrir y cada `GET /sessions`. Ahora el disco
+# y Graph van en un hilo, y hay UNA lectura a la vez: quien pide mientras otra
+# corre comparte la siguiente, que empieza después de su pedido (así el
+# muestreador nunca publica una bandeja de antes del cambio que vio) y una
+# reconexión masiva no arma N lecturas del vault a la vez. Los metadata leídos
+# no se guardan entre lecturas: la caja tiene la memoria justa.
+
+
+class _SharedFreshReads:
+    """Una lectura a la vez. Cada pedido recibe una que EMPEZÓ después de él; los que esperan juntos la comparten."""
+
+    def __init__(self, read: Callable[[], Awaitable[dict]]) -> None:
+        self._read = read
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._waiting: list[asyncio.Future] = []
+        self._worker: asyncio.Task | None = None
+
+    async def get(self) -> dict:
+        loop = asyncio.get_running_loop()
+        if loop is not self._loop:  # otro event loop (tests, reinicio): lo pendiente era del anterior
+            self._loop, self._waiting, self._worker = loop, [], None
+        request = loop.create_future()
+        self._waiting.append(request)
+        if self._worker is None or self._worker.done():
+            self._worker = loop.create_task(self._work())
+        return await request
+
+    async def _work(self) -> None:
+        while self._waiting:
+            # Los que esperan ahora pidieron ANTES de que empiece esta lectura: les sirve. Los que lleguen mientras
+            # corre esperan la próxima.
+            batch, self._waiting = self._waiting, []
+            try:
+                result = await self._read()
+            except asyncio.CancelledError:
+                for request in batch + self._waiting:
+                    request.cancel()
+                self._waiting = []
+                raise
+            except Exception as exc:  # noqa: BLE001 — el error es de quienes esperaban esta lectura
+                for request in batch:
+                    if not request.done():
+                        request.set_exception(exc)
+                continue
+            for request in batch:
+                if not request.done():  # quien se fue (cliente desconectado) ya no la espera
+                    request.set_result(result)
+
+
 @router.get("/sessions")
 async def list_dashboard_sessions():
     """
-    Returns a realtime list of all active or past WhatsApp sessions, 
+    Returns a realtime list of all active or past WhatsApp sessions,
     complete with their assigned tags, route handlers, and metadata.
+
+    La lectura del vault va en un hilo y se comparte con quien la pidió a la vez (`_SharedFreshReads`).
     """
-    if not WORKSPACE_VAULT_DIR.exists():
+    return await _inbox_reads.get()
+
+
+async def _read_inbox() -> dict:
+    sessions, session_data = await asyncio.to_thread(_inbox_from_vault, WORKSPACE_VAULT_DIR)
+
+    # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
+    # verificación de pago (botón) + todo pedido vinculado a una sesión (chip
+    # de orden). El store de OrderFacts es una caché compartida con la vista
+    # Orders — lo ya visto sale al instante.
+    order_ids = {
+        s["pending_payment_order_id"] for s in sessions if s["pending_payment_order_id"]
+    }
+    for data_ in session_data.values():
+        order_ids |= _order_ref_candidate_ids(data_)
+    facts = await _pending_payment_facts(order_ids)
+    for s_ in sessions:
+        data_ = session_data.get(s_["session_id"])
+        if data_ is None:
+            continue
+        if s_["pending_payment_order_id"]:
+            s_["pending_payment_order_id"] = _compute_pending_payment_order_id(
+                data_, facts
+            )
+        s_["order_ref"] = _compute_order_ref(data_, facts)
+
+    # Nombres reales de campaña en UN batch para todo el listado (Graph es
+    # httpx síncrono: va en un hilo).
+    enriched = await asyncio.to_thread(_origins_with_names, {s["session_id"]: s["origin"] for s in sessions})
+    for s_ in sessions:
+        s_["origin"] = enriched.get(s_["session_id"])
+
+    # Sort from most recent to oldest
+    sessions.sort(key=lambda x: x["last_updated_timestamp"], reverse=True)
+    return {"sessions": sessions}
+
+
+_inbox_reads = _SharedFreshReads(_read_inbox)
+
+
+def _inbox_from_vault(vault_dir: Path) -> tuple[list[dict], dict[str, dict]]:
+    """(filas de la bandeja, metadata de cada sesión) leyendo el disco. Corre en un hilo: nada de asyncio aquí."""
+    if not vault_dir.exists():
         # Vault doesn't exist yet, return empty
-        return {"sessions": []}
-        
+        return [], {}
+
     sessions = []
-    
+
     # `metadata.json` por sesion candidata - el estado real de esos pedidos se
     # resuelve DESPUES, en una sola lectura de OrderFacts (no N por sesion).
     session_data: dict[str, dict] = {}
-    metadata_store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    metadata_store = FilesystemMetadataStore(vault_dir)
 
-    for entry in os.listdir(WORKSPACE_VAULT_DIR):
-        session_path = WORKSPACE_VAULT_DIR / entry
+    for entry in os.listdir(vault_dir):
+        session_path = vault_dir / entry
         if session_path.is_dir() and entry.startswith("wa_"):
             tag = "NO_ETIQUETADO"
             motivo = "Sin diagnóstico todavía"
@@ -717,36 +925,8 @@ async def list_dashboard_sessions():
                 "customer_name": customer_name,
                 "last_message_preview": last_message_preview,
             })
+    return sessions, session_data
 
-    # Estado real de los pedidos del inbox, en UNA lectura: los que esperan
-    # verificación de pago (botón) + todo pedido vinculado a una sesión (chip
-    # de orden). El store de OrderFacts es una caché compartida con la vista
-    # Orders — lo ya visto sale al instante.
-    order_ids = {
-        s["pending_payment_order_id"] for s in sessions if s["pending_payment_order_id"]
-    }
-    for data_ in session_data.values():
-        order_ids |= _order_ref_candidate_ids(data_)
-    facts = await _pending_payment_facts(order_ids)
-    for s_ in sessions:
-        data_ = session_data.get(s_["session_id"])
-        if data_ is None:
-            continue
-        if s_["pending_payment_order_id"]:
-            s_["pending_payment_order_id"] = _compute_pending_payment_order_id(
-                data_, facts
-            )
-        s_["order_ref"] = _compute_order_ref(data_, facts)
-
-    # Nombres reales de campaña en UN batch para todo el listado.
-    enriched = _origins_with_names({s["session_id"]: s["origin"] for s in sessions})
-    for s_ in sessions:
-        s_["origin"] = enriched.get(s_["session_id"])
-
-    # Sort from most recent to oldest
-    sessions.sort(key=lambda x: x["last_updated_timestamp"], reverse=True)
-    return {"sessions": sessions}
-    
 
 class _empty_lines:
     """Context manager iterable vacío — mismo shape que un archivo abierto."""

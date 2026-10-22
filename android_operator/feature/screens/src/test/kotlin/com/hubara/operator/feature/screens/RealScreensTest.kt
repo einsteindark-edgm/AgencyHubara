@@ -15,9 +15,13 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import com.hubara.operator.core.navigation.ScreenKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.data.screens.AppSource
@@ -56,6 +60,9 @@ class RealScreensTest {
     private val effects = mutableListOf<ScreenEffect>()
     private val natives = mutableListOf<Pair<String, JsonObject>>()
     private val sources = mutableMapOf<String, MutableStateFlow<JsonElement>>()
+    /** Qué fuentes del teléfono se pidieron al backend (al abrir o al tirar para actualizar) y con qué resultado. */
+    private val refreshed = mutableListOf<String>()
+    private val refreshResults = mutableMapOf<String, Result<Unit>>()
     private val data = FakeData()
 
     private fun json(raw: String) = Json.parseToJsonElement(raw)
@@ -69,7 +76,15 @@ class RealScreensTest {
 
     private fun open(id: String, params: Map<String, String> = emptyMap()): ScreenViewModel {
         val docs = FakeDocs().apply { fresh[id] = File(dir, "$id.json").readText() }
-        val apps = sources.mapValues { (_, flow) -> object : AppSource { override fun observe(params: Map<String, String>) = flow } }
+        val apps = sources.mapValues { (name, flow) ->
+            object : AppSource {
+                override fun observe(params: Map<String, String>) = flow
+                override suspend fun refresh(params: Map<String, String>): Result<Unit> {
+                    refreshed += name
+                    return refreshResults[name] ?: Result.success(Unit)
+                }
+            }
+        }
         val vm = ScreenViewModel(id, params, docs, data, MemoryCache(), FakeChanges(), { 1_790_000_000_000L }, apps,
             NativeActions { name, args -> natives += name to args; NativeOutcome.Done })
         compose.setContent {
@@ -126,6 +141,52 @@ class RealScreensTest {
         // El botón del diálogo (el menú ya se cerró).
         compose.onNodeWithText("Cerrar sesión").performClick()
         compose.runOnIdle { assertThat(natives.map { it.first }).contains("sign_out") }
+    }
+
+    // Pedido del operador (2026-10-21): «agrégale un refresh para deslizar hacia abajo la pantalla y que vaya al servidor
+    // a traer la información», sin esperar al tiempo real.
+    @Test fun deslizar_hacia_abajo_la_bandeja_la_pide_al_servidor() {
+        sources["conversations"] = MutableStateFlow(json("[${chat("wa_000000000101", "Laura Prueba", unread = false, human = false, order = false)}]"))
+        sources["app"] = MutableStateFlow(json("{}"))
+        open("chats")
+        refreshed.clear()  // la de abrir
+
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performTouchInput { swipeDown() }
+
+        compose.runOnIdle { assertThat(refreshed).contains("conversations") }
+    }
+
+    @Test fun sin_conexion_la_bandeja_lo_dice_y_como_reintentar() {
+        sources["conversations"] = MutableStateFlow(json("[${chat("wa_000000000101", "Laura Prueba", unread = false, human = false, order = false)}]"))
+        sources["app"] = MutableStateFlow(json("{}"))
+        refreshResults["conversations"] = Result.failure(IllegalStateException("sin red"))
+        open("chats")
+        compose.onNodeWithText("Sin conexión: mostrando lo último guardado. Desliza hacia abajo para reintentar.").assertExists()
+        compose.onNodeWithText("Laura Prueba").assertExists()
+    }
+
+    @Test fun mas_lleva_a_la_sincronizacion_de_este_telefono() {
+        open("mas")
+        node("Sincronización").performClick()
+        compose.runOnIdle { assertThat(effects).contains(ScreenEffect.Open(ScreenKey("sincronizacion", emptyMap()))) }
+    }
+
+    @Test fun la_sincronizacion_dice_si_los_mensajes_llegan_en_vivo_y_cuanto_tardan() {
+        sources["sync"] = MutableStateFlow(json("""{"state": "live", "live": true, "state_label": "En vivo", "tone": "success",
+            "detail": "Conectada desde hace 5 min: lo que llega al servidor se ve al instante.", "last_event": "hace 3 s",
+            "lag": "0,4 s", "max_lag": "2,1 s", "events": 1234, "data": "1,2 MB", "cuts": 2, "last_error": "sin red · hace 2 min",
+            "refresh": "Bien · hace 1 min"}"""))
+        open("sincronizacion")
+        listOf("En vivo", "Conectada desde hace 5 min: lo que llega al servidor se ve al instante.", "hace 3 s", "0,4 s")
+            .forEach { node(it).assertExists() }
+        node("1,2 MB").assertExists()
+        node("sin red · hace 2 min").assertExists()
+        node("Bien · hace 1 min").assertExists()
+
+        // Tirar hacia abajo (desde arriba de la lista) sincroniza ya: reconecta y trae la bandeja.
+        refreshed.clear()
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToIndex(0).performTouchInput { swipeDown() }
+        compose.runOnIdle { assertThat(refreshed).contains("sync") }
     }
 
     private fun chat(sid: String, name: String, unread: Boolean, human: Boolean, order: Boolean) = """

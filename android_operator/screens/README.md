@@ -20,6 +20,7 @@ las pantallas como **piezas nativas** del catálogo (el chat con su composer, el
 | `crear_pedido.json` | «Crear pedido»: el pedido prellenado de la conversación; lo abre la burbuja verde o «+ Más». |
 | `enviar_productos.json` | «Enviar productos» por categoría, por nombre o uno solo; lo abre la burbuja del chat. Es copia del panel de `acciones.json`: cambia las dos juntas (lo exige `RealScreensTest`). |
 | `mas.json` y las demás | La pestaña «Más»: resumen de ventas, por cobrar, campañas. |
+| `sincronizacion.json` | «Más → Sincronización»: si los mensajes llegan en vivo, cuánto tardan y los cortes (fuente del teléfono `sync`, catálogo 2). Tirar hacia abajo reconecta. |
 
 - **Referencia completa** de componentes, propiedades, filtros, acciones e íconos: [CATALOGO.md](CATALOGO.md)
   (generada desde el código: siempre al día).

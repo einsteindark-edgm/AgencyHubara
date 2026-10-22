@@ -77,8 +77,11 @@ private fun tone(name: String = "tone", doc: String = "Color con significado.") 
  * tabla de la guía. Agregar un componente = agregarlo aquí + pintarlo en `:feature:screens` + subir [VERSION].
  */
 object Catalog {
-    /** Versión del catálogo que entiende ESTA app. Sube cuando se agrega un componente, un ícono o una acción. */
-    const val VERSION = 1
+    /**
+     * Versión del catálogo que entiende ESTA app. Sube cuando se agrega un componente, un ícono, una acción o una fuente
+     * del teléfono. 2 (2026-10-21): la fuente `sync` de la pantalla «Sincronización».
+     */
+    const val VERSION = 2
 
     val components: Map<String, ComponentSpec> = listOf(
         // ── Estructura ───────────────────────────────────────────────────────────────────────────────
@@ -253,6 +256,7 @@ object Catalog {
         "chat" to "Una conversación (params: session): session_id, title, subtitle («Tú atiendes»), name, phone, human, window_open, order_id, order_label («Pedido #41»), stage.",
         "templates" to "Las plantillas aprobadas: name, title, label (con «· recomendada»), body, preview_body ({{variable}}), fallback, needs_image, is_default, variables [{name, label, max_length}], variable_names.",
         "app" to "La app: privacy (si hay política de privacidad para abrir).",
+        "sync" to "La sincronización en vivo de este teléfono (catálogo 2): state (live/connecting/retrying/stopped), live, state_label («En vivo»), tone (para un aviso), detail, last_event («hace 3 s»), lag y max_lag (cuánto tardó en llegar: «0,4 s»), events, data («1,2 MB»), cuts (cortes), last_error y refresh (la última bandeja pedida al servidor). Tirar para actualizar reconecta y trae la bandeja.",
     )
 
     /** Parámetros obligatorios de cada fuente del teléfono. */

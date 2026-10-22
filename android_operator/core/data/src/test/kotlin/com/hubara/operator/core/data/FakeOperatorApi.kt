@@ -39,7 +39,14 @@ class FakeOperatorApi : OperatorApi {
     val sentMessages = mutableListOf<HumanMessageRequest>()
     val toolRequests = mutableListOf<Pair<String, ToolRequest>>()
 
-    override suspend fun sessions() = sessionsResponse.also { calls += "sessions" }
+    /** Si no es null, pedir la bandeja falla con esto (sin red). */
+    var sessionsError: Exception? = null
+
+    override suspend fun sessions(): SessionsResponse {
+        calls += "sessions"
+        sessionsError?.let { throw it }
+        return sessionsResponse
+    }
     override suspend fun session(id: String) = (details[id] ?: SessionDetailsDto(sessionId = id)).also { calls += "session:$id" }
     override suspend fun intervene(id: String, body: InterveneRequest) = HandoffResponseDto(true, "humano").also { calls += "intervene:$id" }
     override suspend fun returnToBot(id: String, body: ReturnToBotRequest) = HandoffResponseDto(true, "ventas").also { calls += "return:$id" }
@@ -59,7 +66,7 @@ class FakeOperatorApi : OperatorApi {
         sentTemplates += body
         return Response.success(HumanMessageResponseDto(true, ""))
     }
-    override suspend fun sseTicket() = SseTicketDto("t")
+    override suspend fun sseTicket() = SseTicketDto("t").also { calls += "sse-ticket" }
     val suggestionFeatures = mutableListOf<String>()
     override suspend fun suggestions(id: String, features: String) =
         suggestionsResponse(id).also { calls += "suggestions:$id"; suggestionFeatures += features }
@@ -71,7 +78,14 @@ class FakeOperatorApi : OperatorApi {
         else Response.error(runToolCode, runToolBody.toResponseBody(JSON))
     }
 
-    override suspend fun fires() = firesResponse.also { calls += "fires" }
+    /** Si no es null, pedir los incendios espera a que el test lo suelte (la red tarda). */
+    var firesGate: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+
+    override suspend fun fires(): FiresDto {
+        calls += "fires"
+        firesGate?.await()
+        return firesResponse
+    }
     override suspend fun hot() = HotDto()
     override suspend fun human() = HumanDto()
     override suspend fun orders(limit: Int) = OrderListDto().also { calls += "orders" }

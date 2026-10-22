@@ -327,6 +327,9 @@ class ScreenViewModel @AssistedInject constructor(
             settled -= source.id
             heldEmpty -= source.id
             watching[source.id] = request to viewModelScope.launch {
+                // Se renueva sola (el tiempo real o el respaldo de la sincronización): sin esto, una recarga que falló al
+                // abrir dejaba «Sin conexión» para siempre aunque el tiempo real la trajera al día (caso 2026-10-21).
+                launch { safeCall { app.renewals(request.params).collect { ok -> renewed(source.id, ok) } } }
                 safeCall {
                     app.observe(request.params).collect { value ->
                         if (source.id in settled || !value.isEmptyValue()) {
@@ -346,6 +349,19 @@ class ScreenViewModel @AssistedInject constructor(
             if (ok) settled += source.id
             val held = if (ok) heldEmpty.remove(source.id) else null
             finished(source.id, ok) { ui -> if (held != null && source.id !in ui.data) ui.data + (source.id to held) else ui.data }
+        }
+    }
+
+    /** Una fuente del teléfono que se renovó sola: llegó del servidor (cuenta como cargada) o no se pudo. */
+    private fun renewed(id: String, ok: Boolean) {
+        if (!ok) {
+            _state.update { it.copy(failed = it.failed + id) }
+            return
+        }
+        settled += id
+        val held = heldEmpty.remove(id)
+        _state.update { ui ->
+            ui.copy(failed = ui.failed - id, data = if (held != null && id !in ui.data) ui.data + (id to held) else ui.data)
         }
     }
 

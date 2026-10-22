@@ -8,6 +8,10 @@ import com.hubara.operator.core.data.mapping.toEntity
 import com.hubara.operator.core.data.repo.ConversationRepository
 import com.hubara.operator.core.data.repo.SeenRepository
 import com.hubara.operator.core.data.screens.sources.ConversationsSource
+import com.hubara.operator.core.data.sync.LiveSync
+import com.hubara.operator.core.data.sync.SyncStatus
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import com.hubara.operator.core.database.OperatorDatabase
 import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.Route
@@ -38,13 +42,33 @@ class AppSourcesTest {
 
     private fun laura(inbound: Int) = Conversation(laura, "570000000000", "INTERESADO", Route.BOT, 0, null, inbound, null, customerName = "Laura Prueba")
 
+    /** La sincronización: cuántas veces se pidió «sincronizar ya» y las renovaciones que manda. */
+    private val sync = object : LiveSync {
+        var syncs = 0
+        override val status = MutableStateFlow(SyncStatus())
+        override val inboxRenewals = MutableSharedFlow<Boolean>(replay = 1)
+        override suspend fun syncNow(): Result<Unit> {
+            syncs++
+            return Result.success(Unit)
+        }
+    }
+
     @Before fun setUp() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         db = Room.inMemoryDatabaseBuilder(context, OperatorDatabase::class.java).allowMainThreadQueries().build()
         val seen = SeenRepository(context, db.conversations())
         // El DataStore «seen» es uno por proceso: cada prueba arranca sin lo que dejó otra (la línea base es lo que se prueba).
         runBlocking { seen.clear() }
-        source = ConversationsSource(ConversationRepository(FakeOperatorApi(), db.conversations()), seen)
+        source = ConversationsSource(ConversationRepository(FakeOperatorApi(), db.conversations()), seen, sync)
+    }
+
+    @Test fun tirar_para_actualizar_la_bandeja_sincroniza_ya_y_se_entera_de_lo_que_llega_solo() = runTest {
+        // Ir al servidor sin esperar al tiempo real: la bandeja por REST y, si estaba esperando para reconectar, reconecta.
+        assertThat(source.refresh(emptyMap()).isSuccess).isTrue()
+        assertThat(sync.syncs).isEqualTo(1)
+
+        sync.inboxRenewals.emit(true)
+        assertThat(source.renewals(emptyMap()).first()).isTrue()
     }
 
     @After fun tearDown() = db.close()

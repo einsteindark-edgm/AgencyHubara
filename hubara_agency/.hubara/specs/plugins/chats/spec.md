@@ -1156,6 +1156,48 @@ mensaje que sí pide respuesta. Caso del operador 2026-10-15: un 👍 o un «gra
 - WHEN la app pide los incendios
 - THEN el chat es incendio grave: «15 min sin respuesta · 1 mensaje»
 
+### Requirement: El tiempo real de la App Operador manda solo lo que cambió (2026-10-21)
+
+`GET /api/dashboard/events?inbox=delta` (la app) SHALL mandar la bandeja completa al conectar y después solo las filas
+que cambiaron respecto de lo último que recibió ESA conexión, más los chats que ya no están (`chats.sessions_delta`,
+`payload = {sessions, removed}`). Sin `inbox` (la web) sigue la bandeja completa. A un cliente atrasado se le manda solo
+la bandeja más nueva de su cola y un solo `session_updated` por sesión; los eventos de otros dominios van tal cual.
+Cada conexión MUST dejar en el log del API su modo, eventos, KB, bandejas omitidas y el mayor retraso en cola
+(`sse: conexión abierta|viva|cerrada`). Caso del operador: con 581 chats cada bandeja pesaba ~380 KB y salía en cada
+cambio; el teléfono en 4G se atrasaba y la app decía «Sin conexión» mientras la web iba al día.
+
+#### Scenario: La app recibe solo el chat que cambió
+
+- GIVEN la app conectada con `inbox=delta` y la bandeja inicial con Laura y Carlos
+- WHEN Laura escribe y Carlos ya no está en el vault
+- THEN la app recibe `chats.sessions_delta` con la fila de Laura y `removed: ["wa_…carlos"]`, sin las demás filas
+
+#### Scenario: Un cliente atrasado no baja bandejas viejas
+
+- GIVEN tres bandejas publicadas mientras el cliente bajaba la anterior
+- WHEN el cliente vuelve a leer
+- THEN recibe solo la última y el log de la conexión cuenta 2 bandejas viejas omitidas
+
+### Requirement: Armar la bandeja no frena al API (2026-10-22)
+
+Leer el vault para la bandeja (`GET /api/dashboard/sessions`, el muestreador del SSE y cada conexión SSE al abrir) y
+pedir a Graph los nombres de los anuncios SHALL correr fuera del event loop del API, y SHALL haber una sola lectura a la
+vez: quien la pide mientras otra corre MUST recibir una que empezó después de su pedido (nunca una de antes de un
+cambio) y la comparte con los que esperaban con él. Medido con 600 chats sintéticos: el loop quedaba tomado ~200 ms
+por lectura (~0,9 s la primera, segundos con Graph lento), sin atender el webhook de WhatsApp ni el SSE.
+
+#### Scenario: El disco lento no frena al resto
+
+- GIVEN una lectura de la bandeja esperando al disco
+- WHEN llega otro pedido al API
+- THEN se atiende antes de que termine la lectura
+
+#### Scenario: Una reconexión masiva
+
+- GIVEN cinco clientes piden la bandeja a la vez
+- WHEN se arma
+- THEN el vault se lee una sola vez y los cinco reciben la misma
+
 ## Out of scope
 
 - Verificación por visión/IA del CONTENIDO de un PDF (¿es un pago real?) — decisión 2026-09-01: la clasificación de PDFs es determinista (todo PDF → verificación humana)

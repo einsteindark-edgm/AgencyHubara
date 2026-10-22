@@ -3,6 +3,7 @@ package com.hubara.operator.core.network
 import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.network.sse.ServerEvent
 import com.hubara.operator.core.network.sse.decodeServerEvent
+import com.hubara.operator.core.network.sse.decodeServerFrame
 import org.junit.Test
 
 class ServerEventTest {
@@ -13,6 +14,26 @@ class ServerEventTest {
         )
         e as ServerEvent.SessionsSnapshot
         assertThat(e.conversations.map { it.sessionId.raw }).containsExactly("wa_test_laura")
+    }
+
+    @Test fun la_app_recibe_solo_los_chats_que_cambiaron_y_los_que_ya_no_estan() {
+        val e = decodeServerEvent(
+            """{"domain":"chats","type":"sessions_delta","id":null,"ts_ms":1,
+            "payload":{"sessions":[{"session_id":"wa_test_laura","last_message_preview":"Hola"},{"session_id":"../x"}],
+            "removed":["wa_test_carlos","../y"]}}""",
+        )
+        e as ServerEvent.SessionsDelta
+        assertThat(e.conversations.map { it.sessionId.raw }).containsExactly("wa_test_laura")
+        assertThat(e.conversations.single().lastMessagePreview).isEqualTo("Hola")
+        assertThat(e.removed.map { it.raw }).containsExactly("wa_test_carlos")
+        assertThat(decodeServerEvent("""{"domain":"chats","type":"sessions_delta","ts_ms":1}""")).isNull()
+    }
+
+    @Test fun cada_evento_dice_cuando_salio_del_servidor() {
+        val frame = decodeServerFrame("""{"domain":"orders","type":"changed","ts_ms":1761000000123}""")
+        assertThat(frame!!.event).isEqualTo(ServerEvent.OrdersChanged)
+        assertThat(frame.sentAtMs).isEqualTo(1761000000123)
+        assertThat(decodeServerFrame("""{"domain":"orders","type":"changed"}""")!!.sentAtMs).isNull()
     }
 
     @Test fun cambio_de_una_sesion() {

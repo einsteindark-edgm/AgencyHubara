@@ -2,6 +2,7 @@ package com.hubara.operator.core.data.screens
 
 import android.content.Context
 import com.hubara.operator.core.data.config.ServerConfigStore
+import com.hubara.operator.core.data.sync.LiveSync
 import com.hubara.operator.core.data.sync.SyncEngine
 import dagger.Binds
 import dagger.Module
@@ -12,6 +13,7 @@ import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoMap
 import dagger.multibindings.StringKey
 import com.hubara.operator.core.data.screens.sources.AppInfoSource
+import com.hubara.operator.core.data.screens.sources.SyncSource
 import com.hubara.operator.core.data.screens.sources.ChatSource
 import com.hubara.operator.core.data.screens.sources.ConversationsSource
 import com.hubara.operator.core.data.screens.sources.FiresSource
@@ -26,6 +28,7 @@ abstract class ScreensModule {
     @Binds abstract fun screenData(impl: ScreenDataClient): ScreenData
     @Binds abstract fun screenDataCache(impl: FileScreenDataCache): ScreenDataCache
     @Binds abstract fun serverChanges(impl: SyncEngine): ServerChanges
+    @Binds abstract fun inboxSync(impl: SyncEngine): LiveSync
 
     // Fuentes del teléfono, por el nombre que usan los archivos de pantalla (`"app": "conversations"`).
     @Binds @IntoMap @StringKey("conversations") abstract fun conversations(impl: ConversationsSource): AppSource
@@ -34,6 +37,7 @@ abstract class ScreensModule {
     @Binds @IntoMap @StringKey("chat") abstract fun chat(impl: ChatSource): AppSource
     @Binds @IntoMap @StringKey("templates") abstract fun templates(impl: TemplatesSource): AppSource
     @Binds @IntoMap @StringKey("app") abstract fun appInfo(impl: AppInfoSource): AppSource
+    @Binds @IntoMap @StringKey("sync") abstract fun sync(impl: SyncSource): AppSource
 
     companion object {
         /** Las pantallas bajan de donde diga la configuración del servidor (por defecto, junto a config.json). */

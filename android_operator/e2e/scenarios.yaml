@@ -926,3 +926,34 @@ scenarios:
       Reporta lo que viste.
     checks:
       - screen_has: "Rosa Prueba"
+
+  - id: S37_tiempo_real_y_tirar_para_actualizar
+    title: Lo que escribe el cliente llega en vivo; tirar hacia abajo va al servidor
+    resumen: "Laura escribe y su mensaje sale en la bandeja en segundos (el tiempo real manda solo los chats que cambiaron). Con la bandeja del servidor caída, tirar hacia abajo avisa «Sin conexión… Desliza hacia abajo para reintentar»; con el servidor de vuelta, tirar otra vez lo quita. «Más → Sincronización» dice que está en vivo y cuánto tardó el último evento."
+    # Caso del operador (2026-10-21): en la app los mensajes llegaban tarde y «Sin conexión» salía mucho. Cada cambio
+    # mandaba la bandeja completa (~380 KB con 581 chats) y una recarga fallida dejaba el aviso para siempre.
+    setup: *fresh
+    script:
+      - {inject: 'reply wa_000000000101 "¿Me confirmas el precio del duo?"'}
+      - {expect: {text: "¿Me confirmas el precio del duo?", timeout: 12}}
+      # Tirar como un dedo: despacio y desde la lista (un tirón de 250 ms desde los filtros a veces no llega al umbral).
+      - {inject: "network --path /api/dashboard/sessions --fail"}
+      - {swipe: {at: "000000000101", dy: 700, ms: 600}}
+      - {expect: "Desliza hacia abajo para reintentar"}
+      - {shot: sin-conexion}
+      - {inject: "network --clear"}
+      - {swipe: {at: "000000000101", dy: 700, ms: 600}}
+      - {expect_gone: "Desliza hacia abajo para reintentar"}
+      - {tap: "=Más"}
+      - {tap: "Sincronización"}
+      - {expect_all: ["En vivo", "Último evento", "Tardó en llegar"]}
+      - {shot: sincronizacion}
+    goal: |
+      Estás en la bandeja de Chats.
+      1. Espera el mensaje nuevo de 000000000101 y di cuánto tardó en aparecer.
+      2. Desliza la lista hacia abajo desde arriba y di si aparece algún aviso.
+      3. Abre la pestaña «Más», entra a «Sincronización» y di qué dice: el estado, el último evento y cuánto tardó.
+      Reporta lo que viste en cada paso.
+    checks:
+      - screen_has: "En vivo"
+      - screen_lacks: "Reconectando"
