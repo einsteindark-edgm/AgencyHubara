@@ -140,7 +140,7 @@ def test_lab_litellm_is_the_same_proxy_as_production() -> None:
     lab = _compose(_LAB / "docker-compose.lab.yml")["services"]["litellm"]
     prod = _compose(_PROD_COMPOSE)["services"]["litellm"]
 
-    assert lab["image"].startswith(prod["image"] + "@sha256:")
+    assert lab["image"] == prod["image"] and "@sha256:" in prod["image"]
     assert lab["healthcheck"] == prod["healthcheck"]
 
 
