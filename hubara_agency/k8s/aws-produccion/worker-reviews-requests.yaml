@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hubara-worker-reviews-requests
+  namespace: default
+spec:
+  # Invitaciones a calificar + respuestas del formulario (plugin reviews).
+  replicas: 1
+  strategy:
+    # Recreate: un solo worker reclamando invitaciones durante el rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hubara-worker-reviews-requests
+  template:
+    metadata:
+      labels:
+        app: hubara-worker-reviews-requests
+    spec:
+      # Apagado ordenado: el worker espera 30 s a sus activities
+      # (WORKER_GRACEFUL_SHUTDOWN); el default de k8s (30 s) lo cortaba.
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: worker
+          image: hubara-agency-prod:latest
+          imagePullPolicy: Always
+          command: ["python", "-m", "hubara_agency.src.plugins.reviews.workers.requests"]
+          # Vía overlay (convención del proyecto — igual que worker-remarketing):
+          #   - WHATSAPP_PHONE_NUMBER_ID / WHATSAPP_ACCESS_TOKEN (envíos)
+          #   - META_FLOW_ID_REVIEW (formulario de calificación)
+          #   - MEDUSA_BASE_URL / MEDUSA_ADMIN_TOKEN (pedidos)
+          #   - REVIEW_REQUESTS_MODE (off | test | on — nace off)
+          env:
+            # P-20/P-21 (INV-2): set explícito de plugins de ESTE deployment.
+            - name: ENABLED_PLUGINS
+              value: "ads,agents_admin,catalog,chats,eta,marketing,orders,reviews,system_map"
+            - name: TEMPORAL_URL
+              value: "temporal-frontend.temporal.svc.cluster.local:7233"
+            - name: TEMPORAL_NAMESPACE
+              value: "default"
+            - name: TEMPORAL_TLS_CERT_PATH
+              value: "/etc/temporal-certs/temporal.pem"
+            - name: TEMPORAL_TLS_KEY_PATH
+              value: "/etc/temporal-certs/temporal.key"
+          volumeMounts:
+            - name: hubara-vault
+              # Vault completo: `_reviews/` (invitaciones y reseñas),
+              # `_promotions/grants/` (cupones personales) + `wa_*/`.
+              mountPath: /var/lib/hubara/vault
+            - name: temporal-certs
+              mountPath: "/etc/temporal-certs"
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: hubara-vault
+          persistentVolumeClaim:
+            claimName: hubara-vault-efs
+        - name: temporal-certs
+          secret:
+            secretName: temporal-cloud-certs

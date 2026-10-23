@@ -190,6 +190,7 @@ def build_ingest_use_case() -> IngestInboundMessage:
     from src.sdk.connectorkit import get_catalog_client, get_web_cart_reader
 
     validate_campaign_coupon, coupon_units_now = _coupon_checks()
+    thanks_coupon = _thanks_coupon_check()
     catalog = get_catalog_client()
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
@@ -206,6 +207,11 @@ def build_ingest_use_case() -> IngestInboundMessage:
         photo_notifier=load_session.notify_photo_reading,
         # El cliente que escribe tras comprar: post-venta con el pedido real.
         order_facts=build_order_facts_reader(),
+        # Cupón de agradecimiento por calificar: se aplica solo al escribirnos.
+        thanks_coupon=thanks_coupon,
+        # La calificación llega al plugin de reseñas por el dispatcher
+        # (premortem C3: sin fábrica no salía nunca).
+        review_client_factory=get_temporal_client,
         # Entrada durable: un reintento de la activity no repite historial,
         # aviso a la sesión ni envíos al cliente.
         effects=build_inbound_effects(),
@@ -270,6 +276,40 @@ def build_photo_identifier(catalog: Any) -> PhotoIdentifier:
         embedder=get_image_embedding_port(),
         matcher=get_photo_match_port(),
     )
+
+
+def _thanks_coupon_check() -> Callable[[str, int], Awaitable[CouponApplication | None]]:
+    """El cupón de agradecimiento por calificar de quien escribe (reseñas,
+    2026-10-13): la concesión de mayor porcentaje, validada con los mismos
+    puertos del SDK que `apply_coupon` (L-32). None = no tiene ninguna."""
+
+    async def _check(session_id: str, now_ms: int) -> CouponApplication | None:
+        from src.sdk.connectorkit import (
+            get_catalog_client,
+            get_coupon_grants_store,
+            get_promo_quota_store,
+            get_promotions_port,
+        )
+
+        grants = get_coupon_grants_store()
+        grant = grants.first_active(session_id, now_ms)
+        if grant is None:
+            return None
+
+        async def _has_grant(code: str) -> bool:
+            return grants.active(session_id, code, now_ms) is not None
+
+        return await resolve_coupon_application(
+            grant.code,
+            promotions=get_promotions_port(),
+            quotas=get_promo_quota_store(),
+            sales=None,
+            catalog=get_catalog_client(),
+            now_ms=now_ms,
+            has_grant=_has_grant,
+        )
+
+    return _check
 
 
 def _coupon_checks() -> tuple[
@@ -380,12 +420,22 @@ def build_ingest_standby_use_case() -> IngestStandby:
         # con la fábrica REAL de Temporal: sin ella el emisor es un no-op.
         await emit_watchdog_events(session_id, metadata, temporal_client_factory=get_temporal_client)
 
+    async def _standby_review_reply(
+        session_id: str, wa_message_id: str, response_json: dict, received_at_ms: int
+    ) -> None:
+        # Premortem C9: la calificación que llega con MBA al frente va por el
+        # MISMO emisor del ingest regular (pendientes + reintentos).
+        await build_ingest_use_case().emit_review_submitted(
+            session_id, wa_message_id, response_json, received_at_ms
+        )
+
     _STANDBY_USE_CASE = IngestStandby(
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
         is_customer_allowed=mba_customer_allowed,
         emit_window_events=_standby_window_events,
+        on_review_reply=_standby_review_reply,
     )
     return _STANDBY_USE_CASE
 

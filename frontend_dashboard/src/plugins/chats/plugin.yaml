@@ -151,7 +151,28 @@ agent:
         # tool LLM cierra el episodio (ManageConversationTagTool con un
         # CLOSING_TAG). Cancela el watchdog del episodio cerrado.
         - EpisodeClosedEvent
+        # Reseñas tras la entrega (2026-10-13): el ingest (dueño del webhook)
+        # emite esto cuando el cliente responde el formulario de calificación
+        # (`flow_token` review:…). Lo procesa el plugin reviews, no el bot.
+        - ReviewSubmittedEvent
       transitions:
+        # La respuesta del formulario de calificación → plugin reviews (reseña,
+        # cupón personal, gracias + botón a Google; 1–3★ al equipo). Un
+        # workflow por mensaje (id por wamid: Meta reintenta webhooks). Soft
+        # (P-SKIP): sin reviews habilitado el mensaje queda en el chat.
+        - id: review_submitted_starts_reviews
+          on_event: ReviewSubmittedEvent
+          action:
+            via: start_workflow
+            target_plugin: reviews
+            target_worker: requests
+            target_workflow: ReviewSubmissionWorkflow
+            workflow_id_template: "review-submit-{event.wa_message_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              wa_message_id: "$.wa_message_id"
+              response_json: "$.response_json"
+              received_at_ms: "$.received_at_ms"
         # ── PR #113 (Window Strategist): `sales_to_remarketing_on_interested`
         # (INTERESADO → RemarketingWorkflow a los 300s, stopgap) se ELIMINÓ.
         # La reactivación ahora la decide el ciclo del agente window-strategist

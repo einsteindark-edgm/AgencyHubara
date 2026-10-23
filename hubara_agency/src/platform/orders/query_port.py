@@ -79,6 +79,9 @@ class OrderItemDTO:
     # Color y aroma que se despachan (metadata de la línea, premortem C1).
     color: str | None = None
     aroma: str | None = None
+    # El producto en Medusa (reseñas tras la entrega: la calificación del
+    # pedido se publica en la ficha de cada producto).
+    product_id: str | None = None
 
 
 @dataclass(frozen=True)

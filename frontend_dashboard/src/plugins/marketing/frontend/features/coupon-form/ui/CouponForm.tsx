@@ -225,10 +225,20 @@ export function CouponForm({ coupon, update: liftedUpdate, onCreated, onCancel }
         onToggle={toggleProduct}
       />
 
-      <FirstPurchaseField
+      <ConditionField
+        label="Solo primera compra"
+        hint="El bot lo aplica solo a clientes que no han comprado antes (lo revisa en sus pedidos)."
         checked={values.firstPurchaseOnly}
         readOnly={readOnly}
         onChange={(firstPurchaseOnly) => set({ firstPurchaseOnly })}
+      />
+
+      <ConditionField
+        label="Solo quien lo recibió"
+        hint="Cupón personal (el agradecimiento por calificar): solo lo usa quien lo recibió, una vez. No se ofrece en campañas."
+        checked={values.grantedOnly}
+        readOnly={readOnly}
+        onChange={(grantedOnly) => set({ grantedOnly })}
       />
 
       {generalError ? (
@@ -312,13 +322,18 @@ function Field({
   );
 }
 
-/** El descuento de bienvenida (caso 2026-10-09): la página lo ofrece en la
- *  primera compra y el bot lo aplica solo a quien no ha comprado. */
-function FirstPurchaseField({
+/** Una condición de Hubara sobre el cupón: el descuento de bienvenida (caso
+ *  2026-10-09, solo primera compra) o el cupón personal (reseñas 2026-10-13,
+ *  solo quien lo recibió). */
+function ConditionField({
+  label,
+  hint,
   checked,
   readOnly,
   onChange,
 }: {
+  label: string;
+  hint: string;
   checked: boolean;
   readOnly: boolean;
   onChange: (checked: boolean) => void;
@@ -335,10 +350,10 @@ function FirstPurchaseField({
           onChange={(e) => onChange(e.target.checked)}
           className="accent-accent"
         />
-        Solo primera compra
+        {label}
       </label>
       <p id={hintId} className="pl-6 text-[10.5px] leading-snug text-fg-faint">
-        El bot lo aplica solo a clientes que no han comprado antes (lo revisa en sus pedidos).
+        {hint}
       </p>
     </div>
   );

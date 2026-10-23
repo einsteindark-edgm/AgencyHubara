@@ -210,3 +210,24 @@ templates:
     # SIN requires_episode_stage: lo dispara SOLO el RemarketingWorkflow
     # (`send_remarketing_template_activity`), nunca la auto-resolution.
     variables: []
+
+  # ===== Reseñas tras la entrega (plugin reviews, 2026-10-13) =================
+  - name: order_review_marketing_v1
+    category: marketing
+    language: es_CO
+    waba_template_name: order_review_marketing_v1   # provisioning CLI (definitions/templates.json)
+    body: "¡Tu pedido {{1}} ya llegó! 🕯️\n\nCuéntanos qué tal te pareció: calificarlo toma 10 segundos y te regalamos 5 % de descuento en tu próxima compra (10 % si nos compartes una foto).\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja."
+    # MARKETING por decisión del operador (dice el descuento para que la abran).
+    # Dentro de la ventana el plugin manda el MISMO texto como mensaje normal
+    # con el formulario (más barato, sin plantilla). La foto del encabezado se
+    # genera por pedido; el botón FLOW abre el formulario review_v1.
+    header_format: image
+    buttons:
+      - { type: flow, text: "Calificar mi pedido", navigate_screen: RATING }
+    semantics: "Invitación a calificar el pedido entregado con la ventana 24h cerrada: foto + descuento + botón al formulario de calificación"
+    triggers_when_window_expiring: false   # MARKETING nunca por watchdog
+    variables:
+      - name: order_reference
+        type: string
+        max_length: 20
+        description: "Número visible del pedido (#31), de OrderFacts"

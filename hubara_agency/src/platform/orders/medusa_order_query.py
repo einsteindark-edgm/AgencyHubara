@@ -520,6 +520,7 @@ class MedusaOrderQuery:
                     * int(it.get("quantity", 0))
                 ),
                 thumbnail=it.get("thumbnail"),
+                product_id=it.get("product_id") or None,
                 handle=(
                     (it.get("metadata") or {}).get("handle")
                     if isinstance(it.get("metadata"), dict) else None

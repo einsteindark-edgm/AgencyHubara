@@ -153,6 +153,20 @@ services:
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 
+  worker-reviews-requests:
+    <<: *app
+    command: ["python", "-m", "src.plugins.reviews.workers.requests"]
+    # Reseñas tras la entrega: ReviewRequestWorkflow (invitación por pedido
+    # entregado) + ReviewSubmissionWorkflow (respuesta del formulario). Nace
+    # apagado por config (REVIEW_REQUESTS_MODE=off, Terraform review-config).
+    # Vault completo: _reviews/ + _promotions/grants/ + wa_*/.
+    environment:
+      # 1–3★: pasa la conversación al equipo por session-actions@v1 (HTTP a
+      # la API) — el service en ESTE compose se llama `api` (PM-003).
+      HUBARA_API_BASE_URL: http://api:8000
+    volumes:
+      - /mnt/hubara-vault:/app/hubara_vault
+
 volumes:
   # hubara-vault ya NO es un volumen Docker: vive en el EBS dedicado montado en
   # /mnt/hubara-vault (bind mount por servicio, SEC-09-full). El volumen viejo

@@ -22,6 +22,7 @@ from src.platform.promotions.coupon_sales import (
     CouponSalesReader,
     UnavailableCouponSalesReader,
 )
+from src.platform.promotions.grants import CouponGrantsStore, VaultCouponGrantsStore
 from src.platform.promotions.medusa import MedusaPromotionsPort
 from src.platform.promotions.port import NullPromotionsPort, PromotionsPort
 from src.platform.promotions.quota_lock import VaultQuotaLock
@@ -103,9 +104,15 @@ def get_coupon_conditions_store() -> CouponConditionsStore:
     return VaultCouponConditionsStore(WORKSPACE_VAULT_DIR)
 
 
+def get_coupon_grants_store() -> CouponGrantsStore:
+    """Cupones personales por persona (agradecimiento por calificar)."""
+    return VaultCouponGrantsStore(WORKSPACE_VAULT_DIR)
+
+
 __all__ = [
     "get_coupon_audit_log",
     "get_coupon_conditions_store",
+    "get_coupon_grants_store",
     "get_coupon_sales_reader",
     "get_promo_quota_store",
     "get_promotions_admin_port",

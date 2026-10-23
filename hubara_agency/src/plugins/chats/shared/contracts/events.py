@@ -184,3 +184,25 @@ __all__ = [
     "CustomerRepliedEvent",
     "EpisodeClosedEvent",
 ]
+
+
+@dataclass(frozen=True)
+class ReviewSubmittedEvent:
+    """El cliente respondió el formulario de calificación de un pedido.
+
+    Lo emite el ingest de chats (dueño del webhook) cuando un `nfm_reply`
+    trae un `flow_token` de reseña (`review:<pedido>:<nonce>`). El plugin
+    `reviews` lo consume (manifest transition): guarda la reseña, concede el
+    cupón de agradecimiento y contesta — sin pasar por el bot de ventas.
+
+    Fields:
+        session_id: la conversación (`wa_<phone>`).
+        wa_message_id: el wamid del inbound (idempotencia: Meta reintenta).
+        response_json: el `response_json` del Flow, serializado a JSON.
+        received_at_ms: cuándo lo envió el cliente.
+    """
+
+    session_id: str
+    wa_message_id: str
+    response_json: str
+    received_at_ms: int

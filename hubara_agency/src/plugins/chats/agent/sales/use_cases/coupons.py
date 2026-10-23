@@ -77,6 +77,8 @@ def promotion_from_snapshot(raw: dict[str, Any]) -> PromotionDTO:
     data["scope_unresolved"] = bool(data.get("scope_unresolved"))
     # …ni condición de primera compra (2026-10-09).
     data["first_purchase_only"] = bool(data.get("first_purchase_only"))
+    # …ni de cupón personal (reseñas, 2026-10-13).
+    data["granted_only"] = bool(data.get("granted_only"))
     fields = PromotionDTO.__dataclass_fields__
     return PromotionDTO(**{k: data.get(k) for k in fields})
 
@@ -203,11 +205,23 @@ def set_applied_coupon(
 
 
 def clear_applied_coupon(metadata: dict[str, Any]) -> bool:
+    """Mutates: quita el cupón del episodio activo y lo anota en
+    `declined_coupons` del episodio: lo que se aplica solo (el cupón de
+    agradecimiento) no vuelve en el próximo mensaje (premortem C8)."""
     episode = get_active_episode(metadata)
     if episode and "applied_coupon" in episode:
-        episode.pop("applied_coupon", None)
+        removed = episode.pop("applied_coupon", None)
+        code = removed.get("code") if isinstance(removed, dict) else None
+        if isinstance(code, str) and code and code not in declined_coupons(episode):
+            episode["declined_coupons"] = [*declined_coupons(episode), code]
         return True
     return False
+
+
+def declined_coupons(episode: dict[str, Any]) -> list[str]:
+    """Los cupones que el cliente o el bot quitaron en este episodio."""
+    raw = episode.get("declined_coupons") if isinstance(episode, dict) else None
+    return [str(c) for c in raw if isinstance(c, str)] if isinstance(raw, list) else []
 
 
 async def discount_line_items(
@@ -557,6 +571,7 @@ __all__ = [
     "applied_coupon",
     "build_coupon_note",
     "clear_applied_coupon",
+    "declined_coupons",
     "coupon_discount_for_items",
     "coupon_in_play",
     "coupon_talk_subject",
