@@ -20,6 +20,10 @@ export const adsCampaignKeys = {
   // Referidos desde agentes de IA — de toda la tienda, solo depende de la ventana.
   agentReferrals: (w: AdsWindowParams) =>
     [...adsCampaignKeys.all, "agent-referrals", w.days, w.from, w.to] as const,
+  // Dónde compran — de una fila de Ads (campaña/segmento/anuncio) o de todas
+  // (`campaignId` null), por ventana.
+  purchasePlaces: (w: AdsWindowParams, campaignId: string | null, adsetId: string | null = null) =>
+    [...adsCampaignKeys.all, "purchase-places", campaignId, adsetId, w.days, w.from, w.to] as const,
   // Creativo de un anuncio — no depende de la ventana.
   creative: (adId: string) => [...adsCampaignKeys.all, "creative", adId] as const,
 } as const;

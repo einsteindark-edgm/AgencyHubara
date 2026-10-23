@@ -52,6 +52,12 @@ import { CampaignWhatsappKpis } from "@plugins/ads/frontend/features/campaign-wh
 import { WhatsappCosts } from "@plugins/ads/frontend/features/whatsapp-costs";
 import { AgentReferralsKpi } from "@plugins/ads/frontend/features/agent-referrals-kpi";
 import { OrdersStaleNotice } from "@plugins/ads/frontend/features/orders-stale-notice";
+// Dónde compran (2026-10-23): ciudad y barrio de las compras de la fila activa
+// (panel del canvas) y de todas las compras (vista general en modal).
+import {
+  CampaignPurchasePlaces,
+  PurchasePlacesOverview,
+} from "@plugins/ads/frontend/features/purchase-places";
 // Las 3 features del buzón de análisis con IA. FSD: la Page es el único punto que
 // las compone — `trigger-run` no importa a `run-result` ni a `hitl-decision`
 // (cross-feature prohibido).
@@ -185,6 +191,39 @@ export function AdsSection() {
       <HitlDecision runId={activeRunId} awaiting={run.awaiting} />
     ) : undefined;
 
+  // ── Dónde compran: vista general (todas las compras) ─────────────────────
+  // Abre desde el header o desde el panel de la campaña. Una campaña de la
+  // lista de Ads se abre en el canvas con un clic (y cierra la vista).
+  const [placesOpen, setPlacesOpen] = useState(false);
+  const placesButton = (
+    <button
+      type="button"
+      className="inline-flex items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-sm font-semibold text-fg-soft hover:bg-line hover:text-fg"
+      onClick={() => setPlacesOpen(true)}
+    >
+      <Icon.loc />
+      Dónde compran
+    </button>
+  );
+  const placesModal = placesOpen && (
+    <AdsModal
+      title="Dónde compran · todas las compras"
+      icon={<Icon.loc />}
+      onClose={() => setPlacesOpen(false)}
+    >
+      <PurchasePlacesOverview
+        params={params}
+        isSelectable={(id) => campaigns.some((c) => c.id === id)}
+        onSelectCampaign={(id) => {
+          setSelectedId(id);
+          setAdsetSel(null);
+          setAdSel(null);
+          setPlacesOpen(false);
+        }}
+      />
+    </AdsModal>
+  );
+
   if (!campaign) {
     // Empty-state: aún sin campañas derivadas del vault. OJO: la conexión a
     // Meta NO depende de que haya campañas — conectar es lo que llena los
@@ -196,10 +235,13 @@ export function AdsSection() {
       <main className="ads-canvas">
         <div className="flex items-center justify-between gap-2 px-4 pt-3">
           <ConnectMeta />
+          {/* Las compras de la tienda web existen aunque no haya campañas. */}
+          {placesButton}
         </div>
         {/* Los referidos de agentes no dependen de que haya campañas de Meta. */}
         <AgentReferralsKpi params={params} />
         <div className="ads-empty">Sin campañas para mostrar.</div>
+        {placesModal}
       </main>
     );
   }
@@ -231,14 +273,17 @@ export function AdsSection() {
           {/* Conexión a Meta (Marketing API vía app propia): botón de login +
               estado. Lo que esto autentica llena los KPIs de spend/clicks. */}
           <ConnectMeta />
-          <button
-            type="button"
-            className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-fg hover:opacity-90"
-            onClick={() => setAnalysisOpen(true)}
-          >
-            <Icon.bot />
-            Analizar con IA
-          </button>
+          <div className="flex items-center gap-2">
+            {placesButton}
+            <button
+              type="button"
+              className="inline-flex items-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-accent-fg hover:opacity-90"
+              onClick={() => setAnalysisOpen(true)}
+            >
+              <Icon.bot />
+              Analizar con IA
+            </button>
+          </div>
         </div>
         {/* Header + KPIs + embudo + distribución pintan `scoped`: la fila del
             segmento seleccionado (drill-down) o la campaña completa. La tabla
@@ -278,6 +323,16 @@ export function AdsSection() {
           <AdsFunnel campaign={scoped ?? campaign} />
           <AdsStateDistribution campaign={scoped ?? campaign} />
           <AdsDailyTrend series={daily} />
+          {/* Ciudad y barrio de las compras del scope activo, cotejados contra
+              todas las compras de las mismas fechas. */}
+          <CampaignPurchasePlaces
+            // La ciudad abierta es de esta fila: otra campaña arranca cerrada.
+            key={`${detailId}|${detailAdsetId ?? ""}`}
+            params={params}
+            campaignId={detailId}
+            adsetId={detailAdsetId}
+            onOpenOverview={() => setPlacesOpen(true)}
+          />
           <AdsAttributedTable rows={attributed} />
         </div>
       </main>
@@ -285,8 +340,14 @@ export function AdsSection() {
         <AdsInspector campaign={scoped ?? campaign} adId={adRow ? adRow.id : null} />
       )}
 
+      {placesModal}
+
       {analysisOpen && (
-        <AnalysisModal onClose={() => setAnalysisOpen(false)}>
+        <AdsModal
+          title="Análisis con IA"
+          icon={<Icon.bot />}
+          onClose={() => setAnalysisOpen(false)}
+        >
           {/* Disparador a la izquierda (scroll propio), resultado en vivo a la
               derecha. El page es el único que une las 3 features (cross-feature
               prohibido). */}
@@ -302,30 +363,33 @@ export function AdsSection() {
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <RunResult runId={activeRunId} decisionSlot={decision} />
           </div>
-        </AnalysisModal>
+        </AdsModal>
       )}
     </>
   );
 }
 
 /**
- * Modal overlay propio del buzón de análisis (NO `<dialog>`/`window.confirm` —
- * regla #6: nativos no son confiables en los webviews de Tauri). Backdrop fijo +
- * panel centrado; la ✕ sólo oculta el modal (el run sigue vivo en la cache, así
- * que reabrir lo muestra de nuevo). Cierra también con click en el backdrop.
+ * Modal overlay propio de la sección (buzón de análisis, vista general de
+ * «Dónde compran») — NO `<dialog>`/`window.confirm`: regla #6, nativos no son
+ * confiables en los webviews de Tauri. Backdrop fijo + panel centrado; la ✕
+ * sólo oculta el modal (el run sigue vivo en la cache, así que reabrir lo
+ * muestra de nuevo). Cierra también con click en el backdrop.
  */
-interface AnalysisModalProps {
+interface AdsModalProps {
+  title: string;
+  icon: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }
 
-function AnalysisModal({ onClose, children }: AnalysisModalProps) {
+function AdsModal({ title, icon, onClose, children }: AdsModalProps) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Análisis con IA"
+      aria-label={title}
       onClick={onClose}
     >
       <div
@@ -334,10 +398,8 @@ function AnalysisModal({ onClose, children }: AnalysisModalProps) {
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-4 py-3">
           <div className="flex items-center gap-2 text-fg">
-            <span className="text-accent">
-              <Icon.bot />
-            </span>
-            <span className="text-sm font-semibold">Análisis con IA</span>
+            <span className="text-accent">{icon}</span>
+            <span className="text-sm font-semibold">{title}</span>
           </div>
           <button
             type="button"
