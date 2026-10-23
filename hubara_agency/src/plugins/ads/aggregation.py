@@ -240,7 +240,10 @@ class AdsAttributedConversation:
 
     # --- Faltantes (queda None — frontend marca visual) ---
     name: str | None = None
+    # Dónde se entrega el pedido del episodio (ciudad + barrio), de Orders.
+    # None si el episodio no tiene pedido o el pedido no trae dirección.
     city: str | None = None
+    neighborhood: str | None = None
     # Valor de la venta atribuida al episodio (COP major units) — de
     # `episode.order_total_cop` congelado al cierre (backfill desde
     # `registered_order` para ventas previas al freeze). None si el episodio
@@ -513,6 +516,20 @@ def _episode_order_value(
     if isinstance(frozen, (int, float)) and not isinstance(frozen, bool):
         return int(frozen)
     return order_totals.get(oid)
+
+
+def _episode_order_place(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: OrderFactsSnapshot | None,
+) -> tuple[str | None, str | None]:
+    """(ciudad, barrio) de entrega del pedido del episodio, leídos de Orders.
+    Sin pedido o sin dato de Orders → (None, None): el chat no tiene copia."""
+    oid = _episode_order_id(episode, metadata)
+    fact = order_facts.facts.get(oid) if oid and order_facts is not None else None
+    if fact is None:
+        return None, None
+    return fact.city, fact.neighborhood
 
 
 def _episode_order_status(
@@ -1499,6 +1516,7 @@ def list_attributed_conversations(
             _jev = _episode_jev_usage(ep)
             _vision = _episode_vision_usage(ep)
             _audio = _episode_audio_usage(ep)
+            _city, _neighborhood = _episode_order_place(ep, metadata, order_facts)
             _capi_slot = capi_idx.get(ep_id) or {}
             if _capi_slot.get("order_canceled_sent"):
                 _capi_event = "OrderCanceled"  # lo último que Meta sabe del pedido
@@ -1519,6 +1537,8 @@ def list_attributed_conversations(
                     ad_headline=ad_headline,
                     agent=metadata.get("active_route"),
                     state=state,
+                    city=_city,
+                    neighborhood=_neighborhood,
                     # Valor de la venta atribuida (frozen en el episodio,
                     # backfill desde registered_order) + duración del episodio.
                     value=_episode_revenue_cop(ep, order_totals, order_facts),

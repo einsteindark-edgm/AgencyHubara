@@ -27,6 +27,7 @@ const sample: BackendAttributedConversation = {
   state: "ganado",
   name: null,
   city: null,
+  neighborhood: null,
   value: 124500,
   duration_ms: 4200000,
   llm_cost_usd: 0.0042,

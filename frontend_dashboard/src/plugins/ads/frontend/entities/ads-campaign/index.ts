@@ -16,6 +16,10 @@ export type {
   CampaignTendency,
   AdsStateReason,
   CapiEvent,
+  PurchaseCampaignShare,
+  PurchaseCity,
+  PurchasePlaces,
+  PurchaseZone,
   WaCostByCategory,
   WaCostEntry,
   WaCostRow,
@@ -43,4 +47,5 @@ export {
   useAttributedConversations,
   useCampaignAdsets,
   useDailySeries,
+  usePurchasePlaces,
 } from "./api";

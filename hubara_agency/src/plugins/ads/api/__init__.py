@@ -35,6 +35,7 @@ que solo se mira al leer crece sin límite (incidente 2026-09-25).
 """
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 import time
@@ -60,6 +61,13 @@ from src.plugins.ads.api.analysis import router as _analysis_router
 from src.plugins.ads.api.meta_oauth import router as _meta_router
 from src.plugins.ads.meta_merge import merge_meta_campaigns
 from src.plugins.ads.meta_names import fetch_meta_ad_names
+from src.plugins.ads.purchase_places import (
+    collect_orders_in_window,
+    order_campaign_links,
+    purchase_rows,
+    rows_in_scope,
+    summarize_purchase_places,
+)
 from src.sdk.connectorkit import OrderFactsSnapshot, meta_marketing_token
 from src.plugins.ads.segmentation import (
     collect_source_ids,
@@ -109,6 +117,16 @@ _scan_cache: BoundedTTLCache[str, list[tuple[FsPath, dict[str, Any]]]] = Bounded
 # proceso no devuelve). Un solo scan a la vez: el resto espera y reusa el
 # resultado (medido: 10 en paralelo +215 MB de pico; con candado, +18 MB).
 _scan_lock = threading.Lock()
+
+# «Dónde compran» (2026-10-23): las compras de la ventana con su campaña. Cada
+# entrada pagina el listado de Orders; 30 s y una sola construcción a la vez
+# (mismo motivo que `_scan_lock`): la vista general y la de la campaña de una
+# misma page-view comparten el resultado.
+_PLACES_TTL_S = 30.0
+_places_cache: BoundedTTLCache[str, Any] = BoundedTTLCache(
+    ttl_s=_PLACES_TTL_S, max_entries=_SCAN_MAX_ENTRIES
+)
+_places_lock = threading.Lock()
 
 # Cache del enrichment de nombres Meta (fix 2026-07-01). Los nombres de
 # ads/campañas cambian casi nunca — TTL largo (10 min) para no pegarle a
@@ -389,6 +407,14 @@ def get_order_facts_port():
     return _factory()
 
 
+def get_order_query_port():
+    """El listado de Orders (lazy + monkeypatcheable en tests), por el mismo
+    motivo que `get_order_facts_port`."""
+    from src.sdk.connectorkit import get_order_query_port as _factory
+
+    return _factory()
+
+
 def _order_facts(sessions: list[tuple[FsPath, dict[str, Any]]]) -> OrderFactsSnapshot:
     """Datos canónicos (Orders) de los pedidos vinculados a estas sesiones.
 
@@ -522,6 +548,107 @@ def get_ads_campaigns(
         "campaigns": [asdict(c) for c in campaigns],
         "orders_stale": facts.stale,
     }
+
+
+def _purchases(
+    since_ms: int | None, until_ms: int | None
+) -> tuple[list[Any], bool, bool, list[tuple[FsPath, dict[str, Any]]]]:
+    """`(compras, orders_available, truncated, sesiones)` de la ventana, cacheado.
+
+    Las compras son los pedidos de Orders creados en la ventana; la campaña sale
+    del vínculo del vault. Basta escanear las sesiones tocadas desde `since_ms`:
+    registrar un pedido escribe el metadata de su sesión. El `since_ms` de un
+    preset se redondea al minuto (ver `_cached_sessions`).
+    """
+    if since_ms is not None:
+        since_ms -= since_ms % _SCAN_BUCKET_MS
+    key = f"{since_ms}|{until_ms}"
+    hit = _places_cache.get(key)
+    if hit is not None:
+        return hit
+    with _places_lock:
+        hit = _places_cache.get(key)
+        if hit is not None:
+            return hit
+        sessions = _cached_sessions(since_ms)
+        try:
+            got = from_thread.run(
+                functools.partial(
+                    collect_orders_in_window,
+                    get_order_query_port(),
+                    since_ms=since_ms,
+                    until_ms=until_ms,
+                )
+            )
+        except Exception:  # noqa: BLE001 — Orders caído no tumba el tablero
+            log.exception("ads: no pude listar los pedidos para «dónde compran»")
+            return [], False, False, sessions
+        rows = purchase_rows(got.orders, order_campaign_links(sessions), _scope_names(sessions))
+        result = (rows, got.available, got.truncated, sessions)
+        if got.available:
+            _places_cache.put(key, result)
+        return result
+
+
+@router.get("/purchase-places")
+def get_purchase_places(
+    days: int | None = Query(
+        None, ge=1, le=365, description="ventana en días; omitir = todo el historial"
+    ),
+    frm: str | None = Query(
+        None,
+        alias="from",
+        description="YYYY-MM-DD inicio (inclusive); con `to` activa rango custom y anula `days`",
+    ),
+    to: str | None = Query(
+        None, description="YYYY-MM-DD fin (inclusive); requiere `from`"
+    ),
+    campaign_id: str | None = Query(
+        None, description="fila de Ads (campaña, anuncio o bucket); omitir = todas las compras"
+    ),
+    adset_id: str | None = Query(
+        None, description="acota la campaña a un segmento (ad set)"
+    ),
+) -> dict:
+    """Dónde compran: compras por ciudad y zona (barrio) — de una campaña o de todas.
+
+    Compra = pedido de Orders (borrador incluido) creado en la ventana, no
+    cancelado ni de prueba. Ciudad y barrio son los de la dirección de envío
+    del pedido; la campaña, la del chat que lo registró (sin chat →
+    `sin_conversacion`). Con `campaign_id`, cada ciudad trae
+    `overall_orders` (sus compras en todas las campañas) para cotejar.
+
+    Response shape:
+      {
+        "orders": 12, "paid_orders": 9, "value_cop": 1450000, "without_city": 1,
+        "overall_orders": null,          # con campaign_id: todas las compras
+        "cities": [
+          {"key": "bogota", "city": "Bogotá", "orders": 7, "paid_orders": 5,
+           "value_cop": 840000, "overall_orders": null,
+           "zones": [{"zone": "Chapinero", "orders": 3, "value_cop": 360000}, ...],
+           "campaigns": [{"id": "120…", "name": "Velitas", "orders": 4, "value_cop": …}, ...]},
+          ...
+        ],
+        "orders_available": true,        # false = Orders no respondió
+        "truncated": false               # true = más pedidos que el tope de páginas
+      }
+    """
+    since_ms, until_ms = _window(days, frm, to)
+    rows, available, truncated, sessions = _purchases(since_ms, until_ms)
+    places = overall = summarize_purchase_places(rows)
+    if campaign_id:
+        scope = (
+            scope_source_ids(_scope_names(sessions), campaign_id=campaign_id, adset_id=adset_id)
+            if adset_id
+            else None
+        )
+        # Segmento sin resolver (Meta caído) → la campaña por su id, como los
+        # otros drill-downs.
+        places = summarize_purchase_places(
+            rows_in_scope(rows, campaign_id=campaign_id, source_ids=scope or None),
+            overall=overall,
+        )
+    return {**asdict(places), "orders_available": available, "truncated": truncated}
 
 
 @router.get("/campaigns/{campaign_id}/conversations")

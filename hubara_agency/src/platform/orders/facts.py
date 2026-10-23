@@ -68,6 +68,10 @@ class OrderFacts:
     # Día de entrega agendado (YYYY-MM-DD, el que ve Orders) o None si nadie
     # lo agendó. La bandeja de incendios de la app móvil lo usa para "retrasado".
     due_iso: str | None = None
+    # Dónde se entrega (ciudad + barrio de la dirección de envío): Ads cuenta
+    # las compras por ciudad y zona con esto (2026-10-23).
+    city: str | None = None
+    neighborhood: str | None = None
 
     @classmethod
     def from_summary(cls, s: OrderSummaryDTO) -> OrderFacts:
@@ -83,6 +87,8 @@ class OrderFacts:
             created_at_ms=int(s.created_at_ms or 0),
             is_test=bool(getattr(s, "is_test", False)),
             due_iso=s.due_iso or None,
+            city=s.city or None,
+            neighborhood=s.neighborhood or None,
         )
 
     @property

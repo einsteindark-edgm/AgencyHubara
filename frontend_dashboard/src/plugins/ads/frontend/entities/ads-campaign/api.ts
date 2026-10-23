@@ -34,6 +34,7 @@ import {
   backendAdsDailyResponseSchema,
   backendAgentReferralsSchema,
   backendAttributedConversationsResponseSchema,
+  backendPurchasePlacesSchema,
   type BackendAdCreative,
   type BackendAdsCampaign,
   type BackendAttributedConversation,
@@ -48,6 +49,7 @@ import {
   type AdsWindowParams,
   type AgentReferrals,
   type AttributedConversation,
+  type PurchasePlaces,
   type AvatarColor,
   type CampaignStatus,
   type CampaignTendency,
@@ -248,6 +250,7 @@ export function mapBackendConversation(
     msgs: b.msgs_count,
     name: b.name,
     city: b.city,
+    neighborhood: b.neighborhood,
     agent: b.agent,
     state: asAdsState(b.state),
     value: b.value,
@@ -555,6 +558,66 @@ export function useAgentReferrals(params: AdsWindowParams) {
       );
       return mapAgentReferrals(raw);
     },
+    staleTime: 30_000,
+  });
+}
+
+/**
+ * Dónde compran: respuesta de `/api/ads/purchase-places` → dominio.
+ */
+export function mapPurchasePlaces(raw: unknown): PurchasePlaces {
+  const p = backendPurchasePlacesSchema.parse(raw);
+  return {
+    orders: p.orders,
+    paidOrders: p.paid_orders,
+    valueCop: p.value_cop,
+    withoutCity: p.without_city,
+    overallOrders: p.overall_orders,
+    ordersAvailable: p.orders_available,
+    truncated: p.truncated,
+    cities: p.cities.map((c) => ({
+      key: c.key,
+      city: c.city,
+      orders: c.orders,
+      paidOrders: c.paid_orders,
+      valueCop: c.value_cop,
+      overallOrders: c.overall_orders,
+      zones: c.zones.map((z) => ({ zone: z.zone, orders: z.orders, valueCop: z.value_cop })),
+      campaigns: c.campaigns.map((k) => ({
+        id: k.id,
+        name: k.name,
+        orders: k.orders,
+        valueCop: k.value_cop,
+      })),
+    })),
+  };
+}
+
+/**
+ * Compras por ciudad y zona en la ventana del header. `campaignId` null = todas
+ * las compras (vista general); con id = las de esa fila de Ads (campaña,
+ * segmento con `adsetId`, o anuncio por su id crudo) + el total para cotejar.
+ * Vive bajo `adsCampaignKeys.all`: el evento `orders` del stream la refresca.
+ */
+export function usePurchasePlaces(
+  params: AdsWindowParams,
+  campaignId: string | null,
+  adsetId: string | null = null,
+  enabled = true,
+) {
+  return useQuery<PurchasePlaces>({
+    queryKey: adsCampaignKeys.purchasePlaces(params, campaignId, adsetId),
+    queryFn: async ({ signal }) => {
+      const q = new URLSearchParams(windowQuery(params, adsetId).slice(1));
+      if (campaignId) q.set("campaign_id", campaignId);
+      const qs = q.toString();
+      const raw = await apiClient.get<unknown>(
+        `/api/ads/purchase-places${qs ? `?${qs}` : ""}`,
+        { signal },
+      );
+      return mapPurchasePlaces(raw);
+    },
+    enabled,
     staleTime: 30_000,
   });
 }
