@@ -2461,3 +2461,44 @@ intent. El verificador de cifras explica hasta 20 unidades por línea.
 - GIVEN un pedido con 2 cajas cuadradas y 4 Trilogías del Terror (o 6 Trilogías)
 - THEN el envío es la tarifa mínima publicada y un $0 se rechaza (`shipping_mismatch`)
 
+### Requirement: Una tarjeta que no salió, el turno siguiente lo sabe (2026-10-23)
+
+Las tools de UI le responden al modelo al encolar («Producto enviado al cliente: …»); el envío real lo
+hace el flush al final del turno. Caso de la celda local de Acktos (el mismo motor): la foto de un
+producto tenía una URL `http`, el cliente de WhatsApp la rechazó, no salió nada y en el turno siguiente
+el bot le dijo al cliente «Por ahora solo tengo esa foto…» como si la hubiera visto. El fallo quedaba
+en `ui_intents_failures` y nadie lo leía.
+
+Todo envío del flush que no llega al cliente (el envío lanza, Meta lo rechaza, no hay nada que mandar
+o no llega una página de la lista de respaldo) SHALL quedar como aviso pendiente, en palabras
+(`metadata.json[undelivered_ui_intents]`, `use_cases/undelivered_cards.py`). El contexto del turno
+siguiente (`build_prompt`) MUST decir qué no le llegó al cliente, en lenguaje llano y sin el error
+técnico, una sola vez: también si una ráfaga reinicia ese turno, y el flush del final de ese turno lo
+borra. Un aviso que ningún turno cerró (turno de abandono, LLM caído) vence a las 24 h. Lo que manda
+el operador desde la app no es aviso: la app ya le responde `send_failed` y el bot no lo prometió.
+Marcar el aviso es de mejor esfuerzo: un vault que no deja escribir no tumba el turno. Los avisos del
+log `flush_ui_intents.dispatch_failed` y `flush_ui_intents.send_failed` llevan la sesión, el tipo y el
+error en el mensaje (el puente a loguru no imprime los `extra`).
+
+No es una capacidad del motor de decisiones: es un hecho que el flush conoce con certeza (un hecho se
+arregla donde vive el dato; no se le pregunta a Jev). Tampoco es el detector de promesas: la tool sí
+corrió y la falla ocurre después del turno.
+
+#### Scenario: La foto del producto no sale (caso de la celda local)
+
+- GIVEN el bot llamó `present_product_detail` y la foto tiene una URL `http`
+- WHEN el flush la intenta enviar y el cliente de WhatsApp la rechaza
+- THEN el contexto del turno siguiente dice que la foto del producto «Vela Cruz de Vida» no le llegó al cliente
+- AND el log dice `flush_ui_intents.dispatch_failed session=… kind=product_detail error=ValueError('image: link debe ser HTTPS público')`
+
+#### Scenario: Una sola vez, aunque el turno se reinicie
+
+- GIVEN el turno siguiente vio el aviso y una ráfaga del cliente lo reinicia
+- THEN el turno reiniciado lo vuelve a ver
+- AND después del flush del final de ese turno, el turno de después ya no lo ve
+
+#### Scenario: Una página de la lista que no llegó
+
+- GIVEN la lista de respaldo sale en 3 páginas y la 2 no llega
+- THEN el contexto del turno siguiente dice que no le llegó la página 2 de 3 de la lista de productos
+

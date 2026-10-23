@@ -211,8 +211,9 @@ jobs:
         # Auditoría de Temporal 2026-10-15 y su premortem del 2026-10-16. Los
         # gates AST (reintentos finitos, heartbeat de las entregas, workers con
         # apagado ordenado), el compose y los manifests de prod, y el
-        # comportamiento: el corte por run, la entrega sin confirmar del V2, el
-        # buzón de avisos de etapa, los reintentos del ETA y el cliente único.
+        # comportamiento: el corte por run, la entrega sin confirmar del V2, la
+        # tarjeta que no salió (el turno siguiente lo sabe, L-38), el buzón de
+        # avisos de etapa, los reintentos del ETA y el cliente único.
         # Viven en tests/plugins/ y tests/platform/, que este job no corre
         # completos: se nombran uno por uno (~40 s). Guarda:
         # tests/infra/test_ci_runs_replay_tests.py.
@@ -233,6 +234,7 @@ jobs:
           tests/platform/test_temporal_client.py
           tests/platform/test_whatsapp_send_template.py
           tests/platform/test_worker_lifecycle.py
+          tests/plugins/chats/sales/test_undelivered_cards.py
           tests/plugins/chats/test_post_sale_return_activities.py
           tests/plugins/eta/test_eta_session_continue_as_new.py
           tests/plugins/eta/test_eta_session_retries.py
