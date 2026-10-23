@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "properties": {
+    "total": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "with_order": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "by_source": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": -9007199254740991,
+        "maximum": 9007199254740991
+      }
+    }
+  },
+  "required": [
+    "total",
+    "with_order",
+    "by_source"
+  ]
+}

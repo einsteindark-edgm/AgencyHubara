@@ -1,0 +1,71 @@
+# Agent Gateway Gates — tests + drift de contrato + build de imagen del Agent
+# Gateway (`agent_gateway/`, MCP server de solo lectura sobre /api/ads/*). ADR
+# docs/adr/2026-10-14-agent-gateway.md.
+#
+# Corre en cada PR que toca el gateway o los contratos Zod de las entities de ads
+# (la spec de sus `outputSchema`): si un contrato cambia y nadie regenera
+# los schemas del gateway, el gateway empezaría a responder
+# `contract_violation` en prod sin que nadie se entere (L-10).
+#
+# Los tests golden contra capturas de prod (`HUBARA_ADS_FIXTURES`) se SKIPean acá:
+# viven en el repo del plugin y este repo es público. El resto (241 menos esos) corre.
+#
+# OBLIGATORIEDAD: para que bloquee el merge, agregá "Agent Gateway — tests + contrato
+# + imagen" a los required status checks de `main` (lo hace un admin).
+name: Agent Gateway Gates
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "agent_gateway/**"
+      - "frontend_dashboard/src/plugins/ads/frontend/entities/**/contracts.ts"
+      - ".github/workflows/agent-gateway-gates.yml"
+  push:
+    branches: [main]
+    paths:
+      - "agent_gateway/**"
+      - "frontend_dashboard/src/plugins/ads/frontend/entities/**/contracts.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-gateway-gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  agent-gateway-gates:
+    name: Agent Gateway — tests + contrato + imagen
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: "3.12"
+
+      # El drift de `outputSchema` regenera los JSON Schema desde los Zod con tsx.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend_dashboard/package-lock.json
+
+      - name: Deps del frontend (zod + tsx para el drift de contrato)
+        working-directory: frontend_dashboard
+        run: npm ci
+
+      - name: Deps del gateway (uv.lock congelado)
+        working-directory: agent_gateway
+        run: uv sync --frozen
+
+      - name: Tests (contrato, auth, transporte, PII, config) + drift de schemas obligatorio
+        working-directory: agent_gateway
+        env:
+          REQUIRE_SCHEMA_DRIFT_CHECK: "1"
+        run: uv run pytest -q
+
+      - name: Imagen (Dockerfile multi-stage, usuario no root)
+        run: docker build -t agent-gateway:ci agent_gateway

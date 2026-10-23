@@ -1,0 +1,84 @@
+{
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "agent": {
+      "type": "string"
+    },
+    "input": {},
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "awaiting_approval",
+        "completed",
+        "failed"
+      ]
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "payload": {}
+        },
+        "required": [
+          "event_id",
+          "type"
+        ]
+      }
+    },
+    "result": {},
+    "awaiting": {},
+    "error": {},
+    "execution_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "created_at_ms": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "campaign_id": {
+      "default": null,
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "run_id",
+    "agent",
+    "input",
+    "status"
+  ]
+}
