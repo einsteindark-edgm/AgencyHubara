@@ -158,6 +158,34 @@ fallback a `POST /api/publish` (gh, headless) si el git nativo no está. El
 click derecho sobre un agente/tool borra el nodo vía `POST /api/delete-node`
 (siempre con confirmación; cascade con blast-radius).
 
+## Forge (migrar el motor a un cliente nuevo)
+
+Contenedor propio 🔥 en la barra de actividad (vista **Flota de clientes**) +
+**Forge Console** (`Forge: Abrir consola`). Es piel sobre dos CLIs del repo:
+`forge/forge.py` (init · plan · apply · verify · publish) y `forge/migrate.py`
+(los pasos S1–S9 con estado: `status --json` · `run` · `done`). La lógica de
+clonación vive solo en esos CLIs; la consola lista los bundles de
+`forge/clients/<slug>/` con las reglas de `forge/manifest.yaml`
+(`workspace_overlay` + `domain.yaml` + `scan.todo_marker`) y streamea el output.
+
+- **Flujo**: Sembrar (init) → redactar `client.yaml`, `domain.yaml` y
+  `workspace/` (una voz por agente de `workspace_overlay.agents`: sales,
+  remarketing, mba_sales…) hasta borrar todo `TODO-BRAND` →
+  Plan → Forjar → Verificar → Publicar → sección **Migración paso a paso**
+  (Ejecutar / Marcar como hecho) → `NEXT_STEPS.md` del clon.
+- **Un proceso a la vez** (mutex en `ForgeService`); Verificar/Publicar solo
+  con `<dest>/.git`; Forjar confirma rama, commit y cambios sin commit.
+- **Llaves**: los pasos automáticos leen `SUPABASE_ACCESS_TOKEN`,
+  `RAILWAY_API_TOKEN`, `MEDUSA_ADMIN_EMAIL`/`MEDUSA_ADMIN_PASSWORD` y
+  `TEMPORAL_CLOUD_API_KEY` del entorno del extension host; la UI solo muestra
+  si están, nunca pide el valor.
+- **Python**: ajuste `acktos.forge.python` (default `python3`, necesita PyYAML;
+  pre-flight con aviso accionable).
+- **En un clon** `forge/` no existe → el context key `acktos.forge.available`
+  esconde vista, comandos y paso del walkthrough.
+- Lógica pura (overlay del manifest, cortador de líneas, parseo de
+  `status --json`, avisos de `client.yaml`): `src/forge/pure.ts`.
+
 ## Desarrollo
 
 ```bash

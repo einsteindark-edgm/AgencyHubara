@@ -76,6 +76,14 @@ module "mba_config" {
 }
 
 # ── Laboratorio de conversaciones: techo del modo, perfil y topes (git = verdad) ─
+module "store_config" {
+  source   = "./modules/store-config"
+  for_each = var.tenants
+
+  tenant = each.key
+  config = each.value.store
+}
+
 module "lab_config" {
   source   = "./modules/lab-config"
   for_each = var.tenants

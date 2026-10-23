@@ -67,6 +67,12 @@ def _need_v6() -> None:
     assert (V6 / "bundle.yaml").is_file(), "falta el paquete ventas-6"
 
 
+def _need_v5() -> None:
+    """Lo de antes (`ventas-5`): en un clon de forge solo viaja el paquete que corre la tienda."""
+    if not (V5 / "bundle.yaml").is_file():
+        pytest.skip("clon de forge: ventas-5 (experimento de esta tienda) no viaja")
+
+
 def _load(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -192,6 +198,7 @@ async def test_with_ventas_6_a_receipt_after_buying_checks_the_payment(monkeypat
 
 async def test_with_ventas_5_the_step_says_the_team_checks_the_payment(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que pasaría hoy: por eso el arreglo se promueve con el paquete."""
+    _need_v5()
     note = await _turn_note(monkeypatch, "ventas-5")
 
     assert TEAM_CHECKS in note
@@ -256,6 +263,7 @@ async def test_with_ventas_5_an_unfinished_order_goes_to_the_team(
     """Lo que pasaría hoy: el relevo al equipo; por eso va en el paquete."""
     from src.plugins.chats.agent.sales.prompts import build_decided_ghosting_prompt
 
+    _need_v5()
     notice = await _ghost_notice(monkeypatch, _isolate_vault_dir, "ventas-5")
 
     assert notice == build_decided_ghosting_prompt("CONFIRMADO_SIN_DATOS")
@@ -353,6 +361,7 @@ async def test_choosing_or_listing_aromas_still_goes_through_the_picker(monkeypa
 
 async def test_with_ventas_5_the_same_question_pushed_the_picker(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que pasaba el 2026-10-09: por eso el arreglo va con el paquete."""
+    _need_v5()
     rows = await _aroma_rows(monkeypatch, "ventas-5", notas=0.93, stage="etapa_variantes")
 
     assert rows == [["present_variant_picker"]]
