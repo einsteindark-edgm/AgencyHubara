@@ -265,7 +265,7 @@ class TestSegundoToqueResuelveLoPractico:
         assert "1-2 frases máximo" not in text
 
     def test_sin_datos_de_la_tienda_queda_el_seguimiento_de_hoy(self, monkeypatch) -> None:
-        _store(monkeypatch)
+        _store(monkeypatch, practical_facts=None)  # explícito: el dominio de un clon de forge sí los trae
         text = build_remarketing_trigger("miró Halloween", touch_number=2, **_SILENT)
         assert "DATOS DE LA TIENDA" not in text
         assert "DISTINTO" in text
@@ -398,9 +398,15 @@ async def test_el_trigger_recibe_el_caso_y_el_tope_real(monkeypatch) -> None:
 def test_los_datos_de_la_tienda_de_ventas_7_son_los_de_ventas() -> None:
     # El 2º toque dice lo que dice Ventas: si cambia una tarifa o el mínimo del
     # contra entrega en `shipping.py`, el paquete tiene que cambiar con ella.
+    # En un clon de forge los dos salen de `commerce` (forge/tests lo prueba) y
+    # los defaults de `shipping.py` siguen siendo los de la tienda madre.
     from pathlib import Path
 
+    import pytest
     import yaml
+
+    if not (Path(__file__).resolve().parents[4] / "forge").is_dir():
+        pytest.skip("clon de forge: los datos de la tienda salen de commerce, no de shipping.py")
 
     from src.plugins.chats.agent.sales.config.shipping import (
         CASH_ON_DELIVERY_MIN_PRODUCTS_COP,

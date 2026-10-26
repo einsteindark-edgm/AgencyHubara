@@ -27,6 +27,8 @@ export interface HubaraConfig {
   frontendCwd: string;
   /** override de seams.yaml; "" = usar <repoRoot>/seams.yaml o el bundled */
   seamsPath: string;
+  /** intérprete de Python para forge/forge.py y forge/migrate.py (necesita PyYAML) */
+  forgePython: string;
 }
 
 export function readHubaraConfig(repoRoot: string): HubaraConfig {
@@ -50,6 +52,7 @@ export function readHubaraConfig(repoRoot: string): HubaraConfig {
     frontendNpx: cfg.get<string>("frontend.npx", "npx"),
     frontendCwd: resolvePath(cfg.get<string>("frontend.cwd", "${workspaceFolder}/frontend_dashboard"), repoRoot),
     seamsPath: cfg.get<string>("seamsPath", ""),
+    forgePython: cfg.get<string>("forge.python", "python3") || "python3",
   };
 }
 

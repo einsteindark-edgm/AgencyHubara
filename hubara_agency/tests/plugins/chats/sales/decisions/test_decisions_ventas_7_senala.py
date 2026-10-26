@@ -51,6 +51,12 @@ def _need_v7() -> None:
     assert (V7 / "bundle.yaml").is_file(), "falta el paquete ventas-7"
 
 
+def _need_v6() -> None:
+    """Lo de antes (`ventas-6`): en un clon de forge solo viaja el paquete que corre la tienda."""
+    if not (V6 / "bundle.yaml").is_file():
+        pytest.skip("clon de forge: ventas-6 (experimento de esta tienda) no viaja")
+
+
 def _load(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -126,6 +132,7 @@ async def test_with_ventas_7_a_greeting_mid_conversation_asks_for_no_extra_bubbl
 
 async def test_with_ventas_6_the_greeting_asked_for_an_extra_bubble(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que pasó el 2026-10-13: por eso el arreglo va con el paquete."""
+    _need_v6()
     assert await _verify(monkeypatch, "ventas-6") == ("complement", ["saludo"])
 
 
@@ -270,6 +277,7 @@ async def test_a_pointed_product_weighs_more_than_the_card_it_wrote_from(monkeyp
 
 async def test_with_ventas_6_the_step_asked_to_choose_a_product_again(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que pasó el 2026-10-13: la guía pedía escoger aunque ya hubiera escogido."""
+    _need_v6()
     note, _guide = await _discovery_note(monkeypatch, "ventas-6", pointed=0.92)
 
     assert GENERIC_STEP in note

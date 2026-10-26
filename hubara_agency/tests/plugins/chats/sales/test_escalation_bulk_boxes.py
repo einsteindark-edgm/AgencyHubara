@@ -22,6 +22,13 @@ from src.platform.tools.escalation import EscalateToHumanTool
 from src.plugins.chats.agent.sales.decisions import registry
 from src.plugins.chats.agent.sales.tools.escalation import guarded_escalation_tool
 
+#: Las cajas son de la tienda madre (`domain.yaml: sold_by_box`, las velas de
+#: deseos): en un clon de forge (sin `forge/`) su dominio no las trae.
+pytestmark = pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[5] / "forge").is_dir(),
+    reason="clon de forge: las cajas (las velas de deseos) son de la tienda madre",
+)
+
 SID = "wa_bulk"
 QUESTION = "por_mayor.velas_sueltas"
 PRODUCT = "por_mayor.producto_por_caja"

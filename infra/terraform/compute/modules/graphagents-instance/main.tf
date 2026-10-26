@@ -126,6 +126,24 @@ data "aws_iam_policy_document" "ssm_read" {
       "arn:aws:ssm:*:*:parameter/graphagents/*",
     ]
   }
+  # El candado real (aislamiento entre proyectos de la misma cuenta, forge):
+  # AmazonSSMManagedInstanceCore permite GetParameter(s) sobre "*" y los
+  # SecureString usan la llave aws/ssm. Un Deny explícito le gana: sin él, esta
+  # caja leería los secretos de OTRO proyecto/clon de la cuenta.
+  statement {
+    sid    = "DenyEveryParameterOutsideGraphAgents"
+    effect = "Deny"
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+      "ssm:GetParameterHistory",
+    ]
+    not_resources = [
+      "arn:aws:ssm:*:*:parameter/graphagents",
+      "arn:aws:ssm:*:*:parameter/graphagents/*",
+    ]
+  }
   statement {
     sid       = "DecryptSecureString"
     actions   = ["kms:Decrypt"]

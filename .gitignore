@@ -43,3 +43,8 @@ hubara_agency/.hubara/evaluator-calibration/*.yaml  # local calibration outputs
 
 # Reportes de certificación del SDK (derivables — hubara certify los regenera)
 hubara_agency/.hubara/certification/
+
+# Archivos de secretos reales (secrets.<tenant>.env, graphagents.secrets.env…) — NUNCA
+# commitear, estén donde estén. Solo la plantilla generada se commitea.
+*secret*.env
+!infra/scripts/secrets.example.env

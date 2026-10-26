@@ -29,6 +29,13 @@ from src.plugins.chats.agent.sales.decisions import registry
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.shared.draft_items import draft_items
 
+#: Las cajas son de la tienda madre (`domain.yaml: sold_by_box`, las velas de
+#: deseos): en un clon de forge (sin `forge/`) su dominio no las trae.
+pytestmark = pytest.mark.skipif(
+    not (Path(__file__).resolve().parents[5] / "forge").is_dir(),
+    reason="clon de forge: las cajas (las velas de deseos) son de la tienda madre",
+)
+
 SID = "wa_boxes"
 ASKED = "Dos cajas de 12 como seria el envio y el pago"
 

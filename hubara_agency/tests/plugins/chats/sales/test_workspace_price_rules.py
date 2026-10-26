@@ -68,13 +68,27 @@ def test_cod_threshold_is_inclusive_in_agent_python() -> None:
 # --- Envío: siempre la tarifa publicada (decisión del operador 2026-09-23) ---
 
 
+#: El tfvars de platform: en un clon de forge trae la política de SU tienda
+#: (`store = {…}`, que el bot lee de SSM); sin bloque `store`, la del código.
+_PLATFORM_TFVARS = Path(__file__).resolve().parents[5] / "infra" / "terraform" / "platform" / "tenants.auto.tfvars"
+
+
+def _published_rate(name: str, default: int) -> int:
+    text = _PLATFORM_TFVARS.read_text(encoding="utf-8") if _PLATFORM_TFVARS.exists() else ""
+    found = re.search(rf"^\s*{name}\s*=\s*(\d+)\s*$", text, re.MULTILINE)
+    return int(found.group(1)) if found else default
+
+
 def test_catalog_skills_cite_the_published_shipping_rates() -> None:
-    """Las tarifas que conoce cada agente son las de `config/shipping.py` (la
-    skill de remarketing decía "$12.000 a $15.000")."""
+    """Las tarifas que conoce cada agente son las PUBLICADAS de la tienda: las
+    de `config/shipping.py`, o las del bloque `store` del tfvars en un clon de
+    forge (la skill de remarketing decía "$12.000 a $15.000")."""
+    local = _published_rate("shipping_rate_local_cop", SHIPPING_RATE_BOGOTA_COP)
+    national = _published_rate("shipping_rate_national_cop", SHIPPING_RATE_NATIONAL_COP)
     for ws in AGENT_WORKSPACES:
-        text = (ws / "skills" / "hubara_catalog" / "SKILL.md").read_text(encoding="utf-8")
-        assert _cop(SHIPPING_RATE_BOGOTA_COP) in text, ws
-        assert _cop(SHIPPING_RATE_NATIONAL_COP) in text, ws
+        text = next((ws / "skills").glob("*_catalog/SKILL.md")).read_text(encoding="utf-8")
+        assert _cop(local) in text, ws
+        assert _cop(national) in text, ws
         assert "$12.000 a $15.000" not in text, ws
 
 
