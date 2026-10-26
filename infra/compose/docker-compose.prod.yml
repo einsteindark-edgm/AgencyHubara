@@ -47,7 +47,10 @@ services:
       - api
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.86.2
+    # Por digest, no solo por etiqueta (2026-10-23): el 21-oct publicaron una
+    # LiteLLM con malware en etiquetas existentes y cada deploy hace `pull`.
+    # Guarda: hubara_agency/tests/infra/test_litellm_image_pinned_by_digest.py.
+    image: ghcr.io/berriai/litellm:v1.86.2@sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
