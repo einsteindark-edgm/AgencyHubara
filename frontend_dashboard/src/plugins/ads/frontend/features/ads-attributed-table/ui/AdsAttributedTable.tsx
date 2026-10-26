@@ -128,7 +128,10 @@ export function AdsAttributedTable({ rows }: Props) {
                       </div>
                     </div>
                   </td>
-                  <td>{c.city ?? <MissingField />}</td>
+                  <td>
+                    {c.city ?? <MissingField />}
+                    {c.neighborhood && <div className="att-id">{c.neighborhood}</div>}
+                  </td>
                   <td>{c.started}</td>
                   <td>{c.lastMsg ?? <MissingField />}</td>
                   <td className="num">{c.msgs}</td>

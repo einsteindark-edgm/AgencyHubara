@@ -88,6 +88,41 @@ vi.mock("@plugins/ads/frontend/features/ads-campaigns-list", () => ({
   ),
 }));
 
+vi.mock("@plugins/ads/frontend/features/purchase-places", () => ({
+  CampaignPurchasePlaces: (props: {
+    campaignId: string;
+    adsetId: string | null;
+    onOpenOverview?: () => void;
+  }) => (
+    <div
+      data-testid="campaign-places"
+      data-campaign={props.campaignId}
+      data-adset={props.adsetId ?? ""}
+    >
+      <button data-testid="places-open-overview" onClick={props.onOpenOverview}>
+        open
+      </button>
+    </div>
+  ),
+  PurchasePlacesOverview: (props: {
+    onSelectCampaign?: (id: string) => void;
+    isSelectable?: (id: string) => boolean;
+  }) => (
+    <div data-testid="places-overview">
+      {["CAMP_OTHER", "sin_conversacion"].map((id) => (
+        <button
+          key={id}
+          data-testid={`overview-pick-${id}`}
+          data-selectable={String(props.isSelectable?.(id))}
+          onClick={() => props.onSelectCampaign?.(id)}
+        >
+          {id}
+        </button>
+      ))}
+    </div>
+  ),
+}));
+
 import { AdsSection } from "./AdsSection";
 import { fireEvent } from "@testing-library/react";
 
@@ -227,5 +262,55 @@ describe("AdsSection — scope por anuncio (creativos, 2026-09-10)", () => {
     expect(queryByTestId("pick-ad")).toBeNull();
     expect(getByTestId("ads-inspector").getAttribute("data-scope")).toBe("CAMP_9");
     expect(getByTestId("ads-inspector").getAttribute("data-ad")).toBe("");
+  });
+});
+
+describe("AdsSection — dónde compran (2026-10-23)", () => {
+  it("el canvas muestra dónde compran de la fila activa (campaña, segmento o anuncio)", () => {
+    useAdsCampaignsMock.mockReturnValue({ data: [makeCampaign()] });
+    useAdsetAdsMock.mockReturnValue({
+      data: [makeCampaign({ id: "AD_1", metaAdsetId: "ADSET_B" })],
+    });
+    const { getByTestId } = render(<AdsSection />);
+    expect(getByTestId("campaign-places").getAttribute("data-campaign")).toBe("CAMP_9");
+    expect(getByTestId("campaign-places").getAttribute("data-adset")).toBe("");
+
+    fireEvent.click(getByTestId("pick-segment"));
+    expect(getByTestId("campaign-places").getAttribute("data-adset")).toBe("ADSET_B");
+
+    fireEvent.click(getByTestId("pick-ad"));
+    expect(getByTestId("campaign-places").getAttribute("data-campaign")).toBe("AD_1");
+    expect(getByTestId("campaign-places").getAttribute("data-adset")).toBe("");
+  });
+
+  it("el botón «Dónde compran» abre la vista general de todas las compras", () => {
+    useAdsCampaignsMock.mockReturnValue({ data: [makeCampaign()] });
+    const { getByRole, getByTestId, queryByTestId } = render(<AdsSection />);
+    expect(queryByTestId("places-overview")).toBeNull();
+
+    fireEvent.click(getByRole("button", { name: /Dónde compran/ }));
+
+    expect(getByTestId("places-overview")).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Cerrar" }));
+    expect(queryByTestId("places-overview")).toBeNull();
+
+    // También se abre desde el panel de la campaña.
+    fireEvent.click(getByTestId("places-open-overview"));
+    expect(getByTestId("places-overview")).toBeTruthy();
+  });
+
+  it("una campaña de la vista general se abre en el canvas y cierra la vista", () => {
+    useAdsCampaignsMock.mockReturnValue({
+      data: [makeCampaign(), makeCampaign({ id: "CAMP_OTHER", metaCampaignId: "CAMP_OTHER" })],
+    });
+    const { getByRole, getByTestId, queryByTestId } = render(<AdsSection />);
+    fireEvent.click(getByRole("button", { name: /Dónde compran/ }));
+
+    // Solo las campañas de la lista de Ads se pueden abrir.
+    expect(getByTestId("overview-pick-sin_conversacion").getAttribute("data-selectable")).toBe("false");
+    fireEvent.click(getByTestId("overview-pick-CAMP_OTHER"));
+
+    expect(queryByTestId("places-overview")).toBeNull();
+    expect(getByTestId("campaign-places").getAttribute("data-campaign")).toBe("CAMP_OTHER");
   });
 });

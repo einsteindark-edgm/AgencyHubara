@@ -168,6 +168,9 @@ class OrderSummaryDTO:
     # escribió, lo paga la tienda (`store_shipping_cost_cop`, fuera del total).
     free_shipping: bool = False
     store_shipping_cost_cop: int | None = None
+    # Barrio de entrega (`shipping_address.address_2`, donde lo guarda el
+    # formulario). Con `city`, es el "dónde compran" de Ads (2026-10-23).
+    neighborhood: str | None = None
 
 
 @dataclass(frozen=True)
