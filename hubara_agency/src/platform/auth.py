@@ -16,6 +16,7 @@ Sin token / token inválido → ``401``.
 """
 from __future__ import annotations
 
+import re
 import time
 from functools import lru_cache
 from typing import Any
@@ -96,11 +97,53 @@ def _verify_token(token: str) -> dict[str, Any]:
         issuer=issuer,
         options={"verify_aud": False},
     )
-    if claims.get("client_id") != config.COGNITO_APP_CLIENT_ID:
+    client_id = claims.get("client_id")
+    if client_id != config.COGNITO_APP_CLIENT_ID and client_id not in _m2m_client_ids():
         raise ValueError("client_id no coincide con el app client del tenant")
     if claims.get("token_use") != "access":
         raise ValueError("el token no es un access token de Cognito")
     return claims
+
+
+#: Scope M2M → rutas (método, regex de ruta completa) que autoriza. Un app client
+#: M2M de ``COGNITO_M2M_CLIENT_IDS`` pasa SOLO si alguno de sus scopes autoriza el
+#: request (ADR 2026-10-14 agent-gateway-auth). ``hubara-api/ads.read`` = EXACTAMENTE
+#: las 11 rutas del catálogo del Agent Gateway (``agent_gateway/hubara_gateway/catalog.py``),
+#: no todo ``/api/ads/``: quedan fuera Graph en vivo (``/meta/insights``), Medusa
+#: (``/meta/analysis-input``) y el SSE ``/events``. Nada de escrituras.
+_SEGMENT = r"[^/]+"
+_M2M_SCOPE_RULES: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
+    "hubara-api/ads.read": tuple(
+        ("GET", re.compile(pattern))
+        for pattern in (
+            r"/api/ads/campaigns",
+            rf"/api/ads/campaigns/{_SEGMENT}/adsets",
+            rf"/api/ads/campaigns/{_SEGMENT}/adsets/{_SEGMENT}/ads",
+            rf"/api/ads/campaigns/{_SEGMENT}/conversations",
+            rf"/api/ads/campaigns/{_SEGMENT}/daily",
+            rf"/api/ads/ads/{_SEGMENT}/creative",
+            r"/api/ads/agent-referrals",
+            r"/api/ads/meta/status",
+            r"/api/ads/analysis/agents",
+            r"/api/ads/analysis/runs",
+            rf"/api/ads/analysis/runs/{_SEGMENT}",
+        )
+    ),
+}
+
+
+def _m2m_client_ids() -> frozenset[str]:
+    return frozenset(
+        c.strip() for c in config.COGNITO_M2M_CLIENT_IDS.split(",") if c.strip()
+    )
+
+
+def _m2m_authorizes(claims: dict[str, Any], method: str, path: str) -> bool:
+    for scope in str(claims.get("scope", "")).split():
+        for rule_method, rule_path in _M2M_SCOPE_RULES.get(scope, ()):
+            if method == rule_method and rule_path.fullmatch(path):
+                return True
+    return False
 
 
 #: Header con el ID token de Cognito que manda el dashboard (C-6). Solo
@@ -233,6 +276,9 @@ def require_auth(request: Request) -> None:
          - en dev/tests → no-op (local sin Cognito sigue andando).
     3. **Cognito configurado** → exige y valida el access-token (header o
        query). Sin/invalid token → ``401``.
+    4. **M2M acotado** — un access token ``client_credentials`` de un app client
+       de ``COGNITO_M2M_CLIENT_IDS`` pasa SOLO si su scope autoriza el método y
+       la ruta (``_M2M_SCOPE_RULES``); si no, ``403``. Actor ``m2m:<client_id>``.
     """
     import secrets
 
@@ -286,4 +332,25 @@ def require_auth(request: Request) -> None:
         raise
     except Exception as exc:  # firma / exp / issuer / claims inválidos
         raise HTTPException(status_code=401, detail="Token inválido") from exc
+    if claims.get("client_id") in _m2m_client_ids():
+        # 4. M2M (client_credentials): solo lo que su scope autoriza; nunca PII
+        #    de otra ruta ni escrituras. El header de auditoría no autoriza nada.
+        if not _extract_header_token(request):
+            # Credencial de 1 h: nunca por query (quedaría en logs/proxies).
+            raise HTTPException(status_code=401, detail="Token M2M solo por header")
+        if not _m2m_authorizes(claims, request.method, path):
+            logger.warning(
+                "auth_m2m_forbidden",
+                client_id=claims.get("client_id"),
+                method=request.method,
+                path=path,
+            )
+            raise HTTPException(status_code=403, detail="Scope insuficiente")
+        _set_actor(request, f"m2m:{claims.get('client_id')}")
+        logger.info(
+            "auth_m2m",
+            client_id=claims.get("client_id"),
+            on_behalf_of=str(request.headers.get("X-Hubara-On-Behalf-Of") or "")[:64] or None,
+        )
+        return
     _set_actor(request, _cognito_actor(request, claims))

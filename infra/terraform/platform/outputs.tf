@@ -61,3 +61,14 @@ output "github_terraform_readonly_role_arn" {
   description = "ARN del rol READ-ONLY (terraform-plan + deploys). Copiar a la GH variable AWS_TF_READONLY_ROLE_ARN."
   value       = module.github_oidc.terraform_readonly_role_arn
 }
+
+# Agent Gateway: ids públicos para configurar el gateway y el plugin dsh-hubara.
+output "agent_gateway" {
+  value = {
+    for t, _ in var.tenants : t => {
+      dsh_hubara_client_id    = module.auth[t].dsh_hubara_client_id
+      agent_gateway_client_id = module.auth[t].agent_gateway_client_id
+      client_secret_ssm_path  = aws_ssm_parameter.agent_gateway_client_secret[t].name
+    }
+  }
+}
