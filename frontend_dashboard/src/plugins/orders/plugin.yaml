@@ -59,6 +59,7 @@ agent:
       # patrón que el ingest HTTP de chats emitiendo con source_worker=sales.
       emits:
         - OrderStageChangedEvent
+        - OrderDeliveredEvent
         - OrderReadyPhotoRequestedEvent
       transitions:
         - id: order_preparing_starts_eta
@@ -132,12 +133,11 @@ agent:
         # evento repetido no invita dos veces). El plugin reviews decide
         # cuándo y por dónde (ventana 24 h → formulario; si no, plantilla de
         # marketing al día siguiente). Soft (P-SKIP): sin reviews habilitado
-        # no pasa nada. `notify_customer=false` (centinela, saltar etapas) no
-        # emite el evento: tampoco se invita.
+        # no pasa nada. Cuelga de `OrderDeliveredEvent`, que sale con CADA
+        # entrega — también con «Avisar al cliente» apagado (centinela, saltar
+        # etapas: operador 2026-10-23); el aviso del ETA no sale en ese caso.
         - id: order_delivered_requests_review
-          on_event: OrderStageChangedEvent
-          when:
-            to_stage: delivered
+          on_event: OrderDeliveredEvent
           action:
             via: start_workflow
             target_plugin: reviews
