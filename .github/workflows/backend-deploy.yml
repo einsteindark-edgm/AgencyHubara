@@ -112,7 +112,7 @@ jobs:
           host: ${{ steps.host.outputs.ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/compose/docker-compose.prod.yml,infra/compose/render-env-from-ssm.sh,infra/compose/split-env-by-service.py,infra/compose/service-secrets.json,infra/compose/refresh-container-aws-creds.sh,infra/compose/hubara-aws-creds.service,infra/compose/hubara-aws-creds.timer,exoclaw-temporal/litellm_config.yaml,frontend_dashboard/src/plugins"
+          source: "infra/compose/docker-compose.prod.yml,infra/compose/render-env-from-ssm.sh,infra/compose/split-env-by-service.py,infra/compose/service-secrets.json,infra/compose/refresh-container-aws-creds.sh,infra/compose/app-aws-creds.service,infra/compose/app-aws-creds.timer,exoclaw-temporal/litellm_config.yaml,frontend_dashboard/src/plugins"
           target: "/tmp/hubara-deploy"
           strip_components: 0
 
@@ -149,11 +149,11 @@ jobs:
             # rol todavía no existe (Terraform sin aplicar), el ayudante de los
             # contenedores cae a IMDS mientras el hop limit siga en 2: no frena el deploy.
             sudo mkdir -p /opt/hubara/aws
-            sudo install -m 0644 /tmp/hubara-deploy/infra/compose/hubara-aws-creds.service /etc/systemd/system/hubara-aws-creds.service
-            sudo install -m 0644 /tmp/hubara-deploy/infra/compose/hubara-aws-creds.timer   /etc/systemd/system/hubara-aws-creds.timer
+            sudo install -m 0644 /tmp/hubara-deploy/infra/compose/app-aws-creds.service /etc/systemd/system/app-aws-creds.service
+            sudo install -m 0644 /tmp/hubara-deploy/infra/compose/app-aws-creds.timer   /etc/systemd/system/app-aws-creds.timer
             sudo systemctl daemon-reload
-            sudo systemctl enable --now hubara-aws-creds.timer
-            sudo systemctl start hubara-aws-creds.service || echo "AVISO: hubara-aws-creds no pudo asumir el rol de los contenedores (¿falta el terraform apply de compute?)" >&2
+            sudo systemctl enable --now app-aws-creds.timer
+            sudo systemctl start app-aws-creds.service || echo "AVISO: app-aws-creds no pudo asumir el rol de los contenedores (¿falta el terraform apply de compute?)" >&2
             GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env.host | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
             # Liberar disco ANTES del pull: cada deploy trae una imagen de ~1.1 GB

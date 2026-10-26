@@ -184,7 +184,7 @@ def test_without_credentials_the_helper_fails_loudly(tmp_path: Path, capsys) -> 
     code = helper.main(creds_file=tmp_path / "missing.json", imds=lambda: None)
 
     captured = capsys.readouterr()
-    assert code != 0 and captured.out == "" and "hubara-aws-creds" in captured.err
+    assert code != 0 and captured.out == "" and "app-aws-creds" in captured.err
 
 
 def test_botocore_is_pointed_at_the_helper() -> None:
@@ -205,7 +205,7 @@ def test_only_the_aws_containers_see_the_temporary_credentials(name: str) -> Non
     svc = _services()[name]
     env = svc.get("environment") or {}
     assert env.get("AWS_CONFIG_FILE") == "/app/hubara_agency/deploy/aws/config"
-    assert "/opt/hubara/aws:/run/hubara-aws:ro" in svc.get("volumes", [])
+    assert "/opt/hubara/aws:/run/app-aws:ro" in svc.get("volumes", [])
 
 
 def test_no_other_container_mounts_the_credentials() -> None:

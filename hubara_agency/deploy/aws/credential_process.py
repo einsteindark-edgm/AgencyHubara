@@ -1,8 +1,8 @@
 """`credential_process` de botocore para los contenedores que usan AWS.
 
 Con hop limit 1 los contenedores no llegan a las credenciales de la caja. El
-timer `hubara-aws-creds` del host deja credenciales temporales del rol
-`agencyhubara-<tenant>-app-containers` en `/run/hubara-aws/creds.json` (montado
+timer `app-aws-creds` del host deja credenciales temporales del rol
+`agencyhubara-<tenant>-app-containers` en `/run/app-aws/creds.json` (montado
 de solo lectura) y este script se las pasa a botocore en el formato de
 `credential_process` (con `Expiration`, botocore lo vuelve a llamar antes de que
 venzan y relee el archivo nuevo).
@@ -21,7 +21,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-DEFAULT_FILE = "/run/hubara-aws/creds.json"
+DEFAULT_FILE = "/run/app-aws/creds.json"
 #: Margen para no entregar una credencial que vence mientras se usa.
 _MIN_LEFT = timedelta(minutes=2)
 _IMDS = "http://169.254.169.254/latest"
@@ -73,7 +73,7 @@ def main(creds_file: Path | None = None, imds=_from_imds) -> int:
     if not creds:
         print(
             f"sin credenciales de AWS: {path} no existe o venció, y el contenedor no llega a las de la caja. "
-            "Mirá el timer `hubara-aws-creds` en el host (systemctl status hubara-aws-creds.service).",
+            "Mirá el timer `app-aws-creds` en el host (systemctl status app-aws-creds.service).",
             file=sys.stderr,
         )
         return 1

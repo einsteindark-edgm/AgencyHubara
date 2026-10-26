@@ -240,9 +240,9 @@ def stat_mode(path: Path) -> int:
 def test_the_deploy_ships_the_split_and_reads_the_registry_token_from_the_host_file() -> None:
     text = _DEPLOY.read_text(encoding="utf-8")
     for path in ("infra/compose/service-secrets.json", "infra/compose/split-env-by-service.py",
-                 "infra/compose/refresh-container-aws-creds.sh", "infra/compose/hubara-aws-creds.service",
-                 "infra/compose/hubara-aws-creds.timer"):
+                 "infra/compose/refresh-container-aws-creds.sh", "infra/compose/app-aws-creds.service",
+                 "infra/compose/app-aws-creds.timer"):
         assert path in text, f"el deploy no copia {path} a la caja"
     assert "grep '^GHCR_PULL_TOKEN=' .env.host" in text
     assert "grep '^GHCR_PULL_TOKEN=' .env |" not in text and "grep '^GHCR_PULL_TOKEN=' .env)" not in text
-    assert "systemctl enable --now hubara-aws-creds.timer" in text
+    assert "systemctl enable --now app-aws-creds.timer" in text

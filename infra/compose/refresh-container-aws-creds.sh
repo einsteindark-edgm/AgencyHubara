@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Credenciales TEMPORALES de AWS para los contenedores que las usan (api,
 # worker-order-sentinel-cycle, worker-reengagement-cycle). Corre EN la caja,
-# como root, por el timer `hubara-aws-creds` (cada 15 min; duran 1 h).
+# como root, por el timer `app-aws-creds` (cada 15 min; duran 1 h).
 #
 # Con hop limit 1 los contenedores no llegan al rol de la caja. El host (que sí
 # llega) asume `agencyhubara-<tenant>-app-containers`, que solo lee/escribe el
 # token de Meta y despierta a GraphAgents, y deja el resultado en el formato de
 # `credential_process` de botocore. Los contenedores montan el directorio de solo
-# lectura (`/opt/hubara/aws:/run/hubara-aws:ro`): se monta el DIRECTORIO, no el
+# lectura (`/opt/hubara/aws:/run/app-aws:ro`): se monta el DIRECTORIO, no el
 # archivo, porque el `mv` atómico cambia el inode y un archivo montado quedaría
 # viejo. Revisión de seguridad 2026-10-26.
 #
@@ -25,7 +25,7 @@ ACCOUNT="$(aws sts get-caller-identity --region "$AWS_REGION" --query Account --
 ROLE_ARN="arn:aws:iam::${ACCOUNT}:role/agencyhubara-${TENANT}-app-containers"
 CREDS="$(aws sts assume-role --region "$AWS_REGION" \
   --role-arn "$ROLE_ARN" \
-  --role-session-name "hubara-${TENANT}-containers" \
+  --role-session-name "${TENANT}-containers" \
   --duration-seconds 3600 \
   --query Credentials --output json)"
 

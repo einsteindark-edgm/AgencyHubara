@@ -168,7 +168,7 @@ resource "aws_iam_role_policy" "wake_graphagents" {
 # Con hop limit 1 (ver `metadata_options`) los contenedores ya no llegan al rol
 # de la caja. Los tres que sí usan AWS (la API: token de Meta + despertar
 # GraphAgents; order-sentinel y reengagement: despertar GraphAgents) reciben
-# credenciales TEMPORALES de este rol: el timer `hubara-aws-creds` del host lo
+# credenciales TEMPORALES de este rol: el timer `app-aws-creds` del host lo
 # asume cada 15 min (1 h de vida) y deja el archivo en /opt/hubara/aws/, que
 # solo esos contenedores montan. Lee/escribe el token de Meta y despierta a
 # GraphAgents; nada de los demás secretos del tenant.

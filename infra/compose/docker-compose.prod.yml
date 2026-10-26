@@ -75,14 +75,14 @@ services:
     expose:
       - "8000"
     # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
-    # hubara-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
+    # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
     # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
     environment:
       AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
       - ./plugins:/app/frontend_dashboard/src/plugins:ro
-      - /opt/hubara/aws:/run/hubara-aws:ro
+      - /opt/hubara/aws:/run/app-aws:ro
 
   worker-catalog-sync:
     <<: *app
@@ -115,13 +115,13 @@ services:
     env_file: [.env, secrets/worker-reengagement-cycle.env]
     command: ["python", "-m", "src.plugins.reengagement.workers.cycle"]
     # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
-    # hubara-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
+    # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
     # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
     environment:
       AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
-      - /opt/hubara/aws:/run/hubara-aws:ro
+      - /opt/hubara/aws:/run/app-aws:ro
 
   worker-order-sentinel-cycle:
     <<: *app
@@ -133,12 +133,12 @@ services:
       # del compose local, PM-003: sin esto el ciclo era skipped_empty eterno).
       HUBARA_API_BASE_URL: http://api:8000
       # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
-      # hubara-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
+      # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
       # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
       AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
-      - /opt/hubara/aws:/run/hubara-aws:ro
+      - /opt/hubara/aws:/run/app-aws:ro
 
   worker-chats-sales_eval:
     <<: *app

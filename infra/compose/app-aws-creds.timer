@@ -1,7 +1,7 @@
 # Cada 15 min: las credenciales duran 1 h, así que siempre quedan ≥45 min de margen
 # y botocore las relee antes de que venzan. Al arrancar la caja, a los 20 s.
 [Unit]
-Description=Renueva las credenciales temporales de AWS de los contenedores de Hubara
+Description=Renueva las credenciales temporales de AWS de los contenedores de la app
 
 [Timer]
 OnBootSec=20s
