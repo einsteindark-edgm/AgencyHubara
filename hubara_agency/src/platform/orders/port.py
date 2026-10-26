@@ -139,7 +139,13 @@ class OrderRegistrationPort(Protocol):
         attribution: dict[str, Any] | None = None,
         coupon_code: str | None = None,
         discount_cop: int = 0,
+        free_shipping: dict[str, Any] | None = None,
     ) -> OrderRegistrationResult: ...
+
+    # Envío gratis (operador, 2026-10-20): `shipping_cop` llega en 0 y
+    # `free_shipping` dice por qué (`{"campaign", "min_boxes", "boxes"}`); el
+    # adapter lo deja en la metadata del pedido. Los callers lo mandan SOLO
+    # cuando aplica, así los adapters/fakes viejos siguen siendo compatibles.
 
     # Cupón (Fase 0, pedido #44): `total_cop` ya viene descontado (lo
     # recomputa la tool desde el snapshot del episodio, L-19) y el reparto

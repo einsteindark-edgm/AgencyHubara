@@ -23,7 +23,25 @@ from src.plugins.chats.agent.sales.variant_enumeration import (
     enumeration_candidates,
     find_enumerated_variants,
 )
-from src.sdk.catalogkit import family_of_color, normalize_label, resolve_category, resolve_color_family
+from src.plugins.chats.agent.sales.price_quotes import find_unexplained_amounts
+from src.plugins.chats.agent.sales.pricing import format_cop
+from src.plugins.chats.agent.sales.use_cases.fact_rules import (
+    BoxWords,
+    CouponWords,
+    DenialWords,
+    PaymentWords,
+    StatusWords,
+    box_unit_claims,
+    coupon_claims,
+    customer_figures,
+    denial_claims,
+    offering_sentences,
+    payment_claims,
+    says_any,
+    status_claims,
+)
+from src.plugins.chats.shared.product_truth import foreign_labels
+from src.sdk.catalogkit import family_of_color, normalize_label, resolve_category, resolve_color_family, stem_word
 
 Options = dict[str, tuple[str, Any]]
 
@@ -73,6 +91,102 @@ def named_titles(inp: Any) -> tuple[str, ...]:
 def enumerated_variants(inp: Any) -> tuple:
     hit = find_enumerated_variants(inp.text, aromas=list(inp.aromas), colors=list(inp.colors))
     return () if hit is None else (hit[0], tuple(hit[1]))
+
+
+def unexplained_prices_rule(inp: Any, *, politica: str) -> list[str]:
+    """Los montos del texto que no explica el precio del catálogo de los
+    productos de los que habla (con el recargo del link) ni la política en una
+    oración que dice una frase de `politica` (del paquete). Sin precios, no se
+    juzga."""
+    if not inp.prices:
+        return []
+    found = find_unexplained_amounts(
+        inp.text, catalog_prices=inp.prices, policy_amounts=inp.policy,
+        surcharge_rates=getattr(inp, "surcharges", ()), policy_context=lambda s: says_any(s, politica),
+    )
+    return list(dict.fromkeys(format_cop(u.amount) for u in found))
+
+
+def _payment(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    """(lo que dice, lo cierto) de `pago_ajeno`, con las frases del paquete."""
+    return payment_claims(
+        inp.text, subtotal=inp.subtotal, cod_min=inp.cod_min, surcharges=inp.surcharges, words=PaymentWords(**words)
+    )
+
+
+def _status(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    return status_claims(
+        inp.text, order=inp.order, stage=inp.stage, pay_status=inp.pay_status, words=StatusWords(**words)
+    )
+
+
+def _coupon(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    return coupon_claims(
+        inp.text, known=inp.known, valid=inp.valid, valid_lines=inp.valid_lines, valid_percents=inp.valid_percents,
+        words=CouponWords(**words),
+    )
+
+
+def _denial(inp: Any, words: dict[str, str]) -> list[tuple[str, str]]:
+    return denial_claims(inp.text, titles=inp.titles, own=inp.own, products=inp.products, words=DenialWords(**words))
+
+
+def foreign_labels_rule(inp: Any, *, ofrece: str, no_ofrece: str) -> list[str]:
+    """La regla sola: las etiquetas del catálogo (aromas o colores) que una
+    oración que ofrece (`ofrece`, y no `no_ofrece`) nombra y no son del
+    producto del que habla. Las frases son del paquete."""
+    text = offering_sentences(inp.text, offers=ofrece, not_offers=no_ofrece)
+    return list(foreign_labels(text, own=inp.own, labels=inp.labels, others=inp.others))
+
+
+# ── ítems ──
+
+
+def unexplained_price_items(inp: Any, *, politica: str) -> list[dict[str, Any]]:
+    return [{"term": term} for term in unexplained_prices_rule(inp, politica=politica)]
+
+
+def _claim_items(claims: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    return [{"term": term, "fact": fact} for term, fact in claims]
+
+
+def customer_figure_items(inp: Any) -> list[dict[str, Any]]:
+    """Las cifras que escribió el cliente y no son de su pedido («$45.000»),
+    con lo que suma su pedido (`inp.order`); sin eso no se juzga ninguna."""
+    if not inp.order:
+        return []
+    return [{"term": format_cop(amount), "fact": inp.order} for amount in customer_figures(inp.customer, inp.figures)]
+
+
+def payment_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_payment(inp, words))
+
+
+def status_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_status(inp, words))
+
+
+def coupon_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_coupon(inp, words))
+
+
+def denial_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    return _claim_items(_denial(inp, words))
+
+
+def box_unit_claim_items(inp: Any, **words: str) -> list[dict[str, Any]]:
+    """Lo que se cobra por caja dicho con un precio por unidad (`caja_por_unidad`):
+    un ítem por producto por caja en foco, si una cláusula dice un precio por
+    unidad sin nombrar la caja (frases del paquete); `precios` en 0 = sin precio."""
+    return _claim_items(box_unit_claims(
+        inp.text, products=inp.productos, units=inp.por_caja, prices=inp.precios, words=BoxWords(**words)
+    ))
+
+
+def foreign_label_items(inp: Any) -> list[dict[str, Any]]:
+    """Lo que Jev juzga: TODO lo ajeno que el texto nombra (sin las frases de
+    la regla sola: Jev lee si se ofrece)."""
+    return [{"term": term} for term in foreign_labels(inp.text, own=inp.own, labels=inp.labels, others=inp.others)]
 
 
 # ── vistas ──
@@ -126,6 +240,144 @@ def chat_and_catalog(inp: Any) -> str | None:
         "Conversación de una tienda con un cliente (lo último al final):\n"
         f"{inp.text.strip()}\n\nProductos del catálogo: " + ", ".join(inp.titles) + "."
     )
+
+
+def text_and_product_labels(inp: Any, *, noun: str, items: list[dict[str, Any]] | None = None) -> str | None:
+    """El texto y los productos de los que habla con lo que tienen (`noun`:
+    aromas, colores), si la regla propone algo ajeno (sin candidatos no se le
+    pregunta a Jev)."""
+    if not items:
+        return None
+    # Sonda con Jev real (2026-10-13): con varios productos, una línea por
+    # producto con sus aromas le rinde peor (0,11-0,16 a una oferta real) que
+    # los títulos juntos y los aromas juntos (0,23-0,68; lo que no se ofrece ≤ 0,13).
+    return (
+        f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Producto del pedido (del que hablan): {' y '.join(inp.products)}. Sus {noun}: {', '.join(inp.own)}."
+    )
+
+
+def text_and_product_prices(inp: Any, *, items: list[dict[str, Any]] | None = None) -> str | None:
+    """El texto y los productos de los que habla con su precio del catálogo,
+    si la regla propone algún monto (sin candidatos no se le pregunta a Jev)."""
+    if not items:
+        return None
+    return (
+        f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Producto del pedido (del que hablan) y su precio en el catálogo: {'; '.join(inp.products)}."
+    )
+
+
+def text_and_claim_facts(inp: Any, *, items: list[dict[str, Any]] | None = None) -> str | None:
+    """El texto y lo que dice el sistema de cada cosa que la regla propone
+    (pago, estado, cupón, negación); sin candidatos no se le pregunta a Jev."""
+    if not items:
+        return None
+    facts = list(dict.fromkeys(item["fact"] for item in items))
+    return (
+        f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Lo que dice el sistema: {'; '.join(facts)}."
+    )
+
+
+def customer_and_reply_facts(inp: Any, *, items: list[dict[str, Any]] | None = None) -> str | None:
+    """Lo que escribió el cliente, lo que la tienda le va a responder y lo que
+    dice el sistema de su pedido (`cifra_del_cliente`); sin candidatos no se
+    le pregunta a Jev."""
+    if not items:
+        return None
+    facts = list(dict.fromkeys(item["fact"] for item in items))
+    return (
+        f"Mensaje del cliente:\n{inp.customer.strip()}\n\n"
+        f"Texto que la tienda le va a responder por WhatsApp:\n{inp.text.strip()}\n\n"
+        f"Lo que dice el sistema: {'; '.join(facts)}."
+    )
+
+
+def pack_quantity_rule(inp: Any) -> str:
+    """Sin Jev: desde una caja entera no se sabe si son cajas o velas
+    («duda»: el texto vuelve al modelo con las dos cuentas); menos, cajas."""
+    from src.plugins.chats.agent.sales.use_cases.pack_quantity import needs_reading
+
+    return "duda" if needs_reading(inp.cantidad, inp.por_caja) else "cajas"
+
+
+def pack_quantity_state(inp: Any) -> str | None:
+    """Lo último de la charla y las dos cuentas de la cantidad que va a anotar
+    el asesor; sin una caja entera o sin la charla, no se le pregunta a Jev."""
+    from src.plugins.chats.agent.sales.use_cases.pack_quantity import as_boxes, as_candles, needs_reading
+
+    if not needs_reading(inp.cantidad, inp.por_caja) or "[cliente]" not in (inp.charla or ""):
+        return None
+    price = f" y cuesta {format_cop(inp.precio)} la caja" if inp.precio else ""
+    return (
+        f"Lo último de la conversación:\n{inp.charla.strip()}\n\n"
+        f"Producto: {inp.producto}. Se cobra por caja: cada caja trae {inp.por_caja} velas{price}.\n"
+        f"El asesor va a anotar la cantidad {inp.cantidad}:\n"
+        f"- si son cajas: {as_boxes(inp.cantidad, inp.por_caja, inp.precio)};\n"
+        f"- si son velas: {as_candles(inp.cantidad, inp.por_caja, inp.precio)}."
+    )
+
+
+def bulk_candles_rule(inp: Any) -> str:
+    """Sin Jev: con una cifra del cliente que, contada en velas, cabe en 20
+    cajas o menos, no se sabe si es al por mayor («duda»: el bot lo revisa
+    con las cuentas); sin ella, lo es (`por_mayor`)."""
+    return "duda" if inp.cifras else "por_mayor"
+
+
+def bulk_candles_state(inp: Any) -> str | None:
+    """Lo último de la charla, lo que se cobra por caja y las cifras del
+    cliente contadas en velas en cada caja (`por_mayor`); sin cifras o sin lo
+    que escribió el cliente, no se le pregunta a Jev."""
+    from src.plugins.chats.agent.sales.use_cases.pack_quantity import BULK_UNITS, as_candles
+
+    if not inp.cifras or "[cliente]" not in (inp.charla or ""):
+        return None
+    boxes = list(zip(inp.productos, inp.por_caja))
+    sizes = "\n".join(f"- {name}: caja de {units} velas" for name, units in boxes)
+    counts = "\n".join(f"- {name}: {as_candles(n, units, None)}" for n in inp.cifras for name, units in boxes)
+    return (
+        f"Lo último de la conversación:\n{inp.charla.strip()}\n\n"
+        f"Lo que se cobra por caja (un pedido al por mayor es de más de {BULK_UNITS} cajas):\n{sizes}\n"
+        f"Si las cifras del cliente son velas:\n{counts}"
+    )
+
+
+def named_box_rule(inp: Any) -> str:
+    """Sin Jev no se sabe si el cliente pide este producto o el de la caja
+    que nombró: «duda» (el bot lo revisa una vez)."""
+    return "duda"
+
+
+def named_box_state(inp: Any) -> str | None:
+    """Lo último de la charla, el producto que va a anotar el asesor con su
+    caja y el de la caja que nombró el cliente (`caja_nombrada`); sin lo que
+    escribió el cliente, no se le pregunta a Jev."""
+    if "[cliente]" not in (inp.charla or ""):
+        return None
+    return (
+        f"Lo último de la conversación:\n{inp.charla.strip()}\n\n"
+        f"El asesor va a anotar {inp.producto}: viene en caja de {inp.por_caja} velas.\n"
+        f"La caja de {inp.otro_por_caja} velas es otro producto: {inp.otro}."
+    )
+
+
+def text_and_option_sheets(inp: Any, *, words: str, ofrece: str) -> str | None:
+    """El texto y la ficha de cada producto con presentaciones para escoger
+    (`variante_ajena`) si el texto ofrece algo (una frase de `ofrece`) o
+    nombra una presentación (`words`: «vaso, tamaño, caja…»); la de los de una
+    sola presentación, solo con una de `words`. Las dos listas son de la
+    tienda, en el paquete. Sin ninguna ficha, no se le pregunta a Jev
+    (premortem del PR #426: «Quedo atenta» era una llamada por texto)."""
+    triggers = {stem_word(w) for w in normalize_label(words.replace(",", " ")).split()}
+    said = {stem_word(w) for w in normalize_label(inp.text).split()}
+    names = bool(triggers & said)
+    offers = names or says_any(inp.text, ofrece)
+    sheets = [*(inp.sheets if offers else ()), *(inp.single if names else ())]
+    if not sheets:
+        return None
+    return f"Texto que la tienda le va a enviar a un cliente por WhatsApp:\n{inp.text.strip()}\n\n" + "\n\n".join(sheets)
 
 
 def text_with_lists(inp: Any) -> str | None:

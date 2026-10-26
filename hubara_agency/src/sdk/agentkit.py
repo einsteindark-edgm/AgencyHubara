@@ -89,3 +89,8 @@ from src.platform.temporal.retry_policies import (
     # Opciones de una activity que llama al LLM o arma su sesión (bootstrap).
     LLM_ACTIVITY_OPTIONS as LLM_ACTIVITY_OPTIONS,
 )
+from src.platform.temporal.continue_as_new import (
+    # Cuándo una sesión hace continue-as-new: turnos del run o sugerencia del
+    # servidor (auditoría de Temporal, 2026-10-15).
+    continue_as_new_due as continue_as_new_due,
+)

@@ -55,7 +55,13 @@ tenants = {
     # `catalogo` (pide present_products, no list_categories) y el cuestionario
     # `rafaga-v7` («me regalas…» es pedir; «¿a qué huele?» no trae el selector).
     # El detalle, en la cabecera de su bundle.yaml. El resto de `lab` queda en
-    # sus defaults (todo apagado). Volver atrás = "ventas-5".
+    # sus defaults (todo apagado). `ventas-7` (2026-10-15, #426) es `ventas-6`
+    # con 12 capacidades nuevas: lo que el bot afirma se revisa contra el
+    # catálogo y el pedido (aroma, color, variante, precio, pago, estado,
+    # cupón, la cifra del cliente, la negación falsa) y las cajas de las velas
+    # de deseos (`cajas`, `caja_nombrada`, `por_mayor`); más `turno-v6` y
+    # `rafaga-v9`. Las 12 nacen en reglas: a Jev las sube el control por
+    # comando. Volver atrás = "ventas-6".
     #
     # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
     # banco del laboratorio. El del operador (2026-10-05) es el número con el
@@ -76,13 +82,20 @@ tenants = {
     # calidad vista en Calidad LLM → "on". Volver atrás = "off" + apply + Backend
     # deploy.
     lab = {
-      decisions_bundle        = "ventas-6"
+      decisions_bundle        = "ventas-7"
       internal_numbers        = ["+573125671604"]
       perception_mode_ceiling = "canary"
       capabilities_ceiling    = "canary"
       workflow_v2_ceiling     = "canary"
       signal_inbound_meta     = true
       prompt_turn_context     = "team"
+    }
+    # Reseñas tras la entrega (#428): encendido para todos de una vez
+    # (decisión del operador, 2026-10-22: «corregimos en el vuelo»). Invita a
+    # calificar cada pedido entregado (formulario en la ventana de 24 h; si no,
+    # la plantilla desde las 20 h). Apagar = "off" + apply + Backend deploy.
+    reviews = {
+      mode = "on"
     }
   }
 

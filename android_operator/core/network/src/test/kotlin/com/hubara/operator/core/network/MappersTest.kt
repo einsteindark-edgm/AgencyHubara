@@ -20,6 +20,8 @@ import com.hubara.operator.core.network.dto.SessionDetailsDto
 import com.hubara.operator.core.network.dto.SessionsResponse
 import com.hubara.operator.core.network.dto.SuggestionsDto
 import com.hubara.operator.core.model.SuggestionTone
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
 import org.junit.Test
 
 class MappersTest {
@@ -240,6 +242,35 @@ class MappersTest {
         assertThat(keys.first()).isEqualTo("fake-text")
         // Estable: el historial solo crece al final, así que la misma respuesta da las mismas claves.
         assertThat(dto.toDomain()!!.messages.map { it.key }).isEqualTo(keys)
+    }
+
+    // Doble check de WhatsApp (caso 2026-10-15): sale de lo que Meta informó por webhook; sin dato, «sin
+    // confirmación». Los mensajes del cliente no lo llevan.
+    @Test fun historial_trae_el_doble_check_de_whatsapp() {
+        val dto = json.decodeFromString<SessionDetailsDto>(
+            """{"session_id":"wa_test_laura","messages":[
+              {"ui_type":"user_message","content":"hola","wamid":"w1"},
+              {"ui_type":"agent_message","content":"¡Hola!","delivery":{"status":"read","at_ms":1760496300000,
+               "error_code":null,"error_title":null}},
+              {"ui_type":"human_message","sender":"human","content":"Ya te ayudo","delivery":{"status":"failed",
+               "at_ms":1760496400000,"error_code":131047,"error_title":"Re-engagement message"}},
+              {"ui_type":"agent_message","content":"viejo"},
+              {"ui_type":"ui_component_sent","content":"El bot envió el catálogo","delivery":{"status":"delivered",
+               "at_ms":1760496500000},"event":{"kind":"bot_card","component":"products_list","text":"Tenemos:",
+               "items":[],"images":[],"link":null}},
+              {"ui_type":"agent_message","content":"raro","delivery":{"status":"deleted"}}
+            ]}""",
+        )
+        val messages = dto.toDomain()!!.messages
+        assertThat(messages.map { it.whatsapp }).containsExactly(
+            null,
+            WhatsAppDelivery(WhatsAppStatus.READ, atMs = 1760496300000),
+            WhatsAppDelivery(WhatsAppStatus.FAILED, 1760496400000, 131047, "Re-engagement message"),
+            WhatsAppDelivery.UNCONFIRMED,
+            WhatsAppDelivery(WhatsAppStatus.DELIVERED, atMs = 1760496500000),
+            // Un estado que la app no conoce no tumba el chat (L-10) ni inventa un check.
+            WhatsAppDelivery.UNCONFIRMED,
+        ).inOrder()
     }
 
     @Test fun burbujas_por_reglas() {

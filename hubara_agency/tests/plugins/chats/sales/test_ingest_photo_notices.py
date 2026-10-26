@@ -1,15 +1,14 @@
-"""El texto que el cliente manda justo después de una foto espera a la foto.
+"""El ingest le avisa a la sesión de ventas que una foto se está leyendo.
 
-La foto entra al bot cuando la visión termina de leerla (1,5 s si basta el
-texto de la foto; hasta ~4,5 s si hay que compararla con las fotos del
-catálogo). La ráfaga se cierra tras 1,5 s de silencio, así que el «¿tienes
-esta?» que el cliente escribe detrás de la foto llegaba solo y el bot
-contestaba sin la foto; la foto entraba después como otro turno (laboratorio
-caso-fotos-0930-r7). Ahora el ingest retiene el texto mientras se lee una foto
-del mismo cliente: la foto entra primero y el texto justo detrás, en la misma
-ráfaga. Las fotos se siguen leyendo a la vez (no se esperan entre sí), otro
-cliente no espera, y la espera tiene tope: si la visión se cuelga, el texto
-sale igual.
+Texto ANTES de la foto (2026-09-30): el «¿tienes esta?» ya salió hacia el bot
+cuando llega la foto; el ingest le avisa al workflow que hay una foto
+leyéndose (la ráfaga la espera) y, cuando la foto ya entró, que terminó
+(`tests/test_sales_burst_waits_for_photo.py`).
+
+El texto DESPUÉS de la foto lo ordenaba `PhotoReads`, en memoria del proceso.
+Desde la fase 2 de la entrada durable lo ordena `InboundSessionWorkflow`: cada
+mensaje entrega después del anterior del mismo cliente
+(`tests/plugins/chats/sales/test_inbound_session_order.py`, ADR 2026-10-16).
 """
 from __future__ import annotations
 
@@ -81,12 +80,11 @@ class _Metadata(MergingMetadataStoreMixin):
         return out
 
 
-def _ingest(loader: _Loader, *, photo_wait_s: float = 5.0, **kw: Any) -> IngestInboundMessage:
+def _ingest(loader: _Loader, **kw: Any) -> IngestInboundMessage:
     return IngestInboundMessage(
         history_store=_History(),  # type: ignore[arg-type]
         load_session=loader,  # type: ignore[arg-type]
         metadata_store=_Metadata(),  # type: ignore[arg-type]
-        photo_wait_s=photo_wait_s,
         **kw,
     )
 
@@ -110,63 +108,6 @@ def _photo_text(media_id: str) -> str:
     return f"[el cliente envió una foto: vela de la foto {media_id}]"
 
 
-async def test_the_text_right_after_a_photo_reaches_the_bot_after_the_photo(vision: _SlowVision) -> None:
-    loader = _Loader()
-    ingest = _ingest(loader)
-
-    await ingest.execute(_photo("img_a"))
-    text = asyncio.create_task(ingest.execute(_text("¿tienes esta?")))
-    await asyncio.sleep(0.05)
-    held = list(loader.messages)
-    vision.finish("img_a")
-    await asyncio.wait_for(text, timeout=2)
-
-    assert held == []
-    assert loader.messages == [_photo_text("img_a"), "¿tienes esta?"]
-
-
-async def test_photos_are_read_at_once_and_the_text_waits_for_all_of_them(vision: _SlowVision) -> None:
-    loader = _Loader()
-    ingest = _ingest(loader)
-
-    await ingest.execute(_photo("img_a"))
-    await ingest.execute(_photo("img_b"))
-    text = asyncio.create_task(ingest.execute(_text("¿las tienes?")))
-    vision.finish("img_b")
-    await asyncio.sleep(0.05)
-    while_a_is_read = list(loader.messages)
-    vision.finish("img_a")
-    await asyncio.wait_for(text, timeout=2)
-
-    assert while_a_is_read == [_photo_text("img_b")]
-    assert loader.messages == [_photo_text("img_b"), _photo_text("img_a"), "¿las tienes?"]
-
-
-async def test_the_wait_has_a_limit(vision: _SlowVision) -> None:
-    loader = _Loader()
-    ingest = _ingest(loader, photo_wait_s=0.05)
-
-    await ingest.execute(_photo("img_a"))
-    await asyncio.wait_for(ingest.execute(_text("hola")), timeout=1)
-    vision.finish("img_a")
-    await asyncio.sleep(0.05)
-
-    assert loader.messages == ["hola", _photo_text("img_a")]
-
-
-async def test_another_customer_does_not_wait(vision: _SlowVision) -> None:
-    loader = _Loader()
-    ingest = _ingest(loader)
-
-    await ingest.execute(_photo("img_a"))
-    await asyncio.wait_for(ingest.execute(_text("hola", sender="573009999999")), timeout=1)
-
-    assert loader.messages == ["hola"]
-    vision.finish("img_a")
-    await asyncio.sleep(0.05)
-
-
-# ── Texto ANTES de la foto (2026-09-30) ──────────────────────────────────────
 # El texto ya salió hacia el bot cuando llega la foto: el ingest le avisa al
 # workflow que hay una foto leyéndose (la ráfaga la espera) y, cuando la foto
 # ya entró, que terminó (`tests/test_sales_burst_waits_for_photo.py`).
@@ -183,10 +124,11 @@ async def test_the_bot_hears_that_a_photo_is_being_read_and_when_it_is_in(vision
 
     ingest = _ingest(loader, photo_notifier=notify)
     await ingest.execute(_text("¿tienes esta?"))
-    await ingest.execute(_photo("img_a"))
+    photo = asyncio.create_task(ingest.execute(_photo("img_a")))
+    await asyncio.sleep(0.05)
     announced = list(events)
     vision.finish("img_a")
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(photo, timeout=2)
 
     assert announced == [(SESSION, "wamid.img_a", False, ["¿tienes esta?"])]
     assert events[-1] == (SESSION, "wamid.img_a", True, ["¿tienes esta?", _photo_text("img_a")])
@@ -199,9 +141,8 @@ async def test_a_failing_notice_never_stops_the_photo(vision: _SlowVision) -> No
         raise RuntimeError("temporal caído")
 
     ingest = _ingest(loader, photo_notifier=broken)
-    await ingest.execute(_photo("img_a"))
     vision.finish("img_a")
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(ingest.execute(_photo("img_a")), timeout=2)
 
     assert loader.messages == [_photo_text("img_a")]
 

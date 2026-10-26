@@ -142,6 +142,13 @@ replacements:
     files: ["infra/whatsapp-provisioning/definitions/*.json"]
     from: "Hubara — Datos de envío"
     to: "{{company}} — Datos de envío"
+  - id: flow-name-calificacion           # Flow review_v1 (plugin reviews): el
+    # nombre va igual en flows.json y en el botón FLOW de templates.json
+    # (`flow_name`) — el CLI resuelve el id por nombre, así que se reemplaza en
+    # los dos a la vez.
+    files: ["infra/whatsapp-provisioning/definitions/*.json"]
+    from: "Hubara — Calificación del pedido"
+    to: "{{company}} — Calificación del pedido"
   - id: plantilla-seguimiento-humano      # human_followup_utility_v1: la asesora
     # y la marca son del cliente. Mismo texto en definitions (lo que se somete a
     # Meta), catálogo (guard de drift) y los tests/fixtures que lo renderizan.
@@ -296,6 +303,10 @@ deletes:
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-4"
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-5"
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-6"
+  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-7"
+  # Los guiones de venta de las campañas de ESTA tienda (2026-10-19): el clon
+  # recibe la carpeta con su README y sin campañas.
+  - "hubara_agency/src/plugins/chats/shared/campaigns/velitas-7-dic.yaml"
   - "infra/VAULT_EBS_MIGRATION_PLAN.md"  # plan de migración del vault VIVO de Hubara (vol/EBS IDs, pasos op)
   - "SECURITY_AUDIT_fable.md"          # auditoría interna de Hubara con hallazgos ancla archivo:línea
 

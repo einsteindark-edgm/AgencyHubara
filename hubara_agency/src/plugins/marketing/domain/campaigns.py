@@ -35,6 +35,17 @@ ALL_SEGMENTS: tuple[str, ...] = (
     SEGMENT_FRIOS,
 )
 
+#: Segmento que sale del PERFIL de la persona, no de la etiqueta de la
+#: conversación (operador, 2026-10-20): quiso comprar y no compró desde
+#: entonces. Lo marca Ventas (`chats/shared/customer_profiles.py`, con lo que
+#: lee Jev) y la pasada `scripts/backfill_interest_profile.py`. Se suma a los
+#: segmentos de la etiqueta sin repetir a nadie.
+SEGMENT_INTERESADOS_SIN_COMPRA = "interesados_sin_compra"
+PROFILE_SEGMENTS: tuple[str, ...] = (SEGMENT_INTERESADOS_SIN_COMPRA,)
+#: El contrato con Ventas: el metadata de la persona.
+_PROFILE_KEY = "profile_tags"
+_PROFILE_INTERESADO = "interesado_sin_compra"
+
 _TAG_TO_SEGMENT: dict[str, str] = {
     "COMPRA_EXITOSA": SEGMENT_CLIENTES,
     "INTERESADO": SEGMENT_INTERESADOS,
@@ -59,6 +70,61 @@ def segment_for_metadata(metadata: dict[str, Any]) -> str | None:
     return _TAG_TO_SEGMENT.get(metadata.get("tag"), SEGMENT_FRIOS)
 
 
+#: Cierres con pedido y la ventana de posventa (las de Ventas,
+#: `chats/.../after_purchase.py`): quien vuelve a escribir dentro de ella
+#: después de comprar acaba de comprar.
+_CLOSED_WITH_ORDER = frozenset({"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE", "CONFIRMADO_SIN_DATOS"})
+_POSTSALE_MS = 30 * 86_400_000
+
+
+def _bought(episode: dict[str, Any]) -> bool:
+    return bool(episode.get("order_id") or episode.get("after_order"))
+
+
+def _post_sale(episodes: list[dict[str, Any]], index: int) -> bool:
+    if episodes[index].get("after_order"):
+        return True
+    if index == 0:
+        return False
+    previous = episodes[index - 1]
+    if not (previous.get("order_id") or previous.get("closing_tag") in _CLOSED_WITH_ORDER):
+        return False
+    closed, started = previous.get("closed_at_ms"), episodes[index].get("started_at_ms")
+    if not isinstance(closed, (int, float)) or not isinstance(started, (int, float)):
+        return True
+    return started - closed <= _POSTSALE_MS
+
+
+def interested_without_purchase(metadata: dict[str, Any]) -> bool:
+    """¿Quiso comprar y no compró desde entonces? El perfil marca el episodio
+    en que mostró la intención; un pedido en ese episodio o en uno posterior
+    (por el chat o con «Crear pedido»; un pedido de la web no se pega a la
+    conversación) lo saca, y también que ese episodio sea posventa (acaba de
+    comprar: «ya te transferí», revisión del 2026-10-20)."""
+    profiles = metadata.get(_PROFILE_KEY)
+    mark = profiles.get(_PROFILE_INTERESADO) if isinstance(profiles, dict) else None
+    if not isinstance(mark, dict):
+        return False
+    episodes = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
+    index = next((i for i, e in enumerate(episodes) if e.get("episode_id") == mark.get("episode_id")), None)
+    if index is None:
+        # El episodio de la marca ya no está (una marca vieja o un episodio que
+        # se descartó): el que estaba en curso a la hora de la marca.
+        at = mark.get("at_ms") if isinstance(mark.get("at_ms"), int) else 0
+        started = [i for i, e in enumerate(episodes) if isinstance(e.get("started_at_ms"), int) and e["started_at_ms"] <= at]
+        index = started[-1] if started else 0
+    if not episodes:
+        return True
+    if _post_sale(episodes, index):
+        return False
+    return not any(_bought(e) for e in episodes[index:])
+
+
+def profile_segments_for_metadata(metadata: dict[str, Any]) -> list[str]:
+    """Los segmentos de perfil de la persona (además del de su etiqueta)."""
+    return [SEGMENT_INTERESADOS_SIN_COMPRA] if interested_without_purchase(metadata) else []
+
+
 CATEGORY_MARKETING = "marketing"
 
 STATUS_DRAFT = "draft"
@@ -66,6 +132,10 @@ STATUS_SCHEDULED = "scheduled"
 STATUS_SENDING = "sending"
 STATUS_SENT = "sent"
 STATUS_FAILED = "failed"
+#: Envío por lotes (V2) que el operador frenó; sigue con «Reanudar».
+STATUS_PAUSED = "paused"
+#: El operador canceló a mitad de envío: lo que salió, salió; no sale más.
+STATUS_CANCELLED = "cancelled"
 
 #: Template MARKETING pre-aprobado por Meta que viaja en cada campaña
 #: (ver `platform/whatsapp/templates/catalog.yaml` + provisioning).
@@ -177,6 +247,9 @@ class CampaignRecipient:
     session_id: str
     segment: str
     customer_name: str | None = None
+    #: Agregado a mano o importado: decisión consciente del operador sobre
+    #: este contacto, se salta el respiro de 48 h entre campañas.
+    bypass_cooldown: bool = False
 
 
 #: Razón de skip de un contacto que pidió la baja (texto o desde WhatsApp).
@@ -214,6 +287,22 @@ class CampaignAudience:
 CAMPAIGN_COOLDOWN_MS = 48 * 60 * 60 * 1000
 
 
+def has_recent_touch_from_other_campaign(
+    metadata: dict[str, Any], campaign_id: str, now_ms: int
+) -> bool:
+    """El respiro de 48 h al enviar: solo cuentan los envíos de OTRAS campañas
+    (el de esta, real o de prueba, no la frena a sí misma)."""
+    others = {
+        **metadata,
+        "campaign_touches": [
+            t
+            for t in metadata.get("campaign_touches") or []
+            if isinstance(t, dict) and t.get("campaign_id") != campaign_id
+        ],
+    }
+    return _has_recent_campaign_touch(others, now_ms)
+
+
 def _has_recent_campaign_touch(metadata: dict[str, Any], now_ms: int) -> bool:
     for touch in metadata.get("campaign_touches") or []:
         if not isinstance(touch, dict):
@@ -247,6 +336,7 @@ def resolve_campaign_audience(
     hours protege siempre); el nombre del vault gana sobre el del archivo.
     """
     wanted = set(campaign.get("segments") or [])
+    wanted_profiles = wanted & set(PROFILE_SEGMENTS)
     removed_ids = set(campaign.get("excluded_session_ids") or [])
     extra_ids = set(campaign.get("extra_session_ids") or [])
     imported = imported_contacts_by_session(campaign)
@@ -262,14 +352,15 @@ def resolve_campaign_audience(
         segment = segment_for_metadata(metadata)
         if segment is None:
             # Humano / baja: absoluto — ni el agregado manual lo pisa.
-            skipped.append(_excluded_recipient(session_id, metadata))
+            skipped.append(excluded_recipient(session_id, metadata))
             continue
         if session_id in removed_ids:
             skipped.append(SkippedRecipient(session_id, "quitado_por_operador"))
             continue
         is_manual = session_id in extra_ids
         is_imported = session_id in imported
-        if not (is_manual or is_imported) and segment not in wanted:
+        profile = next((p for p in profile_segments_for_metadata(metadata) if p in wanted_profiles), None)
+        if not (is_manual or is_imported) and segment not in wanted and profile is None:
             skipped.append(SkippedRecipient(session_id, "fuera_de_segmento"))
             continue
         if is_quiet_hours is not None and is_quiet_hours(session_id):
@@ -287,6 +378,8 @@ def resolve_campaign_audience(
             continue
         if segment in wanted:
             resolved_segment = segment
+        elif profile is not None:
+            resolved_segment = profile
         elif is_manual:
             resolved_segment = SEGMENT_MANUAL
         else:
@@ -297,6 +390,7 @@ def resolve_campaign_audience(
                 segment=resolved_segment,
                 customer_name=customer_name_from_metadata(metadata)
                 or (imported.get(session_id) if is_imported else None),
+                bypass_cooldown=is_manual or is_imported,
             )
         )
     # Importados SIN sesión en el vault: destinatarios nuevos para el bot.
@@ -314,12 +408,13 @@ def resolve_campaign_audience(
                 session_id=session_id,
                 segment=SEGMENT_IMPORTADOS,
                 customer_name=_first_name(name),
+                bypass_cooldown=True,
             )
         )
     return CampaignAudience(recipients=recipients, skipped=skipped)
 
 
-def _excluded_recipient(session_id: str, metadata: dict[str, Any]) -> SkippedRecipient:
+def excluded_recipient(session_id: str, metadata: dict[str, Any]) -> SkippedRecipient:
     """Humano → "excluido"; baja → "dado_de_baja" con su registro."""
     from src.sdk.messagingkit import marketing_opt_out_info
 
@@ -384,6 +479,12 @@ class RecipientSendPlan:
 
     session_id: str
     variables: dict[str, str]
+    #: Se salta el respiro de 48 h (agregado a mano o importado): el lote
+    #: lo vuelve a mirar al enviar y necesita saberlo.
+    bypass_cooldown: bool = False
+    #: Entró SOLO por un segmento de perfil («interesados sin compra»): si
+    #: deja de serlo antes de su lote (compró), no se le envía.
+    profile_segment: str | None = None
 
 
 @dataclass(frozen=True)
@@ -438,15 +539,12 @@ def build_send_plan(
     audience = resolve_campaign_audience(
         campaign, sessions, now_ms=now_ms, is_quiet_hours=is_quiet_hours
     )
-    names = {
-        r.session_id: r.customer_name for r in audience.recipients
-    }
     recipients = [
         RecipientSendPlan(
             session_id=r.session_id,
-            variables=campaign_template_variables(
-                campaign, customer_name=names[r.session_id]
-            ),
+            variables=campaign_template_variables(campaign, customer_name=r.customer_name),
+            bypass_cooldown=r.bypass_cooldown,
+            profile_segment=r.segment if r.segment in PROFILE_SEGMENTS else None,
         )
         for r in audience.recipients
     ]
@@ -639,11 +737,33 @@ def build_campaign_touch(
     return touch
 
 
+def campaign_touch_of(metadata: dict[str, Any], campaign_id: Any) -> dict[str, Any] | None:
+    """El touch del envío REAL de esta campaña al contacto, o None. (Una
+    prueba del operador no cuenta.)"""
+    for touch in metadata.get("campaign_touches") or []:
+        if isinstance(touch, dict) and not touch.get("test") and touch.get("campaign_id") == campaign_id:
+            return touch
+    return None
+
+
+def received_campaign(metadata: dict[str, Any], campaign_id: Any) -> bool:
+    """¿El contacto ya recibió el envío REAL de esta campaña?"""
+    return campaign_touch_of(metadata, campaign_id) is not None
+
+
 def append_campaign_touch(
     metadata: dict[str, Any], touch: dict[str, Any]
 ) -> dict[str, Any]:
-    """Appendea el touch capeando el historial (mutación in-place)."""
+    """Appendea el touch capeando el historial (mutación in-place).
+
+    Idempotente por (campaña, contacto): un envío real que se reintenta (la
+    activity, el lote, un worker que se cae entre el write y el ack) no
+    duplica la atribución. Las pruebas del operador no cuentan como el envío
+    real, ni el real las pisa.
+    """
     touches = metadata.setdefault("campaign_touches", [])
+    if not touch.get("test") and received_campaign(metadata, touch.get("campaign_id")):
+        return metadata
     touches.append(touch)
     if len(touches) > CAMPAIGN_TOUCHES_CAP:
         metadata["campaign_touches"] = touches[-CAMPAIGN_TOUCHES_CAP:]

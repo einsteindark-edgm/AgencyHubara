@@ -48,6 +48,19 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   relevo: "Colega prometido",
   cupon: "Cupón",
   fuera_de_catalogo: "Fuera de catálogo",
+  aroma_ajeno: "Aromas de otro producto",
+  color_ajeno: "Colores de otro producto",
+  variante_ajena: "Presentación que no existe",
+  precio_ajeno: "Precio que no es el del catálogo",
+  pago_ajeno: "Pago que no aplica al pedido",
+  estado_ajeno: "Estado del pedido que no es cierto",
+  cupon_ajeno: "Cupón que no está vigente",
+  negacion_falsa: "Negar lo que sí tenemos",
+  cifra_del_cliente: "Darle la razón en una cuenta equivocada",
+  cajas: "Cajas o velas",
+  caja_nombrada: "La caja que nombró el cliente",
+  por_mayor: "Por mayor o velas sueltas",
+  caja_por_unidad: "Precio de la caja dicho por unidad",
   cantidad: "Cantidad",
   categoria: "Categoría",
   familia_de_color: "Familia de color",
@@ -178,6 +191,24 @@ function quoted(values: unknown[]): string {
   return values.map((v) => `«${String(v)}»`).join(", ");
 }
 
+/** Pago y estado: lo que la regla propone es una frase («puede pagar su pedido contra entrega»). */
+function claimSentence(value: unknown, wrong: string, fine: string): Sentence {
+  const terms = list(value);
+  return terms.length ? warn(`Devuelve el texto al modelo: le dijo que ${quoted(terms)}, y ${wrong}`) : plain(fine);
+}
+
+function factSentence(value: unknown, wrong: string, fine: string): Sentence {
+  const terms = list(value);
+  return terms.length ? warn(`Devuelve el texto al modelo: ${quoted(terms)} ${wrong}`) : plain(fine);
+}
+
+function foreignLabels(value: unknown, noun: string, plural: string): Sentence {
+  const terms = list(value);
+  return terms.length
+    ? warn(`Devuelve el texto al modelo: ${quoted(terms)} ${terms.length === 1 ? `no es ${noun}` : `no son ${plural}`} de ese producto`)
+    : plain(`Los ${plural} que nombra son del producto`);
+}
+
 const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   compra: (value) => {
     const [kind, source] = list(value);
@@ -203,6 +234,52 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
     return terms.length
       ? warn(`Avisa al modelo que no aparece por nombre en el catálogo: ${quoted(terms)}`)
       : plain("Nada fuera del catálogo");
+  },
+  // `aroma_ajeno` y `color_ajeno` (ventas-7): lo que el texto le ofrecía al
+  // producto y es de otro; `variante_ajena`: una presentación que no tiene.
+  // `send_reply` le devolvió el texto al modelo una vez.
+  aroma_ajeno: (value) => foreignLabels(value, "aroma", "aromas"),
+  color_ajeno: (value) => foreignLabels(value, "color", "colores"),
+  variante_ajena: (value) =>
+    value === true
+      ? warn("Devuelve el texto al modelo: le ofrece una presentación que no tiene")
+      : plain("Las presentaciones que ofrece son del producto"),
+  // Los hechos que el texto afirma (ventas-7): lo que quedó vuelve al modelo una vez.
+  precio_ajeno: (value) => factSentence(value, "no es el precio del catálogo", "Los precios que dice son los del catálogo"),
+  pago_ajeno: (value) => claimSentence(value, "no es así para su pedido", "Lo que dice del pago aplica a su pedido"),
+  estado_ajeno: (value) => claimSentence(value, "el sistema dice otra cosa", "Lo que dice del pedido coincide con el sistema"),
+  cupon_ajeno: (value) => factSentence(value, "no está vigente", "Los cupones que ofrece están vigentes"),
+  negacion_falsa: (value) => factSentence(value, "sí lo tenemos", "No niega nada que tengamos"),
+  // La cantidad de un producto que se cobra por caja: ¿cajas o velas? (···0686, 2026-10-14).
+  cajas: (value) =>
+    value === "velas"
+      ? warn("Eran velas: anota las cajas que son")
+      : value === "duda"
+        ? warn("No se sabe si son cajas o velas: vuelve al modelo con las dos cuentas")
+        : plain("Son cajas: la cantidad queda"),
+  // El cliente nombró la caja de otro producto («Dos cajas de 12» y la ondulada trae 10; ···0686, 2026-10-14).
+  caja_nombrada: (value) =>
+    value === "otro"
+      ? warn("Pidió el producto de la otra caja: no se anota este")
+      : value === "duda"
+        ? warn("No se sabe de qué caja habla: vuelve al bot una vez")
+        : plain("Es el producto que pidió: se anota"),
+  // El «por mayor» que eran velas sueltas de lo que va por caja (36 velitas = 3 cajas; laboratorio 2026-10-14).
+  por_mayor: (value) =>
+    value === "velas"
+      ? warn("Eran velas sueltas: no pasa a un colega, el bot anota las cajas")
+      : value === "duda"
+        ? warn("No se sabe si es al por mayor: vuelve al bot una vez con las cuentas")
+        : plain("Es al por mayor: pasa a un colega"),
+  // Lo que se cobra por caja con un precio por unidad («cada velita vale $25.000», ventas-7, 2026-10-16).
+  caja_por_unidad: (value) =>
+    claimSentence(value, "ese es el precio de la caja", "No le pone a cada unidad el precio de la caja"),
+  // El cliente afirma una suma que no es la de su pedido y el texto le daba la razón (2026-10-14).
+  cifra_del_cliente: (value) => {
+    const terms = list(value);
+    return terms.length
+      ? warn(`Devuelve el texto al modelo: le daba la razón al cliente en ${quoted(terms)}, y su pedido suma otra cosa`)
+      : plain("No le da la razón en ninguna cuenta equivocada");
   },
   cantidad: (value) => {
     const n = obj(value).cantidad;
@@ -319,6 +396,7 @@ export function decisionSentence(d: EngineDecisionView): Sentence {
 
 const QUESTIONS: Record<string, string> = {
   "burbuja.cual": "¿Qué acción le conviene enviar al operador?",
+  "variante.ajena": "¿El texto le ofrece una presentación que el producto no tiene?",
   "incendio.gravedad": "¿Qué tan urgente es responderle?",
   "incendio.tipo": "¿Qué plantea el cliente?",
   "incendio.empeora": "¿Empeoró desde la última lectura?",
@@ -346,6 +424,10 @@ const QUESTIONS: Record<string, string> = {
   // ventas-3: se pregunta cuando la tienda no le escribe hace un día o más (o nunca le escribió).
   "cortesia.saludo_solo": "¿Es solo un saludo, sin agradecer ni contar nada?",
   "relevo.promete": "¿El mensaje promete que un colega lo atiende?",
+  "cajas.pide_cajas": "¿El cliente pide esa cantidad de cajas?",
+  "caja_nombrada.pide_la_otra": "¿Quiere el producto de la otra caja?",
+  "por_mayor.producto_por_caja": "¿Pide uno de los productos que se cobran por caja?",
+  "por_mayor.velas_sueltas": "¿El número del cliente cuenta velas sueltas, no cajas?",
   "cierre.etiqueta": "¿Con qué etiqueta cierra?",
   "afirmacion.sin_consultar": "¿Afirma algo que requiere consultar, sin haber consultado?",
   // ventas-3 (2026-10-06): Jev dice qué afirma; la tabla lo cruza con las herramientas del turno.
@@ -402,6 +484,16 @@ function percent(p: number): string {
   return `${Math.round(p * 100)} %`;
 }
 
+const FACT_QUESTIONS: Record<string, (term: string) => string> = {
+  precio_ajeno: (term) => `¿El texto le dice que ${term} es el precio del producto?`,
+  pago_ajeno: (term) => `¿El texto le dice que ${term}, para su pedido de ahora?`,
+  estado_ajeno: (term) => `¿El texto le dice, como algo que ya pasó, que ${term}?`,
+  cupon_ajeno: (term) => `¿El texto le ofrece ${term} como cupón vigente?`,
+  negacion_falsa: (term) => `¿El texto le dice que no tenemos ${term}?`,
+  cifra_del_cliente: (term) => `El cliente escribió ${term}: ¿el texto le da la razón?`,
+  caja_por_unidad: () => "¿El texto le pone a cada unidad el precio de la caja?",
+};
+
 function questionText(d: EngineDecisionView, q: string): string {
   if (QUESTIONS[q]) return QUESTIONS[q];
   const term = /^fuera_de_catalogo\.termino_(\d+)$/.exec(q);
@@ -410,6 +502,23 @@ function questionText(d: EngineDecisionView, q: string): string {
     const terms = list(d.rule !== undefined ? d.rule : d.value);
     const word = terms[Number(term[1]) - 1];
     return word !== undefined ? `¿«${String(word)}» es algo que el cliente pide o muestra?` : `¿El término ${term[1]} es algo que el cliente pide o muestra?`;
+  }
+  const foreign = /^(aroma|color)_ajeno\.termino_(\d+)$/.exec(q);
+  if (foreign) {
+    // Jev revisa los aromas (o colores) que propuso la regla, en su orden.
+    const terms = list(d.rule !== undefined ? d.rule : d.value);
+    const word = terms[Number(foreign[2]) - 1];
+    return word !== undefined
+      ? `¿El texto le ofrece «${String(word)}» como ${foreign[1]} del producto?`
+      : `¿El texto le ofrece el ${foreign[1]} ${foreign[2]} como ${foreign[1]} del producto?`;
+  }
+  const fact = /^(precio_ajeno|pago_ajeno|estado_ajeno|cupon_ajeno|negacion_falsa|cifra_del_cliente|caja_por_unidad)\.termino_(\d+)$/.exec(q);
+  if (fact) {
+    // Jev revisa lo que propuso la regla, en su orden.
+    const terms = list(d.rule !== undefined ? d.rule : d.value);
+    const word = terms[Number(fact[2]) - 1];
+    const term = word !== undefined ? `«${String(word)}»` : `lo ${fact[2]}`;
+    return FACT_QUESTIONS[fact[1]](term);
   }
   const slot = /^datos\.([a-z_]+)$/.exec(q);
   if (slot) return `¿El cliente sí dio ${SLOT_LABELS[slot[1]] ?? slot[1]}?`;

@@ -20,17 +20,77 @@ queue. Detalles del comportamiento del agente se definen en
 ### Requirement: Webhook de WhatsApp inbound
 
 El sistema MUST exponer `POST /api/webhook` que reciba mensajes inbound
-de WhatsApp Cloud API y los despache a `IngestInboundMessage` use case
-en background (sin bloquear la response al cliente WhatsApp).
+de WhatsApp Cloud API y los deje en Temporal ANTES de responder 200
+(entrada durable, `docs/adr/2026-10-15-durable-inbound-entry.md`): un deploy
+o un OOM de la API MUST NOT perder un mensaje que Meta ya dio por entregado.
+El ingest (`IngestInboundMessage`) corre en el worker `sales`, un paso por
+activity (fase 2), y la entrega a la sesión va en orden de llegada por cliente
+(`InboundSessionWorkflow`, `docs/adr/2026-10-16-inbound-session-workflow.md`).
 
 #### Scenario: Mensaje de texto válido
 
 - GIVEN un body WhatsApp Cloud bien formado con un mensaje de texto
 - WHEN `POST /api/webhook` recibe el body
 - THEN parsea con `parse_whatsapp_inbound_all` (el POST ENTERO)
-- AND devuelve `{status: "ok"}` con HTTP 200 en < 200ms
-- AND `IngestInboundMessage.execute(parsed)` se invoca en background
-- AND eventualmente arranca/signalá el workflow apropiado (sales o remarketing)
+- AND arranca `InboundMessageWorkflow` con id `inbound-<wamid>` y `REJECT_DUPLICATE` en la cola del worker `sales`, con el mensaje parseado y ya en la dirección de su conversación
+- AND recién entonces devuelve `{status: "ok"}` con HTTP 200
+- AND el workflow corre los pasos del ingest, cada uno en su activity (heartbeat, 5 intentos repartidos en ~3 min): el estado de la sesión con sus lecturas (`read_inbound_state`), el turno (`prepare_inbound_turn`), el historial (`write_inbound_history`) y la entrega, que eventualmente arranca/signalea el workflow apropiado (sales o remarketing) (`deliver_inbound_turn`)
+- AND un paso que ya terminó no se repite si falla uno posterior: su resultado queda en el historial del workflow (la entrega reintentada no vuelve a leer con Jev ni a escribir la línea del panel)
+
+#### Scenario: Temporal no acepta el mensaje
+
+- GIVEN Temporal no responde (o falla) al arrancar el workflow de un mensaje
+- THEN el webhook devuelve HTTP 503 (Meta reintenta el POST)
+- AND el mensaje queda `stage=enqueue_failed` con el error en el ledger
+- AND los mensajes del POST que ya habían entrado no se repiten en el reintento (los frena `REJECT_DUPLICATE`)
+- AND durante los 5 s siguientes a una falla el webhook responde 503 sin volver a probar (con Temporal colgado no se apilan webhooks de 8 s cada uno)
+- AND el `raw` de Meta NO viaja a Temporal (la historia guarda el input 30 días, en claro)
+
+#### Scenario: Meta re-entrega un mensaje que ya entró
+
+- GIVEN un `wamid` cuyo `inbound-<wamid>` ya existe en Temporal
+- THEN el webhook lo cuenta como aceptado (HTTP 200) y deja `stage=duplicate`
+- AND el mensaje no se ingiere dos veces
+
+#### Scenario: Un reintento del ingest no repite efectos
+
+- GIVEN un paso del ingest se reintenta tras hacer parte de su trabajo (el worker murió a mitad)
+- THEN el reintento no repite la línea del cliente en el historial, el mensaje a la sesión de ventas ni los envíos directos al cliente (diario `InboundEffects` por `wamid` en `<vault>/_ledger/inbound_effects/`)
+- AND lo que decidió el paso del estado (la nota de frontera del episodio nuevo, la respuesta a campaña, el resumen del episodio anterior —sin los datos de envío de su borrador, que no salen del vault—) llega a la entrega aunque la entrega se reintente: viaja en el resultado del paso, no se vuelve a decidir sobre un documento que ya la tiene escrita
+- AND si la escritura del estado falla, ese paso se reintenta (hasta 3 intentos); si sigue fallando, el mensaje sigue igual hasta el historial y el bot
+- AND los envíos al cliente se reclaman ANTES de salir (como mucho una vez); el historial y el aviso a la sesión se marcan DESPUÉS (al menos una vez: solo una caída del proceso entre el efecto y su marca lo repite)
+- AND dos intentos del mismo mensaje que se superponen avisan a la sesión UNA vez, y un intento cancelado mientras avisa termina el aviso y deja su marca
+- AND un error de programación (`TypeError`, `KeyError`…) no se reintenta
+
+#### Scenario: Foto y nota de voz como pasos
+
+- GIVEN un mensaje con una foto (o una nota de voz)
+- THEN el workflow la lee en su propio paso (`describe_inbound_image` / `transcribe_inbound_audio`, heartbeat, 3 intentos) y la hace entrar como texto (`<wamid>_vision` / `<wamid>_transcribed`) por los mismos pasos, con la llegada de la foto como reloj
+- AND al terminar la foto (también si su lectura falló) le avisa a la sesión de ventas que ya no la espere (`photo_reading` con `done=True`)
+- AND ninguna lectura queda como tarea suelta del proceso: si el worker muere a mitad, el paso se repite en otro worker
+- AND si tras sus intentos no se puede leer, el workflow queda Failed a la vista (reseteable), no se pierde en silencio
+- AND una nota de voz que no se entendió le pide al cliente que la escriba UNA vez y no llega al bot
+
+#### Scenario: Orden de entrega por cliente sin serializar las lecturas
+
+- GIVEN dos mensajes del mismo cliente en POSTs distintos («hola», cuya lectura con Jev tarda, y «quiero velas» 1 s después)
+- WHEN entran
+- THEN cada uno se anuncia al `InboundSessionWorkflow` del cliente (`inbound-wa_<número>`), que le responde con su anterior (el último anunciado con una llegada al webhook estrictamente menor)
+- AND los dos se leen en seguida, en paralelo
+- AND el segundo escribe su línea del historial y llega a la sesión DESPUÉS de que termine el primero (espera con tope de 30 s; si el anterior se traba, sale igual: se pierde el orden, nunca el mensaje)
+- AND dentro de un mismo POST manda `after` (el anterior del mismo cliente en ese POST), y ahí el paso del estado también espera al anterior: los dos verían el mismo episodio cerrado o la misma campaña sin responder
+- AND lo que las lecturas dicen del ÚLTIMO mensaje (la señal de compra, la pausa por aplazamiento, la cortesía) se escribe en el paso del historial, en orden, con `last_inbound_message_id`: la foto que reentra tarde no borra la señal del «luego te escribo» que el cliente mandó detrás
+
+#### Scenario: El texto escrito detrás de una foto la espera
+
+- GIVEN una foto cuya visión tarda y un «¿tienes esta?» que el cliente manda detrás (otro POST)
+- THEN la foto entra primero al chat y al bot, y el texto justo después
+- AND la espera vive en Temporal, no en memoria de un proceso: el worker `sales` puede correr con varias réplicas
+
+#### Scenario: «Llegó tarde» y «fuera de ventana» se miden con la llegada al webhook
+
+- GIVEN un mensaje que llegó a tiempo y cuyo ingest se reintenta minutos después
+- THEN no se marca como entregado tarde (`sent_at_ms`) ni como fuera de ventana: el reloj es `received_at_ms` del webhook, no la hora del intento
 
 #### Scenario: POST batcheado (varios mensajes en un mismo webhook)
 
@@ -40,9 +100,9 @@ y el resto se perdía en silencio.
 
 - GIVEN un POST con varios mensajes — en varios `entry`, varios `changes`, o varios ítems de un mismo `messages[]`
 - WHEN se procesa
-- THEN CADA mensaje MUST llegar a `IngestInboundMessage.execute`, uno por background task
-- AND en el orden en que Meta los mandó (los tasks corren en serie → dos mensajes del mismo cliente se ingieren en orden)
-- AND el fallo de un task (un ingest o un delivery status que lanza) MUST NOT impedir los siguientes: se loguea con traceback (`inbound_ingest_failed` / `delivery_status_ingest_failed`) y se sigue
+- THEN CADA mensaje MUST llegar al ingest, uno por `InboundMessageWorkflow`
+- AND en el orden en que Meta los mandó: cada mensaje lleva el `wamid` del anterior del MISMO cliente en ese POST (`after`) y su workflow, antes de escribir el historial, espera a que ese cierre (tope 30 s; si no existe o falló, sigue); sus lecturas no esperan
+- AND el fallo de un ingest MUST NOT impedir los siguientes (cada uno es su propio workflow); el de un delivery status (background task) tampoco: se loguea con traceback (`delivery_status_ingest_failed`) y se sigue
 - AND cada mensaje deja su desenlace en el ledger de inbound (ver "Ledger durable de inbound del webhook")
 
 #### Scenario: Body malformado
@@ -599,14 +659,20 @@ MUST NOT afectar la respuesta al webhook.
 - THEN escribe un registro `request` (`outcome=accepted`, `fields`, `n_messages`, `n_statuses`)
 - AND un registro `message` `stage=seen` POR CADA mensaje del body crudo (con `wa_message_id`, `session_id` — `wa_<teléfono>` o `wa_<CC><id>` si solo vino el BSUID —, `user_id` (el `from_user_id` crudo, también en los `rejected`) y el resumen del `referral`: `source_id`, `source_type`, `headline`, `has_clid`) — independiente de lo que el parser decida después
 
+#### Scenario: el mensaje entra a Temporal
+
+- GIVEN un mensaje válido del cliente (`field=messages`)
+- WHEN el webhook lo deja en Temporal
+- THEN queda `stage=queued` (o `stage=duplicate` si ya estaba); si Temporal falló, `stage=enqueue_failed` con `error` (no es desenlace: Meta reintenta)
+
 #### Scenario: el ingest deja su desenlace
 
-- GIVEN un mensaje entregado a `IngestInboundMessage` / `IngestStandby`
+- GIVEN un mensaje entregado a `IngestInboundMessage` (activity del worker `sales`) / `IngestStandby` (background task de la API)
 - WHEN el ingest termina
 - THEN queda `stage=ingested`; si lanzó, `stage=ingest_failed` con `error`
-- AND la excepción NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción y dejaría sin ingerir a los mensajes encolados detrás
+- AND en la activity la excepción se re-lanza (Temporal reintenta, 5 intentos); en `standby` NO se re-lanza (se loguea con traceback): Starlette corta el loop de background tasks en la primera excepción
 - AND un ítem que el parser rechaza queda `stage=rejected` con el motivo en `error` (el reporte lo cuenta como `failed`)
-- AND un `seen` sin desenlace se reporta como `lost`
+- AND un `seen` sin desenlace se reporta como `lost`, salvo que haya entrado a Temporal (`queued`/`duplicate`): entonces es `pending`, y `stuck` si a la hora del reporte lleva más de media hora así
 
 #### Scenario: un POST rechazado también deja registro
 
@@ -616,7 +682,7 @@ MUST NOT afectar la respuesta al webhook.
 #### Scenario: reporte de reconciliación
 
 - WHEN el operador corre `python -m src.plugins.chats.agent.sales.inbound_ledger_report --from D --to D`
-- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed` y `lost`, con los teléfonos enmascarados salvo `--full`
+- THEN obtiene, por día de Bogotá y por anuncio (`referral.source_id`), `sessions` (personas distintas — comparable con "conversaciones iniciadas" de Meta), `ingested`, `failed`, `lost`, `pending` (en Temporal sin desenlace) y `stuck` (así hace más de media hora), con los teléfonos enmascarados salvo `--full`
 
 ### Requirement: Cupones de descuento validados contra Medusa
 
@@ -689,7 +755,7 @@ LLM. Sin cupón válido, un pedido de descuento MUST seguir escalando a humano
 - WHEN el cliente da el código o pregunta por promociones
 - THEN `apply_coupon` responde `applied=false, reason=shipping_not_supported` (el envío lo cobra la transportadora a su tarifa, sin descuentos) y no guarda nada en el episodio, y `list_promotions` no la ofrece
 - AND aunque un episodio ya tenga guardado un cupón de envío (de antes de esta decisión), `compute_discount` no descuenta nada (`shipping_not_supported`), la nota de cada turno dice `[CUPÓN SIN EFECTO: …]` en vez de `[CUPÓN APLICADO: …]`, `present_order_confirmation` explica que no aplica y `register_order` exige el total con el envío completo
-- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente
+- AND el envío real que el operador fija al marcar "en camino" es el que paga el cliente, salvo en un pedido con envío gratis de una campaña (6 cajas o más, 2026-10-20): ahí lo paga la tienda y no se le suma al cliente
 
 #### Scenario: Reglas de la promoción ilegibles
 
@@ -790,6 +856,37 @@ conversación abierta, esa conversación MUST seguir materializando su costo
 
 - WHEN llega `failed` con `errors[0].code = 131049`
 - THEN el touch queda `status: failed` con ese código
+
+### Requirement: Doble check de WhatsApp en cada mensaje saliente (2026-10-15)
+
+Cada estado del webhook (`statuses[]`) MUST quedar en la conversación de su
+destinatario (`recipient_id`, o `recipient_user_id` para clientes con nombre de
+usuario; si no vino, la conversación que registró el mensaje), unido al
+mensaje por su wamid, aunque el episodio no tenga `outbound_messages`. Vive en
+`<vault>/<sid>/delivery_statuses.jsonl` (append-only) y MUST NOT tocar el costo
+por episodio ni los touches de campaña. Los textos del bot y del operador MUST
+guardar el wamid de cada burbuja (`wamids`). `/api/dashboard/sessions/{id}`
+(panel y App Operador) MUST anotar `delivery` en cada mensaje saliente con lo
+que informó WhatsApp —sin retroceder: read > delivered > failed > sent; un
+texto partido en burbujas muestra la más atrasada; `failed` con el código y el
+título de Meta— o `unconfirmed` si no llegó ningún estado: nunca un check
+inventado. Cada estado anotado MUST publicar `chats.session_updated` (SSE).
+
+#### Scenario: Conversación sin outbound registrado (caso 2026-10-15)
+
+- GIVEN el episodio de la conversación no tiene `outbound_messages` y el texto del bot guardó `wamids: [wamid.E1]`
+- WHEN llegan `delivered`, `sent` y `read` de `wamid.E1` (desordenados) con `recipient_id` de esa conversación
+- THEN el mensaje del bot sale con `delivery.status = read` y su hora, y el panel y la app lo pintan en vivo
+
+#### Scenario: Mensaje que no llegó
+
+- WHEN llega `failed` con `errors[0] = {code: 131047, title: "Re-engagement message"}`
+- THEN el mensaje sale con `delivery = {status: failed, error_code: 131047, error_title: "Re-engagement message"}` y la burbuja dice «No llegó · 131047»
+
+#### Scenario: Sin dato de WhatsApp
+
+- GIVEN un mensaje saliente sin wamids (historial anterior) o cuyos wamids no tienen estado
+- THEN sale con `delivery.status = unconfirmed` y la burbuja dice «sin confirmación»
 
 ### Requirement: La respuesta que cita el mensaje de una campaña es de esa campaña
 
@@ -1038,6 +1135,68 @@ sugerido con `GET /api/chats/order-intake/{id}/form` (sin registrar nada) y regi
 - WHEN el operador lo crea
 - THEN el pedido queda registrado como con `/order` y la respuesta trae `success: true`; con un dato mal llenado o un
   producto que ya no existe, `success: false` y qué revisar (nunca un 422 crudo)
+
+### Requirement: Incendio de chat solo si el cliente espera respuesta (App Operador)
+
+Un chat con un humano al mando SHALL ser incendio (`GET /api/chats/mobile/fires`, su aviso push y el «sin responder» de
+la página «Humano» del widget) solo si, después de la última respuesta que el cliente vio, escribió algo que pide
+respuesta. No la piden una reacción (o quitarla), un sticker ni un acuse que cumpla la regla del acuse del ingest
+(`is_closing_ack`: «gracias», «ok perfecto», «listo», solo emojis; nunca con `?`). La espera se cuenta desde el primer
+mensaje que sí pide respuesta. Caso del operador 2026-10-15: un 👍 o un «gracias» era incendio grave a los 10 min.
+
+#### Scenario: Un «gracias» después de la respuesta
+
+- GIVEN el operador respondió y el cliente escribió «Muchas gracias 🙏» (o reaccionó con 👍) hace 30 min
+- WHEN la app pide los incendios
+- THEN ese chat no está, y en la página «Humano» tiene 0 sin responder
+
+#### Scenario: Una pregunta y después una reacción
+
+- GIVEN el cliente preguntó «¿y el de lavanda tiene descuento?» hace 15 min y reaccionó con 👍 hace 14
+- WHEN la app pide los incendios
+- THEN el chat es incendio grave: «15 min sin respuesta · 1 mensaje»
+
+### Requirement: El tiempo real de la App Operador manda solo lo que cambió (2026-10-21)
+
+`GET /api/dashboard/events?inbox=delta` (la app) SHALL mandar la bandeja completa al conectar y después solo las filas
+que cambiaron respecto de lo último que recibió ESA conexión, más los chats que ya no están (`chats.sessions_delta`,
+`payload = {sessions, removed}`). Sin `inbox` (la web) sigue la bandeja completa. A un cliente atrasado se le manda solo
+la bandeja más nueva de su cola y un solo `session_updated` por sesión; los eventos de otros dominios van tal cual.
+Cada conexión MUST dejar en el log del API su modo, eventos, KB, bandejas omitidas y el mayor retraso en cola
+(`sse: conexión abierta|viva|cerrada`). Caso del operador: con 581 chats cada bandeja pesaba ~380 KB y salía en cada
+cambio; el teléfono en 4G se atrasaba y la app decía «Sin conexión» mientras la web iba al día.
+
+#### Scenario: La app recibe solo el chat que cambió
+
+- GIVEN la app conectada con `inbox=delta` y la bandeja inicial con Laura y Carlos
+- WHEN Laura escribe y Carlos ya no está en el vault
+- THEN la app recibe `chats.sessions_delta` con la fila de Laura y `removed: ["wa_…carlos"]`, sin las demás filas
+
+#### Scenario: Un cliente atrasado no baja bandejas viejas
+
+- GIVEN tres bandejas publicadas mientras el cliente bajaba la anterior
+- WHEN el cliente vuelve a leer
+- THEN recibe solo la última y el log de la conexión cuenta 2 bandejas viejas omitidas
+
+### Requirement: Armar la bandeja no frena al API (2026-10-22)
+
+Leer el vault para la bandeja (`GET /api/dashboard/sessions`, el muestreador del SSE y cada conexión SSE al abrir) y
+pedir a Graph los nombres de los anuncios SHALL correr fuera del event loop del API, y SHALL haber una sola lectura a la
+vez: quien la pide mientras otra corre MUST recibir una que empezó después de su pedido (nunca una de antes de un
+cambio) y la comparte con los que esperaban con él. Medido con 600 chats sintéticos: el loop quedaba tomado ~200 ms
+por lectura (~0,9 s la primera, segundos con Graph lento), sin atender el webhook de WhatsApp ni el SSE.
+
+#### Scenario: El disco lento no frena al resto
+
+- GIVEN una lectura de la bandeja esperando al disco
+- WHEN llega otro pedido al API
+- THEN se atiende antes de que termine la lectura
+
+#### Scenario: Una reconexión masiva
+
+- GIVEN cinco clientes piden la bandeja a la vez
+- WHEN se arma
+- THEN el vault se lee una sola vez y los cinco reciben la misma
 
 ## Out of scope
 

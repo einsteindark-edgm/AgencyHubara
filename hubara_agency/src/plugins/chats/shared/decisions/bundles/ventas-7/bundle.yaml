@@ -1,0 +1,187 @@
+# yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
+#
+# Paquete de decisión de Hubara (velas), ventas, versión 7. PAQUETES_DE_DECISION.md.
+# Es `ventas-6@6` con decisiones nuevas, ③ del catálogo y dos cambios del turno, y
+# nada más (las pruebas lo exigen: test_decisions_ventas_7.py y
+# test_decisions_ventas_7_senala.py). Caso de producción del 2026-10-13: el cliente
+# armó un carrito con 2 Velas de deseos cuadradas y el bot escribió «vienen en
+# Chanel, Drakar y Ylang Ylang»; Drakar e Ylang Ylang eran de la Plegaria de
+# Luz (salió en la misma búsqueda) y el producto tiene un solo aroma.
+#   - `aroma_ajeno` y `color_ajeno`: el código encuentra los aromas (o colores)
+#     del catálogo que el texto le da al producto y no son suyos; Jev solo
+#     quita avisos falsos (otro producto, una fecha). Sin Jev, la regla juzga
+#     solo las oraciones que ofrecen algo (frases del paquete).
+#   - `variante_ajena`: lo inventado (un signo, un tamaño, «también viene en
+#     vaso») no está en ningún catálogo; Jev lee la ficha del producto. Sin
+#     Jev no revisa.
+#   - Los hechos que el texto afirma, con la misma forma (la regla propone con
+#     lo que sabe el código, Jev solo quita): `precio_ajeno` (el precio del
+#     catálogo; el mismo incidente cotizó $23.000 por $25.000), `pago_ajeno`
+#     (contra entrega y recargo del link), `estado_ajeno` (pago y etapa según
+#     OrderFacts), `cupon_ajeno` (cupones vigentes para el cliente) y
+#     `negacion_falsa` (negar lo que el catálogo tiene).
+#   - `cifra_del_cliente` (laboratorio del 2026-10-14): el cliente afirma una
+#     suma equivocada («1 cuadrada + 1 ondulada me da $45.000, ¿no?»; son
+#     $47.500) y el bot le da la razón («Así es» o «Sí, las dos suman
+#     $45.000»). La regla propone las cifras del cliente que no son de su
+#     pedido (sin pedido anotado, de lo que se habló); Jev lee su mensaje y la
+#     respuesta (sin Jev no revisa). Sonda con Jev real: 34 de 34. Laboratorio
+#     (12 conversaciones, Jev real): antes, dos respuestas le daban la razón
+#     («Sí, $25.000 + $22.500 son $47.500», «las dos velas suman $45.000»);
+#     después, ninguna, con tres retenciones y las tres corregidas.
+# Y en el contrato del turno (···0686, 2026-10-14): el bot preguntó «¿rojo y
+# verde o multicolor?», la clienta contestó por el envío y el pago y el color no
+# volvió. En `etapa_variantes`, querer cerrar (cómo pagar, sus datos, confirmar)
+# pide `present_variant_picker` en ese turno (una prueba lo exige:
+# test_decisions_ventas_7_variante_al_cerrar.py). La etapa ya sabe de la opción
+# «Color» de Medusa y el resumen y el registro no salen sin ella: eso es del
+# catálogo, en código (test_order_real_options.py, test_closing_variant_choice.py).
+# Y `cajas` (el mismo laboratorio): «Dos cajas de 12» se anotó `cantidad: 24` y el
+# resumen salió con 24 cajas ($600.000). Solo las velas de deseos se cobran por
+# caja (12 o 10 velas; `domain.yaml: sold_by_box`, decisión del operador): desde
+# una caja entera, Jev lee la charla y las dos cuentas y
+# dice si son cajas o velas; `set_order_slot` anota las cajas que son. Sin Jev,
+# el modelo lo revisa una vez por mensaje del cliente. El catálogo que lee el
+# bot dice la caja de cada una (código: test_catalog_sold_by_box.py), y dos más
+# del mismo laboratorio: `caja_nombrada` («Dos cajas de 12» y se anotó la
+# ondulada, que trae 10: Jev dice si quiere la de la otra caja) y `por_mayor`
+# («me vendes 36 velitas?» se pasó a un colega como pedido al por mayor; eran 3
+# cajas: Jev dice si cuenta velas sueltas y `escalate_to_human` no lo pasa).
+# `send_reply` y las tarjetas con texto del modelo (`tools/fact_check.py`)
+# juntan todas en una retención con lo que es cierto: lo ya dicho sale al
+# segundo intento, lo nuevo se retiene otra vez (dos por mensaje del cliente).
+# Las frases que buscan las reglas viven en el `with:` de cada capacidad.
+# El catálogo las pide desde esta versión (`capabilities_since`).
+# Y, editado en el lugar el 2026-10-16 (decisión del operador: emergencia, sin un
+# paquete nuevo ni Terraform), `caja_por_unidad` (una prueba lo exige:
+# test_decisions_ventas_7_caja_por_unidad.py). Caso de producción del mismo día: el
+# cliente armó un carrito con una caja de Velas de deseos cuadradas ($25.000 la caja
+# de 12), preguntó si cada vela valía eso y el bot le dijo que el precio era por
+# unidad («cada velita vale $25.000»); un colega tuvo que corregirlo. `precio_ajeno`
+# no lo vio: el monto es el del catálogo; lo falso es a qué se lo pone. Con un
+# producto que se cobra por caja en foco, la regla (frases del paquete) propone una
+# cláusula que dice un precio por unidad sin nombrar la caja y Jev decide. Sin Jev no
+# revisa. La traza lo distingue por la capacidad (antes no existía), no por la versión.
+# Y ③ del catálogo en el turno (anuncio de velitas, 2026-10-13, 16:53 Bogotá;
+# una prueba lo exige: test_decisions_ventas_7_verifica.py). El bot mandó botones
+# y después el catálogo completo a quien pidió las velitas del 7 de diciembre; ③
+# dudó (0,56) y después aprobó (0,96): preguntaba «¿atiende el asunto?» y no veía
+# qué mostraban las tarjetas ni lo que se habló antes. Ahora el catálogo tiene su
+# pregunta («¿le MUESTRA los productos que pidió?») y su complemento (mostrarlos,
+# no un texto), y ③ ve lo que muestran las tarjetas y el contexto
+# (`reply_state.contents`, `with_context`). Sonda con Jev real: botones 0,56 →
+# 0,05 y catálogo completo 0,71 → 0,13 (los dos «falta»); las dos velitas 0,81;
+# los demás asuntos, igual que con ventas-6.
+#
+# Y dos cambios del turno (una prueba lo exige: test_decisions_ventas_7_senala.py).
+# Caso de producción del 2026-10-13 (anuncio de Halloween):
+#   - La fila del saludo en ③ (`verify_decide`): un «hola» con una pregunta a
+#     media conversación hizo mandar, aparte, un «buenas noches» a las 4 p. m.
+#     El saludo nunca pide otra burbuja: en el primer contacto lo pone el
+#     egreso, después la nota de la hora pide no volver a saludar.
+#   - La política `turno-v6` con la pregunta `descubrimiento.senala_producto`
+#     (cuestionario `rafaga-v9`): el cliente citó la línea del set y escribió
+#     «Estás» (= «estas»); la guía decía «ayúdale a escoger un producto» y el
+#     bot volvía a preguntar cuál. Si señala un producto concreto, el paso es
+#     hablarle de ese y preguntarle si se lo lleva (que le guste no es que lo
+#     quiera: el paso pregunta, no anota).
+#
+# ventas-6:
+# Es `ventas-5@5` con la política del turno `turno-v5` y nada más (una prueba lo
+# exige: test_decisions_ventas_6.py). Caso de producción del 2026-10-09 (pedido
+# #64): el cliente compró, «Confirmar pago» le devolvió la conversación al bot y
+# respondió citando su comprobante; en post-venta la guía de `turno-v4` pedía
+# «agradece y confirma que el equipo revisa el pago» con el pago ya confirmado.
+# Con `turno-v5` el paso es mirar el pago con `check_order_status`.
+# Y la tabla de `cierre` (decisión del operador, 2026-10-09: ningún silencio
+# pasa solo al equipo): «confirmó y no terminó de dar los datos de envío»
+# cierra INTERESADO —remarketing lo retoma con el pedido— en vez de
+# CONFIRMADO_SIN_DATOS + relevo. La pregunta a Jev no cambia.
+# Y la fila `catalogo` del contrato (turno 1 de …7392, 2026-10-08): pide
+# `present_products` o la galería (ya no `list_categories`, que no le muestra
+# nada al cliente) y que el texto vaya en `intro_text`.
+# Y el cuestionario del turno `rafaga-v7` con su fila del contrato (venta del
+# 2026-10-09, Encanto Silvestre):
+#   - «Me regalas también la de encanto silvestre» es PEDIR el producto: Jev lo
+#     leía como `gusto` (un regalo) y el bot hacía una recomendación que nadie pidió;
+#   - preguntar a qué huele un aroma (`aroma.notas`, pregunta nueva) no pide el
+#     selector: «¿Este qué esencia tiene?» citando el Caballero de la noche se
+#     responde con sus notas, no mandando otra vez la lista.
+#   Sonda (Jev real, frases sintéticas): «me regalas…» `gusto` 0,45–0,94 → 0,10;
+#   regalos de verdad 0,90–0,96; `aroma.notas` 0,96–0,98 al preguntar a qué huele
+#   y 0,02–0,05 al elegir o pedir la lista.
+# Y, editado en el lugar el 2026-10-13 (decisión del operador: urgente, sin el
+# Terraform apply de un paquete nuevo), el cuestionario `rafaga-v8`: la pista de
+# `catalogo` cuenta «quiero más información sobre…» un tipo, kit u ocasión de
+# velas. Los anuncios de velitas del 7 de diciembre saludaban con botones sin
+# buscar (Jev: catalogo 0,16–0,31); ahora 0,97. La traza lo distingue por el id
+# del cuestionario (`rafaga-v8`), no por la versión del paquete.
+#
+# ventas-5:
+# Es `ventas-4@4` con dos preguntas reescritas (incidente del 2026-10-09 y su
+# premortem): `compra.pregunta_compra` cuenta la propuesta de cierre («Si dale»
+# a «te paso el formulario… y dejamos el pedido listo» se retiraba) y
+# `relevo.promete` deja afuera el aviso de un evento del pedido («nuestro
+# equipo te avisa cuando despachemos»). Una prueba lo exige:
+# test_decisions_ventas_5.py.
+#
+# ventas-4:
+# Es `ventas-3@3` con la política del turno `turno-v4` y nada más (una prueba lo
+# exige: test_decisions_ventas_4.py). Conversación de prueba del 2026-10-07
+# (···1604, turno 3): el cliente escribió «Me gusta esta» desde la ficha de la
+# Calabaza en el catálogo de WhatsApp; la nota del ingest llegó, pero la guía de
+# `turno-v3` (etapa calculada con el borrador vacío) le pidió al LLM «ayúdale a
+# escoger un producto» y el bot preguntó «¿Cuál de las cuatro te gustó?». Con
+# `turno-v4` el paso de descubrimiento usa el producto desde el que escribe el
+# cliente (la ficha del catálogo o la página de la web).
+# Se promueve nombrándolo en Terraform (`tenants.<t>.lab.decisions_bundle =
+# "ventas-4"`), después de medirlo en el laboratorio (`B@ventas-4`).
+# Inmutable: otra pregunta u otro umbral = otra versión. Certificar:
+#   cd hubara_agency && uv run python -m src.sdk.cli decisions check
+id: ventas-7
+version: 7
+engine_contract: 1
+oracle: jev-1.13
+capabilities:
+  - acuse
+  - afirmacion
+  - aroma_ajeno
+  - baja
+  - caja_nombrada
+  - caja_por_unidad
+  - cajas
+  - cantidad
+  - categoria
+  - cierre
+  - cifra_del_cliente
+  - color_ajeno
+  - compra
+  - contactar
+  - cortesia
+  - cupon
+  - cupon_ajeno
+  - datos
+  - destinatario
+  - destinatario_oracion
+  - destinatario_plantilla
+  - enumeracion
+  - estado_ajeno
+  - familia_de_color
+  - fuera_de_catalogo
+  - item_del_pedido
+  - monto
+  - negacion_falsa
+  - pago_ajeno
+  - persona
+  - por_mayor
+  - portavelas
+  - preambulo
+  - precio_ajeno
+  - producto_nombrado
+  - relevo
+  - rescate
+  - retoma
+  - saludo
+  - selector
+  - variante_ajena
+  - zona_de_envio

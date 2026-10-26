@@ -36,7 +36,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
-from src.plugins.chats.agent.sales.decisions.registry import capability
+from src.plugins.chats.agent.sales.decisions.registry import capability, capability_if_present
 
 __all__ = [
     "CategoriaPedida",
@@ -50,6 +50,10 @@ __all__ = [
     "clean_llm_text",
     "customer_reply_text",
     "decide_for_session",
+    "FACT_CAPABILITIES",
+    "check_facts",
+    "fact_words",
+    "facts_in_bundle",
     "is_internal_text",
     "option_list",
     "product_quote_sentences",
@@ -174,6 +178,192 @@ async def option_list(
         vault_dir=vault_dir,
     )
     return tuple(verdict.value or ())
+
+
+#: Las decisiones de los hechos antes de enviar (ventas-7, 2026-10-13).
+FACT_CAPABILITIES: tuple[str, ...] = (
+    "aroma_ajeno", "color_ajeno", "variante_ajena", "precio_ajeno",
+    "pago_ajeno", "estado_ajeno", "cupon_ajeno", "negacion_falsa", "cifra_del_cliente",
+    # El precio de la caja dicho por unidad (ventas-7 editado en el lugar, 2026-10-16).
+    "caja_por_unidad",
+)
+
+
+def facts_in_bundle() -> bool:
+    """¿El paquete activo trae alguna decisión de los hechos? Con uno anterior
+    (ventas-6 y antes) no hay nada que revisar ni que leer."""
+    return any(capability_if_present(name) is not None for name in FACT_CAPABILITIES)
+
+
+def fact_words(name: str) -> dict[str, Any] | None:
+    """Las frases de una regla de palabras de los hechos (`estado_ajeno`,
+    `cupon_ajeno`…): el `with:` de sus ítems en el paquete activo. None si el
+    paquete no trae la decisión (no hay nada que revisar ni que consultar)."""
+    cap = capability_if_present(name)
+    return None if cap is None else cap.items_params
+
+
+async def check_facts(text: str, facts: Any, *, session_id: str, vault_dir: Path | None) -> Any:
+    """Lo que el texto le dice al cliente y no coincide con los hechos que
+    armó el código (`use_cases.reply_facts.ReplyFacts`): cada capacidad del
+    paquete revisa lo suyo, en paralelo (incidente 2026-10-13). Con un paquete
+    anterior a una decisión (ventas-6 y antes), esa no revisa nada: todavía no
+    existe para la tienda. Devuelve `reply_facts.Findings`."""
+    import asyncio
+
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import (
+        CajaDelTexto,
+        CifraDelCliente,
+        CuponDelTexto,
+        EstadoDelTexto,
+        NegacionDelTexto,
+        OpcionesDelTexto,
+        PagoDelTexto,
+        PreciosDelTexto,
+        VariantesDelTexto,
+    )
+    from src.plugins.chats.agent.sales.use_cases.reply_facts import Findings
+
+    async def _nothing() -> tuple[()]:
+        return ()
+
+    async def ask(name: str, inp: Any, default: Any) -> Any:
+        cap = capability_if_present(name)
+        if cap is None:
+            return default
+        verdict = await decide_for_session(cap, inp, session_id=session_id, vault_dir=vault_dir)
+        return verdict.value if verdict.value is not None else default
+
+    from src.plugins.chats.shared.product_truth import without_names
+
+    # El nombre del cliente no es un aroma ni un color («¡Hola Rosa!»).
+    label_text = without_names(text, facts.names)
+
+    def labels(own: Sequence[str], found: Sequence[str], others: Sequence[str]) -> OpcionesDelTexto:
+        return OpcionesDelTexto(
+            text=label_text, products=tuple(facts.titles), own=tuple(own), labels=tuple(found), others=tuple(others)
+        )
+
+    prices = PreciosDelTexto(
+        text=text, products=tuple(facts.price_lines), prices=tuple(facts.prices), policy=tuple(facts.policy),
+        surcharges=tuple(facts.surcharge_rates),
+    )
+    payment = PagoDelTexto(text=text, subtotal=facts.subtotal, cod_min=facts.cod_min, surcharges=tuple(facts.surcharges))
+    status = EstadoDelTexto(text=text, order=facts.order, stage=facts.stage, pay_status=facts.pay_status)
+    coupon = CuponDelTexto(
+        text=text, known=tuple(facts.coupons_known), valid=tuple(facts.coupons_valid),
+        valid_lines=tuple(facts.coupons_lines), valid_percents=tuple(facts.coupons_percents),
+    )
+    denial = NegacionDelTexto(
+        text=text, titles=tuple(facts.titles_all), own=tuple(facts.own_labels), products=tuple(facts.titles)
+    )
+    figure = CifraDelCliente(
+        text=text, customer=facts.customer_text, figures=tuple(facts.order_figures), order=facts.figure_truth
+    )
+    box = CajaDelTexto(
+        text=text, productos=tuple(title for title, _n, _p in facts.boxes),
+        por_caja=tuple(n for _t, n, _p in facts.boxes), precios=tuple(price or 0 for _t, _n, price in facts.boxes),
+    )
+    (aromas, colors, variant, wrong_prices, payments, states, coupons, denials, figures, boxes) = await asyncio.gather(
+        ask("aroma_ajeno", labels(facts.own_aromas, facts.aromas, facts.colors), ()),
+        ask("color_ajeno", labels(facts.own_colors, facts.colors, facts.aromas), ()),
+        ask("variante_ajena", VariantesDelTexto(text=text, sheets=tuple(facts.sheets), single=tuple(facts.single)), False),
+        ask("precio_ajeno", prices, ()),
+        ask("pago_ajeno", payment, ()),
+        ask("estado_ajeno", status, ()),
+        # Sin los cupones leídos no se juzga ninguno (no saber no es «no hay»).
+        ask("cupon_ajeno", coupon, ()) if facts.coupons_checked else _nothing(),
+        ask("negacion_falsa", denial, ()),
+        ask("cifra_del_cliente", figure, ()),
+        # Sin un producto por caja en foco no hay nada que revisar (ni que preguntar).
+        ask("caja_por_unidad", box, ()) if facts.boxes else _nothing(),
+    )
+
+    def pairs(name: str, terms: Sequence[str], inp: Any) -> tuple[tuple[str, str], ...]:
+        """Lo que quedó, con lo cierto que leyó Jev (los mismos ítems del paquete)."""
+        cap = capability_if_present(name)
+        truth = {item["term"]: item["fact"] for item in (cap.items(inp) if cap is not None and terms else ())}
+        return tuple((term, truth.get(term) or "lo que dice el sistema es distinto") for term in terms)
+
+    return Findings(
+        aromas=tuple(aromas), colors=tuple(colors), variant=bool(variant), prices=tuple(wrong_prices),
+        payments=pairs("pago_ajeno", payments, payment), states=pairs("estado_ajeno", states, status),
+        coupons=pairs("cupon_ajeno", coupons, coupon), denials=pairs("negacion_falsa", denials, denial),
+        figures=pairs("cifra_del_cliente", figures, figure), boxes=pairs("caja_por_unidad", boxes, box),
+    )
+
+
+def boxes_in_bundle() -> bool:
+    """¿El paquete activo trae `cajas`? Con uno anterior (ventas-6 y antes),
+    `set_order_slot` anota la cantidad como siempre."""
+    return capability_if_present("cajas") is not None
+
+
+async def boxes_reading(
+    producto: str, cantidad: int, por_caja: int, precio: int | None, charla: str,
+    *, session_id: str, vault_dir: Path | None,
+) -> str | None:
+    """¿La cantidad de un producto que se cobra por caja son cajas o velas?
+    (capacidad `cajas`, laboratorio de ···0686, 2026-10-14): «cajas», «velas»
+    o «duda». None si el paquete no trae la decisión (ventas-6 y antes): la
+    cantidad se anota como siempre."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CajasDelPedido
+
+    cap = capability_if_present("cajas")
+    if cap is None:
+        return None
+    verdict = await decide_for_session(
+        cap,
+        CajasDelPedido(producto=producto, cantidad=cantidad, por_caja=por_caja, precio=precio, charla=charla),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return verdict.value
+
+
+async def bulk_reading(
+    charla: str, cifras: Sequence[int], productos: Sequence[str], por_caja: Sequence[int],
+    *, session_id: str, vault_dir: Path | None,
+) -> str | None:
+    """¿El pedido al por mayor que el bot va a pasar a un colega son velas
+    sueltas de lo que se cobra por caja? (capacidad `por_mayor`, laboratorio
+    2026-10-14: «me vendes 36 velitas?» eran 3 cajas): «velas», «por_mayor» o
+    «duda». None si el paquete no trae la decisión: escala como siempre."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import PedidoPorMayor
+
+    cap = capability_if_present("por_mayor")
+    if cap is None:
+        return None
+    verdict = await decide_for_session(
+        cap,
+        PedidoPorMayor(charla=charla, cifras=tuple(cifras), productos=tuple(productos), por_caja=tuple(por_caja)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return verdict.value
+
+
+async def named_box_reading(
+    producto: str, por_caja: int, otro: str, otro_por_caja: int, charla: str,
+    *, session_id: str, vault_dir: Path | None,
+) -> str | None:
+    """¿El cliente pide el producto que va a anotar el asesor o el de la caja
+    que nombró? (capacidad `caja_nombrada`, laboratorio de ···0686,
+    2026-10-14: «Dos cajas de 12» y se anotó la ondulada, que trae 10):
+    «este», «otro» o «duda». None si el paquete no trae la decisión: se anota
+    como siempre."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CajaNombrada
+
+    cap = capability_if_present("caja_nombrada")
+    if cap is None:
+        return None
+    verdict = await decide_for_session(
+        cap,
+        CajaNombrada(producto=producto, por_caja=por_caja, otro=otro, otro_por_caja=otro_por_caja, charla=charla),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    return verdict.value
 
 
 async def catalog_choice_buttons(

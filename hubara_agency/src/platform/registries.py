@@ -3,7 +3,15 @@ from pathlib import Path
 from exoclaw.agent.tools.registry import ToolRegistry
 from exoclaw_temporal.config import LLMConfig, WorkspaceConfig
 
-from src.platform.config import API_BASE_LLMLITE ,DEFAULT_LLM_MODEL, DEEPSEEK_API_KEY, WORKSPACE_VAULT_DIR
+from src.platform.config import (
+    API_BASE_LLMLITE,
+    DEFAULT_LLM_MODEL,
+    LLM_API_KEY_ENV,
+    LLM_CALL_DEADLINE_S,
+    LLM_FALLBACK_DEADLINE_S,
+    LLM_FALLBACK_MODEL,
+    WORKSPACE_VAULT_DIR,
+)
 
 # PR-G post-mortem (workflow session-wa_573125671604):
 # Las tools `ReadFileTool` / `WriteFileTool` de `exoclaw_tools_workspace.filesystem`
@@ -48,14 +56,25 @@ def build_default_llm_config() -> LLMConfig:
     - temperature=0.1: respuestas estables. Con thinking encendido DeepSeek
       IGNORABA este valor; apagado vuelve a respetarse (era otra razón para
       apagarlo). El fallback `gemini-backup` siempre lo respetó.
+    - call_deadline_s / fallback_model / fallback_deadline_s: tope TOTAL de cada
+      llamada de `llm_chat` y respaldo por el proxy si vence o falla (incidente
+      del 2026-10-15: DeepSeek saturado colgó las llamadas). Valores y su
+      porqué: `LLM_*` en config.py. Guard: tests/platform/test_llm_fallback_wiring.py.
+    - api_key_env, SIN api_key (2026-10-19): este config viaja en los payloads
+      de Temporal y queda en la historia de Temporal Cloud, así que solo nombra
+      la variable; `llm_chat` lee la llave del entorno del worker al llamar.
+      Guard: tests/plugins/test_llm_key_not_in_temporal_history.py.
     """
     return LLMConfig(
         model=DEFAULT_LLM_MODEL,
-        api_key=DEEPSEEK_API_KEY,
+        api_key_env=LLM_API_KEY_ENV,
         api_base=API_BASE_LLMLITE,
         temperature=0.1,
         max_tokens=32768,
-        max_iterations=10 # Cap the iterations for general tasks
+        max_iterations=10, # Cap the iterations for general tasks
+        call_deadline_s=LLM_CALL_DEADLINE_S,
+        fallback_model=LLM_FALLBACK_MODEL,
+        fallback_deadline_s=LLM_FALLBACK_DEADLINE_S,
     )
 
 def build_workspace_config(session_id: str) -> WorkspaceConfig:

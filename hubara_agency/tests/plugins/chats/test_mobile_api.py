@@ -567,6 +567,47 @@ def test_fires_join_waiting_chats_with_late_and_unverified_orders(h: _Harness) -
     assert carla["subtitle"] == "Pedido #40 · $95.000" and carla["updated_ms"] == NOW - 3 * 60 * _MIN
 
 
+def test_a_reaction_a_thanks_or_an_ok_after_the_answer_is_not_a_fire(h: _Harness) -> None:
+    """Caso del operador (2026-10-15): el cliente reaccionaba con 👍, decía «gracias» o cerraba con «ok perfecto» y el
+    chat quedaba como incendio (grave a los 10 min, con aviso push). Esos mensajes no esperan respuesta de nadie."""
+    answered = [
+        {"role": "user", "content": "¿me lo mandan mañana?", "timestamp": _iso(NOW - 41 * _MIN)},
+        {"role": "assistant", "sender": "human", "content": "Sí, sale mañana temprano", "timestamp": _iso(NOW - 40 * _MIN)},
+    ]
+    closers = {
+        "wa_test_reaccion": "[el cliente reaccionó con 👍]",
+        "wa_test_quito": "[el cliente quitó su reacción]",
+        "wa_test_sticker": "[el cliente envió un sticker]",
+        "wa_test_gracias": "Muchas gracias 🙏",
+        "wa_test_ok": "Ok perfecto",
+        "wa_test_despedida": "listo, gracias, feliz tarde",
+        "wa_test_emoji": "❤️",
+    }
+    for sid, text in closers.items():
+        h.seed(sid, {"active_route": "humano", "escalation_reason": "EXPLICIT_REQUEST", "profile": {"name": "Ana"},
+                     "last_inbound_at_ms": NOW - 30 * _MIN},
+               events=[*answered, {"role": "user", "content": text, "timestamp": _iso(NOW - 30 * _MIN)}])
+    # Una pregunta sin responder sigue esperando aunque después reaccione: se cuenta desde la pregunta.
+    h.seed("wa_test_pregunta", {"active_route": "humano", "profile": {"name": "Eva"}, "last_inbound_at_ms": NOW - 14 * _MIN},
+           events=[*answered, {"role": "user", "content": "¿y el de lavanda tiene descuento?", "timestamp": _iso(NOW - 15 * _MIN)},
+                   {"role": "user", "content": "[el cliente reaccionó con 👍]", "timestamp": _iso(NOW - 14 * _MIN)}])
+    # «Ok, ¿y cuándo llega?» pregunta algo: sí espera respuesta.
+    h.seed("wa_test_ok_pregunta", {"active_route": "humano", "profile": {"name": "Luz"}, "last_inbound_at_ms": NOW - 3 * _MIN},
+           events=[*answered, {"role": "user", "content": "Ok, ¿y cuándo llega?", "timestamp": _iso(NOW - 3 * _MIN)}])
+
+    r = h.client.get("/api/chats/mobile/fires")
+
+    assert r.status_code == 200, r.text
+    fires = {f["fire_id"]: f for f in r.json()["fires"]}
+    assert set(fires) == {"chat:wa_test_pregunta", "chat:wa_test_ok_pregunta"}
+    assert fires["chat:wa_test_pregunta"]["subtitle"] == "15 min sin respuesta · 1 mensaje"
+    assert fires["chat:wa_test_ok_pregunta"]["severity"] == "hoy"
+    # La página «Humano» del widget cuenta lo mismo: en los chats cerrados nadie espera.
+    human = {c["session_id"]: c["unanswered"] for c in h.client.get("/api/chats/mobile/human").json()["human"]}
+    assert {human[sid] for sid in closers} == {0}
+    assert human["wa_test_pregunta"] == 1
+
+
 def test_fires_survive_medusa_down_with_the_inbox_legacy_rule(h: _Harness) -> None:
     h.seed("wa_test_carla", {
         "active_route": "humano", "escalation_reason": "PAYMENT_VERIFICATION_PENDING", "tag": "HUMANO",

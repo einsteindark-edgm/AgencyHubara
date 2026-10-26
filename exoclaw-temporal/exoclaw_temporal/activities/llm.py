@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import os
+
 import litellm
 import structlog
 from exoclaw_provider_litellm.provider import LiteLLMProvider
 from temporalio import activity
 
-from exoclaw_temporal.config import LLMChatInput, LLMResponseData, ToolCallData
+from exoclaw_temporal.config import LLMChatInput, LLMConfig, LLMResponseData, ToolCallData
 
 logger = structlog.get_logger()
 
@@ -83,9 +87,126 @@ def _detach_baggage(token) -> None:
         pass
 
 
+def _api_key(llm: LLMConfig) -> str | None:
+    """La llave de la llamada, para el principal y el respaldo: la del payload
+    si la trae (inputs agendados antes de que la llave saliera del payload), si
+    no la de la variable ``api_key_env`` del entorno del worker."""
+    if llm.api_key:
+        return llm.api_key
+    if not llm.api_key_env:
+        return None
+    key = os.environ.get(llm.api_key_env)
+    if not key:
+        # Sin llave, `litellm_proxy/` falla en el cliente si el proceso no tiene
+        # `OPENAI_API_KEY`: el worker mal configurado se ve acá, con el nombre
+        # de la variable.
+        logger.warning("llm_api_key_missing", env=llm.api_key_env, model=llm.model)
+    return key or None
+
+
+async def _chat(
+    provider: LiteLLMProvider,
+    input: LLMChatInput,
+    *,
+    model: str,
+    reasoning_effort: str | None,
+    deadline_s: float | None,
+):
+    """Una llamada al modelo; con ``deadline_s`` es un tope TOTAL.
+
+    ``asyncio.wait_for`` cancela la llamada al vencer: el cliente HTTP cierra la
+    conexión. El ``timeout`` de litellm, en cambio, es por lectura y un servidor
+    que manda bytes de relleno (DeepSeek saturado: una línea vacía por minuto)
+    lo reinicia para siempre.
+    """
+    tool_defs = input.tool_definitions()
+    call = provider.chat(
+        messages=input.messages,
+        tools=tool_defs if tool_defs else None,
+        model=model,
+        temperature=input.llm.temperature,
+        max_tokens=input.llm.max_tokens,
+        reasoning_effort=reasoning_effort,
+    )
+    if deadline_s is None:
+        return await call
+    return await asyncio.wait_for(call, timeout=deadline_s)
+
+
+async def _chat_with_fallback(provider: LiteLLMProvider, input: LLMChatInput):
+    """La llamada con su tope; si vence o falla, la misma petición al respaldo.
+
+    El respaldo va sin ``reasoning_effort`` (es del modelo principal) y con su
+    propio tope: un respaldo colgado no repite el problema. Si también falla,
+    el error sube y Temporal reintenta el intento. Un intento CANCELADO
+    (``CancelledError``, que no es ``Exception``) se cancela: no cae al respaldo.
+    """
+    llm = input.llm
+    try:
+        return await _chat(
+            provider,
+            input,
+            model=llm.model,
+            reasoning_effort=llm.reasoning_effort,
+            deadline_s=llm.call_deadline_s,
+        )
+    except Exception as exc:  # noqa: BLE001 — cualquier falla del principal va al respaldo
+        if not llm.fallback_model:
+            raise
+        baggage = input.baggage or {}
+        # Falla técnica = se recupera sola y avisa: nunca en silencio.
+        logger.warning(
+            "llm_fallback",
+            cause="timeout" if isinstance(exc, (TimeoutError, litellm.Timeout)) else "error",
+            primary_model=llm.model,
+            fallback_model=llm.fallback_model,
+            deadline_s=llm.call_deadline_s,
+            session_id=baggage.get("session.id"),
+            episode_id=baggage.get("episode.id"),
+            error=f"{type(exc).__name__}: {str(exc)[:300]}",
+        )
+        return await _chat(
+            provider,
+            input,
+            model=llm.fallback_model,
+            reasoning_effort=None,
+            deadline_s=llm.fallback_deadline_s,
+        )
+
+
+#: Cada cuánto late `llm_chat` mientras espera al modelo (el workflow le pone
+#: `heartbeat_timeout`: si el worker muere a mitad de la llamada, el reintento
+#: sale en segundos y no al vencer el `start_to_close` de 5 min).
+_HEARTBEAT_EVERY_S: float = 10
+
+
+async def _heartbeat_loop() -> None:
+    # El primer latido sale al primer intervalo, no al arrancar: cada heartbeat
+    # que llega al servidor es una acción facturable de Temporal Cloud, y una
+    # respuesta que tarda menos que el intervalo no necesita ninguno.
+    while True:
+        await asyncio.sleep(_HEARTBEAT_EVERY_S)
+        activity.heartbeat()
+
+
 @activity.defn
 async def llm_chat(input: LLMChatInput) -> LLMResponseData:
-    """Call the LLM. Runs as a Temporal activity so it's retried on failure."""
+    """Call the LLM. Runs as a Temporal activity so it's retried on failure.
+
+    Heartbeats every ``_HEARTBEAT_EVERY_S`` while the model thinks (same pattern
+    as ``execute_tool``); outside an activity (direct calls in tests) it doesn't.
+    """
+    heartbeat_task = asyncio.create_task(_heartbeat_loop()) if activity.in_activity() else None
+    try:
+        return await _llm_chat(input)
+    finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await heartbeat_task
+
+
+async def _llm_chat(input: LLMChatInput) -> LLMResponseData:
     # HU-003: attach del baggage (session.id/episode.id/whatsapp.number) ANTES del
     # LLM call, para que el span gen_ai de OpenLIT lo reciba como atributos
     # (atribución de costo por conversación). Temporal NO propaga baggage
@@ -93,21 +214,13 @@ async def llm_chat(input: LLMChatInput) -> LLMResponseData:
     _baggage_token = _attach_baggage(input.baggage)
     try:
         provider = _CacheAwareLiteLLMProvider(
-            api_key=input.llm.api_key,
+            api_key=_api_key(input.llm),
             api_base=input.llm.api_base,
             default_model=input.llm.model,
             extra_headers=input.llm.extra_headers or None,
         )
 
-        tool_defs = input.tool_definitions()
-        response = await provider.chat(
-            messages=input.messages,
-            tools=tool_defs if tool_defs else None,
-            model=input.llm.model,
-            temperature=input.llm.temperature,
-            max_tokens=input.llm.max_tokens,
-            reasoning_effort=input.llm.reasoning_effort,
-        )
+        response = await _chat_with_fallback(provider, input)
 
         return LLMResponseData(
             content=response.content,

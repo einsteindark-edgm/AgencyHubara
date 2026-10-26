@@ -23,6 +23,7 @@ with workflow.unsafe.imports_passed_through():
     )
     from src.platform.temporal.retry_policies import _LLM_OPTIONS
     from src.sdk.agentkit import (
+    continue_as_new_due,
     is_no_message_abstention,
     looks_like_admin_leak,
     salvage_customer_text,
@@ -46,6 +47,7 @@ with workflow.unsafe.imports_passed_through():
         VerifyOutput,
         complement_note_of,
         delivered_card_texts,
+        delivered_card_contents,
         delivered_components,
         perceive_burst_activity,
         plan_of,
@@ -148,6 +150,10 @@ _MAX_TURN_RESTARTS = 2
 # un turno que todavía no le mostró nada al cliente vuelve a empezar con ella.
 # Tope: la visión tarda 2 a 8 s; una foto que no llega no retiene más.
 _PHOTO_WAIT_MAX = timedelta(seconds=15)
+# Los envíos y el flush laten (`@with_heartbeat`): si el worker muere a mitad,
+# Temporal los reintenta a los 30 s y no al vencer su `start_to_close`
+# (premortem de la Ola 0 de Temporal, 2026-10-16). Solo opciones: replay seguro.
+_SEND_HEARTBEAT = timedelta(seconds=30)
 _PHOTO_PATCH = "burst-waits-for-photo-v1"
 
 
@@ -286,6 +292,19 @@ def _note_guard(
         guards.append(name)
 
 
+def _persist_args_with_wamids(args: list, delivered: object) -> list:
+    """Args de `persist_assistant_message_activity` con las burbujas que
+    salieron (`[{wamid, text}]`, 4.º argumento): el doble check de WhatsApp
+    del chat se une por esos wamids (caso 2026-10-15).
+
+    Siempre, sin depender del patch: es solo el contenido de la activity (L-22).
+    `workflow.patched` recuerda su primer resultado en todo el run: en un run
+    que venía de antes del deploy era False y los mensajes nuevos salían sin
+    wamids. `deprecate_patch` deja reproducir los runs que ya grabaron la marca."""
+    workflow.deprecate_patch("persist-wamids-v1")
+    return [*args, *([None] * (3 - len(args))), delivered if isinstance(delivered, list) else None]
+
+
 def _text_outbound(text: str, delivered: object) -> dict:
     """Paso `outbound` de un envío de texto. `delivered` es lo que devolvió
     `send_whatsapp_message_activity`: `[{wamid, text}]` desde la traza v2;
@@ -338,6 +357,43 @@ def _perception_settings(raw: object) -> tuple[str | None, str | None]:
     mode = mode if isinstance(mode, str) and mode in _PERCEPTION_MODES else None
     valid_profile = isinstance(profile, str) and 0 < len(profile) <= 40 and profile.replace("-", "").isalnum()
     return mode, (profile if valid_profile else None)
+
+
+def _continue_as_new_input(wf: Any, input: SalesSessionInput, session_id: str, turn_count: int) -> SalesSessionInput:
+    """El input del run siguiente (V1 y V2): el contador acumulado y lo que el
+    run lleva del turno (auditoría de Temporal, 2026-10-15). Solo payload del
+    continue-as-new: no cambia comandos."""
+    return SalesSessionInput(
+        session_id=session_id,
+        turn_count=turn_count,
+        runtime_workspace_path=input.runtime_workspace_path,
+        pending_topics=list(wf._pending_topics) or None,
+        perception_mode=wf._perception_mode,
+        perception_profile=wf._perception_profile,
+        photos_reading=sorted(wf._photos_reading) or None,
+        # Solo el V2 recuerda lo que entró con un traspaso (caso 2026-10-16).
+        handoff_wamids=sorted(getattr(wf, "_handoff_wamids", ())) or None,
+        # Solo el V2 avisa de una respuesta que no se confirmó (`delivery_v2`).
+        undelivered=list(getattr(wf, "_undelivered", ())) or None,
+    )
+
+
+def _restore_carried(wf: Any, input: SalesSessionInput) -> None:
+    """Lo que el run anterior pasó por el continue-as-new; una sesión nueva no
+    trae nada. Corre en el `@workflow.init`, antes de cualquier señal."""
+    mode, profile = _perception_settings(
+        {"perception_mode": input.perception_mode, "perception_profile": input.perception_profile}
+    )
+    if mode is not None:
+        wf._perception_mode = mode
+    if profile is not None:
+        wf._perception_profile = profile
+    wf._pending_topics = [t for t in input.pending_topics or [] if isinstance(t, str)]
+    wf._photos_reading.update(w for w in input.photos_reading or [] if isinstance(w, str))
+    if hasattr(wf, "_handoff_wamids"):
+        wf._handoff_wamids.update(w for w in input.handoff_wamids or [] if isinstance(w, str))
+    if hasattr(wf, "_undelivered"):
+        wf._undelivered = [n for n in input.undelivered or [] if isinstance(n, str)]
 
 
 def _burst_messages(batch: list[PendingMessage]) -> list[dict[str, Any]]:
@@ -452,7 +508,8 @@ async def _system_turn_clock() -> list[str]:
 class HubaraSalesSessionWorkflow:
     """Long-running session workflow with ghosting injection mechanism."""
 
-    def __init__(self) -> None:
+    @workflow.init
+    def __init__(self, input: SalesSessionInput) -> None:
         self._pending: list[PendingMessage] = []
         self._last_response: str | None = None
         self._processing = False
@@ -465,6 +522,7 @@ class HubaraSalesSessionWorkflow:
         # Fotos del cliente que el ingest está leyendo (wamid): la ráfaga las
         # espera (texto antes de la foto, 2026-09-30).
         self._photos_reading: set[str] = set()
+        _restore_carried(self, input)
 
     @workflow.signal
     async def photo_reading(self, wamid: Any = None, done: Any = False) -> None:
@@ -604,7 +662,10 @@ class HubaraSalesSessionWorkflow:
             input,
             **_LLM_OPTIONS,
         )
+        # `turn_count` es el acumulado (claves de los turnos); el tope de
+        # continue-as-new cuenta los de este run (`run_turns`).
         turn_count = input.turn_count
+        run_turns = 0
 
         # Handoff Remarketing→Sales (Fix 3, gated): el dispatcher escribio
         # `pending_handoff_summary` en metadata.json al transferir. Lo leemos +
@@ -1041,6 +1102,7 @@ class HubaraSalesSessionWorkflow:
                         break
                     self._last_response = result.final_content
                     turn_count += 1
+                    run_turns += 1
                     # Id determinista del turno (traza v2): no depende del
                     # contador de la activity de la traza, que puede correrse.
                     turn_key = f"run:{workflow.info().run_id}/t:{turn_count}"
@@ -1389,12 +1451,13 @@ class HubaraSalesSessionWorkflow:
                             send_whatsapp_message_activity,
                             args=[session.session_id, greeting],
                             start_to_close_timeout=timedelta(seconds=90),
+                            heartbeat_timeout=_SEND_HEARTBEAT,
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
                         trace_steps.append(_text_outbound(greeting, greeting_delivered))
                         await workflow.execute_activity(
                             persist_assistant_message_activity,
-                            args=[session.session_id, greeting],
+                            args=_persist_args_with_wamids([session.session_id, greeting], greeting_delivered),
                             start_to_close_timeout=timedelta(seconds=10),
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
@@ -1446,6 +1509,7 @@ class HubaraSalesSessionWorkflow:
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, pre_msg],
                                 start_to_close_timeout=timedelta(seconds=90),
+                                heartbeat_timeout=_SEND_HEARTBEAT,
                                 retry_policy=RetryPolicy(maximum_attempts=2),
                             )
                             trace_steps.append(_text_outbound(pre_msg, pre_delivered))
@@ -1453,7 +1517,7 @@ class HubaraSalesSessionWorkflow:
                             if workflow.patched("persist-assistant-message-v1"):
                                 await workflow.execute_activity(
                                     persist_assistant_message_activity,
-                                    args=[session.session_id, pre_msg],
+                                    args=_persist_args_with_wamids([session.session_id, pre_msg], pre_delivered),
                                     start_to_close_timeout=timedelta(seconds=10),
                                     retry_policy=RetryPolicy(maximum_attempts=2),
                                 )
@@ -1642,6 +1706,7 @@ class HubaraSalesSessionWorkflow:
                                 # Solo las tarjetas que el cliente recibe (ni
                                 # `send_reply` ni las tools que se negaron).
                                 components=delivered_components(result.tool_events),
+                                card_contents=delivered_card_contents(result.tool_events),
                             )
                         )
                         trace_steps.append(_verify_step(verify_out, verified_ms, applied=True))
@@ -1653,6 +1718,9 @@ class HubaraSalesSessionWorkflow:
                         and not leak_blocked
                     ):
                         # Evitamos enviar respuestas vacías o alucinar respuestas internas durante auto-cierres
+                        # Sin envío (selector de variantes) no hay burbujas: el
+                        # chat lo mostrará «sin confirmación».
+                        final_delivered: object = None
                         if not suppress_text_for_picker:
                             # El texto promete que un colega lo atiende y
                             # nadie escaló: la red escala antes de enviarlo
@@ -1672,6 +1740,7 @@ class HubaraSalesSessionWorkflow:
                                 send_whatsapp_message_activity,
                                 args=[session.session_id, result.final_content],
                                 start_to_close_timeout=timedelta(seconds=90),
+                                heartbeat_timeout=_SEND_HEARTBEAT,
                                 retry_policy=RetryPolicy(maximum_attempts=2)
                             )
                             trace_steps.append(
@@ -1709,6 +1778,7 @@ class HubaraSalesSessionWorkflow:
                             ]
                             if workflow.patched("persist-tools-used-v1"):
                                 _persist_args.append(list(result.tools_used or []))
+                                _persist_args = _persist_args_with_wamids(_persist_args, final_delivered)
                             await workflow.execute_activity(
                                 persist_assistant_message_activity,
                                 args=_persist_args,
@@ -1736,6 +1806,7 @@ class HubaraSalesSessionWorkflow:
                             flush_pending_ui_intents_activity,
                             args=[session.session_id],
                             start_to_close_timeout=timedelta(seconds=120),
+                            heartbeat_timeout=_SEND_HEARTBEAT,
                             retry_policy=RetryPolicy(maximum_attempts=2),
                         )
                         flush_step = _flush_outbound(flush_report)
@@ -1795,6 +1866,7 @@ class HubaraSalesSessionWorkflow:
                                         trace_sent_texts, None, delivered_card_texts(result.tool_events)
                                     ),
                                     components=delivered_components(result.tool_events),
+                                    card_contents=delivered_card_contents(result.tool_events),
                                 )
                             )
                             trace_steps.append(_verify_step(shadow_verify, shadow_verified_ms, applied=False))
@@ -1993,16 +2065,11 @@ class HubaraSalesSessionWorkflow:
                     self._processing = False
 
             # continue_as_new to keep history bounded
-            if turn_count >= _CONTINUE_AS_NEW_AFTER_TURNS and not self._pending:
+            if not self._pending and continue_as_new_due(
+                run_turns=run_turns, total_turns=turn_count, limit=_CONTINUE_AS_NEW_AFTER_TURNS
+            ):
                 # F-string: stdlib logging usa `%s`, no `{}`; el formato previo
                 # `"Reached {} turns", N` lanzaba TypeError al disparar (bug
                 # latente que solo se activaba al pasar 50 turnos).
-                workflow.logger.info(
-                    f"Reached {_CONTINUE_AS_NEW_AFTER_TURNS} turns, continuing as new"
-                )
-                workflow.continue_as_new(
-                    SalesSessionInput(
-                        session_id=session.session_id,
-                        turn_count=turn_count,
-                    )
-                )
+                workflow.logger.info(f"Continue-as-new tras {run_turns} turnos del run ({turn_count} en total)")
+                workflow.continue_as_new(_continue_as_new_input(self, input, session.session_id, turn_count))

@@ -121,6 +121,15 @@ export interface ChatQuote {
   imageUrl?: string;
 }
 
+/** El doble check de una burbuja saliente, listo para pintar. `time`: la hora
+ *  (Bogotá) del estado; ausente si WhatsApp no la mandó o no hubo estado. */
+export interface ChatDeliveryItem {
+  status: "sent" | "delivered" | "read" | "failed" | "unconfirmed";
+  time?: string;
+  errorCode?: number;
+  errorTitle?: string;
+}
+
 export interface ChatMessageItem {
   kind: MessageKind;
   text?: string;
@@ -134,7 +143,9 @@ export interface ChatMessageItem {
    *    (regla 5: los derivados de reloj se computan en render).
    *  - En una burbuja es el día al que pertenece. Vacío si no hay timestamp. */
   dayIso?: string;
-  status?: "sent" | "read";
+  /** Doble check de WhatsApp (solo `kind: "out"`): lo que Meta informó del
+   *  mensaje, o `unconfirmed` si no llegó ningún estado. */
+  delivery?: ChatDeliveryItem;
   dur?: string;
   /** Sólo definido cuando kind="out". Indica si lo escribió el bot o el humano operador. */
   author?: OutboundAuthor;

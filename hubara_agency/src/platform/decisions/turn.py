@@ -72,10 +72,35 @@ class _WithCriteria(_Strict):
         return self
 
 
+class TopicVerify(_Strict):
+    """La pregunta de ③ propia de un asunto (ventas-7, 2026-10-13: «¿le MUESTRA
+    los productos que pidió?» para el catálogo, en vez de «¿lo atiende?»).
+    `{label}` y `{where}` como la de todos; sí/no."""
+
+    text: str = Field(min_length=1)
+    criteria: dict[str, str]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _yaml_booleans(cls, data: Any) -> Any:
+        return yaml_booleans(data)
+
+    @model_validator(mode="after")
+    def _yes_no(self) -> Any:
+        if set(self.criteria) != {"true", "false"}:
+            raise ValueError("la pregunta de ③ es noul: criteria con exactamente las llaves true y false")
+        return self
+
+
 class TurnTopic(_Strict):
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     label: str = Field(min_length=1)
     hint: str = ""
+    #: ③ con su propia pregunta; sin esto, la de `questionnaire.verify`.
+    verify: TopicVerify | None = None
+    #: Lo que la burbuja de más hace cuando ③ dice que falta este asunto (p. ej.
+    #: mostrar los productos, que un texto no muestra). Sin esto, la de siempre.
+    complement: str = ""
 
 
 class BurstQuestion(_WithCriteria):
@@ -173,6 +198,12 @@ class ReplyState(_Strict):
     empty: str = Field(min_length=1)
     #: `{components}`: las tarjetas que también recibe el cliente.
     components: str = Field(min_length=1)
+    #: `{contents}`: lo que MUESTRAN esas tarjetas (los productos de la lista,
+    #: las etiquetas de los botones). Sin esto, ③ no lo ve.
+    contents: str | None = None
+    #: ③ ve también el contexto del turno (lo que el cliente vio antes y los
+    #: hechos del pedido), como la ráfaga.
+    with_context: bool = False
 
 
 class TurnQuestionnaire(_Strict):

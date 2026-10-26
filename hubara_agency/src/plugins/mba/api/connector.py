@@ -51,7 +51,7 @@ from src.plugins.mba.domain.tool_calls import (
 )
 from src.plugins.mba.service import list_agents, load_agent
 from src.plugins.mba.tools import ToolDeps, default_deps, run_tool
-from src.sdk.runtime import client_ip, mba_customer_allowed
+from src.sdk.runtime import client_ip, is_placeholder, mba_customer_allowed
 
 PUBLIC_ROUTER = True
 API_KEY_ENV = "HUBARA_MBA_API_KEY"
@@ -86,7 +86,8 @@ def get_tool_deps() -> ToolDeps:
 
 def _check_api_key(presented: str | None, *, client: str, tool: str) -> None:
     expected = os.environ.get(API_KEY_ENV, "")
-    if not expected:
+    # El relleno de SSM está en el repo público: mientras sea el valor, no hay llave.
+    if is_placeholder(expected):
         # el nombre de la variable va al log (operador), no al cliente anónimo
         logger.warning(
             "[mba] connector sin {} configurada; 503 a {} para {}",

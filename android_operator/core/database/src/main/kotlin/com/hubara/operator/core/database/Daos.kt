@@ -20,20 +20,51 @@ interface ConversationDao {
     @Upsert
     suspend fun upsert(rows: List<ConversationEntity>)
 
-    @Query("DELETE FROM conversations WHERE sessionId NOT IN (:keep)")
-    suspend fun deleteAllExcept(keep: List<String>)
+    @Query("SELECT sessionId, windowExpiresAtMs FROM conversations")
+    suspend fun stored(): List<StoredConversation>
+
+    @Query("DELETE FROM conversations WHERE sessionId IN (:ids)")
+    suspend fun delete(ids: List<String>)
 
     @Query("UPDATE conversations SET route = :route WHERE sessionId = :sessionId")
     suspend fun setRoute(sessionId: String, route: String)
 
-    /** La bandeja manda la lista completa: se conserva la ventana de 24 h que llegó con cada detalle. */
+    /**
+     * La bandeja manda la lista completa: se conserva la ventana de 24 h que llegó con cada detalle. Nada liga un
+     * parámetro por chat: Android 11 (SQLite 3.28) no acepta más de 999 en una consulta y con más chats la bandeja
+     * quedaba congelada (caso 2026-10-15). Lo que sobra se borra en tandas.
+     */
     @Transaction
     suspend fun replaceAll(rows: List<ConversationEntity>) {
-        val windows = rows.associate { it.sessionId to get(it.sessionId)?.windowExpiresAtMs }
-        upsert(rows.map { it.copy(windowExpiresAtMs = it.windowExpiresAtMs ?: windows[it.sessionId]) })
-        deleteAllExcept(rows.map { it.sessionId })
+        val before = stored().associate { it.sessionId to it.windowExpiresAtMs }
+        upsert(rows.map { it.copy(windowExpiresAtMs = it.windowExpiresAtMs ?: before[it.sessionId]) })
+        val keep = rows.mapTo(HashSet()) { it.sessionId }
+        before.keys.filterNot { it in keep }.chunked(MAX_BOUND_ARGS).forEach { delete(it) }
+    }
+
+    @Query("SELECT sessionId, windowExpiresAtMs FROM conversations WHERE sessionId IN (:ids)")
+    suspend fun storedOf(ids: List<String>): List<StoredConversation>
+
+    /**
+     * Lo que cambió de la bandeja (el tiempo real manda solo eso): esos chats se actualizan con su ventana de 24 h y los
+     * que ya no están se borran. Los demás no se tocan. En tandas, por el tope de 999 parámetros.
+     */
+    @Transaction
+    suspend fun applyChanges(rows: List<ConversationEntity>, removed: List<String>) {
+        val before = rows.map { it.sessionId }.chunked(MAX_BOUND_ARGS).flatMap { storedOf(it) }
+            .associate { it.sessionId to it.windowExpiresAtMs }
+        upsert(rows.map { it.copy(windowExpiresAtMs = it.windowExpiresAtMs ?: before[it.sessionId]) })
+        removed.chunked(MAX_BOUND_ARGS).forEach { delete(it) }
+    }
+
+    companion object {
+        /** Muy por debajo de los 999 parámetros que acepta el SQLite de Android 11. */
+        const val MAX_BOUND_ARGS = 500
     }
 }
+
+/** Lo guardado de un chat que la bandeja necesita al reemplazar la lista. */
+data class StoredConversation(val sessionId: String, val windowExpiresAtMs: Long?)
 
 @Dao
 interface MessageDao {

@@ -197,6 +197,7 @@ async def reconcile_one(
     port: OrderRegistrationPort,
     max_attempts: int = DEFAULT_MAX_ATTEMPTS,
     quota_recheck: QuotaRecheck | None = None,
+    coupon_grants: Any = None,
 ) -> ReconciliationOutcome:
     """Reintenta registrar en Medusa UN pedido fallido. Idempotente.
 
@@ -217,6 +218,11 @@ async def reconcile_one(
         si ya no alcanzan (otro cliente se las llevó mientras Medusa estaba
         caído) NO se registra: queda `abandoned` con `quota_changed` para un
         humano — nunca se vende dos veces la última unidad.
+      * Cupón personal (`coupon_granted_only`, premortem C2): el reintento
+        relee la concesión (`coupon_grants`; por defecto la del vault). Si se
+        usó o venció mientras tanto, NO se registra con el descuento: queda
+        `abandoned` con `coupon_not_granted` para un humano. Si el pedido
+        sale, la concesión se gasta (un solo uso).
     """
     metadata_file = Path(vault_dir) / session_key / "metadata.json"
     data = _read_metadata(metadata_file)
@@ -294,6 +300,42 @@ async def reconcile_one(
             error_detail=f"record malformado: {type(exc).__name__}: {exc}",
             attempts=len(prior_attempts),
         )
+
+    granted_code = _granted_only_code(record)
+    grants = None
+    if granted_code is not None:
+        grants = coupon_grants if coupon_grants is not None else _default_grants()
+        try:
+            grant_ok = grants.active(session_key, granted_code, _now_ms()) is not None
+        except Exception as exc:  # noqa: BLE001 — sin releer la concesión no se registra
+            log.warning(
+                "reconcile_one: audit_id=%s sin releer el cupón personal %s (%s): sigue pendiente",
+                audit_id, granted_code, exc,
+            )
+            return _still_failing(
+                metadata_file, audit_id, record, prior_attempts, max_attempts, session_key,
+                provider=str(record.get("provider") or "medusa"),
+                error_detail=f"grant_unavailable: no pude releer el cupón personal ({type(exc).__name__})",
+            )
+        if not grant_ok:
+            record["status"] = STATUS_ABANDONED
+            record["abandoned_at_ms"] = _now_ms()
+            record["abandon_reason"] = "coupon_not_granted"
+            _save_record(metadata_file, audit_id, record)
+            log.warning(
+                "reconcile_one: audit_id=%s NO se reintenta: el cupón personal %s ya se usó o venció",
+                audit_id, granted_code,
+            )
+            return ReconciliationOutcome(
+                session_key=session_key,
+                audit_id=audit_id,
+                outcome=OUTCOME_ABANDONED,
+                error_detail=(
+                    f"coupon_not_granted: el cupón personal {granted_code} ya se usó o venció; "
+                    "re-confirmar el total sin el descuento con el cliente y registrarlo a mano"
+                ),
+                attempts=len(prior_attempts),
+            )
 
     needed = _quota_units_needed(record)
     result: OrderRegistrationResult
@@ -383,6 +425,8 @@ async def reconcile_one(
         record["resolved_at_ms"] = now
         record["resolution"] = "auto"
         _save_record(metadata_file, audit_id, record)
+        if granted_code is not None and grants is not None:
+            _spend_grant(grants, session_key, granted_code, result.order_id, now, audit_id)
         log.info(
             "reconcile_one: audit_id=%s RESUELTO → order_id=%s provider=%s",
             audit_id, result.order_id, result.provider,
@@ -560,6 +604,74 @@ def _locate_record(data: dict[str, Any], audit_id: str):
     return None
 
 
+def _granted_only_code(record: dict[str, Any]) -> str | None:
+    """El código del cupón personal del record, o None."""
+    code = record.get("coupon_code")
+    if record.get("coupon_granted_only") and isinstance(code, str) and code.strip():
+        return code.strip().upper()
+    return None
+
+
+def _default_grants() -> Any:
+    from src.platform.promotions.composition import get_coupon_grants_store
+
+    return get_coupon_grants_store()
+
+
+def _spend_grant(
+    grants: Any, session_key: str, code: str, order_id: str | None, now_ms: int, audit_id: str
+) -> None:
+    """El pedido salió: la concesión se gasta. Si no hay qué gastar (se usó
+    en otro lado entre la relectura y acá), queda un aviso en el log."""
+    try:
+        used = grants.mark_used(session_key, code, str(order_id or audit_id), now_ms)
+    except Exception as exc:  # noqa: BLE001 — el pedido ya existe
+        log.warning(
+            "reconcile_one: audit_id=%s no pude gastar el cupón personal %s: %s", audit_id, code, exc
+        )
+        return
+    if used is None:
+        log.warning(
+            "reconcile_one: audit_id=%s el cupón personal %s de %s no tenía concesión vigente "
+            "al gastarlo (pedido %s)",
+            audit_id, code, session_key, order_id,
+        )
+
+
+def _still_failing(
+    metadata_file: Path,
+    audit_id: str,
+    record: dict[str, Any],
+    prior_attempts: list[Any],
+    max_attempts: int,
+    session_key: str,
+    *,
+    provider: str,
+    error_detail: str,
+) -> ReconciliationOutcome:
+    """Un intento que no llegó a Medusa: cuenta y, en el tope, se abandona."""
+    now = _now_ms()
+    attempts = [
+        *prior_attempts,
+        {"ts_ms": now, "ok": False, "provider": provider, "order_id": None, "error_detail": error_detail},
+    ]
+    record["reconciliation_attempts"] = attempts
+    outcome = OUTCOME_STILL_FAILING
+    if len(attempts) >= max_attempts:
+        record["status"] = STATUS_ABANDONED
+        record["abandoned_at_ms"] = now
+        outcome = OUTCOME_ABANDONED
+    _save_record(metadata_file, audit_id, record)
+    return ReconciliationOutcome(
+        session_key=session_key,
+        audit_id=audit_id,
+        outcome=outcome,
+        provider=provider,
+        error_detail=error_detail,
+        attempts=len(attempts),
+    )
+
+
 def _rebuild_order_args(
     record: dict[str, Any],
 ) -> tuple[list[OrderItem], OrderShipping, dict[str, Any]]:
@@ -637,4 +749,7 @@ def _rebuild_order_args(
         ]
         kwargs["coupon_code"] = str(record["coupon_code"])
         kwargs["discount_cop"] = int(record.get("discount_cop") or 0)
+    # Envío gratis de la campaña: el reintento lo registra igual (envío $0).
+    if isinstance(record.get("free_shipping"), dict):
+        kwargs["free_shipping"] = dict(record["free_shipping"])
     return items, shipping, kwargs

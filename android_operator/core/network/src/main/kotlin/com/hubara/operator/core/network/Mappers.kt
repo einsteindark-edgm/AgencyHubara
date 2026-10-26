@@ -31,6 +31,8 @@ import com.hubara.operator.core.model.ShippingAddress
 import com.hubara.operator.core.model.Suggestion
 import com.hubara.operator.core.model.SuggestionSet
 import com.hubara.operator.core.model.SuggestionTone
+import com.hubara.operator.core.model.WhatsAppDelivery
+import com.hubara.operator.core.model.WhatsAppStatus
 import com.hubara.operator.core.network.dto.ActionRefDto
 import com.hubara.operator.core.network.dto.ChatMessageDto
 import com.hubara.operator.core.network.dto.ChatSessionDto
@@ -49,6 +51,8 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 
 // Todo lo que llega del backend se valida acá: un id inválido descarta la fila, un enum nuevo cae en
 // su valor por defecto. Ninguna pantalla ve un DTO.
@@ -150,6 +154,25 @@ internal fun JsonElement?.toCard(): MessageCard? {
     }
 }
 
+/** El doble check de un saliente; sin dato o con un estado que la app no conoce: «sin confirmación» (nunca un
+ *  check inventado). */
+internal fun JsonElement?.toWhatsAppDelivery(): WhatsAppDelivery {
+    val d = this as? JsonObject ?: return WhatsAppDelivery.UNCONFIRMED
+    val status = when (d["status"].str()) {
+        "sent" -> WhatsAppStatus.SENT
+        "delivered" -> WhatsAppStatus.DELIVERED
+        "read" -> WhatsAppStatus.READ
+        "failed" -> WhatsAppStatus.FAILED
+        else -> return WhatsAppDelivery.UNCONFIRMED
+    }
+    return WhatsAppDelivery(
+        status = status,
+        atMs = (d["at_ms"] as? JsonPrimitive)?.longOrNull,
+        errorCode = (d["error_code"] as? JsonPrimitive)?.intOrNull,
+        errorTitle = d["error_title"].str(),
+    )
+}
+
 /** El cliente tocó un botón: su título. */
 private fun JsonElement?.tapTitle(): String? =
     (this as? JsonObject)?.takeIf { it["kind"].str() == "button_tap" }?.get("title").str()
@@ -165,9 +188,10 @@ fun SessionDetailsDto.toDomain(): ChatDetail? {
             // repetido (FakeSend de desarrollo) lleva el índice para no chocar en Room ni en la lista.
             val base = m.wamid ?: "i$index:${ts ?: 0}"
             val card = m.event.toCard()
+            val author = m.author(card)
             Message(
                 key = if (usedKeys.add(base)) base else "$base#$index",
-                author = m.author(card),
+                author = author,
                 text = m.content,
                 imageUrl = m.imageUrl,
                 timestampMs = ts,
@@ -175,6 +199,7 @@ fun SessionDetailsDto.toDomain(): ChatDetail? {
                 arrivedAfterWindow = (m.arrivedAfterWindow as? JsonPrimitive)?.booleanOrNull == true,
                 card = card,
                 tap = if (m.uiType == "user_message") m.event.tapTitle() else null,
+                whatsapp = if (author == Author.BOT || author == Author.HUMAN) m.delivery.toWhatsAppDelivery() else null,
             )
         }
     return ChatDetail(

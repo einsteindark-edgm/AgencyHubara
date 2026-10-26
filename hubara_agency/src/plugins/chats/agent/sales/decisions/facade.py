@@ -13,7 +13,7 @@ import json
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from src.plugins.chats.agent.sales.card_texts import card_texts, envelope_card_text
+from src.plugins.chats.agent.sales.card_texts import card_contents, card_texts, envelope_card_text
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES as PERCEPTION_ACTIVITIES,
     perceive_burst_activity as perceive_burst_activity,
@@ -36,7 +36,7 @@ from src.plugins.chats.agent.sales.decisions.egress_activities import (
 )
 from src.plugins.chats.agent.sales.decisions.plan import PlanTopic, TurnPlan, uncovered_topics
 from src.plugins.chats.agent.sales.read_only_tools import READ_ONLY_TOOLS
-from src.sdk.agentkit import TurnPolicy
+from src.sdk.agentkit import TurnPolicy, is_no_message_abstention
 
 # Tools que tocan al cliente (envían o encolan algo que el flush entrega).
 _CARD_PREFIXES = ("present_", "send_", "request_")
@@ -92,20 +92,34 @@ def _no_extra_round(_tools_used: list[str], _shown: str) -> None:
     return None
 
 
-def contract_policy_of(decisions: TurnDecisions | None) -> TurnPolicy | None:
+#: La ronda de un `NO_MESSAGE` cuando el cliente escribió (caso 2026-10-16).
+_CUSTOMER_WAITS_NOTE = (
+    "El cliente te escribió y espera tu respuesta: contéstale a lo que dijo, siguiendo la "
+    "conversación. En este turno no puedes quedarte callado."
+)
+
+
+def contract_policy_of(decisions: TurnDecisions | None, *, customer_waits: bool = False) -> TurnPolicy | None:
     """Segunda puerta del turno (F6, workflow V2): si el LLM va a cerrar con
     texto (suelto o por `send_reply`) sin la tool que el contrato GRABADO pedía
     (`tools.required`) y el cliente todavía no vio nada, UNA ronda más con la
     nota de las que faltan.
     Sin contrato grabado (perfiles sin tools, resultados viejos), None: el
-    turno de hoy. Sin la ronda ② por palabras (diferencia 3 del V2)."""
+    turno de hoy. Sin la ronda ② por palabras (diferencia 3 del V2).
+
+    `customer_waits` (el turno trae lo que el cliente le escribió a
+    remarketing, caso 2026-10-16): si el LLM se abstiene con el centinela
+    `NO_MESSAGE` (protocolo, no una lectura del texto), UNA ronda más con la
+    nota de que el cliente espera respuesta."""
     tools = getattr(decisions, "tools", None) if decisions is not None else None
     required = tools.get("required") if isinstance(tools, Mapping) else None
     rows = [r for r in required or [] if isinstance(r, Mapping) and r.get("any_of")]
-    if not rows:
+    if not rows and not customer_waits:
         return None
 
-    def final_round_note(tools_used: list[str], _draft: str) -> str | None:
+    def final_round_note(tools_used: list[str], draft: str) -> str | None:
+        if customer_waits and is_no_message_abstention(draft):
+            return _CUSTOMER_WAITS_NOTE
         missing = [r for r in rows if not set(r.get("any_of") or []) & set(tools_used)]
         if not missing:
             return None
@@ -159,6 +173,21 @@ def delivered_components(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
         if _refused(event.get("result")):
             continue
         out.append(name)
+    return out
+
+
+def delivered_card_contents(tool_events: Sequence[Mapping[str, Any]]) -> list[str]:
+    """③ Lo que MUESTRAN las tarjetas del turno (`card_contents`), de las que
+    no se negaron y en su orden. Viaja a la verificación aparte del texto: el
+    paquete decide si Jev lo ve (`reply_state.contents`). Puro."""
+    out: list[str] = []
+    for event in tool_events:
+        if _refused(event.get("result")):
+            continue
+        args = event.get("args")
+        shown = card_contents(str(event.get("name") or ""), args if isinstance(args, Mapping) else {}, event.get("result"))
+        if shown:
+            out.append(shown)
     return out
 
 

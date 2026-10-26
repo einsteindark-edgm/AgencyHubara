@@ -545,6 +545,23 @@
           "minLength": 1,
           "title": "Components",
           "type": "string"
+        },
+        "contents": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contents"
+        },
+        "with_context": {
+          "default": false,
+          "title": "With Context",
+          "type": "boolean"
         }
       },
       "required": [
@@ -636,6 +653,30 @@
         "topic"
       ],
       "title": "TopicRef",
+      "type": "object"
+    },
+    "TopicVerify": {
+      "additionalProperties": false,
+      "description": "La pregunta de ③ propia de un asunto (ventas-7, 2026-10-13: «¿le MUESTRA\nlos productos que pidió?» para el catálogo, en vez de «¿lo atiende?»).\n`{label}` y `{where}` como la de todos; sí/no.",
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "criteria": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Criteria",
+          "type": "object"
+        }
+      },
+      "required": [
+        "text",
+        "criteria"
+      ],
+      "title": "TopicVerify",
       "type": "object"
     },
     "TurnExamples": {
@@ -736,6 +777,22 @@
         "hint": {
           "default": "",
           "title": "Hint",
+          "type": "string"
+        },
+        "verify": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TopicVerify"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "complement": {
+          "default": "",
+          "title": "Complement",
           "type": "string"
         }
       },

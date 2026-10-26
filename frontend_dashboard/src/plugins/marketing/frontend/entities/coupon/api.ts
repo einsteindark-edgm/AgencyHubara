@@ -85,6 +85,7 @@ export function mapBackendCoupon(b: BackendCoupon): Coupon {
     acceptsUnits: b.accepts_units,
     units: b.units === null ? null : { total: b.units.total, left: b.units.left },
     firstPurchaseOnly: b.first_purchase_only,
+    grantedOnly: b.granted_only,
   };
 }
 
@@ -162,6 +163,7 @@ export function couponInputToBody(input: CouponInput): Record<string, unknown> {
     ends_on: input.endsOn,
     status: input.status,
     first_purchase_only: input.firstPurchaseOnly ?? false,
+    granted_only: input.grantedOnly ?? false,
   };
 }
 
@@ -175,6 +177,7 @@ export function couponPatchToBody(patch: CouponPatch): Record<string, unknown> {
   if (patch.startsOn !== undefined) body.starts_on = patch.startsOn;
   if (patch.endsOn !== undefined) body.ends_on = patch.endsOn;
   if (patch.firstPurchaseOnly !== undefined) body.first_purchase_only = patch.firstPurchaseOnly;
+  if (patch.grantedOnly !== undefined) body.granted_only = patch.grantedOnly;
   return body;
 }
 

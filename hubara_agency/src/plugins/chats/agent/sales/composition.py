@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 import os
+import time
 
 from exoclaw_temporal.config import WorkspaceConfig
 from loguru import logger
@@ -46,6 +47,8 @@ from src.platform.state import FilesystemMetadataStore as _PlatformFsMetaStore
 from src.platform.temporal.client import get_temporal_client
 from src.platform.whatsapp.composition import get_current_rate_card
 from src.plugins.chats.agent.sales.config.env import get_workspace_path
+from src.plugins.chats.agent.sales.inbound_effects_store import FilesystemInboundEffects
+from src.sdk import get_task_queue
 from src.plugins.chats.agent.sales.inbound_ledger_store import FilesystemInboundLedger
 from src.plugins.chats.agent.sales.sender_identity_store import FilesystemSenderIdentity
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
@@ -64,6 +67,7 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import QuotaOffer, quo
 from src.plugins.chats.agent.sales.use_cases.coupons import promotion_from_snapshot
 from src.plugins.chats.agent.sales.use_cases.ingest_handover import IngestHandover
 from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import emit_watchdog_events
+from src.plugins.chats.agent.sales.use_cases.inbound_entry import InboundEntry
 from src.plugins.chats.agent.sales.use_cases.ingest_standby import IngestStandby
 from src.plugins.chats.agent.sales.use_cases.photo_product import PhotoIdentifier
 from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import (
@@ -72,6 +76,7 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
 
 
 _INGEST_USE_CASE: IngestInboundMessage | None = None
+_INBOUND_ENTRY: InboundEntry | None = None
 _DELIVERY_STATUS_USE_CASE: IngestDeliveryStatus | None = None
 _STANDBY_USE_CASE: IngestStandby | None = None
 _HANDOVER_USE_CASE: IngestHandover | None = None
@@ -95,6 +100,24 @@ def build_inbound_ledger() -> FilesystemInboundLedger:
     sobrevive a deploys, a diferencia de los logs del container). `_ledger/`
     no empieza con `wa_` → ningún scanner de sesiones lo toma por conversación."""
     return FilesystemInboundLedger(WORKSPACE_VAULT_DIR / "_ledger" / "webhook")
+
+
+def build_inbound_entry() -> InboundEntry:
+    """La entrada durable del webhook (ADR 2026-10-15): deja cada mensaje en
+    Temporal como `InboundMessageWorkflow` en la cola del worker `sales`.
+    Singleton por proceso: el cliente de Temporal se conecta una vez."""
+    global _INBOUND_ENTRY
+    if _INBOUND_ENTRY is None:
+        _INBOUND_ENTRY = InboundEntry(get_temporal_client, task_queue=get_task_queue("chats", "sales"))
+    return _INBOUND_ENTRY
+
+
+def build_inbound_effects() -> FilesystemInboundEffects:
+    """Diario de efectos de la entrada durable (ADR 2026-10-15): lo que un
+    reintento del ingest no repite, por `wamid`, junto al ledger en el vault."""
+    return FilesystemInboundEffects(
+        WORKSPACE_VAULT_DIR / "_ledger" / "inbound_effects", now_ms=lambda: int(time.time() * 1000)
+    )
 
 
 def build_sender_identity() -> FilesystemSenderIdentity:
@@ -167,6 +190,7 @@ def build_ingest_use_case() -> IngestInboundMessage:
     from src.sdk.connectorkit import get_catalog_client, get_web_cart_reader
 
     validate_campaign_coupon, coupon_units_now = _coupon_checks()
+    thanks_coupon = _thanks_coupon_check()
     catalog = get_catalog_client()
     _INGEST_USE_CASE = IngestInboundMessage(
         history_store=history_store,
@@ -183,6 +207,14 @@ def build_ingest_use_case() -> IngestInboundMessage:
         photo_notifier=load_session.notify_photo_reading,
         # El cliente que escribe tras comprar: post-venta con el pedido real.
         order_facts=build_order_facts_reader(),
+        # Cupón de agradecimiento por calificar: se aplica solo al escribirnos.
+        thanks_coupon=thanks_coupon,
+        # La calificación llega al plugin de reseñas por el dispatcher
+        # (premortem C3: sin fábrica no salía nunca).
+        review_client_factory=get_temporal_client,
+        # Entrada durable: un reintento de la activity no repite historial,
+        # aviso a la sesión ni envíos al cliente.
+        effects=build_inbound_effects(),
     )
     return _INGEST_USE_CASE
 
@@ -199,7 +231,7 @@ def _order_facts_port() -> Any:
 
 def build_order_facts_reader() -> Callable[[str], Awaitable[Any]]:
     """OrderFacts de UN pedido (``None`` si Medusa no lo conoce), con tope:
-    el ingest corre en el webhook y nunca espera más que esto."""
+    el ingest nunca espera más que esto (el mensaje del cliente va detrás)."""
     import asyncio
 
     async def read(order_id: str) -> Any:
@@ -244,6 +276,40 @@ def build_photo_identifier(catalog: Any) -> PhotoIdentifier:
         embedder=get_image_embedding_port(),
         matcher=get_photo_match_port(),
     )
+
+
+def _thanks_coupon_check() -> Callable[[str, int], Awaitable[CouponApplication | None]]:
+    """El cupón de agradecimiento por calificar de quien escribe (reseñas,
+    2026-10-13): la concesión de mayor porcentaje, validada con los mismos
+    puertos del SDK que `apply_coupon` (L-32). None = no tiene ninguna."""
+
+    async def _check(session_id: str, now_ms: int) -> CouponApplication | None:
+        from src.sdk.connectorkit import (
+            get_catalog_client,
+            get_coupon_grants_store,
+            get_promo_quota_store,
+            get_promotions_port,
+        )
+
+        grants = get_coupon_grants_store()
+        grant = grants.first_active(session_id, now_ms)
+        if grant is None:
+            return None
+
+        async def _has_grant(code: str) -> bool:
+            return grants.active(session_id, code, now_ms) is not None
+
+        return await resolve_coupon_application(
+            grant.code,
+            promotions=get_promotions_port(),
+            quotas=get_promo_quota_store(),
+            sales=None,
+            catalog=get_catalog_client(),
+            now_ms=now_ms,
+            has_grant=_has_grant,
+        )
+
+    return _check
 
 
 def _coupon_checks() -> tuple[
@@ -326,8 +392,19 @@ def build_ingest_delivery_status_use_case() -> IngestDeliveryStatus:
         event_bus=event_bus,
         vault_dir=WORKSPACE_VAULT_DIR,
         tenant_id=tenant_id,
+        on_delivery_recorded=_publish_session_updated,
     )
     return _DELIVERY_STATUS_USE_CASE
+
+
+def _publish_session_updated(session_id: str) -> None:
+    """El doble check de WhatsApp en vivo: el panel y la App Operador ya
+    recargan el detalle de una conversación con `chats.session_updated` (canal
+    1, SSE). Los estados se ingieren en el proceso de la API, donde vive el bus.
+    Import local: el bus es del proceso API, no de los workers."""
+    from src.sdk.dashboardkit import get_dashboard_event_bus
+
+    get_dashboard_event_bus().publish("chats", "session_updated", id=session_id)
 
 
 def build_ingest_standby_use_case() -> IngestStandby:
@@ -343,12 +420,22 @@ def build_ingest_standby_use_case() -> IngestStandby:
         # con la fábrica REAL de Temporal: sin ella el emisor es un no-op.
         await emit_watchdog_events(session_id, metadata, temporal_client_factory=get_temporal_client)
 
+    async def _standby_review_reply(
+        session_id: str, wa_message_id: str, response_json: dict, received_at_ms: int
+    ) -> None:
+        # Premortem C9: la calificación que llega con MBA al frente va por el
+        # MISMO emisor del ingest regular (pendientes + reintentos).
+        await build_ingest_use_case().emit_review_submitted(
+            session_id, wa_message_id, response_json, received_at_ms
+        )
+
     _STANDBY_USE_CASE = IngestStandby(
         metadata_store=_PlatformFsMetaStore(WORKSPACE_VAULT_DIR),
         history_store=FilesystemMessageHistoryStore(WORKSPACE_VAULT_DIR),
         vault_dir=WORKSPACE_VAULT_DIR,
         is_customer_allowed=mba_customer_allowed,
         emit_window_events=_standby_window_events,
+        on_review_reply=_standby_review_reply,
     )
     return _STANDBY_USE_CASE
 

@@ -1,0 +1,78 @@
+# Guion de venta de UNA campaña (un archivo por campaña). Lo lee
+# `chats/shared/sales_campaigns.py`; la guía está en `README.md` de esta carpeta.
+#
+# Solo entra a las conversaciones de esta campaña: las que vienen de uno de sus
+# anuncios, cuyo pedido tiene uno de sus productos, o donde el cliente nombra uno
+# de sus productos o manda su foto. Las demás conversaciones no
+# cambian (una prueba lo exige). Para cambiar el guion, edita este archivo; para
+# otra campaña, crea otro archivo.
+#
+# Los precios NO se escriben aquí: el bot los recibe del catálogo (Medusa), igual
+# que el combo y el mínimo de contra entrega. Escribir un precio aquí lo
+# desfasaría de Medusa (una prueba lo frena).
+#
+# Caso que lo originó (fin de semana 17-18 oct 2026): 36 conversaciones de los
+# anuncios de las velitas y una sola venta. Preguntaban el precio apenas veían el
+# catálogo, una caja no alcanzaba el mínimo de contra entrega y nada los movía a
+# comprar ya («hay tiempo todavía»). Decisiones del operador (2026-10-19): combo
+# de dos cajas, el cupón de bienvenida del 5 % como incentivo y el precio por
+# mayor de la descripción de cada producto.
+id: velitas-7-dic
+nombre: Velitas del 7 de diciembre
+activa: true
+desde: 2026-10-01
+hasta: 2026-12-07
+# Handles de Medusa de los productos de la campaña.
+productos:
+  - velas-de-deseos-onduladas
+  - velas-de-deseos-cuadradas
+# Palabras del título o del texto del anuncio, o del primer mensaje del cliente
+# (el mensaje prellenado), sin tildes ni mayúsculas.
+anuncios:
+  - velitas de intencion
+  - kit de velitas
+  - velitas del 7 de diciembre
+  - noche de velitas
+# Cuántas cajas lleva el combo; el bot recibe el total de cada combinación y si
+# paga contra entrega.
+combo_cajas: 2
+# Envío gratis desde esta cantidad de cajas de la campaña (se pueden mezclar), a
+# cualquier ciudad y con cualquier medio de pago (operador, 2026-10-20). Con
+# esas cajas, el pedido entero va sin envío aunque lleve otros productos; los
+# otros productos no suman para llegar a la cantidad. El sistema no cobra el
+# envío al registrar el pedido; con menos cajas se cobra como siempre. Vacío =
+# sin envío gratis.
+envio_gratis_desde_cajas: 6
+# El incentivo para comprar ya: el código del cupón en Medusa (dashboard →
+# Marketing → Cupones). El bot dice su valor y su fecha límite tal como están
+# allá: si el cupón vence el 31 de octubre, dice «hasta el 31 de octubre»; si
+# en el dashboard le cambias el «hasta» al 15 de noviembre, dice eso, sin
+# deploy. Vencido o desactivado, no lo ofrece. Nunca se escribe una fecha aquí.
+# Es un cupón propio de la campaña (decisión del operador, 2026-10-20): así la
+# fecha límite no vence el cupón de bienvenida de toda la tienda.
+cupon: VELITAS5
+# El toque de remarketing que lleva la oferta del cupón, solo para quien tuvo
+# intención de compra y no compró (eligió un producto, dio datos, aplazó o
+# confirmó: lo que leyó Jev en sus mensajes, o un pedido a medias).
+toque_oferta: 2
+guion:
+  - "Primera respuesta: en el intro_text del catálogo escribe el precio de cada caja y cuántas velas trae (los tienes arriba). En esta campaña SÍ escribes los precios aunque la tarjeta también los muestre: casi todos los clientes preguntan el precio apenas ven el catálogo."
+  - "Cierra cada mensaje con UNA propuesta concreta y no con otra pregunta abierta: recomienda una caja (la de más velas rinde más para regalar) o el combo, y pregúntale si se la apartas."
+  - "El combo es la oferta de la campaña: una caja para la casa y otra para regalar. Ofrécelo cuando dude, cuando pregunte por el pago o el envío, cuando diga que es para regalar o para la casa, o cuando pida una sola. Las líneas del combo de arriba dicen si paga contra entrega: dilo solo cuando su línea lo dice."
+  - "Si pregunta «el costo», «cuánto vale» o «el precio» sin nombrar el envío, es el precio de la caja: dalo. Las tarifas de envío van solo si pregunta por el envío."
+  - "Si quiere contra entrega con una sola caja, dile con calidez que esa caja sola va con pago anticipado (Nequi o link de pago) y ofrécele el combo cuando su línea dice que paga contra entrega."
+  - "Para que no lo deje para última hora: el cupón de la campaña, tal como te lo paso arriba (su valor y, si la tiene, su fecha límite; solo cuando rige). Ofrécelo cuando dude o aplace la compra («te aviso», «hay tiempo», «más adelante»); cuando el cliente aplaza, el sistema te lo avisa. Va con el argumento del anuncio: mejor dejar listas las velitas desde ya y no a última hora. No inventes otra fecha, escasez ni cupos."
+  - "Si es para vender, para un negocio o un emprendimiento: dale el precio por mayor que dice la descripción del producto (get_product_by_handle) y desde cuántas cajas aplica. Si quiere esa cantidad, pásalo con un colega como siempre."
+  - "Los aromas y las presentaciones son los de la ficha del producto: no ofrezcas otros."
+  # Operador, 2026-10-22: «están pidiendo mucho personalizarla con nombre».
+  - "Si pide otra forma, otro tamaño o un diseño distinto, o personalizarlas con su nombre, una dedicatoria o una palabra suya: dile con calidez que este año no las estamos personalizando ni haciendo otras formas, que las que tenemos disponibles son estas dos cajas, y no ofrezcas excepciones, pedidos especiales ni consultarlo con un colega. En ese mismo mensaje véndele el diseño actual con el concepto de su descripción (get_product_by_handle): las intenciones que trae cada caja en relieve con su símbolo, el mensaje que llevan y para qué son, el aroma, que son hechas a mano y los colores para escoger, todo como lo dice la descripción; no le agregues materiales ni otros datos que ella no diga. Ayúdale a escoger (para quién es, qué intenciones quiere regalar) y cierra con una propuesta concreta: la caja que más le sirva o el combo."
+# Un texto por toque de remarketing; del último en adelante se repite el último.
+toques:
+  - "Cuéntale en una o dos líneas qué son, con lo que dice su ficha, el precio de las dos cajas, y propónle el combo (si su línea dice que paga contra entrega, díselo). Termina preguntándole si le apartas una caja o el combo."
+  - "Lo práctico, en positivo: el combo y si paga al recibir (según su línea) y, si tienes los DATOS DE LA TIENDA, cuánto tarda en llegar."
+  - "El argumento del anuncio, sin presión: que no le pase como el año pasado, mejor dejar listas las velitas desde ya para la Noche de Velitas. Cierra con la puerta abierta."
+ejemplos:
+  primera_respuesta:
+    - "Para la Noche de Velitas tenemos dos cajas de velas de deseos: la ondulada trae 10 velas por [su precio] y la cuadrada 12 por [su precio]. ¿Te aparto una o el combo de 2, una para tu casa y otra para regalar? 🤍"
+  toques:
+    - "Las velas de deseos llevan cada una su intención en relieve 🕯️ La ondulada de 10 está en [su precio] y la cuadrada de 12 en [su precio]. ¿Te aparto el combo de 2, una para tu casa y otra para regalar?"

@@ -39,8 +39,25 @@ def build_remarketing_trigger(
     catalog_facts: str = "",
     unavailable_terms: list[str] | None = None,
     post_purchase: str = "",
+    silent_after_catalog: bool = False,
+    catalog_described: bool = False,
+    sales_campaign_script: str = "",
+    sales_campaign_examples: list[str] | None = None,
 ) -> str:
     """Saludo proactivo inicial inyectado al LLM al arrancar el workflow.
+
+    `silent_after_catalog` (análisis 2026-10-13): el cliente pidió, vio el
+    catálogo y no volvió a escribir. El 1er toque le EXPLICA lo que vio con la
+    ficha real (si la ficha tiene descripción: `catalog_described`) y el 2º le
+    resuelve envío, tiempos y pago con los datos de la tienda
+    (`domain.yaml: vocabulary.practical_facts`). Sin esos datos, el gancho de
+    siempre.
+
+    `sales_campaign_script` (operador, 2026-10-19): el guion de la campaña de venta del
+    episodio, ya redactado para este toque (precios del catálogo, combo,
+    cupón vigente); sus ejemplos reemplazan a los de la tienda y su cupón es
+    la excepción a la regla 3. "" = el gancho de siempre, sin un carácter
+    distinto.
 
     `campaign_context` (runs edbb0d8b / 8e73b7dc): la campaña que abrió el
     episodio activo. El gancho es sobre ESA campaña — sin esto retomó la
@@ -73,12 +90,32 @@ def build_remarketing_trigger(
         return _post_purchase_trigger(
             post_purchase, transcript=transcript, catalog_facts=catalog_facts
         )
+    # Los ejemplos y los datos de la tienda (domain.yaml del paquete activo, F5).
+    store = vocabulary()
+    practical_facts = str(store.get("practical_facts") or "").strip()
+    explain = touch_number == 1 and silent_after_catalog and catalog_described and bool(catalog_facts)
+    practical = touch_number == 2 and silent_after_catalog and bool(practical_facts)
     # Incidente run dc32f7fe (2026-09-10): el encabezado afirmaba "quedó
     # pendiente de cerrar una compra" aunque no hubiera pedido → "quedó
     # pendiente lo de tu pedido" a un cliente que solo miró la lista. Con el
     # flag de draft (activity v2) el framing es honesto; `None` = path legacy
     # (histories en vuelo replayean la activity vieja con 2 args).
-    if has_order_draft is False:
+    if explain:
+        situacion = (
+            "El cliente escribió pidiendo información, le enviamos el catálogo "
+            "y no volvió a escribir: no eligió nada ni preguntó nada. Este "
+            "mensaje le cuenta lo que la tarjeta del catálogo no le dijo: qué "
+            "es lo que vio y por qué vale la pena, con los datos de su ficha "
+            "real. NO hables de 'tu pedido': no existe."
+        )
+    elif practical:
+        situacion = (
+            "El cliente escribió pidiendo información, recibió el catálogo y "
+            "un primer mensaje de seguimiento, y sigue sin responder. Este mensaje le resuelve las dudas prácticas que frenan "
+            "una compra: cuánto tarda en llegar, cuánto vale el envío y cómo "
+            "puede pagar. NO hables de 'tu pedido': no existe."
+        )
+    elif has_order_draft is False:
         situacion = (
             "El cliente miró productos pero NO eligió ninguno ni dejó un "
             "pedido a medias. NO hables de 'tu pedido', NO ofrezcas "
@@ -115,7 +152,13 @@ def build_remarketing_trigger(
             "NO es motivo de abstención: este mensaje es el siguiente paso "
             "planificado.\n"
         )
-        if touch_number > 1:
+        if practical:
+            ladder_block += (
+                "Escribe un mensaje DISTINTO al anterior: ya no le expliques el "
+                "producto, resuélvele lo práctico con los DATOS DE LA TIENDA. "
+                "NUNCA repitas la misma frase ni le reproches que no respondió.\n"
+            )
+        elif touch_number > 1:
             detail_angle = (
                 "un detalle concreto que esté en el CATÁLOGO REAL del "
                 "producto que miró, "
@@ -153,6 +196,15 @@ def build_remarketing_trigger(
         if campaign_context
         else ""
     )
+    script_block = f"{sales_campaign_script}\n\n" if sales_campaign_script else ""
+    coupon_exception = (
+        " La única excepción es el cupón que trae el GUION DE LA CAMPAÑA, tal "
+        "como viene (su valor, su fecha límite y sus condiciones), y su envío "
+        "gratis desde cierta cantidad de cajas si el guion lo trae (nunca con "
+        "menos cajas): no cambies su valor ni su fecha, ni le sumes otro beneficio."
+        if sales_campaign_script
+        else ""
+    )
     # Incidente 2026-09-25: sin catálogo, la escalera ("un detalle concreto")
     # empujó al LLM a inventar: «el Cubo Love también viene en vaso», «las de
     # vaso son las más pedidas», ofrecer «la del dragón» (no la vendemos).
@@ -178,21 +230,111 @@ def build_remarketing_trigger(
         else ""
     )
     catalog_source = (
-        "en el CATÁLOGO REAL de arriba"
+        "en el CATÁLOGO REAL de arriba o en el GUION DE LA CAMPAÑA"
+        if catalog_facts and sales_campaign_script
+        else "en el CATÁLOGO REAL de arriba"
         if catalog_facts
         else "en ningún lado: no tienes el catálogo, así que no afirmes ningún "
         "atributo de producto y ofrece ayuda para elegir"
     )
-    # Los ejemplos de la tienda (domain.yaml del paquete activo, F5).
-    store = vocabulary()
+    store_block = (
+        "DATOS DE LA TIENDA (uso interno — la única fuente para envío, tiempos "
+        f"y pago):\n{practical_facts}\n\n"
+        if practical
+        else ""
+    )
+    if explain or practical:
+        neutral_phrases = (
+            "Usa frases neutras, sin decir 'quedó pendiente' ni 'retomar': el "
+            "cliente no dejó nada pendiente."
+        )
+        topic_rule = (
+            "4. **Qué contarle**: elige una o dos de las piezas que vio (están "
+            "en la ficha) y cuéntale qué son y para qué sirven con lo que dice "
+            "su descripción: el aroma, cómo están hechas, para qué ocasión son. "
+            "Un beneficio concreto, no una lista de nombres: los nombres ya los "
+            "vio en la tarjeta. Si la colección es de una fecha (Halloween, el "
+            "7 de diciembre…), nómbrala tal como aparece en la conversación o "
+            "en la ficha.\n\n"
+            if explain
+            else "4. **Qué contarle**: uno o dos datos de los DATOS DE LA TIENDA "
+            "(cuánto tarda en llegar, el envío, cómo pagar), conectados con lo "
+            "que vio. Los tiempos son los de siempre de la tienda, NUNCA una "
+            "promesa ('te llega antes del…', 'te llega el viernes'). Las tarifas "
+            "de envío son mínimas: dilo así. Si un medio de pago tiene una "
+            "condición (un monto mínimo), di la condición.\n\n"
+        )
+        # El último toque cierra con la puerta abierta, sin pregunta insistente
+        # (revisión de producción del PR #426: con Frecuencia 2 el 2º pedía las dos cosas).
+        last = touch_number is not None and total_touches is not None and touch_number >= total_touches
+        format_rule = (
+            "5. **Formato**: 2 a 4 líneas cortas y cálidas. No empieces con "
+            "«Hola de nuevo». "
+            + (
+                "Cierra dejando la puerta abierta, sin pregunta insistente.\n\n"
+                if last
+                else "Termina con UNA pregunta fácil de contestar (si es para él o "
+                "para regalar, a qué ciudad sería el envío, si le cuentas los "
+                "aromas), no con '¿te ayudo con algo?'.\n\n"
+            )
+        )
+        # Los datos de la tienda solo los ve (y la guarda solo los deja pasar)
+        # el toque que los trae.
+        where_numbers = "ficha, en los datos de la tienda o en la conversación" if practical else "ficha o en la conversación"
+        numbers_rule = (
+            "9. **Números**: No repitas precios: ya los vio en la tarjeta. Solo "
+            "escribe un número (horas, tamaños, días, valores) si está en la "
+            f"{where_numbers}; si escribes uno que no esté ahí, el mensaje NO "
+            "se envía.\n\n"
+        )
+        examples = list(store.get("hook_examples_explain" if explain else "hook_examples_practical") or [])
+    else:
+        neutral_phrases = (
+            "Usa frases neutras como 'te escribo de nuevo', 'pasaba a "
+            "preguntarte', 'quedó pendiente lo de…', 'te recordé y quería…'."
+        )
+        topic_rule = (
+            "4. **Anclaje al motivo**: menciona sutilmente el producto o "
+            f"tema concreto del motivo (ej. {store['hook_topic_examples']}) para que el cliente reconozca el contexto. "
+            "NO leas el motivo textualmente — re-frásalo natural.\n\n"
+        )
+        format_rule = (
+            "5. **Brevedad**: 1-2 frases máximo. WhatsApp es chat — el "
+            "mensaje debe leerse en 3 segundos.\n\n"
+        )
+        numbers_rule = ""
+        examples = list(store["hook_examples"])
+    if sales_campaign_script:
+        # El toque de la campaña dice qué contar y cómo cerrar; sus precios y
+        # su combo son datos del catálogo (los armó la activity).
+        format_rule = (
+            "5. **Formato**: 2 a 4 líneas cortas y cálidas. No empieces con "
+            "«Hola de nuevo». Haz lo que dice el GUION DE LA CAMPAÑA para este "
+            "toque.\n\n"
+        )
+        numbers_rule = (
+            "9. **Números**: los precios y el combo del GUION DE LA CAMPAÑA los "
+            "escribes tal como vienen. Cualquier otro número (horas, tamaños, "
+            "días, valores) solo si está en la ficha o en la conversación; si "
+            "escribes uno que no esté ahí, el mensaje NO se envía.\n\n"
+        )
+        examples = list(sales_campaign_examples or []) or examples
+    examples_block = (
+        "**EJEMPLOS de buen gancho** (referencia, no copies literal):\n"
+        + "\n".join(f"- '{example}'" for example in examples)
+        if examples
+        else ""
+    )
     return (
         "[SISTEMA INTERNO — NO REPRODUCIR ESTE TEXTO AL CLIENTE]: "
         f"{situacion}\n\n"
+        f"{script_block}"
         f"{campaign_block}"
         f"MOTIVO REGISTRADO DE CIERRE (uso interno): '{motivo}'.\n"
         f"MEMORIA DE EVENTOS PASADOS (uso interno):{memory_context}\n\n"
         f"{transcript_block}"
         f"{catalog_block}"
+        f"{store_block}"
         f"{ladder_block}"
         "REGLAS DEL GANCHO (todas obligatorias):\n\n"
         "1. **Identidad**: eres el MISMO Asesor de Hubara que ya conversó "
@@ -202,19 +344,15 @@ def build_remarketing_trigger(
         "2. **Tiempo**: NO conoces el tiempo real transcurrido desde el "
         "último mensaje (pueden haber sido minutos o días — no lo sabes). "
         "PROHIBIDO usar frases temporales específicas: 'hace unos días', "
-        "'hace 48 horas', 'ayer', 'la otra vez', 'hace tiempo'. Usa "
-        "frases neutras como 'te escribo de nuevo', 'pasaba a "
-        "preguntarte', 'quedó pendiente lo de…', 'te recordé y quería…'.\n\n"
+        "'hace 48 horas', 'ayer', 'la otra vez', 'hace tiempo'. "
+        f"{neutral_phrases}\n\n"
         "3. **Descuentos** (AGENTS.md → Prohibición absoluta de descuentos): "
         "NUNCA ofrezcas envío gratis, descuentos ni beneficios extra, "
         "tampoco si el motivo menciona 'caro' o una queja de precio (el "
-        "envío lo cobra la transportadora a su tarifa). Retoma con un "
-        "saludo casual.\n\n"
-        "4. **Anclaje al motivo**: menciona sutilmente el producto o "
-        f"tema concreto del motivo (ej. {store['hook_topic_examples']}) para que el cliente reconozca el contexto. "
-        "NO leas el motivo textualmente — re-frásalo natural.\n\n"
-        "5. **Brevedad**: 1-2 frases máximo. WhatsApp es chat — el "
-        "mensaje debe leerse en 3 segundos.\n\n"
+        "envío lo cobra la transportadora a su tarifa)."
+        f"{coupon_exception} Retoma con un saludo casual.\n\n"
+        f"{topic_rule}"
+        f"{format_rule}"
         "6. **PROHIBIDO ABSOLUTO**: NO expliques tu razonamiento, NO "
         "menciones archivos internos (AGENTS.md, MEMORY.md, etc.), NO "
         "hables del cliente en tercera persona ('Cliente preguntó…'). "
@@ -237,8 +375,8 @@ def build_remarketing_trigger(
         "inventar popularidad o "
         "valoraciones ('los más pedidos', 'de los más lindos', 'el favorito'): "
         "no tienes datos de ventas.\n\n"
-        "**EJEMPLOS de buen gancho** (referencia, no copies literal):\n"
-        + "\n".join(f"- '{example}'" for example in store["hook_examples"])
+        f"{numbers_rule}"
+        f"{examples_block}"
     )
 
 

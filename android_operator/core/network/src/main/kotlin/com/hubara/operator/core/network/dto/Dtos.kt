@@ -10,6 +10,10 @@ import kotlinx.serialization.json.JsonObject
 @Serializable
 data class SessionsResponse(val sessions: List<ChatSessionDto> = emptyList())
 
+/** `chats.sessions_delta`: las filas de la bandeja que cambiaron y los chats que ya no están. */
+@Serializable
+data class SessionsDeltaDto(val sessions: List<ChatSessionDto> = emptyList(), val removed: List<String> = emptyList())
+
 @Serializable
 data class OrderRefDto(
     @SerialName("order_id") val orderId: String,
@@ -53,6 +57,9 @@ data class ChatMessageDto(
     /** La forma real del mensaje (`chats/shared/chat_events.py`): `bot_card`, `bot_buttons`, `button_tap`…
      *  `JsonElement` a propósito: un evento que la app no conoce o mal formado se ignora (L-10). */
     val event: JsonElement? = null,
+    /** Doble check de WhatsApp de un saliente: `{status, at_ms, error_code, error_title}` con lo que Meta informó
+     *  por webhook (`chats/shared/delivery_status.py`). `JsonElement`: un valor raro queda «sin confirmación». */
+    val delivery: JsonElement? = null,
 )
 
 @Serializable

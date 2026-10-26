@@ -30,7 +30,7 @@ queda como bridge mínimo del payload Meta hacia el ingestor).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from typing import Any
 
 from src.sdk.identitykit import address_from_user_id
@@ -157,6 +157,16 @@ def _profile_name(contacts: Any, from_number: str, user_id: str | None = None) -
     clean = " ".join("".join(ch for ch in name if ch.isprintable()).split())
     return clean[:_PROFILE_NAME_MAX] or None
 
+
+
+def message_from_dict(raw: dict[str, Any]) -> WhatsAppMessage:
+    """El `WhatsAppMessage` de un dict (`dataclasses.asdict`): así viaja por
+    Temporal entre el webhook y los pasos del ingest. Tolerante a la versión
+    que lo dejó: un campo que esta versión no conoce se ignora (un mensaje
+    queda en Temporal durante un deploy); uno nuevo con default lo completa el
+    dataclass."""
+    known = {f.name for f in fields(WhatsAppMessage)}
+    return WhatsAppMessage(**{k: v for k, v in raw.items() if k in known})
 
 @dataclass(frozen=True)
 class RejectedInbound:
@@ -447,6 +457,13 @@ class WhatsAppStatusUpdate:
     timestamp_ms: int | None = None
     #: `errors[0].code` de un `failed` (131049, 131026…).
     error_code: int | None = None
+    #: `errors[0].title` de un `failed` ("Re-engagement message"…).
+    error_title: str | None = None
+    #: A quién iba el mensaje: su teléfono (`recipient_id`) o, si el cliente
+    #: usa nombre de usuario, su BSUID (`recipient_user_id`). Ubica la
+    #: conversación del doble check sin escanear el vault (caso 2026-10-15).
+    recipient_id: str | None = None
+    recipient_user_id: str | None = None
 
 
 def parse_whatsapp_statuses(body: dict) -> list[WhatsAppStatusUpdate]:
@@ -515,12 +532,20 @@ def _parse_status(status: Any) -> WhatsAppStatusUpdate | None:
     errors = status.get("errors")
     first = errors[0] if isinstance(errors, list) and errors else None
     code = first.get("code") if isinstance(first, dict) else None
+    title = first.get("title") if isinstance(first, dict) else None
+    recipient_id = status.get("recipient_id")
+    recipient_user_id = status.get("recipient_user_id")
     return WhatsAppStatusUpdate(
         wa_message_id=wa_message_id,
         status=status_kind,
         pricing=pricing,
         timestamp_ms=timestamp_ms,
         error_code=code if isinstance(code, int) and not isinstance(code, bool) else None,
+        error_title=title if isinstance(title, str) and title else None,
+        recipient_id=recipient_id if isinstance(recipient_id, str) and recipient_id else None,
+        recipient_user_id=(
+            recipient_user_id if isinstance(recipient_user_id, str) and recipient_user_id else None
+        ),
     )
 
 

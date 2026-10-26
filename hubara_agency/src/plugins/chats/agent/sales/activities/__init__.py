@@ -18,6 +18,7 @@ from src.plugins.chats.agent.sales.activities.bootstrap_session import (
     bootstrap_sales_session_activity,
     decide_ghosting_action,
     read_and_clear_pending_handoff_activity,
+    read_handoff_reply_activity,
     read_idle_timeout_seconds_activity,
     read_order_draft_note_activity,
 )
@@ -33,8 +34,8 @@ from src.plugins.chats.agent.sales.activities.inject_context import (
     build_first_contact_greeting_activity,
     compute_bogota_context_activity,
 )
-from src.plugins.chats.agent.sales.activities.transcribe_audio import (
-    transcribe_audio_activity,
+from src.plugins.chats.agent.sales.activities.reply_window import (
+    read_reply_window_activity,
 )
 from src.plugins.chats.agent.sales.activities.turn_trace import (
     persist_turn_trace_activity,
@@ -50,9 +51,10 @@ __all__ = [
     "ensure_payment_pending_closure_activity",
     "ensure_promised_handoff_activity",
     "read_and_clear_pending_handoff_activity",
+    "read_handoff_reply_activity",
     "read_order_draft_note_activity",
     "read_idle_timeout_seconds_activity",
+    "read_reply_window_activity",
     "flush_pending_ui_intents_activity",
     "persist_turn_trace_activity",
-    "transcribe_audio_activity",
 ]

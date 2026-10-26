@@ -79,6 +79,9 @@ class OrderItemDTO:
     # Color y aroma que se despachan (metadata de la línea, premortem C1).
     color: str | None = None
     aroma: str | None = None
+    # El producto en Medusa (reseñas tras la entrega: la calificación del
+    # pedido se publica en la ficha de cada producto).
+    product_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +163,11 @@ class OrderSummaryDTO:
     # `total_cop - shipping_cop`.
     shipping_cop: int = 0
     shipping_confirmed: bool = False
+    # Envío gratis (operador, 2026-10-20): el cliente no paga envío
+    # (`shipping_cop` = 0) y el valor real del despacho, si el operador ya lo
+    # escribió, lo paga la tienda (`store_shipping_cost_cop`, fuera del total).
+    free_shipping: bool = False
+    store_shipping_cost_cop: int | None = None
 
 
 @dataclass(frozen=True)

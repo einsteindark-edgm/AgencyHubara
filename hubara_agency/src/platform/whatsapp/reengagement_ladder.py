@@ -21,6 +21,7 @@ metadata. Sin `from __future__ import annotations`: `LadderState` puede cruzar
 el boundary workflow↔activity (mismo criterio que send_policy.py).
 """
 from dataclasses import dataclass
+from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
 _MIN = 60 * 1000
@@ -131,6 +132,11 @@ def ladder_state(
     if step == 0 and first_gap_ms is not None:
         gap = first_gap_ms
     next_due = (last_touch if last_touch is not None else anchor) + gap
+    # El toque anterior pudo agendar el siguiente (análisis 2026-10-13: el 2º
+    # toque del que se calló tras el catálogo va a la mañana siguiente).
+    scheduled = since_anchor[-1].get("next_at_ms") if since_anchor else None
+    if isinstance(scheduled, int):
+        next_due = scheduled
     return LadderState(
         step=step,
         due=now_ms >= next_due,
@@ -140,8 +146,77 @@ def ladder_state(
     )
 
 
-def record_touch(metadata: dict[str, Any], now_ms: int, kind: str) -> None:
-    """Registra un toque (enviado o abstenido) — muta `metadata` in place."""
+#: «La mañana siguiente» (decisión del operador 2026-10-13): el 2º toque al
+#: cliente que se calló tras el catálogo. A +2h del 1º respondía el 4 %.
+#: Es el valor que el workflow le pasa a `record_remarketing_touch_activity`.
+NEXT_TOUCH_MORNING = "manana_siguiente"
+NEXT_MORNING_HOUR = 9
+#: El horario permitido por defecto (el de `quiet_hours`; en producción lo
+#: fija Terraform: `WATCHDOG_QUIET_HOURS_START/END`). La mañana arranca 15 min
+#: después de que empieza: adelantar el toque para no salir de la ventana,
+#: nunca antes de eso; la tarde, antes de que termine.
+DEFAULT_ALLOWED_FROM = (8, 0)
+DEFAULT_ALLOWED_UNTIL = (21, 30)
+_MORNING_LEAD_MIN = 15
+#: Sin mañana dentro de la ventana (el cliente escribió temprano): la tarde
+#: del mismo día.
+EVENING_HOUR = 19
+#: Margen antes de que cierre la ventana de 24 h: el ciclo corre cada 45 min,
+#: y fuera de la ventana Meta solo acepta plantilla.
+WINDOW_MARGIN_MS = 2 * _HOUR
+
+
+def _at(day: datetime, hour: int, minute: int = 0) -> int:
+    return int(day.replace(hour=hour, minute=minute, second=0, microsecond=0).timestamp() * 1000)
+
+
+def next_morning_at_ms(
+    touch_ms: int,
+    window_expires_ms: int,
+    tz: tzinfo,
+    *,
+    allowed_from: tuple[int, int] = DEFAULT_ALLOWED_FROM,
+    allowed_until: tuple[int, int] = DEFAULT_ALLOWED_UNTIL,
+) -> int | None:
+    """Cuándo sale el toque agendado para «la mañana siguiente» a `touch_ms`;
+    None = no cabe: hueco normal de la escalera.
+
+    Pura (R-DET): las horas son las locales del cliente (`tz`) y el horario
+    permitido es el que se le pasa (`allowed_from`/`allowed_until`). A las 9:00
+    del día siguiente si cabe en la ventana de 24 h con su margen; si no cabe
+    pero la ventana cierra después de que empieza la mañana, en ese último
+    momento; y si la mañana no existe dentro de la ventana, a las 19:00 del
+    mismo día (nunca antes del hueco normal desde el toque anterior). Si ni
+    eso cabe —la ventana cierra antes del hueco normal, o la tarde caería en
+    horas de silencio—, None (revisión de producción del PR #426: agendaba el
+    2º ANTES del 1º o a las 22:30)."""
+    window_end = window_expires_ms - WINDOW_MARGIN_MS
+    earliest_next = touch_ms + LADDER_GAPS_MS[1]
+    if window_end < earliest_next:
+        return None
+    touched = datetime.fromtimestamp(touch_ms / 1000, tz)
+    next_day = touched + timedelta(days=1)
+    lead = datetime(2000, 1, 1, *allowed_from) + timedelta(minutes=_MORNING_LEAD_MIN)
+    earliest_morning = _at(next_day, lead.hour, lead.minute)
+    morning = min(max(_at(next_day, NEXT_MORNING_HOUR), earliest_morning), window_end)
+    if morning >= earliest_morning:
+        return morning
+    evening = min(max(_at(touched, EVENING_HOUR), earliest_next), window_end)
+    if evening >= _at(touched, *allowed_until):
+        return None
+    return evening
+
+
+def record_touch(
+    metadata: dict[str, Any], now_ms: int, kind: str, *, next_at_ms: int | None = None
+) -> None:
+    """Registra un toque (enviado o abstenido) — muta `metadata` in place.
+
+    `next_at_ms`: el toque agenda cuándo sale el siguiente (manda sobre el
+    hueco de la escalera; ver `next_morning_at_ms`)."""
     touches = _touches(metadata)
-    touches.append({"at_ms": now_ms, "kind": kind})
+    touch: dict[str, Any] = {"at_ms": now_ms, "kind": kind}
+    if next_at_ms is not None:
+        touch["next_at_ms"] = next_at_ms
+    touches.append(touch)
     metadata["remarketing_touches"] = touches[-_TOUCH_LOG_MAX:]

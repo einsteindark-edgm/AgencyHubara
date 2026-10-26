@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from src.platform.catalog.variant_attrs import normalize_label
+from src.platform.catalog.variant_attrs import normalize_label, stem_word
 
 COLORS_METADATA_KEY = "colores"
 
@@ -122,17 +122,6 @@ def primary_colors(mapping: dict[str, list[str]]) -> list[str]:
 
 
 def _stem_tokens(text: str) -> frozenset[str]:
-    """Tokens normalizados con stem de género/número castellano liviano.
-
-    "ROJAS" → {"roj"}; "azul claro" → {"azul", "clar"}. Solo recorta la `s`
-    final y UNA `a`/`o` final (nunca `e`: "verde"/"celeste" quedan enteros) —
-    suficiente para rojo/roja/rojos/rojas sin diccionario.
-    """
-    tokens = set()
-    for token in normalize_label(text).split():
-        if len(token) > 3 and token.endswith("s"):
-            token = token[:-1]
-        if len(token) > 3 and token[-1] in "ao":
-            token = token[:-1]
-        tokens.add(token)
-    return frozenset(tokens)
+    """Tokens normalizados sin género ni número (`variant_attrs.stem_word`):
+    "ROJAS" → {"roj"}; "azul claro" → {"azul", "clar"}; "azules" → {"azul"}."""
+    return frozenset(stem_word(token) for token in normalize_label(text).split())

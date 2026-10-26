@@ -58,3 +58,26 @@ describe("chatMessageSchema · mensaje que Meta entregó tarde", () => {
     expect(parsed.arrived_after_window).toBeUndefined();
   });
 });
+
+describe("chatMessageSchema · doble check de WhatsApp", () => {
+  const base = { ui_type: "agent_message", role: "assistant", content: "¡Hola!" };
+
+  it("conserva lo que informó WhatsApp del mensaje (forma real del backend)", () => {
+    const parsed = chatMessageSchema.parse({
+      ...base,
+      delivery: { status: "failed", at_ms: 1760496100000, error_code: 131047, error_title: "Re-engagement message" },
+    });
+    expect(parsed.delivery).toEqual({
+      status: "failed",
+      at_ms: 1760496100000,
+      error_code: 131047,
+      error_title: "Re-engagement message",
+    });
+    expect(chatMessageSchema.parse({ ...base, delivery: { status: "unconfirmed", at_ms: null, error_code: null, error_title: null } }).delivery?.status).toBe("unconfirmed");
+  });
+
+  it("un estado que el panel no conoce no tumba la sesión: queda sin dato (L-10)", () => {
+    expect(chatMessageSchema.parse({ ...base, delivery: { status: "deleted" } }).delivery).toBeUndefined();
+    expect(chatMessageSchema.parse({ ...base, delivery: "read" }).delivery).toBeUndefined();
+  });
+});

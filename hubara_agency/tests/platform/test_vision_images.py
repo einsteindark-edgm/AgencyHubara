@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 
+import pytest
 from PIL import Image
 
 from src.platform.vision.images import candidate_sheet, to_jpeg
@@ -54,6 +55,18 @@ def test_transparency_turns_white() -> None:
 
 def test_bytes_that_are_not_an_image_give_none() -> None:
     assert to_jpeg(b"hola", max_side=1024) is None
+
+
+@pytest.mark.parametrize("fmt", ["TIFF", "BMP", "GIF"])
+def test_a_format_whatsapp_and_the_catalog_never_send_is_not_decoded(fmt: str) -> None:
+    # Los bytes de la foto los manda cualquiera que escriba por WhatsApp y
+    # Pillow elige el decodificador por su contenido, no por el mime que
+    # declara Meta. Solo se decodifica lo que mandan WhatsApp y el catálogo
+    # (JPEG, PNG, WEBP): la revisión del 2026-10-23 encontró ~25 fallas de
+    # Pillow, varias críticas en decodificadores como TIFF y FlashPix.
+    other = _encode(Image.new("RGB", (100, 100), (220, 0, 0)), fmt)
+
+    assert to_jpeg(other, max_side=1024) is None
 
 
 def test_the_sheet_has_one_numbered_row_per_candidate() -> None:

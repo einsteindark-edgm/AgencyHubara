@@ -82,8 +82,18 @@ async def test_fakes_capture_instead_of_acting() -> None:
     ]
     with pytest.raises(ApplicationError, match="ghosting"):
         await acts["decide_ghosting_action"]()
-    with pytest.raises(ApplicationError, match="audio"):
-        await acts["transcribe_audio_activity"]("x")
+
+
+async def test_a_bench_turn_without_llm_gives_up_at_once_instead_of_waiting() -> None:
+    """La caída del LLM (2026-10-15): en producción el turno espera minutos a
+    que vuelva el modelo; un caso del banco no. El sandbox dice que la ventana
+    ya cerró: el turno se rinde de una y el caso termina con su traza."""
+    acts = {a.__temporal_activity_definition.name: a for a in sandbox_activities(
+        [_named("read_reply_window")], capture=SandboxCapture())}
+
+    window = await acts["read_reply_window"]("wa_573000000099")
+
+    assert window == {"route": "ventas", "window_expires_at_ms": 0}
 
 
 async def test_the_trace_is_persisted_for_real_and_announces_the_end_of_the_turn() -> None:

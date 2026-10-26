@@ -346,6 +346,11 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "order_item_for_values": _CATALOG,
         "named_titles": _CATALOG,
         "enumerated_variants": _CATALOG,
+        "foreign_labels_rule": _CATALOG,
+        "unexplained_prices_rule": _CATALOG,
+        "pack_quantity_rule": _CATALOG,
+        "bulk_candles_rule": _CATALOG,
+        "named_box_rule": _CATALOG,
         "admin_leak": _EGRESS,
         "first_contact_greeting": _EGRESS,
         "breaks_persona": _PARTS,
@@ -364,6 +369,14 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "order_item_data": _CATALOG,
         "chat_and_catalog": _CATALOG,
         "text_with_lists": _CATALOG,
+        "text_and_product_labels": _CATALOG,
+        "text_and_option_sheets": _CATALOG,
+        "text_and_product_prices": _CATALOG,
+        "text_and_claim_facts": _CATALOG,
+        "customer_and_reply_facts": _CATALOG,
+        "pack_quantity_state": _CATALOG,
+        "bulk_candles_state": _CATALOG,
+        "named_box_state": _CATALOG,
         "greeting_texts": _EGRESS,
         "leading_sentences_state": _PARTS,
         "conversation_for_slots": _PARTS,
@@ -380,6 +393,14 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "leading_sentences": _PARTS,
         "order_slot_values": _PARTS,
         "unavailable_term_items": _PARTS,
+        "foreign_label_items": _CATALOG,
+        "unexplained_price_items": _CATALOG,
+        "payment_claim_items": _CATALOG,
+        "status_claim_items": _CATALOG,
+        "coupon_claim_items": _CATALOG,
+        "denial_claim_items": _CATALOG,
+        "customer_figure_items": _CATALOG,
+        "box_unit_claim_items": _CATALOG,
     },
     "options": {
         "catalog_categories": _CATALOG,
@@ -460,6 +481,16 @@ class BundledCapability:
         if self._spec.items is None:
             return None
         return list(self._call("items", self._spec.items, inp))
+
+    @property
+    def items_params(self) -> dict[str, Any]:
+        """El `with:` de sus ítems (el vocabulario de una regla de palabras);
+        vacío si no decide ítem por ítem."""
+        return dict(self._spec.items.params) if self._spec.items is not None else {}
+
+    def items(self, inp: Any) -> list[dict[str, Any]]:
+        """Los ítems que propone para `inp` (vacío si no decide ítem por ítem)."""
+        return self._items(inp) or []
 
     def rule(self, inp: Any) -> Any:
         return self._call("rule", self._spec.rule, inp)

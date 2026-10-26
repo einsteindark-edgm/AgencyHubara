@@ -74,6 +74,24 @@ class RemarketingContext:
     skip_touch: bool = False
     contact: dict = field(default_factory=dict)
     post_purchase: str = ""
+    #: El cliente pidió, vio el catálogo y no volvió a escribir (análisis
+    #: 2026-10-13): el 1er toque le explica lo que vio, el 2º le resuelve
+    #: envío/tiempos/pago a la mañana siguiente.
+    silent_after_catalog: bool = False
+    #: La ficha de lo que vio trae descripción: hay qué explicarle. Sin ella,
+    #: el 1er toque es el gancho corto de siempre.
+    catalog_described: bool = False
+    #: El tope de toques de verdad (Agents → Remarketing → Frecuencia), para
+    #: que el último toque sepa que es el último. None = contexto legacy.
+    total_touches: int | None = None
+    #: Los números que el gancho puede escribir (ficha, charla, campaña, datos
+    #: de la tienda): la guarda de salida bloquea los demás.
+    allowed_numbers: list[str] = field(default_factory=list)
+    #: El guion de la campaña de venta del episodio (`chats/shared/campaigns`,
+    #: operador 2026-10-19), ya redactado para ESTE toque con los precios del
+    #: catálogo, y sus ejemplos. "" = la conversación no es de una campaña.
+    sales_campaign_script: str = ""
+    sales_campaign_examples: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -93,3 +111,11 @@ class RemarketingTriggerInput:
     #: Ver `RemarketingContext.unavailable_terms`.
     unavailable_terms: list[str] = field(default_factory=list)
     post_purchase: str = ""
+    #: Ver `RemarketingContext.silent_after_catalog` / `catalog_described` /
+    #: `total_touches` (análisis 2026-10-13).
+    silent_after_catalog: bool = False
+    catalog_described: bool = False
+    total_touches: int | None = None
+    #: Ver `RemarketingContext.sales_campaign_script` (2026-10-19).
+    sales_campaign_script: str = ""
+    sales_campaign_examples: list[str] = field(default_factory=list)

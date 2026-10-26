@@ -58,6 +58,14 @@ COUPON_REASON_TEXT = {
         "No pude confirmar si es su primera compra, así que no apliqué el cupón "
         "de bienvenida."
     ),
+    "not_granted": (
+        "Ese cupón es personal: es el agradecimiento por calificar un pedido y "
+        "este cliente no lo tiene (o ya lo usó, o venció)."
+    ),
+    "grant_unknown": (
+        "No pude confirmar que este cliente tenga ese cupón de agradecimiento, "
+        "así que no lo apliqué."
+    ),
 }
 
 
@@ -103,6 +111,7 @@ async def resolve_coupon_application(
     catalog: Any,
     now_ms: int,
     bought_before: Callable[[], Awaitable[bool]] | None = None,
+    has_grant: Callable[[str], Awaitable[bool]] | None = None,
 ) -> CouponApplication:
     """Valida `code` contra Medusa y su cupo. No escribe nada: el que llama
     decide dónde guardarlo (`store_coupon_application`).
@@ -110,7 +119,11 @@ async def resolve_coupon_application(
     `bought_before`: si el cliente ya compró (`first_purchase.bought_before`
     sobre la conversación). Un cupón de primera compra NO se aplica sin él ni
     si falla (falla cerrada): toda puerta nueva que valide cupones tiene que
-    poder mirarlo (L-32)."""
+    poder mirarlo (L-32).
+
+    `has_grant(código)`: si ESTE cliente tiene vigente el cupón personal (el
+    agradecimiento por calificar, `promotions/grants.py`). Igual que la
+    primera compra: sin él o si falla, un cupón `granted_only` no se aplica."""
     normalized = normalize_coupon_code(code)
     try:
         active = await promotions.list_active()
@@ -136,6 +149,16 @@ async def resolve_coupon_application(
             return CouponApplication(promotion.code, "first_purchase_unknown", promotion)
         if already:
             return CouponApplication(promotion.code, "first_purchase_only", promotion)
+    if promotion.granted_only:
+        # Reseñas tras la entrega: solo quien calificó, una vez, antes de vencer.
+        if has_grant is None:
+            return CouponApplication(promotion.code, "grant_unknown", promotion)
+        try:
+            granted = await has_grant(promotion.code)
+        except Exception:  # noqa: BLE001 — no se adivina: el cupón no se aplica
+            return CouponApplication(promotion.code, "grant_unknown", promotion)
+        if not granted:
+            return CouponApplication(promotion.code, "not_granted", promotion)
     offer = await quota_offer(promotion, quotas=quotas, sales=sales, catalog=catalog)
     if offer.reason is not None:
         return CouponApplication(

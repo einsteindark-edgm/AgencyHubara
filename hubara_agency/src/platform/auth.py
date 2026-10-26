@@ -132,18 +132,6 @@ _M2M_SCOPE_RULES: dict[str, tuple[tuple[str, re.Pattern[str]], ...]] = {
 }
 
 
-def _routed_path(request: Any) -> str:
-    """La ruta que ENRUTA Starlette (``scope["path"]``).
-
-    ``request.url.path`` se arma con el header ``Host`` y luego se re-parsea: un
-    ``Host: x/api/ads`` lo convierte en ``/api/ads/<ruta real>``. Toda decisión de
-    autorización por ruta va sobre ``scope["path"]``."""
-    scope = getattr(request, "scope", None)
-    if isinstance(scope, dict) and isinstance(scope.get("path"), str):
-        return scope["path"]
-    return request.url.path
-
-
 def _m2m_client_ids() -> frozenset[str]:
     return frozenset(
         c.strip() for c in config.COGNITO_M2M_CLIENT_IDS.split(",") if c.strip()
@@ -309,8 +297,12 @@ def require_auth(request: Request) -> None:
 
     # 1b. Ticket SSE (SEC-06): el stream `/events` no puede mandar header, así
     #     que el frontend pasa un ticket firmado de corta vida por query — nunca
-    #     el access-token. Solo válido para el path del stream.
-    if _routed_path(request).endswith("/events"):
+    #     el access-token. Solo válido para el path del stream. La ruta es
+    #     `scope["path"]` (la que enruta el router), NO `request.url.path`:
+    #     Starlette arma la URL con la ruta ya decodificada y un `%3F` la corta
+    #     (`/api/orders/orders/events%3Fx` → `url.path == ".../events"`).
+    path = request.scope["path"]
+    if path.endswith("/events"):
         ticket = request.query_params.get("ticket", "")
         if ticket and sse_ticket.verify(_sse_ticket_secret(), ticket, time.time()):
             return
@@ -321,7 +313,7 @@ def require_auth(request: Request) -> None:
             logger.error(
                 "auth_misconfigured_in_prod",
                 reason="COGNITO_* ausente/placeholder en producción — 503 fail-closed",
-                path=request.url.path,
+                path=path,
             )
             raise HTTPException(
                 status_code=503,
@@ -346,12 +338,12 @@ def require_auth(request: Request) -> None:
         if not _extract_header_token(request):
             # Credencial de 1 h: nunca por query (quedaría en logs/proxies).
             raise HTTPException(status_code=401, detail="Token M2M solo por header")
-        if not _m2m_authorizes(claims, request.method, _routed_path(request)):
+        if not _m2m_authorizes(claims, request.method, path):
             logger.warning(
                 "auth_m2m_forbidden",
                 client_id=claims.get("client_id"),
                 method=request.method,
-                path=_routed_path(request),
+                path=path,
             )
             raise HTTPException(status_code=403, detail="Scope insuficiente")
         _set_actor(request, f"m2m:{claims.get('client_id')}")

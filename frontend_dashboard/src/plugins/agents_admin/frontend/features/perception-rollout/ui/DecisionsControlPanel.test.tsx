@@ -93,6 +93,71 @@ describe("DecisionsControlPanel", () => {
     expect(within(incendio).getByText("Ahora: Sombra")).toBeInTheDocument();
   });
 
+  it("nombra los aromas de otro producto con su pregunta (ventas-7, 2026-10-13)", async () => {
+    state = payload({ aroma_ajeno: "off" });
+    renderPanel();
+
+    const aroma = await screen.findByRole("group", { name: "Aromas de otro producto" });
+    expect(within(aroma).getByText("¿el texto le ofrece al producto un aroma que es de otro?")).toBeInTheDocument();
+    expect(within(aroma).getByText("Ahora: Reglas")).toBeInTheDocument();
+  });
+
+  it("nombra los colores de otro producto y la presentación que no existe", async () => {
+    state = payload({ color_ajeno: "off", variante_ajena: "shadow" });
+    renderPanel();
+
+    const color = await screen.findByRole("group", { name: "Colores de otro producto" });
+    expect(within(color).getByText("¿el texto le ofrece al producto un color que es de otro?")).toBeInTheDocument();
+    const variant = screen.getByRole("group", { name: "Presentación que no existe" });
+    expect(within(variant).getByText("¿el texto le ofrece una presentación, signo o tamaño que el producto no tiene? (solo con Jev)")).toBeInTheDocument();
+  });
+
+  it("nombra los hechos que el texto afirma (ventas-7)", async () => {
+    state = payload({ precio_ajeno: "off", pago_ajeno: "off", estado_ajeno: "off", cupon_ajeno: "off", negacion_falsa: "off" });
+    renderPanel();
+
+    const price = await screen.findByRole("group", { name: "Precio que no es el del catálogo" });
+    expect(within(price).getByText("¿el texto le dice un precio que no es el del catálogo?")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Pago que no aplica al pedido" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Estado del pedido que no es cierto" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Cupón que no está vigente" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Negar lo que sí tenemos" })).toBeInTheDocument();
+  });
+
+  it("nombra cajas o velas (ventas-7)", async () => {
+    state = payload({ cajas: "off" });
+    renderPanel();
+
+    const boxes = await screen.findByRole("group", { name: "Cajas o velas" });
+    expect(within(boxes).getByText("¿la cantidad que anota el bot son cajas o las velas que traen?")).toBeInTheDocument();
+  });
+
+  it("nombra por mayor o velas sueltas y la caja que nombró el cliente (ventas-7)", async () => {
+    state = payload({ por_mayor: "off", caja_nombrada: "off" });
+    renderPanel();
+
+    const bulk = await screen.findByRole("group", { name: "Por mayor o velas sueltas" });
+    expect(within(bulk).getByText("¿lo que el bot iba a pasar como pedido al por mayor son unas velas sueltas?")).toBeInTheDocument();
+    const box = screen.getByRole("group", { name: "La caja que nombró el cliente" });
+    expect(within(box).getByText("¿el cliente pidió el producto de la otra caja?")).toBeInTheDocument();
+  });
+
+  it("nombra darle la razón al cliente en una cuenta equivocada (ventas-7)", async () => {
+    state = payload({ cifra_del_cliente: "off" });
+    renderPanel();
+
+    const figure = await screen.findByRole("group", { name: "Darle la razón en una cuenta equivocada" });
+    expect(within(figure).getByText("¿le da la razón al cliente en una cuenta que no es la de su pedido? (solo con Jev)")).toBeInTheDocument();
+  });
+
+  it("nombra el precio de la caja dicho por unidad (ventas-7, 2026-10-16)", async () => {
+    state = payload({ caja_por_unidad: "off" });
+    renderPanel();
+
+    const box = await screen.findByRole("group", { name: "Precio de la caja dicho por unidad" });
+    expect(within(box).getByText("¿le dice que cada vela cuesta lo que cuesta la caja? (solo con Jev)")).toBeInTheDocument();
+  });
+
   it("nombra el acuse tras la despedida con su pregunta", async () => {
     state = payload({ acuse: "off" });
     renderPanel();

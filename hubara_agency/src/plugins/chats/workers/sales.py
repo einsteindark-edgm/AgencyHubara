@@ -19,6 +19,8 @@ init_otel("sales-agent")
 from loguru import logger
 from temporalio.worker import Worker
 
+from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
+
 from src.platform.analytics.composition import setup_analytics
 from src.platform.catalog.composition import get_catalog_client
 from src.platform.catalog.medusa_checkout import MedusaCheckoutVerification
@@ -68,9 +70,10 @@ from src.plugins.chats.agent.sales.activities import (
     flush_pending_ui_intents_activity,
     persist_turn_trace_activity,
     read_and_clear_pending_handoff_activity,
+    read_handoff_reply_activity,
     read_idle_timeout_seconds_activity,
     read_order_draft_note_activity,
-    transcribe_audio_activity,
+    read_reply_window_activity,
 )
 from src.plugins.chats.agent.sales.tools.catalog import (
     GetProductByHandleTool,
@@ -90,6 +93,7 @@ from src.plugins.chats.agent.sales.tools.coupons import (
 )
 from src.plugins.chats.agent.sales.tools.order_draft import SetOrderSlotTool
 from src.plugins.chats.agent.sales.tools.order_status import CheckOrderStatusTool
+from src.plugins.chats.agent.sales.tools.fact_check import FactCheck
 from src.plugins.chats.agent.sales.tools.reply import SendReplyTool
 from src.plugins.chats.agent.sales.tools.order_registration import (
     RegisterOrderTool,
@@ -119,6 +123,25 @@ from src.plugins.chats.agent.sales.workflows.sales_session import (
 from src.plugins.chats.agent.sales.workflows.sales_session_v2 import (
     HubaraSalesSessionWorkflowV2,
 )
+from src.plugins.chats.agent.sales.workflows.inbound_message import (
+    InboundMessageWorkflow,
+)
+from src.plugins.chats.agent.sales.workflows.inbound_session import (
+    InboundSessionWorkflow,
+)
+from src.plugins.chats.agent.sales.activities.inbound_entry import (
+    deliver_inbound_turn_activity,
+    describe_inbound_image_activity,
+    ingest_inbound_message_activity,
+    notify_inbound_photo_done_activity,
+    prepare_inbound_turn_activity,
+    read_inbound_state_activity,
+    register_inbound_arrival_activity,
+    transcribe_inbound_audio_activity,
+    wait_inbound_predecessor_activity,
+    wait_inbound_workflow_activity,
+    write_inbound_history_activity,
+)
 from src.plugins.chats.agent.sales.decisions.routing import register_sales_workflow_router
 from src.plugins.chats.agent.sales.decisions.activities import (
     PERCEPTION_ACTIVITIES,
@@ -132,9 +155,34 @@ from src.plugins.chats.agent.sales.decisions.egress_activities import (
 # módulo para que el sandbox del laboratorio registre las mismas clases.
 SALES_WORKFLOWS = [HubaraSalesSessionWorkflow, HubaraSalesSessionWorkflowV2]
 
+# Entrada durable (ADR 2026-10-15): el webhook deja cada mensaje del cliente en
+# Temporal (`inbound-<wamid>`) y ESTE worker lo ingiere — el mismo `.env`, el
+# mismo vault y el mismo proceso que ya le habla a la sesión, sin un contenedor
+# más en la caja de 4 GB. Listas aparte: el sandbox del laboratorio registra
+# solo las de la sesión (`SALES_WORKFLOWS` / `SALES_ACTIVITIES`).
+# Fase 2: un paso del ingest por activity, la foto y la nota de voz con la
+# suya, y el orden por cliente en `InboundSessionWorkflow` (ADR 2026-10-16):
+# nada vive en memoria del proceso, así que el worker puede tener réplicas.
+INBOUND_WORKFLOWS = [InboundMessageWorkflow, InboundSessionWorkflow]
+INBOUND_ACTIVITIES = [
+    register_inbound_arrival_activity,
+    read_inbound_state_activity,
+    prepare_inbound_turn_activity,
+    write_inbound_history_activity,
+    deliver_inbound_turn_activity,
+    describe_inbound_image_activity,
+    transcribe_inbound_audio_activity,
+    notify_inbound_photo_done_activity,
+    wait_inbound_workflow_activity,
+    # Fase 1: los runs que estaban vivos al desplegar la fase 2 terminan con
+    # estas (se retiran cuando ya no quede ninguno; un run vive minutos).
+    ingest_inbound_message_activity,
+    wait_inbound_predecessor_activity,
+]
+
 # HU-002: analytics bus singleton — filesystem siempre, Meta CAPI si hay
 # token. El bus es global para todo el proceso del worker; las activities
-# (flush_pending_ui_intents_activity, transcribe_audio_activity) leen
+# (flush_pending_ui_intents_activity, los pasos del ingest) leen
 # desde `get_event_bus()` por su cuenta.
 setup_analytics()
 
@@ -164,8 +212,11 @@ register_tool_extension(
     # registro de bots y de la cola de desacuerdos. El catálogo (aromas y
     # colores): una lista para escoger vuelve al modelo para que la mande con
     # el selector (laboratorio caso-fotos-0930-r10, 4567 t20).
+    # Los hechos antes de enviar (2026-10-13): lo que el texto le dice al
+    # cliente contra el catálogo, el pedido, el pago y los cupones.
     lambda workspace: SendReplyTool(
-        workspace=str(workspace), vault_dir=build_vault_dir(), catalog=get_catalog_client()
+        workspace=str(workspace), vault_dir=build_vault_dir(), catalog=get_catalog_client(),
+        fact_check=_fact_check(),
     ),
 )
 
@@ -181,6 +232,7 @@ _catalog = get_catalog_client()
 # vendidas se derivan de los pedidos de Medusa — un cupón con cupo aplica
 # SOLO a esas combinaciones producto + color + aroma.
 from src.sdk.connectorkit import (  # noqa: E402
+    get_coupon_grants_store,
     get_coupon_sales_reader,
     get_customer_orders_port,
     get_order_facts_port,
@@ -217,6 +269,17 @@ def _customer_orders_port():
         return None
 
 
+def _fact_check() -> FactCheck:
+    """Los hechos antes de enviar (incidente 2026-10-13): `send_reply` y las
+    tarjetas con texto del modelo revisan contra el catálogo, el pedido
+    (OrderFacts) y los cupones (Medusa) lo que le dicen al cliente, y contra
+    lo que el cliente acaba de escribir (el historial: sus cifras)."""
+    return FactCheck(
+        build_vault_dir(), _catalog, promotions=_promotions, order_facts=_order_facts_port(),
+        history_reader=build_session_history_reader(),
+    )
+
+
 register_tool_extension(
     "sales.list_promotions",
     lambda workspace: ListPromotionsTool(
@@ -228,6 +291,7 @@ register_tool_extension(
         metadata_store=build_session_metadata_store(),
         order_facts=_order_facts_port(),
         customer_orders=_customer_orders_port(),
+        coupon_grants=get_coupon_grants_store(),
     ),
 )
 register_tool_extension(
@@ -241,6 +305,7 @@ register_tool_extension(
         sales=_coupon_sales,
         order_facts=_order_facts_port(),
         customer_orders=_customer_orders_port(),
+        coupon_grants=get_coupon_grants_store(),
     ),
 )
 
@@ -269,7 +334,11 @@ register_tool_extension(
 # (`frontend_dashboard/src/entities/chat/model.ts:10`).
 register_tool_extension(
     "sales.escalate_to_human",
-    lambda workspace: guarded_escalation_tool(EscalateToHumanTool)(workspace=str(workspace)),
+    # El historial: lo que escribió el cliente para `por_mayor` (36 velitas
+    # que son 3 cajas no van a un colega; laboratorio 2026-10-14).
+    lambda workspace: guarded_escalation_tool(EscalateToHumanTool)(
+        workspace=str(workspace), history_reader=build_session_history_reader()
+    ),
 )
 
 # Convivencia ETA/Sales (2026-06-10): el agente ETA es notificador puro — las
@@ -346,6 +415,8 @@ register_tool_extension(
         quotas=get_promo_quota_store(),
         sales=_coupon_sales,
         quota_lock=get_quota_lock(),
+        # Cupón personal (agradecimiento por calificar): se gasta al registrar.
+        coupon_grants=get_coupon_grants_store(),
     ),
 )
 
@@ -378,13 +449,13 @@ _photo_colors = build_photo_color_reader()
 register_tool_extension(
     "sales.present_product_detail",
     lambda workspace: PresentProductDetailTool(
-        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors
+        workspace=str(workspace), catalog=_catalog, photo_colors=_photo_colors, fact_check=_fact_check()
     ),
 )
 register_tool_extension(
     "sales.present_products",
     lambda workspace: PresentProductsTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, fact_check=_fact_check()
     ),
 )
 # sales.request_location removido (sesión adc6400c) — el botón nativo de
@@ -425,7 +496,7 @@ register_tool_extension(
 )
 register_tool_extension(
     "sales.send_cta_url",
-    lambda workspace: SendCTAUrlTool(workspace=str(workspace)),
+    lambda workspace: SendCTAUrlTool(workspace=str(workspace), fact_check=_fact_check()),
 )
 # HU-002 / fix sesión a56bfaa9: cuando el cliente pide "más fotos", el LLM
 # debe usar esta tool en vez de send_cta_url (anti-patrón que sacaba al
@@ -445,7 +516,7 @@ register_tool_extension(
     # sean productos/aromas/colores/diseños del catálogo (máx 3 botones =
     # el LLM recorta opciones); eso va por present_products / variant_picker.
     lambda workspace: SendQuickRepliesTool(
-        workspace=str(workspace), catalog=_catalog
+        workspace=str(workspace), catalog=_catalog, fact_check=_fact_check()
     ),
 )
 # Fix sesión 71f479f7: cuando hay ≥4 aromas/colores, lista tappable con
@@ -461,6 +532,7 @@ register_tool_extension(
         catalog=_catalog,
         # Cupón con cupo: sus combinaciones van arriba del picker.
         metadata_store=build_session_metadata_store(),
+        fact_check=_fact_check(),
     ),
 )
 
@@ -506,12 +578,19 @@ SALES_ACTIVITIES = [
     decide_ghosting_action,
     bootstrap_sales_session_activity,
     read_and_clear_pending_handoff_activity,
+    # Lo que el cliente le escribió a remarketing, al turno del traspaso del
+    # V2 (caso 2026-10-16: con solo el resumen, Ventas se calló).
+    read_handoff_reply_activity,
     # Draft del pedido al turno de handoff (run 019f6db3): sin esto
     # el LLM arranca ciego y re-pregunta/pisa lo ya elegido.
     read_order_draft_note_activity,
     # Dynamic ghosting timeout (sesión c4e3416f): extiende el wait
     # cuando hay un WhatsApp Flow pendiente esperando nfm_reply.
     read_idle_timeout_seconds_activity,
+    # Caída total del LLM (2026-10-15): el turno del V2 espera a que vuelva
+    # el modelo y lee si el chat sigue siendo del bot y cuándo cierra la
+    # ventana (`llm_outage_v2`).
+    read_reply_window_activity,
     start_or_signal_sales_workflow_activity,
     schedule_remarketing_workflow_activity,
     # ADR-2026-05-20: declarative orchestration activities.
@@ -537,8 +616,6 @@ SALES_ACTIVITIES = [
     # El texto final promete que un colega lo atiende y nadie escaló
     # (laboratorio caso-cortesia-1001, 2026-09-30): la red escala.
     ensure_promised_handoff_activity,
-    # HU-002 / A.5: transcripción de audio inbound (Groq/OpenAI).
-    transcribe_audio_activity,
     # HU dialecto colombiano: hora de Bogotá + saludo apropiado
     # inyectado al plugin_context. La usan los turnos de sistema del
     # workflow (traspaso, abandono, complemento — caso 4567 del
@@ -577,16 +654,18 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=task_queue,
-        workflows=SALES_WORKFLOWS,
-        activities=SALES_ACTIVITIES,
+        workflows=[*SALES_WORKFLOWS, *INBOUND_WORKFLOWS],
+        activities=[*SALES_ACTIVITIES, *INBOUND_ACTIVITIES],
         # OTel obs: el TracingInterceptor (en get_temporal_client) crea spans
         # dentro del workflow sandbox → necesita opentelemetry como passthrough
         # o rompe con RestrictedWorkflowAccessError. Ver otel_workflow_runner.
         workflow_runner=otel_workflow_runner(),
+        # SIGTERM: espera a las activities en curso antes de cancelarlas.
+        graceful_shutdown_timeout=WORKER_GRACEFUL_SHUTDOWN,
     )
 
     logger.info("😎 Sales Agent En Vivo. Escuchando la cola exclusiva: '{}'", task_queue)
-    await worker.run()
+    await run_worker(worker)  # SIGTERM → apagado ordenado
 
 
 if __name__ == "__main__":

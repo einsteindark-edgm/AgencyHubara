@@ -101,8 +101,8 @@ def ingest(monkeypatch: pytest.MonkeyPatch):
         temporal_client_factory=_factory,  # type: ignore[arg-type]
     )
 
-    async def run(sent_ms: int) -> dict[str, Any]:
-        await use_case.execute(_message(sent_ms))
+    async def run(sent_ms: int, *, received_at_ms: int | None = None) -> dict[str, Any]:
+        await use_case.execute(_message(sent_ms), received_at_ms=received_at_ms)
         for _ in range(6):
             await asyncio.sleep(0)
         return metadata.read(_SID)
@@ -215,4 +215,33 @@ async def test_an_old_message_arriving_after_a_newer_one_does_not_close_the_wind
     assert meta["last_inbound_at_ms"] == newer_ms
     assert meta["service_window_expires_at_ms"] == newer_ms + SERVICE_WINDOW_MS
     assert "arrived_after_window" not in history.kwargs[0]  # la ventana sigue abierta
+    assert bot.calls == [(_SID, "hola, ¿tienen velas de halloween?")]
+
+
+# --- Entrada durable, fase 2 (ADR 2026-10-15, paso 5): el reloj del ingest es
+# la llegada al webhook (`received_at_ms`), no la hora del intento. Un ingest
+# que se reintenta minutos después no vuelve tarde un mensaje que llegó a tiempo.
+
+
+@pytest.mark.asyncio
+async def test_a_retried_ingest_does_not_mark_late_a_message_that_arrived_on_time(ingest) -> None:
+    run, history, bot, _dispatch, _metadata = ingest
+    arrived_ms = _NOW_MS - 4 * 60_000  # llegó hace 4 min; el ingest se reintentó
+    sent_ms = arrived_ms - 2 * 60_000  # Meta lo entregó 2 min después de escrito
+
+    await run(sent_ms, received_at_ms=arrived_ms)
+
+    assert "sent_at_ms" not in history.kwargs[0]
+    assert bot.calls == [(_SID, "hola, ¿tienen velas de halloween?")]
+
+
+@pytest.mark.asyncio
+async def test_a_retried_ingest_answers_a_message_that_arrived_inside_the_window(ingest) -> None:
+    run, history, bot, _dispatch, _metadata = ingest
+    arrived_ms = _NOW_MS - 3 * 60_000
+    sent_ms = arrived_ms - SERVICE_WINDOW_MS + 60_000  # abierta al llegar; vencida al reintentar
+
+    await run(sent_ms, received_at_ms=arrived_ms)
+
+    assert "arrived_after_window" not in history.kwargs[0]
     assert bot.calls == [(_SID, "hola, ¿tienen velas de halloween?")]

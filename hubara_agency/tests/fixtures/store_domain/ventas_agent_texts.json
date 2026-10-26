@@ -259,7 +259,7 @@
       "type": "object"
      },
      "shipping_cop": {
-      "description": "Tarifa MÍNIMA publicada de envío en COP: 7900 ($7.900) para Bogotá y municipios cercanos, 16940 ($16.940) a nivel nacional. No existe envío gratis: nunca 0. También con contra entrega (el resumen igual dice \"Por confirmar\" y el total a registrar es subtotal + envío − cupón).",
+      "description": "Tarifa MÍNIMA publicada de envío en COP: 7900 ($7.900) para Bogotá y municipios cercanos, 16940 ($16.940) a nivel nacional. No existe envío gratis: nunca 0, salvo cuando el pedido lleva las cajas del envío gratis de una campaña (lo valida el sistema y te lo dice): ahí 0. También con contra entrega (el resumen igual dice \"Por confirmar\" y el total a registrar es subtotal + envío − cupón).",
       "minimum": 0,
       "type": "integer"
      },
@@ -338,7 +338,7 @@
       "type": "string"
      },
      "shipping_cop": {
-      "description": "Tarifa MÍNIMA publicada de envío en COP: 7900 ($7.900) para Bogotá y municipios cercanos, 16940 ($16.940) a nivel nacional. No existe envío gratis: nunca 0. También con contra entrega (el resumen igual dice \"Por confirmar\" y el total a registrar es subtotal + envío − cupón).",
+      "description": "Tarifa MÍNIMA publicada de envío en COP: 7900 ($7.900) para Bogotá y municipios cercanos, 16940 ($16.940) a nivel nacional. No existe envío gratis: nunca 0, salvo cuando el pedido lleva las cajas del envío gratis de una campaña (lo valida el sistema y te lo dice): ahí 0. También con contra entrega (el resumen igual dice \"Por confirmar\" y el total a registrar es subtotal + envío − cupón).",
       "minimum": 0,
       "type": "integer"
      },

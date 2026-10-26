@@ -121,6 +121,7 @@ from src.platform.orders.query_port import (
 from src.platform.promotions.composition import (
     get_coupon_audit_log as get_coupon_audit_log,
     get_coupon_conditions_store as get_coupon_conditions_store,
+    get_coupon_grants_store as get_coupon_grants_store,
     get_coupon_sales_reader as get_coupon_sales_reader,
     get_promo_quota_store as get_promo_quota_store,
     get_promotions_admin_port as get_promotions_admin_port,
@@ -165,6 +166,20 @@ from src.platform.promotions.conditions import (
     CouponConditions as CouponConditions,
     CouponConditionsError as CouponConditionsError,
     FakeCouponConditionsStore as FakeCouponConditionsStore,
+)
+from src.platform.reviews.composition import (
+    get_product_reviews_port as get_product_reviews_port,
+)
+from src.platform.reviews.port import (
+    FakeProductReviews as FakeProductReviews,
+    ProductReviewInput as ProductReviewInput,
+    ProductReviewsPort as ProductReviewsPort,
+    ProductReviewsUnavailableError as ProductReviewsUnavailableError,
+)
+from src.platform.promotions.grants import (
+    CouponGrant as CouponGrant,
+    CouponGrantsStore as CouponGrantsStore,
+    FakeCouponGrantsStore as FakeCouponGrantsStore,
 )
 from src.platform.promotions.coupon_sales import (
     CouponResults as CouponResults,

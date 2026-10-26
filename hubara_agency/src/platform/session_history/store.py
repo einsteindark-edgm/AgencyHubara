@@ -143,6 +143,8 @@ class FilesystemMessageHistoryStore:
         *,
         sender: str | None = None,
         wamid: str | None = None,
+        wamids: list[str] | None = None,
+        agent: str | None = None,
     ) -> None:
         """``tools_used``: NOMBRES de las tools que el agente ejecutó durante el
         turno que culminó en este mensaje. Campo distinto de ``tool_calls`` a
@@ -152,7 +154,13 @@ class FilesystemMessageHistoryStore:
         eval (reconstruct.to_evaluable_turns) le pasa al juez — sin esto el
         juez no ve que el turno llamó search_products/escalate_to_human y
         falla con falsos negativos (caso ep_010: correct_handoff=0.5 con la
-        escalada efectivamente hecha)."""
+        escalada efectivamente hecha).
+
+        ``agent``: el agente que lo escribió cuando NO es el de ventas (hoy,
+        ``"remarketing"``). Ventas no ve en su historial lo que escribió otro
+        agente; con la marca, la nota de «lo que pasó sin ti» lo cuenta (caso
+        2026-10-16: el gancho cortaba la nota). Sin marca = ventas, como
+        siempre; el dashboard la ignora."""
         event: dict[str, Any] = {
             "role": "assistant",
             "content": content,
@@ -168,6 +176,9 @@ class FilesystemMessageHistoryStore:
             event["sender"] = sender
         if wamid:
             event["wamid"] = wamid
+        _put_wamids(event, wamids)
+        if agent:
+            event["agent"] = agent
         self._append(session_id, event)
 
     def append_human_event(
@@ -179,6 +190,7 @@ class FilesystemMessageHistoryStore:
         document_url: str | None = None,
         document_filename: str | None = None,
         wamid: str | None = None,
+        wamids: list[str] | None = None,
     ) -> None:
         """Mensaje del humano operador via dashboard handoff.
 
@@ -204,7 +216,8 @@ class FilesystemMessageHistoryStore:
 
         ``wamid``: id que Meta asignó al envío (adjuntos). Lo necesita el
         dashboard para resolver una respuesta del cliente que CITE este
-        mensaje. Los textos se fragmentan en varias burbujas y no lo traen.
+        mensaje. Los textos se fragmentan en varias burbujas: ``wamids`` guarda
+        el de cada una (el doble check de WhatsApp se une por ahí).
         """
         event: dict[str, Any] = {
             "role": "assistant",
@@ -220,4 +233,15 @@ class FilesystemMessageHistoryStore:
             event["document_filename"] = document_filename
         if wamid:
             event["wamid"] = wamid
+        _put_wamids(event, wamids)
         self._append(session_id, event)
+
+
+def _put_wamids(event: dict[str, Any], wamids: list[str] | None) -> None:
+    """``wamids``: el id que Meta dio a CADA burbuja de un texto (uno se parte
+    en varias por ``\\n\\n``). Une el evento con los estados de WhatsApp (doble
+    check del chat, caso 2026-10-15). Solo los no vacíos; sin ninguno, no se
+    escribe el campo."""
+    kept = [w for w in wamids or () if isinstance(w, str) and w]
+    if kept:
+        event["wamids"] = kept

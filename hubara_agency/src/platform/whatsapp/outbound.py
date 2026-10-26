@@ -316,7 +316,9 @@ def build_flow(
             },
         },
     }
-    if p.header_text is not None:
+    if p.header_media_id is not None:
+        interactive["header"] = {"type": "image", "image": {"id": p.header_media_id}}
+    elif p.header_text is not None:
         interactive["header"] = {"type": "text", "text": p.header_text}
     if p.footer is not None:
         interactive["footer"] = {"text": p.footer}
@@ -589,8 +591,15 @@ def build_template_message(
     *,
     header_media_id: str | None = None,
     carousel_cards: list[wa_dtos.CarouselCard] | None = None,
+    flow_token: str | None = None,
+    flow_action_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Construye el payload Meta para enviar un template aprobado.
+
+    `flow_token` / `flow_action_data`: para plantillas con botón FLOW — el token
+    viaja de vuelta en la respuesta del Flow (identifica qué se respondió) y es
+    obligatorio en esas; prohibido en el resto. `flow_action_data` alimenta la
+    primera pantalla del Flow.
 
     `header_media_id`: foto del encabezado (ya subida a Meta) para templates con
     `header_format == "image"` — obligatoria en esos, prohibida en el resto.
@@ -673,6 +682,16 @@ def build_template_message(
                 "o sin payload del botón"
             )
 
+    has_flow_button = any(b.type == "flow" for b in spec.buttons)
+    if has_flow_button and not flow_token:
+        raise ValueError(
+            f"Template {spec.name!r} lleva botón FLOW: falta flow_token"
+        )
+    if not has_flow_button and (flow_token or flow_action_data):
+        raise ValueError(
+            f"Template {spec.name!r} no tiene botón FLOW: no admite flow_token"
+        )
+
     # Construir parameters EN EL ORDEN DECLARADO POR spec.variables.
     # Meta los usa posicionalmente como {{1}}, {{2}}, ...
     parameters = [
@@ -701,6 +720,20 @@ def build_template_message(
                     {"card_index": index, "components": _carousel_card_components(spec, card)}
                     for index, card in enumerate(cards)
                 ],
+            }
+        )
+    if has_flow_button:
+        action: dict[str, Any] = {"flow_token": flow_token}
+        if flow_action_data is not None:
+            action["flow_action_data"] = flow_action_data
+        components.append(
+            {
+                "type": "button",
+                "sub_type": "flow",
+                "index": str(
+                    next(i for i, b in enumerate(spec.buttons) if b.type == "flow")
+                ),
+                "parameters": [{"type": "action", "action": action}],
             }
         )
     if components:

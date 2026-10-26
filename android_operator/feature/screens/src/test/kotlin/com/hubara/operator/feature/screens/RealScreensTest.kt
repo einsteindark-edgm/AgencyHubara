@@ -2,18 +2,26 @@ package com.hubara.operator.feature.screens
 
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
+import com.hubara.operator.core.navigation.ScreenKey
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.data.screens.AppSource
@@ -52,6 +60,9 @@ class RealScreensTest {
     private val effects = mutableListOf<ScreenEffect>()
     private val natives = mutableListOf<Pair<String, JsonObject>>()
     private val sources = mutableMapOf<String, MutableStateFlow<JsonElement>>()
+    /** Qué fuentes del teléfono se pidieron al backend (al abrir o al tirar para actualizar) y con qué resultado. */
+    private val refreshed = mutableListOf<String>()
+    private val refreshResults = mutableMapOf<String, Result<Unit>>()
     private val data = FakeData()
 
     private fun json(raw: String) = Json.parseToJsonElement(raw)
@@ -65,7 +76,15 @@ class RealScreensTest {
 
     private fun open(id: String, params: Map<String, String> = emptyMap()): ScreenViewModel {
         val docs = FakeDocs().apply { fresh[id] = File(dir, "$id.json").readText() }
-        val apps = sources.mapValues { (_, flow) -> object : AppSource { override fun observe(params: Map<String, String>) = flow } }
+        val apps = sources.mapValues { (name, flow) ->
+            object : AppSource {
+                override fun observe(params: Map<String, String>) = flow
+                override suspend fun refresh(params: Map<String, String>): Result<Unit> {
+                    refreshed += name
+                    return refreshResults[name] ?: Result.success(Unit)
+                }
+            }
+        }
         val vm = ScreenViewModel(id, params, docs, data, MemoryCache(), FakeChanges(), { 1_790_000_000_000L }, apps,
             NativeActions { name, args -> natives += name to args; NativeOutcome.Done })
         compose.setContent {
@@ -84,16 +103,29 @@ class RealScreensTest {
           {"session_id": "wa_000000000101", "title": "Laura Prueba", "name": "Laura Prueba", "detail": "000000000101 · Bot · Interesado",
            "preview": "¿y qué aromas tienen?", "unseen": 2, "unseen_label": "2 mensajes sin leer", "unread": true, "human": false, "has_order": false, "all": true, "time_ms": 1789999000000},
           {"session_id": "wa_000000000102", "title": "Sofía Prueba", "name": "Sofía Prueba", "detail": "000000000102 · Humano",
-           "preview": "hola", "unseen": 0, "unseen_label": "", "unread": false, "human": true, "has_order": false, "all": true, "time_ms": 1789999000000}]"""))
+           "preview": "hola", "unseen": 0, "unseen_label": "", "unread": false, "human": true, "has_order": false, "all": true, "time_ms": 1789999000000},
+          {"session_id": "wa_000000000104", "title": "Andrés Prueba", "name": "Andrés Prueba", "detail": "000000000104 · Bot · Pedido #41",
+           "preview": "¿ya salió?", "unseen": 0, "unseen_label": "", "unread": false, "human": false, "has_order": true, "all": true, "time_ms": 1789998000000}]"""))
         sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
         open("chats")
-        compose.onNodeWithText("Laura Prueba").assertExists()
+        // «Todos» son todos, y el que atiende una persona lleva su etiqueta «Humano» (caso del operador, 2026-10-15).
+        listOf("Laura Prueba", "Sofía Prueba", "Andrés Prueba").forEach { compose.onNodeWithText(it).assertExists() }
+        compose.onNode(hasText("Sofía Prueba") and hasText("Humano")).assertExists()
+        compose.onNode(hasText("Laura Prueba") and hasText("Humano")).assertDoesNotExist()
+        compose.onNode(hasText("Andrés Prueba") and hasText("Humano")).assertDoesNotExist()
         compose.onNode(hasContentDescription("2 mensajes sin leer")).assertExists()
         compose.onNodeWithText("No leídos").performClick()
+        compose.onNodeWithText("Laura Prueba").assertExists()
         compose.onNodeWithText("Sofía Prueba").assertDoesNotExist()
-        compose.onNodeWithText("Humano").performClick()
+        compose.onNodeWithText("Andrés Prueba").assertDoesNotExist()
+        compose.onNode(hasText("Humano") and isSelectable()).performClick()
         compose.onNodeWithText("Laura Prueba").assertDoesNotExist()
+        compose.onNodeWithText("Andrés Prueba").assertDoesNotExist()
         compose.onNodeWithText("Sofía Prueba").assertExists()
+        compose.onNodeWithText("Con pedido").performClick()
+        compose.onNodeWithText("Andrés Prueba").assertExists()
+        compose.onNodeWithText("Laura Prueba").assertDoesNotExist()
+        compose.onNodeWithText("Sofía Prueba").assertDoesNotExist()
 
         compose.onNode(hasContentDescription("Más opciones")).performClick()
         compose.onNodeWithText("Política de privacidad").performClick()
@@ -109,6 +141,98 @@ class RealScreensTest {
         // El botón del diálogo (el menú ya se cerró).
         compose.onNodeWithText("Cerrar sesión").performClick()
         compose.runOnIdle { assertThat(natives.map { it.first }).contains("sign_out") }
+    }
+
+    // Pedido del operador (2026-10-21): «agrégale un refresh para deslizar hacia abajo la pantalla y que vaya al servidor
+    // a traer la información», sin esperar al tiempo real.
+    @Test fun deslizar_hacia_abajo_la_bandeja_la_pide_al_servidor() {
+        sources["conversations"] = MutableStateFlow(json("[${chat("wa_000000000101", "Laura Prueba", unread = false, human = false, order = false)}]"))
+        sources["app"] = MutableStateFlow(json("{}"))
+        open("chats")
+        refreshed.clear()  // la de abrir
+
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performTouchInput { swipeDown() }
+
+        compose.runOnIdle { assertThat(refreshed).contains("conversations") }
+    }
+
+    @Test fun sin_conexion_la_bandeja_lo_dice_y_como_reintentar() {
+        sources["conversations"] = MutableStateFlow(json("[${chat("wa_000000000101", "Laura Prueba", unread = false, human = false, order = false)}]"))
+        sources["app"] = MutableStateFlow(json("{}"))
+        refreshResults["conversations"] = Result.failure(IllegalStateException("sin red"))
+        open("chats")
+        compose.onNodeWithText("Sin conexión: mostrando lo último guardado. Desliza hacia abajo para reintentar.").assertExists()
+        compose.onNodeWithText("Laura Prueba").assertExists()
+    }
+
+    @Test fun mas_lleva_a_la_sincronizacion_de_este_telefono() {
+        open("mas")
+        node("Sincronización").performClick()
+        compose.runOnIdle { assertThat(effects).contains(ScreenEffect.Open(ScreenKey("sincronizacion", emptyMap()))) }
+    }
+
+    @Test fun la_sincronizacion_dice_si_los_mensajes_llegan_en_vivo_y_cuanto_tardan() {
+        sources["sync"] = MutableStateFlow(json("""{"state": "live", "live": true, "state_label": "En vivo", "tone": "success",
+            "detail": "Conectada desde hace 5 min: lo que llega al servidor se ve al instante.", "last_event": "hace 3 s",
+            "lag": "0,4 s", "max_lag": "2,1 s", "events": 1234, "data": "1,2 MB", "cuts": 2, "last_error": "sin red · hace 2 min",
+            "refresh": "Bien · hace 1 min"}"""))
+        open("sincronizacion")
+        listOf("En vivo", "Conectada desde hace 5 min: lo que llega al servidor se ve al instante.", "hace 3 s", "0,4 s")
+            .forEach { node(it).assertExists() }
+        node("1,2 MB").assertExists()
+        node("sin red · hace 2 min").assertExists()
+        node("Bien · hace 1 min").assertExists()
+
+        // Tirar hacia abajo (desde arriba de la lista) sincroniza ya: reconecta y trae la bandeja.
+        refreshed.clear()
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToIndex(0).performTouchInput { swipeDown() }
+        compose.runOnIdle { assertThat(refreshed).contains("sync") }
+    }
+
+    private fun chat(sid: String, name: String, unread: Boolean, human: Boolean, order: Boolean) = """
+        {"session_id": "$sid", "title": "$name", "name": "$name", "detail": "", "preview": "hola", "unseen": 0, "unseen_label": "",
+         "unread": $unread, "human": $human, "has_order": $order, "all": true, "time_ms": 1789999000000}"""
+
+    // Pedido del operador (2026-10-15): una bolita al lado de cada filtro con cuántas conversaciones tiene; un filtro
+    // vacío no la lleva. Sale de los mismos datos de la bandeja (Room, al día por el SSE).
+    @Test fun cada_filtro_de_la_bandeja_dice_cuantas_conversaciones_tiene() {
+        val inbox = MutableStateFlow(json("[" + listOf(
+            chat("wa_000000000101", "Laura Prueba", unread = true, human = false, order = false),
+            chat("wa_000000000102", "Sofía Prueba", unread = false, human = true, order = false),
+            chat("wa_000000000104", "Andrés Prueba", unread = true, human = false, order = true),
+        ).joinToString(",") + "]"))
+        sources["conversations"] = inbox
+        sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
+        open("chats")
+
+        compose.onNode(isSelectable() and hasText("Todos") and hasContentDescription("3")).assertExists()
+        compose.onNode(isSelectable() and hasText("No leídos") and hasContentDescription("2")).assertExists()
+        compose.onNode(isSelectable() and hasText("Humano") and hasContentDescription("1")).assertExists()
+        compose.onNode(isSelectable() and hasText("Con pedido") and hasContentDescription("1")).assertExists()
+        // Sofía vuelve al bot: «Humano» queda en cero y su bolita se va, sin recargar la pantalla.
+        inbox.value = json("[" + listOf(
+            chat("wa_000000000101", "Laura Prueba", unread = true, human = false, order = false),
+            chat("wa_000000000102", "Sofía Prueba", unread = false, human = false, order = false),
+        ).joinToString(",") + "]")
+        compose.onNode(isSelectable() and hasText("Todos") and hasContentDescription("2")).assertExists()
+        compose.onNode(isSelectable() and hasText("Humano") and hasContentDescription("0")).assertDoesNotExist()
+        compose.onNode(isSelectable() and hasText("Humano")).assert(SemanticsMatcher.keyNotDefined(SemanticsProperties.ContentDescription))
+    }
+
+    // Con miles de chats (como producción) la bolita lleva punto de miles. Que los cuatro chips se vean sin deslizar lo
+    // cuida S35 en el emulador: Robolectric mide el texto muy angosto y aquí siempre caben.
+    @Test fun con_miles_de_chats_la_bolita_de_todos_lleva_punto_de_miles() {
+        val old = (1..1205).map { chat("wa_0000009%05d".format(it), "Cliente $it", unread = false, human = false, order = false) }
+        sources["conversations"] = MutableStateFlow(json("[" + (old + listOf(
+            chat("wa_000000000101", "Laura Prueba", unread = true, human = false, order = false),
+            chat("wa_000000000102", "Sofía Prueba", unread = false, human = true, order = false),
+            chat("wa_000000000104", "Andrés Prueba", unread = true, human = false, order = true),
+        )).joinToString(",") + "]"))
+        sources["app"] = MutableStateFlow(json("""{"privacy": true}"""))
+        open("chats")
+
+        compose.onNode(isSelectable() and hasText("Todos") and hasContentDescription("1.208")).assertExists()
+        compose.onNode(isSelectable() and hasText("No leídos") and hasContentDescription("2")).assertExists()
     }
 
     @Test fun un_incendio_de_orden_abre_su_ficha_y_uno_de_chat_lo_abre_en_vivo() {
@@ -162,6 +286,22 @@ class RealScreensTest {
             assertThat(patch.path).isEqualTo("/api/orders/orders/order_40/stage")
             assertThat(patch.body).isEqualTo(json("""{"stage": "shipping", "tracking_url": "https://envia.co/g/1", "shipping_cost": 12000}"""))
         }
+    }
+
+    // Envío gratis de una campaña (desde las cajas que dice su archivo; operador, 2026-10-20): el costo real del
+    // despacho lo paga la tienda. La pantalla no escribe el número (operador, 2026-10-22: «no debería ir código quemado»).
+    @Test fun la_ficha_de_un_pedido_con_envio_gratis_dice_que_el_envio_lo_paga_la_tienda() {
+        data.ok("/api/orders/orders/order_40", """{"summary": {"id": "order_40", "display_id": "#40", "customer": "Juan Prueba",
+            "status": "ready", "pay_status": "pending", "total_cop": 135000, "free_shipping": true, "store_shipping_cost_cop": 18000},
+            "items_detail": [{"title": "Caja de Velas de deseos onduladas", "quantity": 6, "total_cop": 135000}],
+            "shipping_address": {"first_name": "Juan", "last_name": "Prueba", "address_1": "Calle Falsa 1", "address_2": "Laureles", "city": "Medellín"},
+            "shipping_cop": 0, "payment_method_label": "Contra entrega"}""")
+        open("pedido", mapOf("order_id" to "order_40"))
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToNode(hasText("lo paga la tienda", substring = true))
+        compose.onNodeWithText("Envío gratis por la campaña", substring = true).assertExists()
+        compose.onNodeWithTag(SCREEN_LIST_TAG).performScrollToNode(hasText("(envío gratis)", substring = true))
+        compose.onNodeWithText("(envío gratis)", substring = true).assertExists()
+        node("ENVÍO QUE PAGA LA TIENDA").assertExists()
     }
 
     @Test fun en_camino_se_marca_entregado() {

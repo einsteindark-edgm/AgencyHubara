@@ -29,8 +29,10 @@ Reemplazadas:
   * `send_typing_indicator_activity`: no-op;
   * transferencias, remarketing, handoff y eventos entre agentes: se capturan
     y no arrancan nada;
-  * `decide_ghosting_action` y `transcribe_audio_activity`: fallan en voz
-    alta si algo las llama (no son parte de un turno del banco).
+  * `decide_ghosting_action`: falla en voz alta si algo la llama (no es parte
+    de un turno del banco);
+  * `read_reply_window`: la ventana ya cerró. Con el LLM caído, el turno del
+    banco se rinde de una en vez de esperar minutos a que vuelva el modelo.
 """
 from __future__ import annotations
 
@@ -70,6 +72,9 @@ REAL_IN_SANDBOX = frozenset(
         "perceive_burst",
         "persist_assistant_message_activity",
         "read_and_clear_pending_handoff",
+        # Lo que el cliente le escribió a remarketing (caso 2026-10-16): solo
+        # lee el chat del sandbox.
+        "read_handoff_reply",
         "read_order_draft_note",
         "record_episode_llm_usage",
         "record_turn",
@@ -157,9 +162,13 @@ def _fakes(capture: SandboxCapture, real: dict[str, Any]) -> dict[str, Callable[
     async def decide_ghosting_action() -> str:
         raise ApplicationError("sandbox: el ghosting no se simula (turno aislado del banco)", non_retryable=True)
 
-    @activity.defn(name="transcribe_audio_activity")
-    async def transcribe_audio(session_id: str) -> str:
-        raise ApplicationError("sandbox: el audio no se transcribe en el laboratorio", non_retryable=True)
+    @activity.defn(name="read_reply_window")
+    async def read_reply_window(session_id: str) -> dict:
+        # Caída del LLM (2026-10-15): en producción el turno espera a que
+        # vuelva el modelo; un caso del banco no. La ventana ya cerró: el turno
+        # se rinde de una y el caso termina con su traza. Es el JSON de
+        # `ReplyWindow` (el contrato es del agente de ventas: R-DIP #10).
+        return {"route": "ventas", "window_expires_at_ms": 0}
 
     persist_real = real.get("persist_turn_trace")
 
@@ -184,7 +193,7 @@ def _fakes(capture: SandboxCapture, real: dict[str, Any]) -> dict[str, Callable[
         "schedule_remarketing_workflow": schedule_remarketing_workflow,
         "write_pending_handoff": write_pending_handoff,
         "decide_ghosting_action": decide_ghosting_action,
-        "transcribe_audio_activity": transcribe_audio,
+        "read_reply_window": read_reply_window,
         "persist_turn_trace": persist_turn_trace,
     }
 

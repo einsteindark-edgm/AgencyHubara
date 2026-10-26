@@ -45,6 +45,7 @@ from src.platform.whatsapp.reengagement_ladder import (
     HOT_FIRST_GAP_MS as HOT_FIRST_GAP_MS,
     LADDER_GAPS_MS as LADDER_GAPS_MS,
     MAX_TEMPLATES_PER_24H as MAX_TEMPLATES_PER_24H,
+    NEXT_TOUCH_MORNING as NEXT_TOUCH_MORNING,
     TOUCH_ABSTAINED as TOUCH_ABSTAINED,
     TOUCH_FREE_FORM as TOUCH_FREE_FORM,
     TOUCH_TEMPLATE as TOUCH_TEMPLATE,
@@ -154,6 +155,20 @@ from src.platform.whatsapp.activities import (
 )
 from src.platform.whatsapp.cost import (
     OutboundLogEntry as OutboundLogEntry,
+)
+
+# Mensajes interactivos DENTRO de la ventana 24h, con historial y log de
+# salientes: el plugin de reseñas abre el formulario de calificación (Flow) y
+# manda el botón «Opinar en Google». Fuera de la ventana Meta los rechaza
+# (131047) y el caller cae a la plantilla con botón FLOW.
+from src.platform.whatsapp.activities import (
+    send_cta_url_to_session as send_cta_url_to_session,
+    send_flow_to_session as send_flow_to_session,
+)
+from src.platform.whatsapp.dtos import (
+    InteractiveCTAUrlOutbound as InteractiveCTAUrlOutbound,
+    InteractiveFlowOutbound as InteractiveFlowOutbound,
+    OutboundResult as OutboundResult,
 )
 
 # Los envíos del turno de ventas (motor de decisiones F4): el workflow V2 nace

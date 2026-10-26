@@ -776,13 +776,20 @@ export function CreateOrderAction({ chatId, available = true }: Props) {
                   <>
                     <div style={totalsStyle}>
                       <span>Envío</span>
-                      <span>{formatCop(shownTotals.shippingCop)}</span>
+                      {/* $0 = el envío gratis de una campaña (desde 2026-09-23
+                          no hay otro envío sin costo). */}
+                      <span>{shownTotals.shippingCop === 0 ? "gratis" : formatCop(shownTotals.shippingCop)}</span>
                     </div>
                     <div style={totalsStyle}>
                       <span>Total</span>
                       <span>{formatCop(shownTotals.totalCop)}</span>
                     </div>
                   </>
+                ) : suggestion?.free_shipping ? (
+                  <p style={mutedStyle}>
+                    Envío gratis: el pedido lleva {suggestion.free_shipping.boxes} cajas de la campaña
+                    (gratis desde {suggestion.free_shipping.min_boxes}). No se le cobra al cliente.
+                  </p>
                 ) : (
                   <p style={mutedStyle}>
                     El envío se calcula al crear el pedido (tarifa mínima según la

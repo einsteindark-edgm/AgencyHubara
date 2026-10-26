@@ -333,3 +333,70 @@ async def test_standby_inbound_reply_persists_the_quoted_id(vault: Path) -> None
     (line,) = _lines(vault)
     assert line["wamid"] == "wamid.STANDBY.IN.R"
     assert line["reply_to"] == {"id": "wamid.STANDBY.ECHO.1"}
+
+
+# --- Premortem C9: la calificación también llega con MBA al frente ------------
+
+
+def _review_reply(wamid: str = "wamid.STANDBY.REVIEW") -> dict[str, Any]:
+    body = P.inbound("x", wamid=wamid)
+    msg = body["entry"][0]["changes"][0]["value"]["standby"]["messages"][0]
+    msg.pop("text")
+    msg["type"] = "interactive"
+    msg["interactive"] = {
+        "type": "nfm_reply",
+        "nfm_reply": {
+            "name": "flow",
+            "body": "Sent",
+            "response_json": json.dumps({"flow_token": "review:order_01JABC:n1", "rating": "5"}),
+        },
+    }
+    return body
+
+
+async def test_a_review_reply_under_standby_reaches_the_reviews_plugin_without_a_new_episode(vault: Path) -> None:
+    """Igual que el webhook normal (H2): la calificación de quien ya compró no
+    abre un episodio y va al plugin de reseñas (el cupón prometido)."""
+    calls: list[tuple] = []
+
+    async def _on_review(session_id: str, wa_message_id: str, response: dict, received_at_ms: int) -> None:
+        calls.append((session_id, wa_message_id, response, received_at_ms))
+
+    await _run(vault, P.inbound())
+    FilesystemMetadataStore(vault).update(
+        SESSION, lambda d: {**d, "tag": "COMPRA_EXITOSA",
+                            "episodes": [{**d["episodes"][0], "closed_at_ms": NOW_MS, "closing_tag": "COMPRA_EXITOSA"}]})
+    uc = IngestStandby(
+        metadata_store=FilesystemMetadataStore(vault), history_store=FilesystemMessageHistoryStore(vault),
+        vault_dir=vault, now_ms=lambda: NOW_MS + 60_000, is_customer_allowed=lambda c: True,
+        on_review_reply=_on_review,
+    )
+
+    res = await uc.execute(parse_whatsapp_standby(_review_reply()))
+
+    assert res.messages_persisted == 1
+    assert calls == [(SESSION, "wamid.STANDBY.REVIEW", {"flow_token": "review:order_01JABC:n1", "rating": "5"},
+                      1_757_300_000_000)]
+    m = _meta(vault)
+    assert len(m["episodes"]) == 1 and m["tag"] == "COMPRA_EXITOSA"
+    assert m["service_window_expires_at_ms"] == NOW_MS + 60_000 + 24 * 3600 * 1000
+    assert _lines(vault)[-1]["content"].startswith("[calificación recibida] ★★★★★")
+
+
+async def test_the_composed_standby_ear_hands_review_replies_to_the_regular_ingest(vault: Path, monkeypatch) -> None:
+    from src.plugins.chats.agent.sales import composition
+
+    seen: list[tuple] = []
+
+    class _Regular:
+        async def emit_review_submitted(self, *args) -> None:
+            seen.append(args)
+
+    monkeypatch.setattr(composition, "build_ingest_use_case", lambda: _Regular())
+    monkeypatch.setattr(composition, "_STANDBY_USE_CASE", None)
+    monkeypatch.setattr(composition, "WORKSPACE_VAULT_DIR", vault)
+    uc = composition.build_ingest_standby_use_case()
+
+    await uc._on_review_reply(SESSION, "wamid.R", {"rating": "4"}, NOW_MS)
+
+    assert seen == [(SESSION, "wamid.R", {"rating": "4"}, NOW_MS)]

@@ -6,7 +6,10 @@ import com.hubara.operator.core.designsystem.LoadError
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -16,6 +19,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -76,7 +80,7 @@ fun ChatIsland(
         actions = ChatActions(
             onMore = onMore, onReactivate = onReactivate, onIntervene = vm::intervene, onSend = vm::send, onSendText = vm::sendText,
             onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss, onClearError = vm::clearError, onReload = vm::refresh,
-            onOpen = onOpen,
+            onOpen = onOpen, onPull = vm::pull,
         ),
     )
 }
@@ -95,9 +99,15 @@ class ChatActions(
     val onReload: () -> Unit = {},
     /** Abre una pantalla del servidor (la burbuja «Crear pedido» → `crear_pedido`). */
     val onOpen: (String) -> Unit = {},
+    /** Tirar hacia abajo el historial: la conversación al servidor ya, sin esperar al tiempo real. */
+    val onPull: () -> Unit = {},
 )
 
+/** Para los tests: el historial (se tira hacia abajo para pedirlo al servidor). */
+const val CHAT_HISTORY_TAG = "chat_history"
+
 /** El chat sin ViewModel: lo que se ve dado un [ChatUiState]. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modifier: Modifier = Modifier) {
     Column(modifier) {
@@ -108,7 +118,10 @@ fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modif
             HistoryView.FAILED -> Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 LoadError(actions.onReload, title = "No se pudo cargar la conversación")
             }
-            HistoryView.MESSAGES -> History(ui, Modifier.weight(1f))
+            // Tirar hacia abajo desde arriba del historial lo pide al servidor (el indicador, solo si lo pidió el operador).
+            HistoryView.MESSAGES -> PullToRefreshBox(isRefreshing = ui.refreshing, onRefresh = actions.onPull, modifier = Modifier.weight(1f)) {
+                History(ui, Modifier.fillMaxSize())
+            }
         }
         // Piso del radar: los incendios que aparecen solos nunca tapan deshacer, burbujas ni lo que se escribe.
         RadarFloor {
@@ -145,7 +158,7 @@ private fun History(ui: ChatUiState, modifier: Modifier) {
         if (newest != null && list.firstVisibleItemIndex <= 2) list.animateScrollToItem(0)
     }
     LazyColumn(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth().testTag(CHAT_HISTORY_TAG),
         state = list,
         reverseLayout = true,
         contentPadding = PaddingValues(start = Spacing.md, end = Spacing.md, top = Spacing.sm, bottom = Spacing.md),

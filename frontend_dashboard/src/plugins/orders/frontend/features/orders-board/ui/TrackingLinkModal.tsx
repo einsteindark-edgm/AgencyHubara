@@ -36,6 +36,9 @@ interface Props {
   orderTotal?: number | null;
   /** Tarifa mínima de envío que se cobró al vender (referencia). `null` = no hay. */
   estimatedShipping?: number | null;
+  /** Envío gratis (desde N cajas de una campaña): el valor real lo paga la
+   *  tienda — queda anotado, pero el total a cobrar no lo suma. */
+  freeShipping?: boolean;
   /** Transición en vuelo: deshabilita las acciones. */
   busy?: boolean;
   onConfirm: (result: ShippingConfirm) => void;
@@ -46,6 +49,7 @@ export function TrackingLinkModal({
   orderId,
   orderTotal = null,
   estimatedShipping = null,
+  freeShipping = false,
   busy = false,
   onConfirm,
   onCancel,
@@ -122,6 +126,12 @@ export function TrackingLinkModal({
       >
         <div>
           <div className="text-[13px] font-bold text-fg">🚚 Marcar en camino · {orderId}</div>
+          {freeShipping && (
+            <p data-testid="ship-free" className="mt-1 text-[11.5px] font-semibold leading-snug text-fg">
+              Este pedido tiene envío gratis por la campaña: el valor real del
+              envío lo paga la tienda y no se le cobra al cliente.
+            </p>
+          )}
           <p className="mt-1 text-[11.5px] leading-snug text-fg-faint">
             El cliente recibe por WhatsApp el aviso de que su pedido ya va en
             camino. Escribí el valor REAL del envío: reemplaza a la tarifa
@@ -148,7 +158,9 @@ export function TrackingLinkModal({
           )}
         <label className="flex flex-col gap-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-fg-faint">
-            Valor del envío real (opcional)
+            {freeShipping
+              ? "Valor del envío real — lo paga la tienda (opcional)"
+              : "Valor del envío real (opcional)"}
           </span>
           <input
             type="text"
@@ -174,7 +186,7 @@ export function TrackingLinkModal({
             <div className="flex items-center justify-between border-t border-line pt-2 text-[12.5px]">
               <span className="font-semibold text-fg">Total</span>
               <span data-testid="ship-total" className="font-bold text-fg">
-                {fmtMoney(knownTotal + shippingValue)}
+                {fmtMoney(freeShipping ? knownTotal : knownTotal + shippingValue)}
               </span>
             </div>
           )}

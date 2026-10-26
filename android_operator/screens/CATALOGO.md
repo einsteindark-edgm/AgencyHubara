@@ -1,5 +1,5 @@
 <!-- Generado desde Catalog.kt y Filters.kt: no lo edites a mano. ./gradlew :core:sdui:test -PupdateScreens=true -->
-# Catálogo de pantallas del servidor (versión 1)
+# Catálogo de pantallas del servidor (versión 2)
 
 Lo que esta versión de la App Operador sabe pintar y hacer. La guía para crear una pantalla está en
 [README.md](README.md). Todo texto acepta `{{ … }}`.
@@ -163,6 +163,8 @@ _Se puede tocar (`action`)._
 | `avatar_seed` | texto | Valor estable para el color del avatar (por defecto el nombre). |
 | `tag` | texto | Píldora debajo del título. |
 | `tag_tone` | `neutral` · `primary` · `secondary` · `bot` · `success` · `warning` · `danger` | Color de la píldora. |
+| `title_tag` | texto | Píldora chica al lado del título, sin agregar una línea (quién atiende: «Humano»). |
+| `title_tag_tone` | `neutral` · `primary` · `secondary` · `bot` · `success` · `warning` · `danger` | Color de la píldora del título. |
 | `trailing` | texto | Valor a la derecha (un total, una cifra). |
 | `trailing_caption` | texto | Línea chica debajo del valor (una hora). |
 | `trailing_tone` | `default` · `muted` · `primary` · `bot` · `success` · `warning` · `danger` | Color del valor y su línea chica. |
@@ -263,7 +265,7 @@ Elige UNA opción. Guarda el valor en `bind` (`state.x` vuelve a pedir los datos
 | Propiedad | Tipo | Qué es |
 |---|---|---|
 | `bind` **(obligatoria)** | `state.x` / `form.x` | Dónde se guarda: `state.<clave>`. |
-| `options` **(obligatoria)** | opciones | `[{ "value": "…", "label": "…" }]`. |
+| `options` **(obligatoria)** | opciones | `[{ "value": "…", "label": "…", "badge": "{{…}}" }]`. `badge` (opcional): un número en una bolita al lado del texto, como los no leídos de la bandeja (vacío o 0: sin bolita). Con bolitas los chips bajan de línea en vez de deslizarse: se ven todos. |
 | `style` | `chips` · `segmented` | Chips (por defecto) o botones segmentados. |
 
 ### `text_field`
@@ -352,6 +354,7 @@ Una lista `[ {…}, {…} ]` en `action` ejecuta varias en orden.
 | `chat` | Una conversación (params: session): session_id, title, subtitle («Tú atiendes»), name, phone, human, window_open, order_id, order_label («Pedido #41»), stage. |
 | `templates` | Las plantillas aprobadas: name, title, label (con «· recomendada»), body, preview_body ({{variable}}), fallback, needs_image, is_default, variables [{name, label, max_length}], variable_names. |
 | `app` | La app: privacy (si hay política de privacidad para abrir). |
+| `sync` | La sincronización en vivo de este teléfono (catálogo 2): state (live/connecting/retrying/stopped), live, state_label («En vivo»), tone (para un aviso), detail, last_event («hace 3 s»), lag y max_lag (cuánto tardó en llegar: «0,4 s»), events, data («1,2 MB»), cuts (cortes), last_error y refresh (la última bandeja pedida al servidor). Tirar para actualizar reconecta y trae la bandeja. |
 
 El estado de cada fuente se lee con `{{status.<fuente>.loading}}` y `{{status.<fuente>.failed}}`.
 

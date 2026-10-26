@@ -314,3 +314,34 @@ el contacto tenía abierta, esa fila no lo repite (pedido del operador,
 - GIVEN el operador hizo envíos de prueba y respondió
 - THEN la campaña no aparece en Ads por esas pruebas (el touch de prueba guarda el id del mensaje, pero la atribución lo ignora)
 
+### Requirement: Segmento de perfil «Interesados sin compra» (2026-10-20)
+
+La audiencia de una campaña SHALL ofrecer, además de los segmentos que salen
+de la etiqueta de la conversación (clientes, interesados, fríos), el segmento
+de perfil `interesados_sin_compra`: las personas con
+`profile_tags.interesado_sin_compra` (lo marca Ventas en vivo y la pasada
+`scripts/backfill_interest_profile.py` en las conversaciones de antes) que no
+compraron desde el episodio de la marca (pedido del operador: «que ese
+perfilamiento sirva como un filtro de público para las campañas de WhatsApp»).
+Un pedido en la conversación (el `order_id` de ese episodio o de uno
+posterior, o un episodio de posventa `after_order`) MUST sacarla del segmento,
+y una marca en un episodio de posventa (acaba de comprar) MUST NOT contar. Si
+el episodio de la marca ya no está, cuenta el que estaba en curso a la hora
+de la marca (`at_ms`). Los segmentos elegidos se suman sin repetir a nadie y
+las exclusiones de siempre (humano, baja, sesión de prueba, campaña reciente)
+valen igual. Límite conocido: un pedido hecho solo en la tienda web no queda
+en la conversación y no saca a nadie del segmento.
+
+#### Scenario: La tanda del 5 % a quien quiso comprar
+
+- GIVEN tres personas con la marca: una sin pedido, una que compró por el chat después de la marca y una atendida por un humano
+- WHEN el operador elige el segmento «Interesados sin compra»
+- THEN solo la primera es destinataria; la segunda queda `fuera_de_segmento` y la tercera `excluido`
+- AND `GET /segments` cuenta el segmento con la misma regla (la card y la audiencia no difieren)
+
+#### Scenario: Dos segmentos que comparten personas
+
+- GIVEN una persona con etiqueta INTERESADO y la marca del perfil
+- WHEN la campaña elige «Interesados» e «Interesados sin compra»
+- THEN recibe un solo mensaje
+

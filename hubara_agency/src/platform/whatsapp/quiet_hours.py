@@ -86,6 +86,14 @@ def _parse_hhmm(value: str) -> tuple[int, int]:
     return (int(raw), 0)
 
 
+def allowed_hours() -> tuple[tuple[int, int], tuple[int, int]]:
+    """El horario permitido configurado (hora local, `(hh, mm)`): desde,
+    hasta (exclusivo). Lo fija Terraform (`WATCHDOG_QUIET_HOURS_START/END`)."""
+    start = _parse_hhmm(os.environ.get("WATCHDOG_QUIET_HOURS_START", DEFAULT_QUIET_HOURS_START))
+    end = _parse_hhmm(os.environ.get("WATCHDOG_QUIET_HOURS_END", DEFAULT_QUIET_HOURS_END))
+    return start, end
+
+
 def is_quiet_hours_for_session(session_id: str, now_utc: datetime) -> bool:
     """True si la hora LOCAL del cliente está fuera del horario permitido."""
     tz = resolve_local_timezone(session_id)

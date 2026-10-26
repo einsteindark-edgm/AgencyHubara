@@ -27,7 +27,7 @@ def test_report_covers_the_bogota_day_window_and_masks_phones(tmp_path, monkeypa
     assert report.main(["--from", "2026-09-18", "--to", "2026-09-18"]) == 0
 
     out = json.loads(capsys.readouterr().out)
-    assert out["by_day_ad"] == {"2026-09-18": {_AD: {"sessions": 1, "ingested": 0, "failed": 0, "lost": 1}}}
+    assert out["by_day_ad"] == {"2026-09-18": {_AD: {"sessions": 1, "ingested": 0, "failed": 0, "lost": 1, "pending": 0, "stuck": 0}}}
     assert out["lost"][0]["session_id"] == "wa_***0001"
     assert out["lost"][0]["at_bogota"] == "2026-09-18 07:10:00"
 
@@ -40,3 +40,19 @@ def test_full_flag_shows_the_session_id_to_locate_the_chat(tmp_path, monkeypatch
     report.main(["--from", "2026-09-18", "--to", "2026-09-18", "--full"])
 
     assert json.loads(capsys.readouterr().out)["lost"][0]["session_id"] == "wa_573000000001"
+
+
+def test_a_message_left_in_temporal_is_reported_as_stuck_and_masked(tmp_path, monkeypatch, capsys) -> None:
+    """Entrada durable (ADR 2026-10-15): `queued` sin desenlace = en Temporal;
+    de hace semanas (a la hora del reporte), varado: `stuck`. Sale enmascarado
+    como `lost` y `failed`."""
+    ledger = FilesystemInboundLedger(tmp_path)
+    queued = {"kind": "message", "stage": "queued", "at_ms": _SEP_18_0710_BOG + 1, "field": "messages", "wa_message_id": "wamid.B", "session_id": "wa_573000000001"}
+    ledger.append([_seen("wamid.B", "wa_573000000001", _SEP_18_0710_BOG), queued])
+    monkeypatch.setattr(report, "build_inbound_ledger", lambda: ledger)
+
+    report.main(["--from", "2026-09-18", "--to", "2026-09-18"])
+
+    out = json.loads(capsys.readouterr().out)
+    assert out["lost"] == [] and out["pending"] == []
+    assert out["stuck"][0]["session_id"] == "wa_***0001"

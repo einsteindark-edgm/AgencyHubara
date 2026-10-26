@@ -2,7 +2,9 @@
 aparte, como un caso en la caja: entorno del sandbox ANTES de importar la
 app, un turno real del banco con el workflow de producción sobre el servidor
 de pruebas de Temporal y un LLM falso, y hooks de auditoría de Python que
-anotan cada conexión y cada escritura. Escribe un reporte JSON.
+anotan cada conexión y cada escritura. Escribe un reporte JSON. Con
+`PROBE_HISTORY=1` el reporte trae también la historia de Temporal del turno
+(`histories`, como la exporta `WorkflowHistory.to_json_dict`).
 
 Uso: python sandbox_turn_probe.py <case.json> <bench_dir> <sandbox_dir> <report.json> [brazo]
 """
@@ -28,6 +30,7 @@ _lookups: list[str] = []
 _writes: list[str] = []
 _tools_called: list[str] = []
 _tool_messages: list[dict] = []
+_histories: list[dict] = []
 _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_CREAT | os.O_APPEND
 
 
@@ -99,9 +102,21 @@ async def main() -> dict:
 
     case = json.loads(CASE.read_text(encoding="utf-8"))
     async with await WorkflowEnvironment.start_time_skipping() as env:
+        started = []
+        if os.environ.get("PROBE_HISTORY") == "1":
+            start_workflow = env.client.start_workflow
+
+            async def recording_start(*args, **kwargs):
+                handle = await start_workflow(*args, **kwargs)
+                started.append(handle)
+                return handle
+
+            env.client.start_workflow = recording_start
         sys.addaudithook(_hook)  # el servidor de pruebas ya bajó y arrancó: de acá en adelante, el turno
         result = await run_case(case, bench_dir=BENCH, sandbox_dir=SANDBOX, client=env.client, llm_chat=fake_llm, timeout_s=120,
                               arm=ARM)
+        for handle in started:
+            _histories.append((await handle.fetch_history()).to_json_dict())
     result["llm_calls"] = calls["n"]
     # Lo que el Jev falso recibió (con `PERCEPTION_PROVIDER=fake`): el estado
     # de cada pregunta, para ver qué contexto le llegó.
@@ -115,5 +130,5 @@ async def main() -> dict:
 if __name__ == "__main__":
     report = {"result": asyncio.run(main())}
     report.update(connects=_connects, lookups=_lookups, writes=sorted(set(_writes)), tools_called=_tools_called,
-                  tool_messages=_tool_messages)
+                  tool_messages=_tool_messages, histories=_histories)
     REPORT.write_text(json.dumps(report, ensure_ascii=False, default=str), encoding="utf-8")

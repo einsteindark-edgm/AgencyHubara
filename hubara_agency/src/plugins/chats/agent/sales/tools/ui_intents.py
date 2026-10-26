@@ -55,6 +55,7 @@ from src.sdk.connectorkit import has_real_variants, product_retailer_id
 from src.platform.catalog import CatalogPort, ProductNotFoundError, deslugify
 from src.platform.config import WORKSPACE_VAULT_DIR
 from src.plugins.chats.agent.sales.decisions.guards import catalog_choice_buttons
+from src.plugins.chats.agent.sales.tools.fact_check import held_text
 from src.platform.state import FilesystemMetadataStore
 from src.platform.whatsapp import limits as wa_limits
 from src.plugins.chats.agent.sales.card_messages import (
@@ -340,13 +341,17 @@ class PresentProductDetailTool(ToolBase):
         workspace: str | Path,
         catalog: CatalogPort,
         photo_colors: PhotoColorReader | None = None,
+        fact_check: Any = None,
     ) -> None:
         """`photo_colors`: de qué color es la vela de la foto (caso
         2026-10-09: el cliente citó la foto de una ardilla café, «¿no viene en
-        este color?», y nadie lo sabía). Sin él, la foto va como siempre."""
+        este color?», y nadie lo sabía). Sin él, la foto va como siempre.
+        `fact_check`: los hechos del pie de foto que redacta el modelo
+        (`tools/fact_check.py`); sin él, sale como siempre."""
         self._workspace = Path(workspace)
         self._catalog = catalog
         self._photo_colors = photo_colors
+        self._fact_check = fact_check
 
     async def execute_with_context(
         self,
@@ -359,6 +364,9 @@ class PresentProductDetailTool(ToolBase):
             "🖼️ [TOOL present_product_detail] session={} handle={!r} design={!r}",
             ctx.session_key, handle, design,
         )
+        held = await held_text(self._fact_check, ctx, self.name, caption_suffix, handles=[handle])
+        if held is not None:
+            return held
         try:
             product = await self._catalog.get_by_handle(handle)
         except ProductNotFoundError:
@@ -579,9 +587,11 @@ class PresentProductsTool(ToolBase):
         "required": ["intro_text"],
     }
 
-    def __init__(self, workspace: str | Path, catalog: CatalogPort) -> None:
+    def __init__(self, workspace: str | Path, catalog: CatalogPort, fact_check: Any = None) -> None:
         self._workspace = Path(workspace)
         self._catalog = catalog
+        # Los hechos del cuerpo de la lista que redacta el modelo (2026-10-13).
+        self._fact_check = fact_check
 
     async def execute_with_context(
         self,
@@ -591,6 +601,9 @@ class PresentProductsTool(ToolBase):
         group_by: str = "categories",
         category: str | None = None,
     ) -> str:
+        held = await held_text(self._fact_check, ctx, self.name, intro_text, handles=handles or None)
+        if held is not None:
+            return held
         # Un handle repetido sería una fila repetida: WhatsApp rechaza la lista.
         wanted = list(dict.fromkeys(handles or []))
         logger.info(
@@ -1838,6 +1851,25 @@ class PresentOrderConfirmationTool(ToolBase):
                     "set_order_slot(lineas=...)."
                 ),
             }, ensure_ascii=False)
+        # La opción de Medusa sin escoger (2026-10-14, ···0686: «2× Velas de
+        # deseos cuadradas» salió sin color y Medusa cayó a la primera variante).
+        from src.plugins.chats.agent.sales.use_cases.option_choice import unchosen_options
+
+        unchosen = await unchosen_options(self._catalog, items, metadata_now)
+        if unchosen:
+            logger.warning(
+                "🧾 [TOOL present_order_confirmation] rechazada session={}: variant_not_chosen {}",
+                ctx.session_key, unchosen,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "variant_not_chosen",
+                "message": (
+                    f"Falta que el cliente escoja {'; '.join(unchosen)}. NO se encoló la confirmación: "
+                    "pregúntaselo con present_variant_picker, anota lo que escoja con set_order_slot y "
+                    "vuelve a llamar present_order_confirmation con el `color` de cada producto."
+                ),
+            }, ensure_ascii=False)
         # Un producto que va en varias líneas: la tarjeta dice la variante de
         # cada una (si no, el cliente ve dos renglones iguales).
         handles = [str(it["handle"]) for it in items]
@@ -1893,19 +1925,44 @@ class PresentOrderConfirmationTool(ToolBase):
                 ),
             }, ensure_ascii=False)
 
-        # Envío = tarifa mínima publicada, nunca $0 ni inventada (decisión del
-        # operador 2026-09-23: sin descuentos ni envío gratis). Con la ciudad
-        # del borrador, la misma regla que `register_order` (Bogotá solo la
-        # suya): el cliente no confirma un total que el registro rechazaría.
-        # La zona de la ciudad la decide el motor de decisiones (capacidad
-        # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice).
-        zone = await decide_for_session(
-            capability("zona_de_envio"),
-            CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
-            session_id=ctx.session_key,
-            vault_dir=WORKSPACE_VAULT_DIR,
+        # Envío gratis desde N cajas de una campaña (operador, 2026-10-20): lo
+        # decide el sistema con las cajas del pedido, la misma regla que
+        # `register_order` y «Crear pedido». Con él, el envío es $0.
+        from src.plugins.chats.shared.sales_campaigns import bogota_today, free_shipping_for
+
+        free = free_shipping_for(
+            ((str(it.get("handle")), it.get("quantity")) for it in items), today=bogota_today()
         )
-        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
+        if free is not None and int(shipping_cop) != 0:
+            logger.warning(
+                "🚨 [TOOL present_order_confirmation] free_shipping_mismatch session={} shipping_cop={}",
+                ctx.session_key, shipping_cop,
+            )
+            return json.dumps({
+                "queued": False,
+                "error": "shipping_mismatch",
+                "message": (
+                    f"Este pedido lleva {free.boxes} cajas de la campaña: el envío es gratis "
+                    f"(desde {free.min_boxes} cajas). NO se encoló la confirmación: vuelve a "
+                    "llamar present_order_confirmation con shipping_cop=0."
+                ),
+            }, ensure_ascii=False)
+        # Envío = tarifa mínima publicada, nunca $0 ni inventada (decisión del
+        # operador 2026-09-23: sin descuentos ni envío gratis, salvo el de la
+        # campaña de arriba). Con la ciudad del borrador, la misma regla que
+        # `register_order` (Bogotá solo la suya): el cliente no confirma un
+        # total que el registro rechazaría. La zona de la ciudad la decide el
+        # motor de decisiones (capacidad `zona_de_envio`; regla de hoy: Bogotá
+        # si la ciudad lo dice).
+        zone = None
+        if free is None:
+            zone = await decide_for_session(
+                capability("zona_de_envio"),
+                CiudadDeEnvio(ciudad=draft_city if isinstance(draft_city, str) else None),
+                session_id=ctx.session_key,
+                vault_dir=WORKSPACE_VAULT_DIR,
+            )
+        if zone is not None and not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🚨 [TOOL present_order_confirmation] shipping_mismatch session={} shipping_cop={}",
                 ctx.session_key, shipping_cop,
@@ -1980,6 +2037,7 @@ class PresentOrderConfirmationTool(ToolBase):
                     else {}
                 ),
                 **({"coupon_note": note} if note else {}),
+                **({"free_shipping": free.to_json()} if free is not None else {}),
             },
             "analytics": {
                 "component_id": "order_confirmation",
@@ -2016,7 +2074,17 @@ class PresentOrderConfirmationTool(ToolBase):
             if discount and discount_cop > 0
             else ""
         )
-        if payment_method == "cash_on_delivery":
+        if free is not None:
+            # Sin envío por confirmar: el total es el de los productos (menos
+            # el cupón), también con contra entrega.
+            amounts = {"subtotal_cop": subtotal, "total_cop": total}
+            summary = (
+                f"Confirmación enviada: productos ${subtotal:,} COP{discount_text} + envío gratis "
+                f"({free.boxes} cajas de la campaña; gratis desde {free.min_boxes}) = total ${total:,} COP"
+                + (" a pagar al recibir" if payment_method == "cash_on_delivery" else "")
+                + f". {wait_hint}"
+            )
+        elif payment_method == "cash_on_delivery":
             amounts = {"subtotal_cop": subtotal}
             summary = (
                 f"Confirmación enviada: productos ${subtotal:,} COP{discount_text}; el "
@@ -2137,9 +2205,24 @@ class SendShippingRatesTool(ToolBase):
         logger.info(
             "🚚 [TOOL send_shipping_rates] session={}", ctx.session_key
         )
+        # El gancho del envío gratis de la campaña de la conversación, si lo
+        # tiene (operador, 2026-10-20). Una campaña rota no frena las tarifas.
+        from src.plugins.chats.agent.sales.config.shipping import shipping_rates_message
+        from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
+        from src.plugins.chats.shared.sales_campaigns import bogota_today, campaign_for
+
+        campaign = None
+        try:
+            episode = get_active_episode(FilesystemMetadataStore(WORKSPACE_VAULT_DIR).read(ctx.session_key) or {})
+            campaign = campaign_for(episode, today=bogota_today())
+        except Exception as exc:  # noqa: BLE001 — las tarifas salen igual
+            logger.warning("🚚 [TOOL send_shipping_rates] campaña no disponible: {}", exc)
+        text = shipping_rates_message(campaign)
         intent = {
             "kind": "shipping_rates",
-            "params": {},
+            # Solo el id de la campaña: el flush arma el texto desde el código
+            # (nunca texto en los params: el modelo no redacta tarifas).
+            "params": {"campaign": campaign.id} if text != SHIPPING_RATES_MESSAGE else {},
             "analytics": {
                 "component_id": "shipping_rates",
                 "component_kind": "text",
@@ -2150,7 +2233,7 @@ class SendShippingRatesTool(ToolBase):
             "queued": True,
             "kind": "shipping_rates",
             # El texto fijo que lee el cliente (traza y verificación ③).
-            "customer_text": SHIPPING_RATES_MESSAGE,
+            "customer_text": text,
             "summary": (
                 "Mensaje estándar de tarifas de envío enviado al cliente. "
                 "NO repitas ni reformules las tarifas en tu texto; tu turno "
@@ -2350,8 +2433,10 @@ class SendCTAUrlTool(ToolBase):
         "/cart",
     )
 
-    def __init__(self, workspace: str | Path) -> None:
+    def __init__(self, workspace: str | Path, fact_check: Any = None) -> None:
         self._workspace = Path(workspace)
+        # Los hechos del texto sobre el botón que redacta el modelo (2026-10-13).
+        self._fact_check = fact_check
 
     async def execute_with_context(
         self,
@@ -2360,6 +2445,9 @@ class SendCTAUrlTool(ToolBase):
         button_text: str,
         body_text: str,
     ) -> str:
+        held = await held_text(self._fact_check, ctx, self.name, body_text)
+        if held is not None:
+            return held
         if any(blocked in url for blocked in self._BLOCKED_PATTERNS):
             return json.dumps({
                 "queued": False,
@@ -2697,10 +2785,12 @@ class SendQuickRepliesTool(ToolBase):
     )
 
     def __init__(
-        self, workspace: str | Path, catalog: CatalogPort | None = None
+        self, workspace: str | Path, catalog: CatalogPort | None = None, fact_check: Any = None
     ) -> None:
         self._workspace = Path(workspace)
         self._catalog = catalog
+        # Los hechos del texto sobre los botones que redacta el modelo (2026-10-13).
+        self._fact_check = fact_check
 
     async def _catalog_vocabulary(self) -> dict[str, str]:
         """{label normalizado: tipo} con todo lo elegible del catálogo.
@@ -2779,6 +2869,9 @@ class SendQuickRepliesTool(ToolBase):
             "🔘 [TOOL send_quick_replies] session={} count={}",
             ctx.session_key, len(buttons),
         )
+        held = await held_text(self._fact_check, ctx, self.name, body)
+        if held is not None:
+            return held
         # Validar/normalizar: trim de títulos a 20 chars, IDs a 256.
         normalized: list[dict[str, str]] = []
         for b in buttons[: wa_limits.MAX_REPLY_BUTTONS]:
@@ -2976,12 +3069,15 @@ class PresentVariantPickerTool(ToolBase):
         workspace: str | Path,
         catalog: CatalogPort | None = None,
         metadata_store: Any = None,
+        fact_check: Any = None,
     ) -> None:
         """`metadata_store`: metadata de la sesión (DI) para ver el cupón
-        aplicado y lo ya elegido; sin él, el picker sale como siempre."""
+        aplicado y lo ya elegido; sin él, el picker sale como siempre.
+        `fact_check`: los hechos del texto del selector (2026-10-13)."""
         self._workspace = Path(workspace)
         self._catalog = catalog
         self._metadata_store = metadata_store
+        self._fact_check = fact_check
 
     async def _valid_labels_for(
         self, variant_type: str, handle: str | None
@@ -3035,6 +3131,9 @@ class PresentVariantPickerTool(ToolBase):
             "🎨 [TOOL present_variant_picker] session={} type={} count={}",
             ctx.session_key, variant_type, len(options),
         )
+        held = await held_text(self._fact_check, ctx, self.name, intro_text, handles=[handle] if handle else None)
+        if held is not None:
+            return held
 
         # Sanity check
         labels = [str(o.get("label", "")).strip() for o in options]

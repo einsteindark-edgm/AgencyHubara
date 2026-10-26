@@ -225,7 +225,9 @@ def test_the_workers_warm_up_the_store_bundle_before_listening(module: str) -> N
     main = importlib.import_module(module).main
     source = inspect.getsource(main)
 
-    assert "warm_up" in source and source.index("warm_up") < source.index("worker.run()")
+    # El worker empieza a escuchar en `run_worker(worker)` (apagado ordenado,
+    # auditoría de Temporal 2026-10-15).
+    assert "warm_up" in source and source.index("warm_up") < source.index("run_worker(worker)")
 
 
 async def test_the_api_warms_up_the_store_bundle_off_the_event_loop(monkeypatch) -> None:
@@ -297,3 +299,40 @@ def test_a_builtin_that_fails_never_breaks_the_caller(monkeypatch) -> None:
     assert any(e["event"] == "decisions.builtin_failed" and e["log_level"] == "error" and e["bundle"] == "ventas@1"
                and e["capability"] == "baja" for e in logs), logs
     registry.reset()
+
+
+# ── Una decisión que nace en una versión del paquete (incidente 2026-10-13) ──
+
+
+def _bundles_with_a_new_decision(tmp_path: Path, monkeypatch) -> None:
+    """Los paquetes de hoy con un catálogo que pide `nueva` desde la versión 99:
+    ninguno la trae (como `aroma_ajeno` con ventas…ventas-6)."""
+    import yaml
+
+    bundles = tmp_path / "bundles"
+    shutil.copytree(registry.BUNDLES_DIR, bundles)
+    catalog = yaml.safe_load((bundles / "builtins.yaml").read_text(encoding="utf-8"))
+    catalog.setdefault("capabilities_since", {})["nueva"] = 99
+    catalog["about"]["nueva"] = {"name": "Nueva", "where": ["herramientas"], "solves": "Algo nuevo."}
+    (bundles / "builtins.yaml").write_text(yaml.safe_dump(catalog, allow_unicode=True), encoding="utf-8")
+    monkeypatch.setattr(registry, "BUNDLES_DIR", bundles)
+    registry.reset()
+
+
+def test_a_decision_newer_than_the_active_bundle_is_not_run(tmp_path: Path, monkeypatch) -> None:
+    """El paquete activo es anterior a la decisión: el lugar que la pide no
+    decide nada (y nunca corre una clase de Python)."""
+    _bundles_with_a_new_decision(tmp_path, monkeypatch)
+
+    assert registry.capability_if_present("nueva") is None
+
+
+def test_a_decision_the_active_bundle_brings_is_the_same_as_asking_for_it() -> None:
+    assert registry.capability_if_present("baja") is capability("baja")
+
+
+def test_a_misspelled_decision_still_fails_loudly(tmp_path: Path, monkeypatch) -> None:
+    _bundles_with_a_new_decision(tmp_path, monkeypatch)
+
+    with pytest.raises(KeyError, match="no existe la capacidad 'nuevas'"):
+        registry.capability_if_present("nuevas")

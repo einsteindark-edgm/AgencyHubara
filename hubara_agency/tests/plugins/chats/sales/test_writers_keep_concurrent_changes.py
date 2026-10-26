@@ -2,7 +2,8 @@
 `metadata.json` no pisan lo que otro escritor puso mientras tanto
 (incidente 2026-10-06: una copia vieja devolvió una foto ya entregada a la cola).
 
-  * `transcribe_audio_activity` espera la transcripción (segundos);
+  * el paso de la nota de voz (`IngestInboundMessage.transcribe_audio`, la
+    activity `transcribe_inbound_audio`) espera la transcripción (segundos);
   * `ensure_promised_handoff_activity` espera al motor de decisiones (Jev).
 
 Las dos escribían su copia ENTERA; ahora solo lo suyo, sobre lo fresco.
@@ -45,6 +46,26 @@ def _read(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+async def _voice_note_step(vault: Path, wamid: str, media_id: str) -> Any:
+    """El paso de la nota de voz del ingest, con el store real del vault."""
+    from dataclasses import asdict
+
+    from src.plugins.chats.agent.sales.contracts import IngestRequest
+    from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
+    from src.plugins.chats.agent.sales.use_cases.ingest_inbound_message import IngestInboundMessage
+
+    note = WhatsAppMessage(
+        message_id=wamid, from_number=SID.removeprefix("wa_"), phone_number_id="pnid-1", text=None, media=None,
+        audio={"id": media_id, "mime_type": "audio/ogg", "voice": True}, timestamp="1714312345", msg_type="audio",
+    )
+    ingest = IngestInboundMessage(
+        history_store=SimpleNamespace(),  # type: ignore[arg-type]
+        load_session=SimpleNamespace(),  # type: ignore[arg-type]
+        metadata_store=FilesystemMetadataStore(vault),
+    )
+    return await ingest.transcribe_audio(IngestRequest(message=asdict(note)))
+
+
 def _flush_pops_the_photo(vault: Path) -> None:
     def _pop(fresh: dict[str, Any]) -> dict[str, Any]:
         fresh["pending_ui_intents"] = []
@@ -58,9 +79,7 @@ def _flush_pops_the_photo(vault: Path) -> None:
 async def test_audio_transcription_keeps_what_the_flush_wrote_meanwhile(
     _isolate_vault_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import src.platform.analytics as analytics
     import src.platform.audio.composition as audio_composition
-    from src.plugins.chats.agent.sales.activities.transcribe_audio import transcribe_audio_activity
 
     path = _seed(
         _isolate_vault_dir,
@@ -80,11 +99,10 @@ async def test_audio_transcription_keeps_what_the_flush_wrote_meanwhile(
             return None
 
     monkeypatch.setattr(audio_composition, "get_audio_transcription_port", lambda: _Port())
-    monkeypatch.setattr(analytics, "get_event_bus", lambda: _Bus())
 
-    text = await ActivityEnvironment().run(transcribe_audio_activity, SID)
+    reentry = await _voice_note_step(_isolate_vault_dir, "wamid.audio", "media-1")
 
-    assert text == "¿la tienes en lila?"
+    assert reentry is not None and reentry.message["text"] == "¿la tienes en lila?"
     metadata = _read(path)
     assert metadata["pending_ui_intents"] == [], "la transcripción devolvió la foto a la cola"
     assert "wamid.foto" in metadata["outbound_media_index"]
@@ -197,9 +215,7 @@ async def test_the_pending_transcription_of_another_audio_stays(
 ) -> None:
     """Mientras se transcribe el audio 1 llega el audio 2: al terminar, se saca
     el pendiente del 1, no el del 2 (que todavía no se transcribió)."""
-    import src.platform.analytics as analytics
     import src.platform.audio.composition as audio_composition
-    from src.plugins.chats.agent.sales.activities.transcribe_audio import transcribe_audio_activity
 
     path = _seed(
         _isolate_vault_dir,
@@ -220,9 +236,8 @@ async def test_the_pending_transcription_of_another_audio_stays(
             return None
 
     monkeypatch.setattr(audio_composition, "get_audio_transcription_port", lambda: _Port())
-    monkeypatch.setattr(analytics, "get_event_bus", lambda: _Bus())
 
-    await ActivityEnvironment().run(transcribe_audio_activity, SID)
+    await _voice_note_step(_isolate_vault_dir, "wamid.audio1", "media-1")
 
     metadata = _read(path)
     assert metadata["pending_transcription"] == second

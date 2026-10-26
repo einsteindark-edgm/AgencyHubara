@@ -18,7 +18,9 @@ Sin Temporal, sin red: lectura del vault por el store de metadata del plugin
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
@@ -42,6 +44,35 @@ def catalog_unit_price(product: Any) -> int | None:
     except (TypeError, ValueError, AttributeError):
         return None
     return value if value > 0 else None
+
+
+def catalog_prices(product: Any) -> list[int]:
+    """Los precios (int COP) de todas las variantes del producto, sin repetir
+    (el de cada variante con la misma vara que `catalog_unit_price`)."""
+    out: list[int] = []
+    for variant in getattr(product, "variants", None) or []:
+        price = catalog_unit_price(SimpleNamespace(variants=[variant]))
+        if price is not None and price not in out:
+            out.append(price)
+    return out
+
+
+#: Un monto en pesos escrito con sus miles («17.000», «$20.000»).
+_DESCRIPTION_AMOUNT = re.compile(r"(?<![\d.,])\d{1,3}(?:\.\d{3})+(?![\d.,]*\d)")
+
+
+def description_prices(product: Any) -> list[int]:
+    """Los montos que la descripción del producto escribe (int COP): el precio
+    por mayor de las velas de deseos vive ahí («a partir de 20 cajas
+    17.000», operador 2026-10-19). Es un dato del catálogo, como el precio
+    de las variantes; sin descripción, []."""
+    text = str(getattr(product, "description", None) or "")
+    out: list[int] = []
+    for match in _DESCRIPTION_AMOUNT.finditer(text):
+        amount = int(match.group(0).replace(".", ""))
+        if amount >= 1_000 and amount not in out:
+            out.append(amount)
+    return out
 
 
 def format_cop(amount: int) -> str:

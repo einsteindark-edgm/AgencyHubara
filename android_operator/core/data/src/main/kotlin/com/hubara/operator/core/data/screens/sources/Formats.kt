@@ -1,6 +1,8 @@
 package com.hubara.operator.core.data.screens.sources
 
 import com.hubara.operator.core.data.repo.ChatView
+import com.hubara.operator.core.data.sync.SyncState
+import com.hubara.operator.core.data.sync.SyncStatus
 import com.hubara.operator.core.model.Conversation
 import com.hubara.operator.core.model.Fire
 import com.hubara.operator.core.model.FireSubject
@@ -9,6 +11,7 @@ import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.Severity
 import com.hubara.operator.core.model.ShippingForm
 import com.hubara.operator.core.model.Template
+import java.util.Locale
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -152,4 +155,66 @@ fun templateJson(t: Template): JsonObject = buildJsonObject {
         }
     }))
     put("variable_names", JsonArray(t.variables.map { JsonPrimitive(it.name) }))
+}
+
+/**
+ * La sincronización en palabras (pantalla «Sincronización»): si está en vivo, qué llegó y cuánto tardó, los cortes y la
+ * última vez que la bandeja se pidió por REST. Las horas son relativas a [nowMs] (la fuente se renueva cada segundo).
+ */
+fun syncJson(status: SyncStatus, nowMs: Long): JsonObject = buildJsonObject {
+    put("state", status.state.name.lowercase())
+    put("live", status.state == SyncState.LIVE)
+    put("state_label", when (status.state) {
+        SyncState.LIVE -> "En vivo"
+        SyncState.CONNECTING -> "Conectando…"
+        SyncState.RETRYING -> "Reconectando…"
+        SyncState.STOPPED -> "En pausa"
+    })
+    put("tone", when (status.state) {
+        SyncState.LIVE -> "success"
+        SyncState.RETRYING -> "warning"
+        SyncState.CONNECTING, SyncState.STOPPED -> "info"
+    })
+    put("detail", when (status.state) {
+        SyncState.LIVE -> "Conectada desde ${ago(status.connectedSinceMs, nowMs)}: lo que llega al servidor se ve al instante."
+        SyncState.CONNECTING -> "Abriendo la conexión con el servidor…"
+        SyncState.RETRYING -> "Se cortó (${status.lastError ?: "sin respuesta"}). Vuelve a intentar " +
+            "${status.retryAtMs?.let { "en ${secondsLabel(it - nowMs)}" } ?: "enseguida"}; desliza hacia abajo para intentar ya."
+        SyncState.STOPPED -> "Se reanuda al volver a la app."
+    })
+    put("last_event", status.lastEventMs?.let { ago(it, nowMs) } ?: "Todavía nada")
+    put("lag", status.lagMs?.let(::secondsDecimal) ?: "—")
+    put("max_lag", status.maxLagMs?.let(::secondsDecimal) ?: "—")
+    put("events", status.events)
+    put("data", dataLabel(status.bytes))
+    put("cuts", status.cuts)
+    put("last_error", status.lastError?.let { "$it · ${ago(status.lastErrorMs, nowMs)}" } ?: "Ninguno")
+    put("refresh", when (status.lastRefreshOk) {
+        null -> "Todavía no"
+        true -> "Bien · ${ago(status.lastRefreshMs, nowMs)}"
+        false -> "Falló · ${ago(status.lastRefreshMs, nowMs)}"
+    })
+}
+
+/** «ahora», «hace 7 s», «hace 5 min», «hace 2 h». */
+private fun ago(atMs: Long?, nowMs: Long): String {
+    if (atMs == null) return "—"
+    val seconds = ((nowMs - atMs) / 1000).coerceAtLeast(0)
+    return when {
+        seconds < 1 -> "ahora"
+        seconds < 60 -> "hace $seconds s"
+        seconds < 3600 -> "hace ${seconds / 60} min"
+        else -> "hace ${seconds / 3600} h"
+    }
+}
+
+private fun secondsLabel(ms: Long): String = "${((ms + 999) / 1000).coerceAtLeast(0)} s"
+
+/** 400 → «0,4 s»; 2100 → «2,1 s». */
+private fun secondsDecimal(ms: Long): String = String.format(Locale.forLanguageTag("es-CO"), "%.1f s", ms / 1000.0)
+
+/** «820 KB», «1,2 MB». */
+private fun dataLabel(bytes: Long): String = when {
+    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+    else -> String.format(Locale.forLanguageTag("es-CO"), "%.1f MB", bytes / (1024.0 * 1024.0))
 }

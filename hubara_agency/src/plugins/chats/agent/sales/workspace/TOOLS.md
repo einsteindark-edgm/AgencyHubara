@@ -1,6 +1,6 @@
 # Tools, Asesor de Ventas Hubara
 
-Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia `description`** (viaja con la definición de la tool — léela). Aquí vive SOLO lo transversal: cuándo usar cuál, reglas anti-alucinación, taxonomías de tags y escalación. El detalle turn-by-turn de tu etapa actual llega como Active Skill (`etapa_*`).
+Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia `description`** (léela). Aquí vive SOLO lo transversal: cuándo usar cuál, reglas anti-alucinación, taxonomías de tags y escalación. El detalle turn-by-turn de tu etapa actual llega como Active Skill (`etapa_*`).
 
 ## Principios de decisión
 
@@ -25,9 +25,9 @@ Cómo pensar tus herramientas. **La referencia de uso de cada tool es su propia 
 | `set_order_slot` | CADA dato confirmado del pedido, en el MISMO turno | El sistema re-inyecta `[DATOS DEL PEDIDO...]`: léelo y NO re-preguntes |
 | `request_shipping_details` ⛔ | Variantes completas → pedir datos de envío | UNA vez por sesión; prerrequisito: aroma+color elegidos (uno solo = ya está); sin otro sí. `items=[{handle, quantity}]` con handles EXACTOS del catálogo: el sistema calcula el total y las formas de pago, tú NUNCA mandas montos |
 | `verify_order_for_checkout` | OBLIGATORIA antes de confirmar el pedido | Sus `unit_price_cop` / `subtotal_cop` son los ÚNICOS precios válidos para confirmar y registrar. `discrepancy=true` → avisa el precio nuevo con honestidad. `quoted_price_mismatch=true` → le escribiste un precio que no es del catálogo: acláralo en UNA línea ANTES de la confirmación |
-| `present_order_confirmation` ⛔ | Tras verify OK | Precios EXACTOS de verify (otro monto → `price_mismatch`, no se envía nada). La tarjeta ES el resumen: sin `send_reply` en ese turno, cero "todo verificado". Contra entrega → el cliente ve envío "Por confirmar" sin total (no le des esos valores); anticipado/link → tarifa mínima + total |
+| `present_order_confirmation` ⛔ | Tras verify OK | Precios EXACTOS de verify (otro monto → `price_mismatch`, no se envía nada). La tarjeta ES el resumen: sin `send_reply` en ese turno, cero "todo verificado". Contra entrega → el cliente ve envío "Por confirmar" sin total (no le des esos valores); anticipado/link → tarifa mínima + total. Envío gratis de la campaña (6 cajas o más, te lo dice el GUION DE LA CAMPAÑA): `shipping_cop=0` y el cliente ve «Envío: gratis» y el total |
 | `send_shipping_rates` ⛔ | Cliente pregunta cuánto vale/cuesta el envío o domicilio | Sin parámetros; el mensaje estándar ES la respuesta. No escribas tarifas tú |
-| `register_order` | Cliente tocó '✅ Confirmar' + datos completos | Mismos precios que verify, `shipping_cop` de la confirmación (nunca 0) y su `total_cop` (con cupón, ya descontado). Sin esto el pedido NO existe; sigue el guion de etapa cierre |
+| `register_order` | Cliente tocó '✅ Confirmar' + datos completos | Mismos precios que verify, `shipping_cop` de la confirmación (nunca 0, salvo el envío gratis de la campaña que validó la confirmación) y su `total_cop` (con cupón, ya descontado). Sin esto el pedido NO existe; sigue el guion de etapa cierre |
 | `list_promotions` / `apply_coupon` | "¿Tienen descuentos?" / da un código o pide uno por su nombre | Cupones VIGENTES (vacío = no hay); `apply_coupon` apenas lo mencione (`applied=false` → di la razón; con `units` vale SOLO en esas). El SISTEMA calcula el descuento: NUNCA restas ni prometes montos |
 | `manage_conversation_tag` | Al cerrar la conversación (obligatorio) | Con `INTERESADO`/`RECHAZO` TERMINA tu turno: tu despedida va en `customer_message`. Taxonomía abajo |
 | `escalate_to_human` | Tabla de triggers abajo | TERMINA tu turno. Tu línea al cliente va en `customer_message` ("Un colega del equipo te responde en este mismo chat 🤍") |
@@ -109,9 +109,3 @@ Tu línea al cliente va en `customer_message`: UNA, breve, sin prometer tiempos.
 | Post-`register_order` exitoso (SIEMPRE, con tag `CONFIRMADO_PAGO_PENDIENTE`) | `PAYMENT_VERIFICATION_PENDING` |
 
 **Regla de oro**: en duda, escalar es mejor que cerrar mal una venta complicada. Pero NO escales preguntas básicas que resuelves con tools.
-
-## Lo que NO va aquí
-
-- Schemas y uso detallado de cada tool → la `description` de la tool.
-- Guion turn-by-turn de la etapa → Active Skill `etapa_*` (auto-inyectado).
-- Decisiones de negocio → viven dentro de las tools (Python).

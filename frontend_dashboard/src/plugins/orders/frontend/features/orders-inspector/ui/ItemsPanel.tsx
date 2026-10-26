@@ -19,11 +19,22 @@ export function ItemsPanel({ detail }: { detail: OrderDetail }) {
           real al marcar "en camino" — y total = subtotal + envío. */}
       <div style={{ marginTop: 8 }}>
         <KV k="Subtotal productos" v={fmtMoney(detail.subtotal_cop)} />
-        {detail.shipping_cop > 0 && (
-          <KV
-            k={detail.summary.shipping_confirmed ? "Envío" : "Envío (estimado)"}
-            v={fmtMoney(detail.shipping_cop)}
-          />
+        {detail.summary.free_shipping ? (
+          <>
+            {/* Envío gratis de la campaña (desde N cajas): el cliente no lo
+                paga; lo que cuesta el despacho es de la tienda, fuera del total. */}
+            <KV k="Envío" v="gratis por la campaña" />
+            {detail.summary.store_shipping_cost_cop != null && detail.summary.store_shipping_cost_cop > 0 && (
+              <KV k="Envío que paga la tienda" v={fmtMoney(detail.summary.store_shipping_cost_cop)} />
+            )}
+          </>
+        ) : (
+          detail.shipping_cop > 0 && (
+            <KV
+              k={detail.summary.shipping_confirmed ? "Envío" : "Envío (estimado)"}
+              v={fmtMoney(detail.shipping_cop)}
+            />
+          )
         )}
         {detail.discount_total_cop > 0 && (
           <KV k="Descuento" v={"− " + fmtMoney(detail.discount_total_cop)} />

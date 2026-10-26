@@ -49,6 +49,10 @@ _COUPON_PROBLEMS = {
         "es de envío, y el envío lo cobra la transportadora a su tarifa, sin "
         "descuentos: el bot no lo aplica. Usa un cupón sobre productos"
     ),
+    "granted_only": (
+        "es personal (solo quien lo recibió, como el agradecimiento por calificar): "
+        "una campaña no lo puede anunciar"
+    ),
 }
 
 

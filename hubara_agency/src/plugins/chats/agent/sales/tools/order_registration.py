@@ -103,8 +103,10 @@ from src.plugins.chats.agent.sales.use_cases.coupon_quota import (
 )
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import get_active_episode
 from src.plugins.chats.shared.purchase_signals import closing_blocker
+from src.plugins.chats.agent.sales.use_cases.coupon_application import COUPON_REASON_TEXT
 from src.plugins.chats.agent.sales.use_cases.coupons import (
     applied_coupon,
+    clear_applied_coupon,
     coupon_discount_for_items,
     promotion_from_snapshot,
     quota_product_ids,
@@ -112,6 +114,7 @@ from src.plugins.chats.agent.sales.use_cases.coupons import (
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     attach_order_to_active_episode,
 )
+from src.plugins.chats.agent.sales.use_cases.option_choice import unchosen_options
 from src.plugins.chats.agent.sales.use_cases.order_draft import split_lines_mismatch
 from src.sdk.catalogkit import (
     CatalogPort,
@@ -264,6 +267,13 @@ _CLOSING_BLOCKED_SUMMARY = {
 }
 
 
+def _snapshot_granted_only(metadata: dict[str, Any]) -> bool:
+    """¿El cupón aplicado del episodio es personal (`granted_only`)?"""
+    raw = applied_coupon(metadata)
+    promotion = raw.get("promotion") if isinstance(raw, dict) else None
+    return isinstance(promotion, dict) and bool(promotion.get("granted_only"))
+
+
 class RegisterOrderTool(ToolBase):
     """Registra un pedido al cierre exitoso de la venta vía OrderRegistrationPort.
 
@@ -410,8 +420,11 @@ class RegisterOrderTool(ToolBase):
         quota_lock: Any = None,
         split_lines_guard: bool = True,
         closing_guard: bool = True,
+        coupon_grants: Any = None,
     ) -> None:
-        """`quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
+        """`coupon_grants`: cupones personales (agradecimiento por calificar) —
+        registrar el pedido con uno gasta la concesión (un solo uso).
+        `quotas`/`sales`/`quota_lock`: cupo por unidad (central de cupones).
         Con cupo, el reparto se relee BAJO el candado del código antes de
         crear el draft (nunca se vende dos veces la última unidad).
         `split_lines_guard`: un producto repartido en variantes en el borrador
@@ -444,6 +457,76 @@ class RegisterOrderTool(ToolBase):
         self._quota_lock = quota_lock
         self._split_lines_guard = split_lines_guard
         self._closing_guard = closing_guard
+        self._coupon_grants = coupon_grants
+
+    def _spend_personal_coupon(
+        self, session_key: str, code: str, order_id: str | None
+    ) -> None:
+        """Un cupón personal se usa una vez: el pedido registrado gasta la
+        concesión (no-op si el cupón no es personal). El pedido ya existe: si
+        el vault falla, se avisa en el log y no se tumba el registro."""
+        if self._coupon_grants is None or not order_id:
+            return
+        try:
+            used = self._coupon_grants.mark_used(
+                session_key, code, order_id, int(time.time() * 1000)
+            )
+        except Exception as exc:  # noqa: BLE001 — el pedido ya quedó registrado
+            logger.warning(
+                "🎟️ [TOOL register_order] no pude gastar el cupón personal {} de {}: {}",
+                code, session_key, exc,
+            )
+            return
+        if used is not None:
+            logger.info(
+                "🎟️ [TOOL register_order] cupón personal {} usado en {} ({})",
+                code, order_id, session_key,
+            )
+
+    def _personal_coupon_problem(
+        self, session_key: str, metadata: dict[str, Any], discount: Any
+    ) -> str | None:
+        """Premortem C2: el cupón aplicado es personal (`granted_only`) y la
+        concesión ya no está vigente (se usó en otro pedido o venció desde que
+        se aplicó): el motivo de `COUPON_REASON_TEXT`; None = se puede usar.
+        Sin concesiones o ilegibles, no se adivina (falla cerrada, L-32). El
+        reintento del MISMO pedido ya registrado (que gastó la concesión) sí
+        pasa: el adapter lo reusa por fingerprint."""
+        raw = applied_coupon(metadata)
+        promotion = raw.get("promotion") if isinstance(raw, dict) else None
+        if not (isinstance(promotion, dict) and promotion.get("granted_only")):
+            return None
+        if discount is None or discount.discount_cop <= 0:
+            return None
+        if self._coupon_grants is None:
+            return "grant_unknown"
+        code = str(discount.code)
+        try:
+            if self._coupon_grants.active(session_key, code, int(time.time() * 1000)) is not None:
+                return None
+            registered = metadata.get("registered_order")
+            same_order = registered.get("order_id") if isinstance(registered, dict) else None
+            if same_order and any(
+                g.code == code.upper() and g.used_order_id == same_order
+                for g in self._coupon_grants.list_for(session_key)
+            ):
+                return None
+        except Exception:  # noqa: BLE001 — ilegible: no se aplica
+            return "grant_unknown"
+        return "not_granted"
+
+    def _drop_personal_coupon(self, session_key: str) -> None:
+        """El cupón que ya no vale sale del pedido (y no vuelve solo: C8)."""
+        from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
+
+        def _clear(data: dict[str, Any]) -> dict[str, Any]:
+            clear_applied_coupon(data)
+            return data
+
+        try:
+            FilesystemMetadataStore(self._vault_dir).update(session_key, _clear)
+        except Exception as exc:  # noqa: BLE001 — el pedido igual no se registra
+            logger.warning("🎟️ [TOOL register_order] no pude quitar el cupón de {}: {}", session_key, exc)
 
     def _quota_code(self, session_key: str) -> str | None:
         """Código del cupón aplicado si tiene cupo por unidad (hay que
@@ -710,9 +793,38 @@ class RegisterOrderTool(ToolBase):
             national_id=national_id_raw or None,
         )
 
+        # Envío gratis desde N cajas de una campaña (operador, 2026-10-20): la
+        # regla del sistema con las cajas del pedido (la misma del resumen y
+        # de «Crear pedido»). Con ella el envío es $0, y se rechaza otro valor
+        # antes de SEC-07 (el modelo corrige envío y total en un solo intento).
+        from src.plugins.chats.shared.sales_campaigns import bogota_today, free_shipping_for
+
+        free = free_shipping_for(((it.handle, it.quantity) for it in order_items), today=bogota_today())
+        if free is not None and int(shipping_cop) != 0:
+            logger.warning(
+                "🧾 [TOOL register_order] FREE_SHIPPING_MISMATCH session={} boxes={} shipping_cop={}",
+                ctx.session_key, free.boxes, shipping_cop,
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "shipping_mismatch",
+                    "error": "shipping_mismatch",
+                    "summary": (
+                        f"Este pedido lleva {free.boxes} cajas de la campaña: el envío es gratis "
+                        f"(desde {free.min_boxes} cajas). El pedido NO se registró. Llama de nuevo "
+                        "`register_order` con shipping_cop=0 y total_cop = subtotal − cupón; si le "
+                        "dijiste al cliente un valor de envío, acláraselo con honestidad antes."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
         # Envío = tarifa mínima publicada para la ciudad (decisión del operador
         # 2026-09-23: el envío lo cobra la transportadora, sin descuentos ni
-        # envío gratis). SEC-07 solo caza un total desconectado; un envío $0
+        # envío gratis, salvo el de la campaña de arriba). SEC-07 solo caza un
+        # total desconectado; un envío $0
         # con el total "cuadrado" llegaba a Medusa y a las instrucciones de
         # pago como "sin costo" (L-19). Va ANTES de SEC-07: con envío 0 y el
         # total sumado con la tarifa, SEC-07 diría "total esperado = subtotal"
@@ -720,13 +832,15 @@ class RegisterOrderTool(ToolBase):
         # La zona de la ciudad la decide el motor de decisiones (capacidad
         # `zona_de_envio`; regla de hoy: Bogotá si la ciudad lo dice; si no,
         # valen las dos tarifas).
-        zone = await decide_for_session(
-            capability("zona_de_envio"),
-            CiudadDeEnvio(ciudad=order_shipping.city),
-            session_id=ctx.session_key,
-            vault_dir=self._vault_dir,
-        )
-        if not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
+        zone = None
+        if free is None:
+            zone = await decide_for_session(
+                capability("zona_de_envio"),
+                CiudadDeEnvio(ciudad=order_shipping.city),
+                session_id=ctx.session_key,
+                vault_dir=self._vault_dir,
+            )
+        if zone is not None and not is_published_rate_for_zone(int(shipping_cop), (zone.value or {}).get("zona")):
             logger.warning(
                 "🧾 [TOOL register_order] SHIPPING_MISMATCH session={} city={} shipping_cop={}",
                 ctx.session_key,
@@ -808,6 +922,30 @@ class RegisterOrderTool(ToolBase):
                 },
                 ensure_ascii=False,
             )
+        # La opción de Medusa sin escoger (2026-10-14, ···0686: `variant_label`
+        # «Navidad», el aroma, y Medusa cayó a la primera variante). Para el
+        # bot: el operador que registra desde el panel ya habló con el cliente.
+        unchosen = (
+            await unchosen_options(self._catalog, items, metadata_before) if self._closing_guard else []
+        )
+        if unchosen:
+            logger.warning(
+                "🧾 [TOOL register_order] rechazada session={}: variant_not_chosen {}", ctx.session_key, unchosen
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "variant_not_chosen",
+                    "error": "variant_not_chosen",
+                    "summary": (
+                        f"Falta que el cliente escoja {'; '.join(unchosen)}. El pedido NO se registró: "
+                        "pregúntaselo con present_variant_picker, anota lo que escoja con set_order_slot, "
+                        "vuelve a presentar la confirmación y registra con su `variant_label`."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         # Color/aroma que se despachan (premortem C1): los productos "Unico"
         # no tienen variante que los diga, así que viajan en la línea. El
         # canónico de la lista del producto si lo hay; si no, lo que dijo el
@@ -820,6 +958,28 @@ class RegisterOrderTool(ToolBase):
             metadata_before, self._catalog, items, shipping_cop=shipping_cop,
             quotas=self._quotas, sales=self._sales, variants=variants,
         )
+        personal_problem = self._personal_coupon_problem(ctx.session_key, metadata_before, discount)
+        if personal_problem is not None and discount is not None:
+            self._drop_personal_coupon(ctx.session_key)
+            logger.info(
+                "🎟️ [TOOL register_order] cupón personal {} sin concesión vigente ({}) session={}",
+                discount.code, personal_problem, ctx.session_key,
+            )
+            return json.dumps(
+                {
+                    "registered": False,
+                    "order_id": None,
+                    "error_detail": "coupon_not_granted",
+                    "error": "coupon_not_granted",
+                    "summary": (
+                        f"{COUPON_REASON_TEXT[personal_problem]} El pedido NO se registró y el "
+                        f"cupón {discount.code} salió del pedido: explícaselo al cliente con "
+                        "honestidad y vuelve a llamar `present_order_confirmation` (sin el "
+                        "descuento) para que confirme el total."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         if discount is not None and discount.quota:
             # Reintento del MISMO pedido ya registrado en este episodio: su
             # propio draft ya cuenta como vendido, así que el reparto fresco
@@ -1057,6 +1217,8 @@ class RegisterOrderTool(ToolBase):
                 currency=currency,
                 attribution=self._session_attribution(ctx.session_key),
                 **coupon_kwargs,
+                # Solo con envío gratis: los ports/fakes sin este kwarg siguen andando.
+                **({"free_shipping": free.to_json()} if free is not None else {}),
             )
 
         # Generar un fallback order_id si el port no devolvio uno (no
@@ -1097,6 +1259,15 @@ class RegisterOrderTool(ToolBase):
             "shipping_cop": shipping_cop,
             "discount_cop": discount_cop,
             "coupon_code": coupon_code,
+            # Cupón personal (premortem C2): el reintento relee la concesión y
+            # la gasta si el pedido sale.
+            **(
+                {"coupon_granted_only": True}
+                if coupon_code and _snapshot_granted_only(metadata_before)
+                else {}
+            ),
+            # El reintento de reconciliación registra el MISMO envío gratis.
+            **({"free_shipping": free.to_json()} if free is not None else {}),
             # El reparto del cupón: el reintento de reconciliación escribe en
             # Medusa las MISMAS líneas con descuento (pedido #44).
             **(
@@ -1153,6 +1324,8 @@ class RegisterOrderTool(ToolBase):
             if coupon_code:
                 params["discount_cop"] = discount_cop
                 params["coupon_code"] = coupon_code
+            if free is not None:
+                params["free_shipping"] = free.to_json()
             reference = _order_reference(result.raw_payload)
             if reference:
                 params["order_reference"] = reference
@@ -1229,6 +1402,8 @@ class RegisterOrderTool(ToolBase):
         from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 
         FilesystemMetadataStore(self._vault_dir).update(ctx.session_key, _record)
+        if result.success and coupon_code:
+            self._spend_personal_coupon(ctx.session_key, coupon_code, result.order_id)
 
         # ------------------------------------------------------------
         # Envelope para el LLM.

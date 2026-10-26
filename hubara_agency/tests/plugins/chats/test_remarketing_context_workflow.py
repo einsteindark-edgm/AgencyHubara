@@ -131,7 +131,10 @@ def _make_fake_activities(tracker: Tracker, *, context: RemarketingContext, work
         tracker.send_whatsapp_calls.append(message)
 
     @activity.defn(name="persist_assistant_message_activity")
-    async def fake_persist(session_id: str, message: str) -> None:
+    async def fake_persist(
+        session_id: str, message: str, tools_used: object = None, delivered: object = None,
+        agent: str | None = None,
+    ) -> None:
         return None
 
     # remarketing-ladder-v1: todo intento proactivo consume su peldaño.
@@ -197,6 +200,18 @@ async def test_trigger_receives_the_real_catalog_facts(tmp_path) -> None:
     await _run_workflow(tracker, RemarketingContext(tag_motivo=TAG_MOTIVO, catalog_facts=facts), tmp_path)
     (inp,) = tracker.trigger_v2_inputs
     assert inp.catalog_facts == facts
+
+
+@pytest.mark.asyncio
+async def test_trigger_receives_the_campaign_script(tmp_path) -> None:
+    """Operador, 2026-10-19: el toque sigue el guion de la campaña de venta
+    que armó el contexto (ver test_remarketing_sales_campaign)."""
+    tracker = Tracker()
+    script = "GUION DE LA CAMPAÑA «Velitas» (uso interno): …"
+    ctx = RemarketingContext(tag_motivo=TAG_MOTIVO, sales_campaign_script=script, sales_campaign_examples=["un ejemplo"])
+    await _run_workflow(tracker, ctx, tmp_path)
+    [inp] = tracker.trigger_v2_inputs
+    assert inp.sales_campaign_script == script and inp.sales_campaign_examples == ["un ejemplo"]
 
 
 @pytest.mark.asyncio

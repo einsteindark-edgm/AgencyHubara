@@ -19,6 +19,7 @@ import { usePluginHost, useSelection } from "@/shared/sdk";
 import { Icon } from "@/shared/ui";
 
 import {
+  useCampaignEvents,
   useCampaigns,
   useCreateCampaign,
 } from "@plugins/marketing/frontend/entities/campaign";
@@ -93,6 +94,8 @@ function CampaignsView({
   const { showSidebar, showInspector } = usePluginHost();
   const [selectedId, setSelectedId] = useSelection("marketing");
   const { data: campaigns = [] } = useCampaigns();
+  // El avance del envío llega por el stream (no esperar el refetch de 60 s).
+  useCampaignEvents();
   // La creación desde el empty state es orquestación page-level (la lista
   // trae su propio botón "Nueva campaña" para el flujo normal).
   const create = useCreateCampaign();

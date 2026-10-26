@@ -23,6 +23,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
 from src.plugins.chats.agent.sales.card_messages import named_in_form
+from src.sdk.catalogkit import stem_word
 
 _SHIPPING_FLOW = "shipping_flow"
 _FORM_DATA_MARKER = "[datos de envío recibidos]"
@@ -150,12 +151,9 @@ def _tokens(text: str) -> list[str]:
 
 
 def _stem(word: str) -> str:
-    """Sin plural ni género, para «blancas» = «Blanco» y «velones» = «Velón»."""
-    if len(word) > 4 and word.endswith("es"):
-        word = word[:-2]
-    elif len(word) > 3 and word.endswith("s"):
-        word = word[:-1]
-    return word[:-1] if len(word) > 3 and word[-1] in "oa" else word
+    """Sin plural ni género, para «blancas» = «Blanco» y «velones» = «Velón»
+    (la regla única del catálogo, `catalogkit.stem_word`)."""
+    return stem_word(word)
 
 
 _COVERED_WORDS = frozenset(t for t in _tokens(_COVERED_WORDS_RAW))

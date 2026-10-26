@@ -94,6 +94,11 @@ jobs:
         if: steps.scope.outputs.app == 'true'
         run: android_operator/e2e/qa.sh --build-only
 
+      # Solo el AVD, sin su snapshot (PR #426, 2026-10-15): un snapshot cargado en OTRA máquina del runner
+      # arranca sin los servicios del sistema y el `input keyevent 82` del arranque revienta con «No service
+      # published for: input». Pasaba en toda corrida con la caché restaurada (7 de 7 en ese PR) y en ninguna
+      # sin ella. Sin caché, el paso siguiente crea el snapshot y lo usa en la misma máquina; con caché, el
+      # emulador arranca en frío. `v2`: las cachés viejas traen el snapshot.
       - name: Caché del emulador
         if: steps.scope.outputs.app == 'true'
         id: avd-cache
@@ -102,7 +107,17 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-30-google_apis-x86_64-pixel_6-v1
+            !~/.android/avd/*.avd/snapshots
+          key: avd-30-google_apis-x86_64-pixel_6-v2
+
+      # La exclusión de arriba no alcanza (PR #451, 2026-10-20): `~/.android/avd/*` le pasa a tar la carpeta
+      # `test.avd` entera, con su snapshot. La corrida que crea la caché la guarda con el snapshot de SU
+      # máquina, y la siguiente lo carga en otra y revienta igual («No service published for: input»): en
+      # #451 pasó la 1.ª corrida (sin caché) y falló la 2.ª (con ella). Con la caché restaurada, el snapshot
+      # se borra aquí y el emulador arranca en frío.
+      - name: Sin el snapshot de otra máquina (solo con caché)
+        if: steps.scope.outputs.app == 'true' && steps.avd-cache.outputs.cache-hit == 'true'
+        run: rm -rf ~/.android/avd/*.avd/snapshots
 
       - name: Crear el emulador y su snapshot (solo sin caché)
         if: steps.scope.outputs.app == 'true' && steps.avd-cache.outputs.cache-hit != 'true'

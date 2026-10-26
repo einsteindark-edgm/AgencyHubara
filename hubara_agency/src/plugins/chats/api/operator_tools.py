@@ -32,7 +32,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
     flush_pending_ui_intents,
 )
 from src.plugins.chats.agent.sales.catalog_menu import category_row_id
-from src.plugins.chats.agent.sales.config.shipping import shipping_rate_for_city
+from src.plugins.chats.agent.sales.config.shipping import order_shipping
 from src.plugins.chats.agent.sales.tools.coupons import ApplyCouponTool
 from src.plugins.chats.agent.sales.tools.ui_intents import (
     PresentOrderConfirmationTool,
@@ -62,6 +62,7 @@ from src.sdk.connectorkit import (
     ProductNotFoundError,
     get_catalog_client,
     get_coupon_sales_reader,
+    get_coupon_grants_store,
     get_customer_orders_port,
     get_order_facts_port,
     get_promo_quota_store,
@@ -125,6 +126,8 @@ class OperatorToolsDeps:
     customer_orders: Any | None = None
     #: El color de la vela de cada foto del catálogo (2026-10-09).
     photo_colors: Any | None = None
+    #: Cupones personales (agradecimiento por calificar, 2026-10-13).
+    coupon_grants: Any | None = None
 
 
 def _try(name: str, factory: Callable[[], Any]) -> Any | None:
@@ -159,6 +162,7 @@ def get_operator_tools_deps() -> OperatorToolsDeps:
         order_facts=_try("order_facts", get_order_facts_port),
         customer_orders=_try("customer_orders", get_customer_orders_port),
         photo_colors=_try("photo_colors", _photo_color_reader),
+        coupon_grants=_try("coupon_grants", get_coupon_grants_store),
     )
 
 
@@ -190,7 +194,7 @@ def _bot_tools(deps: OperatorToolsDeps) -> dict[str, Callable[[], Any]]:
         "apply_coupon": lambda: ApplyCouponTool(
             ws, promotions=deps.promotions, metadata_store=store, catalog=deps.catalog,
             quotas=deps.quotas, sales=deps.sales, order_facts=deps.order_facts,
-            customer_orders=deps.customer_orders,
+            customer_orders=deps.customer_orders, coupon_grants=deps.coupon_grants,
         ),
     }
 
@@ -464,7 +468,8 @@ async def _confirmation_args(
     neighborhood = str(slots.get("barrio") or "").strip()
     return {
         "items": items,
-        "shipping_cop": shipping_rate_for_city(city),
+        # $0 con las cajas del envío gratis de una campaña; si no, la tarifa mínima.
+        "shipping_cop": order_shipping(((it["handle"], it["quantity"]) for it in items), city)[0],
         "shipping_address_summary": ", ".join(p for p in (address, neighborhood, city) if p),
         "payment_method": method,
     }

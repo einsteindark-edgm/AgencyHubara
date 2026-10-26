@@ -28,12 +28,13 @@ IDENTITY.md; guard ``test_no_voseo_in_agent_strings``).
 from __future__ import annotations
 
 import asyncio
-import difflib
 import re
 import unicodedata
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
+
+from rapidfuzz import fuzz
 
 import structlog
 
@@ -147,7 +148,7 @@ def _by_name(visible: VisibleText, products: Sequence[Any]) -> PhotoProduct | No
         if name in (_norm(product.title), _norm(product.handle)):
             return PhotoProduct(handle=product.handle, title=product.title, how=HOW_NAME, seen=visible.product_name)
     scored = sorted(
-        ((difflib.SequenceMatcher(None, name, _norm(p.title)).ratio(), i) for i, p in enumerate(products)),
+        ((fuzz.ratio(name, _norm(p.title)) / 100, i) for i, p in enumerate(products)),
         reverse=True,
     )
     best, second = scored[0][0], (scored[1][0] if len(scored) > 1 else 0.0)

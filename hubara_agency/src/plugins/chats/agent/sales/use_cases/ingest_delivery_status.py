@@ -68,7 +68,9 @@ from src.platform.whatsapp.cost import (
     empty_episode_cost_summary,
     materialize_pending_in_summary,
 )
+from src.plugins.chats.shared.delivery_status import DeliveryStatusLog
 from src.sdk.connectorkit import apply_campaign_delivery, campaign_touch_for_message
+from src.sdk.identitykit import address_from_user_id, is_customer_session_id
 
 
 log = logging.getLogger(__name__)
@@ -114,6 +116,8 @@ class IngestDeliveryStatus:
         tenant_id: str | None = None,
         sleeper: Sleeper | None = None,
         retry_delays: tuple[float, ...] = _RETRY_DELAYS_SECONDS,
+        delivery_log: DeliveryStatusLog | None = None,
+        on_delivery_recorded: Callable[[str], None] | None = None,
     ) -> None:
         if rate_card is None and rate_card_for is None:
             raise ValueError("IngestDeliveryStatus necesita rate_card o rate_card_for")
@@ -142,6 +146,11 @@ class IngestDeliveryStatus:
         self._tenant_id = tenant_id
         self._sleeper = sleeper or asyncio.sleep
         self._retry_delays = retry_delays
+        # El doble check del chat: el estado queda en la conversación, unido al
+        # mensaje por su wamid (caso 2026-10-15). `on_delivery_recorded` avisa
+        # al panel y a la app (evento en vivo) con el id de la conversación.
+        self._delivery_log = delivery_log or DeliveryStatusLog(vault_dir)
+        self._on_delivery_recorded = on_delivery_recorded
 
     async def execute(
         self,
@@ -151,6 +160,9 @@ class IngestDeliveryStatus:
         *,
         timestamp_ms: int | None = None,
         error_code: int | None = None,
+        error_title: str | None = None,
+        recipient_id: str | None = None,
+        recipient_user_id: str | None = None,
     ) -> None:
         """Procesa UN status update.
 
@@ -163,9 +175,25 @@ class IngestDeliveryStatus:
         """
         snapshot = _pricing_snapshot_from_dict(pricing)
 
+        # 0. El doble check del chat. La conversación sale del destinatario que
+        # trae el estado (no hace falta que el episodio haya registrado el
+        # outbound: caso 2026-10-15); si no vino, de la búsqueda del costo.
+        chat_check = {
+            "wamid": wa_message_id,
+            "status": status,
+            "at_ms": timestamp_ms,
+            "error_code": error_code,
+            "error_title": error_title,
+        }
+        chat_session = self._recipient_session(recipient_id, recipient_user_id)
+        if chat_session is not None:
+            self._record_chat_check(chat_session, chat_check)
+
         # 1. Buscar la sesión con retry (race: outbound puede no haber
         # persistido cuando llega el primer webhook 'sent').
         session_id = await self._locate_with_retry(wa_message_id)
+        if chat_session is None and session_id is not None:
+            self._record_chat_check(session_id, chat_check)
 
         if session_id is None:
             self._dead_letter(
@@ -200,7 +228,11 @@ class IngestDeliveryStatus:
                 error_code=error_code,
                 outcome=outcome,
             )
-            return metadata if _mutate_episode(metadata) or touch_changed else None
+            review_changed = _record_review_delivery(
+                metadata, wa_message_id, status=status, error_code=error_code, outcome=outcome
+            )
+            episode_changed = _mutate_episode(metadata)
+            return metadata if episode_changed or touch_changed or review_changed else None
 
         def _mutate_episode(metadata: dict[str, Any]) -> bool:
             episodes = metadata.get("episodes") or []
@@ -218,8 +250,11 @@ class IngestDeliveryStatus:
             episode = episodes[found[0]]
             # Episodio cerrado → dead-letter, NO mutar summary: el summary
             # quedó congelado al close_episode; los webhooks tardíos NO deben
-            # recalcular el agregado histórico.
-            if episode.get("closed_at_ms") is not None:
+            # recalcular el agregado histórico. Salvo un envío POSTERIOR al
+            # cierre (`after_close`, premortem C7: la invitación a calificar,
+            # un aviso del ETA): ese es costo nuevo de la conversación.
+            after_close = bool(episode["outbound_messages"][found[1]].get("after_close"))
+            if episode.get("closed_at_ms") is not None and not after_close:
                 outcome["reason"] = "episode_closed"
                 outcome["episode_id"] = episode.get("episode_id")
                 return False
@@ -269,7 +304,10 @@ class IngestDeliveryStatus:
                 cost_usd_micros=cost,
                 rate_card_version=rate_card.version,
             )
-            outbound_messages[found[1]] = _outbound_log_entry_to_dict(new_entry)
+            # Lo que el dataclass no tiene (`after_close`) se conserva.
+            outbound_messages[found[1]] = {
+                **outbound_messages[found[1]], **_outbound_log_entry_to_dict(new_entry)
+            }
             episode["outbound_messages"] = outbound_messages
             if not already_materialized:
                 current_summary = _summary_from_episode(episode)
@@ -294,9 +332,11 @@ class IngestDeliveryStatus:
             return
 
         reason = outcome.get("reason")
-        if outcome.get("campaign_touch") and reason in ("entry_disappeared", "episode_closed"):
-            # Mensaje de campaña sin conversación abierta (o ya cerrada): el
-            # touch lo anotó — no es un huérfano.
+        if (outcome.get("campaign_touch") or outcome.get("review_touch")) and reason in (
+            "entry_disappeared", "episode_closed"
+        ):
+            # Mensaje de campaña (o invitación a calificar) sin conversación
+            # abierta (o ya cerrada): el touch lo anotó — no es un huérfano.
             await self._emit_event(
                 session_id=session_id,
                 wa_message_id=wa_message_id,
@@ -332,6 +372,46 @@ class IngestDeliveryStatus:
             snapshot=snapshot if reason == "materialized" else None,
             cost_usd_micros=outcome.get("cost"),
         )
+
+    # =====================================================================
+    # Doble check del chat
+    # =====================================================================
+
+    def _recipient_session(
+        self, recipient_id: str | None, recipient_user_id: str | None
+    ) -> str | None:
+        """La conversación del destinatario del estado, si existe en el vault:
+        `wa_<teléfono>` (``recipient_id``) o `wa_<BSUID sin punto>`
+        (``recipient_user_id``, clientes con nombre de usuario)."""
+        candidates: list[str] = []
+        if isinstance(recipient_id, str) and recipient_id.strip():
+            candidates.append("wa_" + recipient_id.strip().removeprefix("+"))
+        address = address_from_user_id(recipient_user_id)
+        if address:
+            candidates.append("wa_" + address)
+        for session_id in candidates:
+            if is_customer_session_id(session_id) and (self._vault_dir / session_id).is_dir():
+                return session_id
+        return None
+
+    def _record_chat_check(self, session_id: str, check: dict[str, Any]) -> None:
+        """Anota el estado en el chat. Nunca frena el costo: un fallo se loguea."""
+        try:
+            recorded = self._delivery_log.append(session_id, **check)
+        except OSError as e:
+            log.warning(
+                "delivery_status_chat_check_write_failed",
+                extra={"session_id": session_id, "error": str(e)},
+            )
+            return
+        if recorded and self._on_delivery_recorded is not None:
+            try:
+                self._on_delivery_recorded(session_id)
+            except Exception as e:  # noqa: BLE001 — el aviso en vivo es best-effort
+                log.warning(
+                    "delivery_status_live_event_failed",
+                    extra={"session_id": session_id, "error": str(e)},
+                )
 
     # =====================================================================
     # Lookup with retry
@@ -380,6 +460,8 @@ class IngestDeliveryStatus:
                     ):
                         return session_id
             if campaign_touch_for_message(metadata.get("campaign_touches"), wa_message_id):
+                return session_id
+            if _review_touch_for_message(metadata.get("review_request_touches"), wa_message_id):
                 return session_id
         return None
 
@@ -493,6 +575,53 @@ class IngestDeliveryStatus:
                 "ingest_delivery_status_event_emit_failed",
                 extra={"wa_message_id": wa_message_id, "error": str(e)},
             )
+
+
+# =============================================================================
+# Invitación a calificar (premortem C7)
+# =============================================================================
+
+#: Orden de los estados de Meta: uno tardío no deshace uno posterior.
+_STATUS_RANK = {"sent": 1, "delivered": 2, "read": 3}
+
+
+def _review_touch_for_message(touches: Any, wa_message_id: str) -> dict[str, Any] | None:
+    """El `review_request_touches[]` (lo escribe el plugin de reseñas) cuyo
+    mensaje es este, o None."""
+    for touch in touches or []:
+        if isinstance(touch, dict) and wa_message_id and touch.get("wa_message_id") == wa_message_id:
+            return touch
+    return None
+
+
+def _record_review_delivery(
+    metadata: dict[str, Any],
+    wa_message_id: str,
+    *,
+    status: str,
+    error_code: int | None,
+    outcome: dict[str, Any],
+) -> bool:
+    """Mutates: anota en el touch de la invitación a calificar el estado de
+    Meta (`status`; `error_code` como texto si falló). El plugin de reseñas lo
+    lee: una invitación que falló cae a la plantilla. Un «fallido» queda; un
+    estado tardío («entregado» después de «leído») no deshace el posterior."""
+    touch = _review_touch_for_message(metadata.get("review_request_touches"), wa_message_id)
+    if touch is None:
+        return False
+    outcome["review_touch"] = True
+    current = touch.get("status")
+    if current == "failed":
+        return False
+    if status == "failed":
+        touch["status"] = "failed"
+        if error_code is not None:
+            touch["error_code"] = str(error_code)
+        return True
+    if _STATUS_RANK.get(status, 0) <= _STATUS_RANK.get(str(current), 0):
+        return False
+    touch["status"] = status
+    return True
 
 
 # =============================================================================

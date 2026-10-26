@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { capabilityLabel, decisionSentence, type EngineDecisionView } from "./engine-decisions";
+import { capabilityLabel, decisionSentence, jevAnswers, type EngineDecisionView } from "./engine-decisions";
 
 /** Las decisiones de la App Operador (paquete `operador`) se leen en palabras, como las de ventas. */
 describe("decisiones de la App Operador", () => {
@@ -30,5 +30,141 @@ describe("decisiones de la App Operador", () => {
     expect(grave.text).toBe("Grave · queja o molestia · empeora");
     expect(calm.text).toBe("Puede esperar · felicita o agradece");
     expect(grave.tone).not.toBe(calm.tone);
+  });
+});
+
+/** Aromas de otro producto (`aroma_ajeno`, ventas-7, incidente 2026-10-13). */
+describe("aromas de otro producto", () => {
+  const view = (value: unknown, answers: EngineDecisionView["answers"] = []): EngineDecisionView => ({
+    stage: "turno",
+    capability: "aroma_ajeno",
+    by: "jev",
+    provider: "jev",
+    rule: ["Chanel", "Drakar"],
+    value,
+    answers,
+  });
+
+  it("se nombra en palabras", () => {
+    expect(capabilityLabel("aroma_ajeno")).toBe("Aromas de otro producto");
+  });
+
+  it("dice qué aromas devolvió al modelo, o que ninguno", () => {
+    expect(decisionSentence(view(["Drakar"])).text).toBe("Devuelve el texto al modelo: «Drakar» no es aroma de ese producto");
+    expect(decisionSentence(view(["Drakar"])).tone).toBe("warn");
+    expect(decisionSentence(view([])).text).toBe("Los aromas que nombra son del producto");
+  });
+
+  it("los colores y las presentaciones también se leen en palabras", () => {
+    const color = { ...view(["Azul"]), capability: "color_ajeno" };
+    const variant = (value: boolean): EngineDecisionView => ({ ...view(value), capability: "variante_ajena", rule: false });
+
+    expect(capabilityLabel("color_ajeno")).toBe("Colores de otro producto");
+    expect(capabilityLabel("variante_ajena")).toBe("Presentación que no existe");
+    expect(decisionSentence(color).text).toBe("Devuelve el texto al modelo: «Azul» no es color de ese producto");
+    expect(decisionSentence(variant(true)).text).toBe("Devuelve el texto al modelo: le ofrece una presentación que no tiene");
+    expect(decisionSentence(variant(false)).text).toBe("Las presentaciones que ofrece son del producto");
+    expect(jevAnswers({ ...color, rule: ["Azul"], answers: [{ q: "color_ajeno.termino_1", p: 0.9 }] })[0]).toContain(
+      "¿El texto le ofrece «Azul» como color del producto?",
+    );
+    expect(jevAnswers({ ...variant(true), answers: [{ q: "variante.ajena", p: 0.95 }] })[0]).toContain(
+      "¿El texto le ofrece una presentación que el producto no tiene?",
+    );
+  });
+
+  it("los hechos que el texto afirma se leen en palabras", () => {
+    const fact = (capability: string, value: unknown, rule: unknown = value): EngineDecisionView => ({
+      ...view(value), capability, rule,
+    });
+
+    expect(capabilityLabel("precio_ajeno")).toBe("Precio que no es el del catálogo");
+    expect(capabilityLabel("pago_ajeno")).toBe("Pago que no aplica al pedido");
+    expect(capabilityLabel("estado_ajeno")).toBe("Estado del pedido que no es cierto");
+    expect(capabilityLabel("cupon_ajeno")).toBe("Cupón que no está vigente");
+    expect(capabilityLabel("negacion_falsa")).toBe("Negar lo que sí tenemos");
+    expect(decisionSentence(fact("precio_ajeno", ["$23.000"])).text).toBe("Devuelve el texto al modelo: «$23.000» no es el precio del catálogo");
+    expect(decisionSentence(fact("pago_ajeno", ["puede pagar su pedido contra entrega"])).text).toBe(
+      "Devuelve el texto al modelo: le dijo que «puede pagar su pedido contra entrega», y no es así para su pedido",
+    );
+    expect(decisionSentence(fact("cupon_ajeno", ["AMOR2026"])).text).toBe("Devuelve el texto al modelo: «AMOR2026» no está vigente");
+    expect(decisionSentence(fact("negacion_falsa", ["Plegaria de Luz"])).text).toBe("Devuelve el texto al modelo: «Plegaria de Luz» sí lo tenemos");
+    expect(decisionSentence(fact("estado_ajeno", [])).text).toBe("Lo que dice del pedido coincide con el sistema");
+    expect(jevAnswers({ ...fact("precio_ajeno", ["$23.000"]), answers: [{ q: "precio_ajeno.termino_1", p: 0.9 }] })[0]).toContain(
+      "¿El texto le dice que «$23.000» es el precio del producto?",
+    );
+    expect(jevAnswers({ ...fact("negacion_falsa", ["Plegaria de Luz"]), answers: [{ q: "negacion_falsa.termino_1", p: 0.9 }] })[0]).toContain(
+      "¿El texto le dice que no tenemos «Plegaria de Luz»?",
+    );
+  });
+
+  it("cajas o velas se lee en palabras (···0686, 2026-10-14)", () => {
+    const boxes = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "cajas", rule: "duda" });
+
+    expect(capabilityLabel("cajas")).toBe("Cajas o velas");
+    expect(decisionSentence(boxes("velas")).text).toBe("Eran velas: anota las cajas que son");
+    expect(decisionSentence(boxes("cajas")).text).toBe("Son cajas: la cantidad queda");
+    expect(decisionSentence(boxes("duda")).text).toBe("No se sabe si son cajas o velas: vuelve al modelo con las dos cuentas");
+    expect(jevAnswers({ ...boxes("velas"), answers: [{ q: "cajas.pide_cajas", p: 0.04 }] })[0]).toContain(
+      "¿El cliente pide esa cantidad de cajas?",
+    );
+  });
+
+  it("por mayor o velas sueltas se lee en palabras (laboratorio 2026-10-14)", () => {
+    const bulk = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "por_mayor", rule: "duda" });
+
+    expect(capabilityLabel("por_mayor")).toBe("Por mayor o velas sueltas");
+    expect(decisionSentence(bulk("velas")).text).toBe("Eran velas sueltas: no pasa a un colega, el bot anota las cajas");
+    expect(decisionSentence(bulk("por_mayor")).text).toBe("Es al por mayor: pasa a un colega");
+    expect(decisionSentence(bulk("duda")).text).toBe("No se sabe si es al por mayor: vuelve al bot una vez con las cuentas");
+    expect(jevAnswers({ ...bulk("velas"), answers: [{ q: "por_mayor.velas_sueltas", p: 0.9 }] })[0]).toContain(
+      "¿El número del cliente cuenta velas sueltas, no cajas?",
+    );
+    expect(jevAnswers({ ...bulk("velas"), answers: [{ q: "por_mayor.producto_por_caja", p: 0.9 }] })[0]).toContain(
+      "¿Pide uno de los productos que se cobran por caja?",
+    );
+  });
+
+  it("la caja que nombró el cliente se lee en palabras (···0686, 2026-10-14)", () => {
+    const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_nombrada", rule: "duda" });
+
+    expect(capabilityLabel("caja_nombrada")).toBe("La caja que nombró el cliente");
+    expect(decisionSentence(box("otro")).text).toBe("Pidió el producto de la otra caja: no se anota este");
+    expect(decisionSentence(box("este")).text).toBe("Es el producto que pidió: se anota");
+    expect(decisionSentence(box("duda")).text).toBe("No se sabe de qué caja habla: vuelve al bot una vez");
+    expect(jevAnswers({ ...box("otro"), answers: [{ q: "caja_nombrada.pide_la_otra", p: 0.9 }] })[0]).toContain(
+      "¿Quiere el producto de la otra caja?",
+    );
+  });
+
+  it("darle la razón al cliente en una cuenta equivocada se lee en palabras (laboratorio 2026-10-14)", () => {
+    const figure = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "cifra_del_cliente", rule: value });
+
+    expect(capabilityLabel("cifra_del_cliente")).toBe("Darle la razón en una cuenta equivocada");
+    expect(decisionSentence(figure(["$45.000"])).text).toBe(
+      "Devuelve el texto al modelo: le daba la razón al cliente en «$45.000», y su pedido suma otra cosa",
+    );
+    expect(decisionSentence(figure([])).text).toBe("No le da la razón en ninguna cuenta equivocada");
+    expect(jevAnswers({ ...figure(["$45.000"]), answers: [{ q: "cifra_del_cliente.termino_1", p: 0.9 }] })[0]).toContain(
+      "El cliente escribió «$45.000»: ¿el texto le da la razón?",
+    );
+  });
+
+  it("el precio de la caja dicho por unidad se lee en palabras (ventas-7, 2026-10-16)", () => {
+    const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_por_unidad", rule: [] });
+
+    expect(capabilityLabel("caja_por_unidad")).toBe("Precio de la caja dicho por unidad");
+    expect(decisionSentence(box(["el precio de Velas de deseos cuadradas es por unidad"])).text).toBe(
+      "Devuelve el texto al modelo: le dijo que «el precio de Velas de deseos cuadradas es por unidad», y ese es el precio de la caja",
+    );
+    expect(decisionSentence(box([])).text).toBe("No le pone a cada unidad el precio de la caja");
+    expect(jevAnswers({ ...box([]), answers: [{ q: "caja_por_unidad.termino_1", p: 0.9 }] })[0]).toContain(
+      "¿El texto le pone a cada unidad el precio de la caja?",
+    );
+  });
+
+  it("cada pregunta de Jev nombra el aroma que revisó", () => {
+    const answers = jevAnswers(view([], [{ q: "aroma_ajeno.termino_2", p: 0.07 }]));
+
+    expect(answers[0]).toContain("¿El texto le ofrece «Drakar» como aroma del producto?");
   });
 });

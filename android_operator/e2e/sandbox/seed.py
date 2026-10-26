@@ -201,7 +201,8 @@ class Chat:
             self.last_inbound_ms, self.last_inbound_wamid = sent, wamid
 
     def bot(self, at: int, text: str, tools: list[str] | None = None) -> None:
-        ev: dict[str, Any] = {"role": "assistant", "content": text, "timestamp": iso_utc(at)}
+        # `wamids`: el id que Meta dio a cada burbuja del texto (el doble check de WhatsApp se une por ahí).
+        ev: dict[str, Any] = {"role": "assistant", "content": text, "timestamp": iso_utc(at), "wamids": [_wamid()]}
         if tools:
             ev["tools_used"] = tools
         self.events.append(ev)
@@ -216,7 +217,8 @@ class Chat:
         self.events.append(ev)
 
     def human(self, at: int, text: str) -> None:
-        self.events.append({"role": "assistant", "sender": "human", "content": text, "timestamp": iso_utc(at)})
+        self.events.append({"role": "assistant", "sender": "human", "content": text, "timestamp": iso_utc(at),
+                            "wamids": [_wamid()]})
 
     def write(self, metadata: dict[str, Any]) -> None:
         meta_path, jsonl_path, _media = session_paths(self.session)

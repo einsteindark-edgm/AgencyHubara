@@ -282,5 +282,28 @@
       ]
     },
     "semantics": "Campaña con carrusel de 10 productos del catálogo de Meta (sección Marketing). Mismo marco que campaign_promo_marketing (saludo + mensaje + oferta, opt-out fijo). Cada tarjeta es una product card: foto y precio salen del catálogo conectado al número (product_retailer_id + catalog_id al enviar) y el botón Ver abre el producto con carrito nativo. Meta fija la cantidad de tarjetas al aprobar → una plantilla por cantidad. NUNCA por watchdog."
+  },
+  {
+    "name": "order_review_marketing_v1",
+    "category": "MARKETING",
+    "language": "es_CO",
+    "header": {
+      "format": "IMAGE",
+      "example_file": "assets/order_review_example.jpg"
+    },
+    "body": "¡Tu pedido {{1}} ya llegó! 🕯️\n\nCuéntanos qué tal te pareció: calificarlo toma 10 segundos y te regalamos 5 % de descuento en tu próxima compra (10 % si nos compartes una foto).\n\nSi prefieres no recibir más promociones, respóndeme \"NO MÁS\" y te doy de baja.",
+    "example": [
+      "#31"
+    ],
+    "buttons": [
+      {
+        "type": "FLOW",
+        "text": "Calificar mi pedido",
+        "flow_name": "Hubara — Calificación del pedido v1",
+        "flow_action": "navigate",
+        "navigate_screen": "RATING"
+      }
+    ],
+    "semantics": "Invitación a calificar el pedido entregado (plugin reviews, 2026-10-13) con la ventana 24h cerrada. MARKETING por decisión del operador: dice el descuento (5 %, 10 % con foto) para que la gente la abra; lleva la baja fija. Encabezado IMAGE generado por pedido (foto + cinco estrellas). Botón FLOW al formulario review_v1 (requiere el Flow PUBLICADO). NUNCA por watchdog."
   }
 ]

@@ -445,10 +445,12 @@ class TestSendTemplateEpisodeEdgeCases:
         assert metadata["last_outbound"]["wa_message_id"] == "wamid.X"
 
     @pytest.mark.asyncio
-    async def test_closed_episode_does_not_get_log_entry(
+    async def test_closed_episode_records_the_template_as_sent_after_close(
         self, isolated_vault, monkeypatch
     ):
-        """Episodio cerrado: NO contaminamos su outbound_messages."""
+        """Episodio cerrado (premortem C7, reseñas 2026-10-13): la plantilla que
+        sale después (aviso del ETA, invitación a calificar) va a ese episodio
+        marcada `after_close` — si no, su costo no aparecía en ninguna parte."""
         session_id = "wa_5491111111111"
         _write_metadata(
             isolated_vault,
@@ -485,10 +487,9 @@ class TestSendTemplateEpisodeEdgeCases:
         )
 
         metadata = _read_metadata(isolated_vault, session_id)
-        # Episode cerrado NO se tocó.
-        assert "outbound_messages" not in metadata["episodes"][0]
-        assert "cost_summary" not in metadata["episodes"][0]
-        # last_outbound sí se actualizó.
+        [entry] = metadata["episodes"][0]["outbound_messages"]
+        assert entry["wa_message_id"] == "wamid.X" and entry["after_close"] is True
+        assert metadata["episodes"][0]["cost_summary"]["messages_pending_count"] == 1
         assert metadata["last_outbound"]["wa_message_id"] == "wamid.X"
 
 
@@ -639,3 +640,33 @@ class TestSendTemplateStampsSendPolicy:
         assert policy["is_free"] is False  # sin ventanas abiertas
         # utility = 800 micros (estable entre co_2026q2 y q4).
         assert policy["expected_cost_micros"] == 800
+
+
+class TestAmbiguousSendErrors:
+    """Un timeout o un 504 de Meta son AMBIGUOS: la plantilla pudo salir y la
+    respuesta perderse (L-1). Se marcan con su propio tipo para que quien
+    reintenta con paciencia (el ETA) no mande el aviso N veces (premortem de
+    la Ola 0 de Temporal, 2026-10-16). Siguen siendo reintentables para los
+    demás, como antes."""
+
+    async def _raise_for(self, isolated_vault, monkeypatch, error: str) -> ApplicationError:
+        session_id = "wa_5491111111111"
+        _write_metadata(isolated_vault, session_id, {"phone_number_id": "PHONE", "episodes": []})
+        mock_send = AsyncMock(return_value=OutboundResult(wa_message_id=None, ok=False, error=error))
+        monkeypatch.setattr("src.platform.whatsapp.activities.whatsapp_client.send_template", mock_send)
+        with pytest.raises(ApplicationError) as exc_info:
+            await send_template_to_session(session_id, "quote_ready_utility_v2", {"product_or_quote_label": "y"})
+        return exc_info.value
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", ["timeout: ReadTimeout('timed out')", 'http_504: {"error":"gateway timeout"}'])
+    async def test_an_ambiguous_failure_says_so(self, isolated_vault, monkeypatch, error: str) -> None:
+        exc = await self._raise_for(isolated_vault, monkeypatch, error)
+        assert exc.type == "TemplateSendAmbiguous"
+        assert exc.non_retryable is False
+
+    @pytest.mark.asyncio
+    async def test_a_safe_failure_keeps_its_type(self, isolated_vault, monkeypatch) -> None:
+        exc = await self._raise_for(isolated_vault, monkeypatch, 'http_503: {"error":"unavailable"}')
+        assert exc.type == "TemplateSendRetryable"
+        assert exc.non_retryable is False
