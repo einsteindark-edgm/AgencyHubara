@@ -16,7 +16,9 @@ name: hubara-prod
 x-app: &app
   image: ${HUBARA_IMAGE}
   working_dir: /app/hubara_agency
-  env_file: .env
+  # env_file va POR SERVICIO: `.env` (config no secreta) + `secrets/<servicio>.env`
+  # (solo los secretos que ese servicio usa; los reparte split-env-by-service.py
+  # según service-secrets.json). Guarda: tests/infra/test_service_secrets.py.
   restart: unless-stopped
   # Apagado ordenado (auditoría de Temporal, 2026-10-15): la imagen corre
   # `python` como PID 1, que solo recibe las señales que maneja; `run_worker`
@@ -55,7 +57,9 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
-    env_file: .env
+    # Imagen de terceros: SOLO las llaves de los modelos que nombra su config
+    # (revisión de seguridad 2026-10-26; antes cargaba el .env entero).
+    env_file: [secrets/litellm.env]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
       interval: 10s
@@ -65,28 +69,38 @@ services:
 
   api:
     <<: *app
+    env_file: [.env, secrets/api.env]
     command: ["python", "run_api.py"]
     # Sin `ports:` público — Caddy lo fronta. Expuesto solo en la red del compose.
     expose:
       - "8000"
+    # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
+    # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
+    # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
+    environment:
+      AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
       - ./plugins:/app/frontend_dashboard/src/plugins:ro
+      - /opt/hubara/aws:/run/app-aws:ro
 
   worker-catalog-sync:
     <<: *app
+    env_file: [.env, secrets/worker-catalog-sync.env]
     command: ["python", "-m", "src.plugins.catalog.workers.sync"]
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-sales:
     <<: *app
+    env_file: [.env, secrets/worker-chats-sales.env]
     command: ["python", "-m", "src.plugins.chats.workers.sales"]
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-remarketing:
     <<: *app
+    env_file: [.env, secrets/worker-chats-remarketing.env]
     command: ["python", "-m", "src.plugins.chats.workers.remarketing"]
     environment:
       # D1.7: el watchdog etiqueta por silencio a los hilos que responde Meta
@@ -98,29 +112,44 @@ services:
 
   worker-reengagement-cycle:
     <<: *app
+    env_file: [.env, secrets/worker-reengagement-cycle.env]
     command: ["python", "-m", "src.plugins.reengagement.workers.cycle"]
+    # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
+    # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
+    # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
+    environment:
+      AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
+      - /opt/hubara/aws:/run/app-aws:ro
 
   worker-order-sentinel-cycle:
     <<: *app
+    env_file: [.env, secrets/worker-order-sentinel-cycle.env]
     command: ["python", "-m", "src.plugins.order_sentinel.workers.cycle"]
     environment:
       # El ejecutor/enriquecimiento hablan con la API por HTTP — el service
       # en ESTE compose se llama `api` (el default del código es el nombre
       # del compose local, PM-003: sin esto el ciclo era skipped_empty eterno).
       HUBARA_API_BASE_URL: http://api:8000
+      # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
+      # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
+      # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
+      AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
+      - /opt/hubara/aws:/run/app-aws:ro
 
   worker-chats-sales_eval:
     <<: *app
+    env_file: [.env, secrets/worker-chats-sales_eval.env]
     command: ["python", "-m", "src.plugins.chats.workers.sales_eval"]
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 
   worker-chats-post_sale_return:
     <<: *app
+    env_file: [.env, secrets/worker-chats-post_sale_return.env]
     command: ["python", "-m", "src.plugins.chats.workers.post_sale_return"]
     # PostSaleReturnWorkflow: schedule diario (21:00 Bogotá) que devuelve al
     # bot de ventas las COMPRA_EXITOSA pagadas Y ENTREGADAS abiertas en humano.
@@ -134,6 +163,7 @@ services:
 
   worker-eta-eta:
     <<: *app
+    env_file: [.env, secrets/worker-eta-eta.env]
     command: ["python", "-m", "src.plugins.eta.workers.eta"]
     environment:
       # D1.9: con Meta Business Agent al frente el ETA delega la notificación
@@ -144,12 +174,14 @@ services:
 
   worker-orders-reconcile:
     <<: *app
+    env_file: [.env, secrets/worker-orders-reconcile.env]
     command: ["python", "-m", "src.plugins.orders.workers.reconcile"]
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 
   worker-marketing-campaigns:
     <<: *app
+    env_file: [.env, secrets/worker-marketing-campaigns.env]
     command: ["python", "-m", "src.plugins.marketing.workers.campaigns"]
     # CampaignSendWorkflow: envíos de campañas directas (sección Marketing).
     # Vault completo: _campaigns/ (historial) + wa_*/ (audiencia + touches).
@@ -158,6 +190,7 @@ services:
 
   worker-reviews-requests:
     <<: *app
+    env_file: [.env, secrets/worker-reviews-requests.env]
     command: ["python", "-m", "src.plugins.reviews.workers.requests"]
     # Reseñas tras la entrega: ReviewRequestWorkflow (invitación por pedido
     # entregado) + ReviewSubmissionWorkflow (respuesta del formulario). Nace

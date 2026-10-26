@@ -226,6 +226,8 @@ jobs:
           uv run pytest -q
           tests/infra/test_ci_runs_replay_tests.py
           tests/infra/test_prod_compose_graceful_stop.py
+          tests/infra/test_container_aws_credentials.py
+          tests/infra/test_service_secrets.py
           tests/platform/orchestration/test_dispatcher.py
           tests/platform/test_agentkit.py
           tests/platform/test_continue_as_new.py
