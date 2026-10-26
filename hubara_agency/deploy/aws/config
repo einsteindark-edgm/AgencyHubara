@@ -1,0 +1,5 @@
+# Config de AWS para los contenedores que usan boto3 (api, order-sentinel,
+# reengagement). Lo activa AWS_CONFIG_FILE en el compose de prod: botocore pide
+# las credenciales temporales a credential_process.py (ver ese archivo).
+[default]
+credential_process = /app/.venv/bin/python /app/hubara_agency/deploy/aws/credential_process.py

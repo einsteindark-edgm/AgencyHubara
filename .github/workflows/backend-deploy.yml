@@ -112,7 +112,7 @@ jobs:
           host: ${{ steps.host.outputs.ip }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
-          source: "infra/compose/docker-compose.prod.yml,infra/compose/render-env-from-ssm.sh,exoclaw-temporal/litellm_config.yaml,frontend_dashboard/src/plugins"
+          source: "infra/compose/docker-compose.prod.yml,infra/compose/render-env-from-ssm.sh,infra/compose/split-env-by-service.py,infra/compose/service-secrets.json,infra/compose/refresh-container-aws-creds.sh,infra/compose/hubara-aws-creds.service,infra/compose/hubara-aws-creds.timer,exoclaw-temporal/litellm_config.yaml,frontend_dashboard/src/plugins"
           target: "/tmp/hubara-deploy"
           strip_components: 0
 
@@ -133,11 +133,28 @@ jobs:
             sudo chown -R ec2-user:ec2-user /opt/hubara
             cp /tmp/hubara-deploy/infra/compose/docker-compose.prod.yml /opt/hubara/docker-compose.yml
             cp /tmp/hubara-deploy/infra/compose/render-env-from-ssm.sh    /opt/hubara/
+            cp /tmp/hubara-deploy/infra/compose/split-env-by-service.py   /opt/hubara/
+            cp /tmp/hubara-deploy/infra/compose/service-secrets.json      /opt/hubara/
+            cp /tmp/hubara-deploy/infra/compose/refresh-container-aws-creds.sh /opt/hubara/
             cp /tmp/hubara-deploy/exoclaw-temporal/litellm_config.yaml    /opt/hubara/litellm_config.yaml
             cd /opt/hubara
-            chmod +x render-env-from-ssm.sh
+            chmod +x render-env-from-ssm.sh refresh-container-aws-creds.sh
+            # Secretos por servicio (revisión de seguridad 2026-10-26): `.env` solo con la
+            # config no secreta, `secrets/<servicio>.env` con lo de cada uno y `.env.host`
+            # con lo que solo usa la caja. Guarda: tests/infra/test_service_secrets.py.
             HUBARA_IMAGE="$HUBARA_IMAGE" OTEL_ENDPOINT="$OTEL_ENDPOINT" ./render-env-from-ssm.sh
-            GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env | cut -d= -f2-)"
+            # Credenciales temporales de AWS para api/order-sentinel/reengagement (hop
+            # limit 1: los contenedores no llegan a las de la caja). El timer las renueva
+            # cada 15 min; se corre una vez acá para que existan antes del `up -d`. Si el
+            # rol todavía no existe (Terraform sin aplicar), el ayudante de los
+            # contenedores cae a IMDS mientras el hop limit siga en 2: no frena el deploy.
+            sudo mkdir -p /opt/hubara/aws
+            sudo install -m 0644 /tmp/hubara-deploy/infra/compose/hubara-aws-creds.service /etc/systemd/system/hubara-aws-creds.service
+            sudo install -m 0644 /tmp/hubara-deploy/infra/compose/hubara-aws-creds.timer   /etc/systemd/system/hubara-aws-creds.timer
+            sudo systemctl daemon-reload
+            sudo systemctl enable --now hubara-aws-creds.timer
+            sudo systemctl start hubara-aws-creds.service || echo "AVISO: hubara-aws-creds no pudo asumir el rol de los contenedores (¿falta el terraform apply de compute?)" >&2
+            GHCR_TOKEN="$(grep '^GHCR_PULL_TOKEN=' .env.host | cut -d= -f2-)"
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_OWNER" --password-stdin
             # Liberar disco ANTES del pull: cada deploy trae una imagen de ~1.1 GB
             # tagueada por SHA y `image prune -f` (sin -a) NUNCA borra imágenes

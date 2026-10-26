@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Renderiza /opt/hubara/.env para la prod compose. Corre EN la caja EC2 (tiene
+# Renderiza el .env de la prod compose (repartido por servicio). Corre EN la caja EC2 (tiene
 # instance profile con ssm:GetParametersByPath sobre /hubara/<tenant>/*).
 #
 # Lo invoca backend-deploy.yml por SSH, pasando por entorno:
 #   HUBARA_IMAGE       — tag GHCR a correr (ej. ghcr.io/.../agencyhubara:<sha>)
 #   OTEL_ENDPOINT      — http://<ip-privada-signoz>:4317  (output de ../terraform/compute)
 #
-# Combina: (a) secretos de SSM  +  (b) config operacional no-secreta (este script).
+# Combina: (a) SSM  +  (b) config operacional no-secreta (este script), y (c) los
+# reparte: .env compartido + secrets/<servicio>.env + .env.host.
 set -euo pipefail
 
 BOX_ENV=/opt/hubara/box.env
@@ -27,48 +28,26 @@ fi
 : "${OTEL_ENDPOINT:=}"   # vacío → ConsoleSpanExporter (degrada solo)
 
 umask 077
-tmp="$(mktemp)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
 
 # (a) Secretos + config de scheduler desde SSM, recursivo bajo /hubara/<tenant>/.
 #     Incluye los knobs de /hubara/<tenant>/scheduler/ (PR #69) sin tratamiento
-#     especial: el strip a basename los deja como KEY=VALUE igual que los secretos.
-#     (Valores sin tabs/newlines — ok para crons "0 23 * * *", el separador es \t.)
+#     especial: el basename los deja como KEY=VALUE igual que los secretos. Va en
+#     JSON con el tipo de cada parámetro: el reparto separa String de SecureString.
 aws ssm get-parameters-by-path \
   --region "$AWS_REGION" \
   --path "/hubara/${TENANT}" \
   --with-decryption --recursive \
-  --query "Parameters[].[Name,Value]" --output text \
-  | awk -F'\t' '{ n=$1; sub(/.*\//,"",n); print n "=" $2 }' >> "$tmp"
-
-# (a.1) PREFLIGHT fail-closed (SECURITY_AUDIT_fable SEC-01/SEC-02). El bloque (b)
-#   arma HUBARA_ENV=production → faltar los params de auth tumba la API (503) y la
-#   recepción de WhatsApp (403). En vez de rendir un .env que causa ese outage en
-#   SILENCIO, ABORTAMOS acá: `docker compose up` no corre, el contenedor viejo
-#   sigue vivo, y el operador ve qué provisionar. Decoplar del `terraform apply`
-#   (que crea COGNITO_* y es manual) es lo que evita el outage-en-el-merge.
-_ssm_val() { grep -m1 "^$1=" "$tmp" | cut -d= -f2-; }
-_require_real_auth_param() {
-  local key="$1" val; val="$(_ssm_val "$key")"
-  if [ -z "$val" ] || [ "$val" = "PLACEHOLDER_set_out_of_band" ]; then
-    {
-      echo "ABORT deploy: /hubara/${TENANT}/${key} falta o es placeholder en SSM."
-      echo "  HUBARA_ENV=production exige los 4 params de auth provisionados:"
-      echo "  COGNITO_* (via 'terraform apply' de platform) + WHATSAPP_APP_SECRET"
-      echo "  y HUBARA_SERVICE_TOKEN (via 'aws ssm put-parameter --overwrite')."
-      echo "  Detalle y orden: infra/DEPLOY_RUNBOOK.md FASE 2.1."
-    } >&2
-    exit 1
-  fi
-}
-for _k in COGNITO_USER_POOL_ID COGNITO_APP_CLIENT_ID WHATSAPP_APP_SECRET HUBARA_SERVICE_TOKEN; do
-  _require_real_auth_param "$_k"
-done
+  --query "{Parameters: Parameters[].{Name: Name, Type: Type, Value: Value}}" --output json \
+  > "$work/params.json"
 
 # (b) Config operacional NO-secreta y ESTÁTICA (paths, endpoints internos). Los
 #     knobs de scheduler (ORDER_RECONCILE_INTERVAL_MINUTES, SALES_EVAL_*, GOLDEN_EVAL_*,
 #     WATCHDOG_*) NO van acá a propósito: vienen de SSM /scheduler/ (a) para poder
 #     cambiarlos sin redeploy. Hardcodearlos acá los pisaría (último gana en env_file).
-cat >> "$tmp" <<EOF
+cat > "$work/static.env" <<EOF
 HUBARA_IMAGE=${HUBARA_IMAGE}
 CADDY_DOMAIN=${CADDY_DOMAIN}
 ENABLED_PLUGINS=${ENABLED_PLUGINS}
@@ -91,5 +70,14 @@ OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
 OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}
 EOF
 
-mv "$tmp" "$OUT"
-echo "Escrito $OUT ($(grep -c = "$OUT") vars)"
+# (c) Reparto (revisión de seguridad 2026-10-26): `.env` con la config no secreta,
+#     `secrets/<servicio>.env` con los SecureString de cada uno según
+#     service-secrets.json, y `.env.host` con lo que solo usa la caja (GHCR).
+#     PREFLIGHT fail-closed (SEC-01/SEC-02), ahora dentro del reparto: sin los params
+#     de auth (o con el relleno de Terraform) no escribe nada y sale con error →
+#     `docker compose up` no corre y el contenedor viejo sigue vivo.
+python3 "$HERE/split-env-by-service.py" \
+  --params "$work/params.json" \
+  --map "$HERE/service-secrets.json" \
+  --static "$work/static.env" \
+  --out-dir "$(dirname "$OUT")"

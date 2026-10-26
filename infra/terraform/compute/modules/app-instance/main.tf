@@ -164,6 +164,66 @@ resource "aws_iam_role_policy" "wake_graphagents" {
   policy = data.aws_iam_policy_document.wake_graphagents.json
 }
 
+# ── Rol de los CONTENEDORES (revisión de seguridad 2026-10-26) ──────────────
+# Con hop limit 1 (ver `metadata_options`) los contenedores ya no llegan al rol
+# de la caja. Los tres que sí usan AWS (la API: token de Meta + despertar
+# GraphAgents; order-sentinel y reengagement: despertar GraphAgents) reciben
+# credenciales TEMPORALES de este rol: el timer `hubara-aws-creds` del host lo
+# asume cada 15 min (1 h de vida) y deja el archivo en /opt/hubara/aws/, que
+# solo esos contenedores montan. Lee/escribe el token de Meta y despierta a
+# GraphAgents; nada de los demás secretos del tenant.
+# Guarda: hubara_agency/tests/infra/test_container_aws_credentials.py.
+data "aws_iam_policy_document" "containers_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = [aws_iam_role.app.arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "app_containers" {
+  name                 = "agencyhubara-${var.tenant}-app-containers"
+  assume_role_policy   = data.aws_iam_policy_document.containers_assume.json
+  max_session_duration = 3600
+}
+
+data "aws_iam_policy_document" "containers" {
+  source_policy_documents = [data.aws_iam_policy_document.wake_graphagents.json]
+  statement {
+    sid       = "ReadWriteMetaToken"
+    actions   = ["ssm:GetParameter", "ssm:PutParameter", "ssm:DeleteParameter"]
+    resources = ["arn:aws:ssm:*:*:parameter/hubara/${var.tenant}/meta/*"]
+  }
+  statement {
+    sid       = "MetaTokenKms"
+    actions   = ["kms:Decrypt", "kms:Encrypt", "kms:GenerateDataKey"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "app_containers" {
+  name   = "containers"
+  role   = aws_iam_role.app_containers.id
+  policy = data.aws_iam_policy_document.containers.json
+}
+
+# El host asume el rol de los contenedores para renovarles las credenciales.
+data "aws_iam_policy_document" "assume_containers" {
+  statement {
+    sid       = "AssumeContainersRole"
+    actions   = ["sts:AssumeRole"]
+    resources = [aws_iam_role.app_containers.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "assume_containers" {
+  name   = "assume-containers-role"
+  role   = aws_iam_role.app.id
+  policy = data.aws_iam_policy_document.assume_containers.json
+}
+
 # Session Manager (deploy/ops sin abrir SSH si se prefiere). robotocore no siembra
 # las managed policies de AWS → se saltea en local (es real-only, como el cloud-init).
 resource "aws_iam_role_policy_attachment" "ssm_core" {
@@ -211,6 +271,11 @@ resource "aws_instance" "app" {
 
   metadata_options {
     http_tokens = "required" # IMDSv2 obligatorio
+    # 1 salto: solo el host llega a las credenciales de la caja; un contenedor
+    # (un salto más por el bridge de Docker) no. Los que usan AWS reciben las del
+    # rol `app_containers`. Revisión de seguridad 2026-10-26.
+    http_put_response_hop_limit = 1
+    http_endpoint               = "enabled"
   }
 
   # Incidente 2026-07-08: un AMI nuevo en el data source `most_recent` hizo que
