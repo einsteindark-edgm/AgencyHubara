@@ -238,8 +238,13 @@ class FactCheck:
         (order, stage, pay_status, total), (coupons, valid_promotions) = await asyncio.gather(
             self._order(metadata, text), self._coupons(metadata, text)
         )
+        burst, talk = self._conversation(session_key)
+        # Un precio sin producto ni pedido habla de lo que el bot acaba de
+        # mostrar (incidente 2026-10-26: «Los precios van desde $47.000 hasta
+        # $89.900» tras la lista de los navideños; sin foco no se juzgaba).
+        priced = focus or (focus_products(products, draft=None, text=talk) if extract_cop_amounts(text) else [])
         base: set[int] = set()
-        for product in focus:
+        for product in priced:
             base |= set(catalog_prices(product))
             base |= accepted_prices(self._vault_dir, session_key, product.handle, snapshot_price_cop=None)
         prices = set(base)
@@ -252,7 +257,6 @@ class FactCheck:
         if total is not None:
             prices.add(total)
         subtotal, breakdown = _subtotal(products, metadata)
-        burst, talk = self._conversation(session_key)
         figures, truth = _figure_facts(
             products, metadata, subtotal=subtotal, breakdown=breakdown, total=total, talk=f"{talk}\n{text}",
             accepted=lambda handle: accepted_prices(self._vault_dir, session_key, handle, snapshot_price_cop=None),
@@ -264,14 +268,14 @@ class FactCheck:
             (p.title, units, catalog_unit_price(p)) for p in focus if (units := pack_units(p, sold_by_box))
         )
         return ReplyFacts(
-            focus=tuple(focus), aromas=tuple(aromas), colors=tuple(colors), sheets=option_sheets(focus),
-            single=single_sheets(focus),
+            focus=tuple(focus), price_focus=tuple(priced), aromas=tuple(aromas), colors=tuple(colors),
+            sheets=option_sheets(focus), single=single_sheets(focus),
             # El precio por mayor que escribe la descripción (operador,
             # 2026-10-19) es un monto CONDICIONAL, como el mínimo de contra
             # entrega: vale en la oración que dice desde cuánto aplica, no
             # como precio de una caja.
             prices=tuple(sorted(prices)),
-            policy=(*POLICY_AMOUNTS, *sorted({a for p in focus for a in description_prices(p)})),
+            policy=(*POLICY_AMOUNTS, *sorted({a for p in priced for a in description_prices(p)})),
             subtotal=subtotal, order_breakdown=breakdown, cod_min=CASH_ON_DELIVERY_MIN_PRODUCTS_COP,
             surcharges=(PAYMENT_LINK_SURCHARGE_NEQUI_BANCOLOMBIA, PAYMENT_LINK_SURCHARGE_OTHER_BANKS),
             order=order, stage=stage, pay_status=pay_status,

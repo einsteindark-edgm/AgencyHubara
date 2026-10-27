@@ -80,6 +80,29 @@ def format_cop(amount: int) -> str:
     return "$" + f"{int(amount):,}".replace(",", ".")
 
 
+def price_list_line(products: Any) -> str:
+    """«de $47.000 a $54.000: Papá Noel y sus Regalos $47.000; …» — el rango y
+    el precio de cada producto en una línea corta, para el principio del
+    resultado de una tool. El historial que leen los turnos siguientes corta
+    cada resultado a 500 caracteres (incidente 2026-10-26: el turno de
+    complemento solo veía el primer precio y el bot inventó «hasta $89.900»);
+    el rango va primero porque, si la lista no cabe, es lo que queda. Sin
+    precios, ""."""
+    lines: list[str] = []
+    every: set[int] = set()
+    for product in products:
+        prices = sorted(catalog_prices(product))
+        if prices:
+            every.update(prices)
+            lines.append(f"{product.title} {' o '.join(format_cop(p) for p in prices)}")
+    if not lines:
+        return ""
+    body = "; ".join(lines)
+    if len(every) < 2:
+        return body
+    return f"de {format_cop(min(every))} a {format_cop(max(every))}: {body}"
+
+
 def read_checkout_ledger(vault_dir: Path, session_key: str) -> dict[str, Any]:
     """`metadata.checkout_verification` o `{}` (sin ledger / vault ilegible)."""
     try:

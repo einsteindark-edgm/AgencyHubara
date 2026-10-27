@@ -456,6 +456,70 @@ async def test_the_wholesale_price_of_the_product_description_goes_as_is(tmp_pat
     assert retail["error"] == "fact_check"
 
 
+# Incidente 2026-10-25/26 (bot V2, anuncio de velas navideñas): el bot le
+# mostró la lista de los navideños y, en el turno de complemento, escribió
+# «Los precios van desde $47.000 hasta $89.900 según el motivo» (el más caro
+# era $54.000). El texto no nombra ningún producto y no había pedido: sin foco
+# no se juzgaba ningún precio. Un precio sin producto habla de lo que el bot
+# acaba de mostrar (los productos de la charla).
+
+NOEL = _product("Papá Noel y sus Regalos", "papa-noel-y-sus-regalos", ["Navidad"], price=47_000)
+GNOMOS = _product("Trío de Gnomos", "trio-de-gnomos", ["Navidad"], price=53_000)
+CASCANUECES = _product("Dúo de Cascanueces", "duo-de-cascanueces", ["Navidad"], price=54_000)
+SHOWN_LIST = [
+    {"role": "user", "content": "¡Hola! Quiero más información. Motivos y precios"},
+    {"role": "assistant", "content": "🛍️ El bot envió el catálogo con 3 productos — con el mensaje: «Estos son los "
+     "motivos navideños.»", "component_kind": "products_list",
+     "card": {"items": [{"title": "Papá Noel y sus Regalos"}, {"title": "Trío de Gnomos"},
+                        {"title": "Dúo de Cascanueces"}]}},
+]
+INVENTED_RANGE = "Los precios van desde $47.000 hasta $89.900 según el motivo y el tamaño de la pieza."
+
+
+def _list_tool(vault: Path) -> SendReplyTool:
+    return _tool(vault, products=(), catalog=_Catalog(NOEL, GNOMOS, CASCANUECES, DESEOS),
+                 history_reader=lambda _key: SHOWN_LIST)
+
+
+async def test_a_price_range_of_the_list_it_showed_goes_back_with_the_real_prices(
+    tmp_path: Path, ctx: ToolContext
+) -> None:
+    held = await _send(_list_tool(tmp_path), ctx, INVENTED_RANGE)
+
+    assert held.get("reply") is None and held["checks"] == ["precio_ajeno"]
+    message = held["message"]
+    assert "«$89.900»" in message and "«$47.000»" not in message
+    assert "Papá Noel y sus Regalos cuesta $47.000" in message
+    assert "Trío de Gnomos cuesta $53.000" in message and "Dúo de Cascanueces cuesta $54.000" in message
+
+
+async def test_the_real_range_of_the_list_it_showed_goes_as_is(tmp_path: Path, ctx: ToolContext) -> None:
+    text = "Los precios van desde $47.000 hasta $54.000 según el motivo 🤍"
+
+    assert (await _send(_list_tool(tmp_path), ctx, text)).get("reply") == {"text": text}
+
+
+async def test_with_jev_the_range_is_judged_against_the_list_it_showed(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    fake = _jev(monkeypatch, {"precio_ajeno.termino_1": 0.9})
+
+    held = await _send(_list_tool(tmp_path), ctx, INVENTED_RANGE)
+
+    assert held["checks"] == ["precio_ajeno"] and "«$89.900»" in held["message"]
+    [state] = [state for state, questions in fake.calls if "precio_ajeno.termino_1" in questions]
+    assert INVENTED_RANGE in state
+    assert "Papá Noel y sus Regalos: $47.000" in state and "Dúo de Cascanueces: $54.000" in state
+
+
+async def test_with_jev_a_range_jev_does_not_read_as_a_price_goes_as_is(
+    tmp_path: Path, ctx: ToolContext, monkeypatch
+) -> None:
+    _jev(monkeypatch, {"precio_ajeno.termino_1": 0.05})
+
+    assert (await _send(_list_tool(tmp_path), ctx, INVENTED_RANGE)).get("reply") == {"text": INVENTED_RANGE}
+
+
 
 # ── pago, estado del pedido, cupones y lo que niega ────────────────────────
 
