@@ -34,7 +34,10 @@ from src.plugins.chats.agent.sales_eval.scorecard.model import CheckSpec
 # nuestro, APE-01 no pide la marca que ese mensaje ya dijo y APE-03 no aplica;
 # DES-05 no cuenta el mínimo del contra entrega («compras desde $45.000») ni
 # los productos que nombró nuestro mensaje.
-REGISTRY_VERSION = 11
+# v12 (informe de huecos del 2026-11-03, ENV-03): el ingest escribe los datos
+# del formulario en el pedido al llegar; ENV-03 pasa si cada dato que trajo el
+# formulario quedó en el pedido de ese turno, sin exigir set_order_slot.
+REGISTRY_VERSION = 12
 
 LEVELS = ("critico", "mayor", "menor")
 KINDS = ("code", "judge")

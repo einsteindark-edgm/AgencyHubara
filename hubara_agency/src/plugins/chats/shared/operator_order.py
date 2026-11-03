@@ -27,7 +27,7 @@ DEHA: sin I/O ni reloj; el caller lee metadata, ledger y JSONL.
 from __future__ import annotations
 
 import copy
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
@@ -45,6 +45,34 @@ FORM_TO_SLOT: dict[str, str] = {
     "national_id": "cedula",
     "payment_method": "metodo_pago",
 }
+
+
+def form_reply_slots(fields: Mapping[str, Any]) -> dict[str, str]:
+    """Los slots del borrador que trae una respuesta del formulario de envío
+    (los campos del Flow: `city`, `address`…). Lo vacío no cuenta y lo que no
+    es un dato del pedido (`flow_token`, el total, el resumen) tampoco."""
+    return {
+        FORM_TO_SLOT[key]: str(value).strip()
+        for key, value in fields.items()
+        if key in FORM_TO_SLOT and value is not None and str(value).strip()
+    }
+
+
+def _event_slots(parsed: Mapping[str, Any]) -> dict[str, str]:
+    """Los slots de un evento `shipping_form` del chat (`detect_chat_event`)."""
+    fields = {k: parsed.get(k) for k in FORM_TO_SLOT}
+    fields.update({e["key"]: e["value"] for e in parsed.get("extra") or [] if e.get("key") in FORM_TO_SLOT})
+    return form_reply_slots(fields)
+
+
+def form_reply_slots_in_text(content: str) -> dict[str, str]:
+    """Los slots de una respuesta al formulario tal como queda en el chat
+    (``[datos de envío recibidos] city=…; address=…``); ``{}`` si no lo es."""
+    parsed = detect_chat_event({"role": "user", "content": content})
+    if not parsed or parsed.get("kind") != "shipping_form":
+        return {}
+    return _event_slots(parsed)
+
 
 #: Las acciones que el operador mandó desde la app (`operator_tools.LEDGER_KEY`).
 LEDGER_KEY = "operator_tool_actions"
@@ -124,9 +152,7 @@ def _form_reply(events: Sequence[Any], since_ms: int | None) -> tuple[int, dict[
         at_ms = _event_ms(event)
         if not _in_scope(at_ms, since_ms):
             return None  # la última respuesta es de antes: no hay una de este episodio
-        fields = {k: parsed.get(k) for k in FORM_TO_SLOT}
-        fields.update({e["key"]: e["value"] for e in parsed.get("extra") or [] if e.get("key") in FORM_TO_SLOT})
-        slots = {FORM_TO_SLOT[k]: str(v).strip() for k, v in fields.items() if v and str(v).strip()}
+        slots = _event_slots(parsed)
         return (at_ms or 0, slots) if slots else None  # sin hora (historial viejo): solo llena lo que falta
     return None
 

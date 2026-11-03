@@ -1040,6 +1040,51 @@ seguidos sin llamar la tool y el operador lo mandó a mano.
 - THEN la tarjeta de tarifas queda en la cola y sale después del texto
 - AND TAG-09 la cuenta como enviada (la burbuja entregada en el paso a paso)
 
+### Requirement: Un formulario de envío por compra, y sus datos en el pedido al llegar (2026-11-03)
+
+Informe de huecos del 2026-11-03 (ENV-01, 7 conversaciones desde el 10-07): el
+bot V2 volvía a llamar `request_shipping_details` turnos después de que el
+formulario ya le había llegado al cliente (#393 ya había quitado los
+duplicados por carrera; la red de las promesas no los causaba: ya contaba el
+formulario entregado como cumplido). Desde entonces `request_shipping_details`
+SHALL rechazar con `queued=false, error=shipping_form_already_sent` si en el
+episodio activo el formulario ya se entregó (una fila `ok` del registro de
+entregas desde que empezó el episodio); el mensaje le dice al modelo que un
+dato que falte o que el cliente corrija se pide por texto (`send_reply`) y se
+anota con `set_order_slot`. El rechazo no corta el turno. NO SHALL frenar: el
+primer formulario, uno cuyo envío falló, uno de un episodio anterior, otra
+llamada en el mismo turno (ya está en la cola) ni el operador desde la app
+(`api/operator_tools.py`, `once_per_episode=False`: decide él).
+
+ENV-03: los datos del formulario (`nfm_reply`: ciudad, barrio, dirección,
+teléfono, quien recibe, cédula, forma de pago) SHALL quedar en el borrador del
+episodio activo apenas llegan (el ingest, como el carrito web), sin depender
+de que el modelo llame `set_order_slot`. Un campo vacío no borra lo que había.
+No se escribe con un humano al mando ni en un episodio con pedido registrado.
+La forma de pago queda con el id del formulario (`cash_on_delivery`,
+`transfer`, `payment_link`), el mismo que recibe `register_order`. El
+scorecard (ENV-03, registro v12) pasa si cada dato que trajo el formulario
+quedó en el pedido de ese turno.
+
+#### Scenario: El modelo pide el formulario otra vez
+
+- GIVEN un formulario entregado en el episodio activo
+- WHEN el modelo llama `request_shipping_details`
+- THEN la tool devuelve `queued=false, error=shipping_form_already_sent` y no encola nada
+- AND el modelo sigue en el turno y le pide por texto lo que falte
+
+#### Scenario: El primer envío falló
+
+- GIVEN una fila del registro de entregas del formulario con `ok=false`
+- WHEN el modelo llama `request_shipping_details`
+- THEN el formulario queda en la cola
+
+#### Scenario: Llegan los datos del formulario
+
+- GIVEN un borrador con producto y cantidad
+- WHEN llega `nfm_reply` con ciudad, dirección, teléfono, quien recibe y forma de pago
+- THEN el borrador los tiene antes del turno del bot y la nota del pedido se los muestra
+
 ### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
 
 Desde el 2026-10-07 (`purchase_signals.closing_blocker`): con un episodio
