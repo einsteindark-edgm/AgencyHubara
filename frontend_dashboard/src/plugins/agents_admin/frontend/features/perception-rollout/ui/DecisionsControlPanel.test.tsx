@@ -158,6 +158,18 @@ describe("DecisionsControlPanel", () => {
     expect(within(box).getByText("¿le dice que cada vela cuesta lo que cuesta la caja? (solo con Jev)")).toBeInTheDocument();
   });
 
+  it("nombra las decisiones nuevas de ventas-8 (informe de huecos, 2026-11-03)", async () => {
+    state = payload({ saludo_repetido: "off", despedida: "off", repregunta: "off" });
+    renderPanel();
+
+    const welcome = await screen.findByRole("group", { name: "Bienvenida a quien ya conoce la tienda" });
+    expect(within(welcome).getByText("¿el texto le da la bienvenida a quien ya conoce la tienda? (solo con Jev)")).toBeInTheDocument();
+    const closing = screen.getByRole("group", { name: "Frases que la tienda no dice" });
+    expect(within(closing).getByText("¿el texto dice una frase que la tienda no dice? (solo con Jev)")).toBeInTheDocument();
+    const repeated = screen.getByRole("group", { name: "Volver a pedir un dato" });
+    expect(within(repeated).getByText("¿el texto le vuelve a pedir un dato que el pedido ya tiene? (solo con Jev)")).toBeInTheDocument();
+  });
+
   it("nombra el acuse tras la despedida con su pregunta", async () => {
     state = payload({ acuse: "off" });
     renderPanel();

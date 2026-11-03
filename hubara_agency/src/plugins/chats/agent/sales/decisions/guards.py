@@ -55,9 +55,11 @@ __all__ = [
     "fact_words",
     "facts_in_bundle",
     "is_internal_text",
+    "known_order_data",
     "option_list",
     "product_quote_sentences",
     "promised_handoff",
+    "repeated_order_data",
     "safe_customer_text",
     "session_redact_terms",
     "unconfirmed_order_data",
@@ -421,6 +423,64 @@ async def unconfirmed_order_data(
         vault_dir=vault_dir,
     )
     return tuple(verdict.value)
+
+
+def known_order_data(draft: Mapping[str, Any] | None) -> tuple[tuple[str, str], ...]:
+    """Los datos que el borrador del pedido ya tiene, como `(nombre, lo que dice
+    el sistema)`: la cantidad (si cada producto la tiene) y los datos de envío y
+    de pago. El valor de un dato personal no va (Jev lo ve tapado). El piso de
+    `repregunta` (ventas-8): nunca se pregunta por un dato que el pedido no tiene."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.datos import _LABELS, CHECKED_SLOTS, PERSONAL_SLOTS
+    from src.plugins.chats.shared.draft_items import draft_items
+
+    if not isinstance(draft, Mapping):
+        return ()
+    out: list[tuple[str, str]] = []
+    items = draft_items(dict(draft))
+    if items and all(item.get("cantidad") for item in items):
+        lines = ", ".join(f"{item['cantidad']} × {item.get('producto') or 'el producto'}" for item in items)
+        out.append(("el dato «cantidad»", f"el pedido ya tiene la cantidad: {lines}"))
+    slots = draft.get("slots") if isinstance(draft.get("slots"), Mapping) else {}
+    for slot in CHECKED_SLOTS:
+        value = slots.get(slot)
+        if not isinstance(value, str) or not value.strip():
+            continue
+        label = _LABELS.get(slot, slot)
+        fact = f"el pedido ya tiene {label}" + ("" if slot in PERSONAL_SLOTS else f": {value.strip()}")
+        out.append((f"el dato «{label}»", fact))
+    return tuple(out)
+
+
+async def repeated_order_data(
+    text: str,
+    draft: Callable[[], Mapping[str, Any] | None],
+    *,
+    session_id: str,
+    vault_dir: Path | None,
+) -> tuple[tuple[str, str], ...]:
+    """Los datos que el texto le vuelve a pedir al cliente y el pedido ya tiene,
+    con lo que dice el sistema de cada uno (capacidad `repregunta`, ventas-8).
+    Con un paquete anterior o con `reglas`, ninguno, y ni siquiera se lee el
+    borrador (`draft` es perezoso)."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.texto import KnownOrderData
+
+    cap = capability_if_present("repregunta")
+    if cap is None or not text:
+        return ()
+    vault = Path(vault_dir) if vault_dir is not None else None
+    if bot_for_session(session_id, vault_dir=vault).provider(cap.name) == "reglas":
+        return ()
+    known = known_order_data(draft())
+    if not known:
+        return ()
+    verdict = await decide_for_session(
+        cap,
+        KnownOrderData(text=text, terms=tuple(t for t, _f in known), facts=tuple(f for _t, f in known)),
+        session_id=session_id,
+        vault_dir=vault_dir,
+    )
+    asked = set(verdict.value or ())
+    return tuple(pair for pair in known if pair[0] in asked)
 
 
 async def customer_reply_text(text: str, *, session_id: str, vault_dir: Path | None) -> str:

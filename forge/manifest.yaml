@@ -304,6 +304,7 @@ deletes:
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-5"
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-6"
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-7"
+  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-8"
   # Los guiones de venta de las campañas de ESTA tienda (2026-10-19): el clon
   # recibe la carpeta con su README y sin campañas.
   - "hubara_agency/src/plugins/chats/shared/campaigns/velitas-7-dic.yaml"
