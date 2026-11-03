@@ -99,3 +99,12 @@ Cada decisión del flujo SHALL quedar registrada con su motivo
 enviar y en espera por motivo, los envíos sin confirmar, si falta el formulario
 o los cupones (que duren lo prometido) y el estado de la reconstrucción de la
 tienda.
+
+#### Scenario: entregado sin avisar al cliente
+- GIVEN un pedido que el equipo marca «Entregado» con «Avisar al cliente»
+  apagado (saltar etapas en el tablero, o el centinela)
+- WHEN se registra la entrega
+- THEN no sale el WhatsApp de «entregado» del ETA, pero sí la invitación a
+  calificar: `orders` emite `OrderDeliveredEvent` con CADA entrega y la
+  transición `order_delivered_requests_review` cuelga de él (operador,
+  2026-10-23)

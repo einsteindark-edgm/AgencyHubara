@@ -81,8 +81,17 @@ def test_no_order_stage_transition_terminates_the_eta_session() -> None:
 
 def test_delivered_also_starts_one_review_invitation_per_order() -> None:
     """Reseñas tras la entrega (2026-10-13): un workflow por pedido (id por
-    order_id: el evento repetido no invita dos veces) con la hora de entrega."""
-    [review] = [t for t in _matching("delivered") if t.action.target_plugin == "reviews"]
+    order_id: el evento repetido no invita dos veces) con la hora de entrega.
+
+    La invitación cuelga de `OrderDeliveredEvent`, que sale AUNQUE el pedido
+    se marque entregado sin avisar al cliente (saltar etapas en el tablero:
+    decisión del operador, 2026-10-23); el aviso de «entregado» del ETA sigue
+    en `OrderStageChangedEvent`, que solo sale con «Avisar al cliente»."""
+    assert [t for t in _matching("delivered") if t.action.target_plugin == "reviews"] == []
+    [review] = [
+        t for t in get_transitions("orders", "reconcile")
+        if t.on_event == "OrderDeliveredEvent" and t.action.target_plugin == "reviews"
+    ]
     assert review.action.via == "start_workflow"
     assert review.action.target_workflow == "ReviewRequestWorkflow"
     assert review.action.workflow_id_template == "review-request-{event.order_id}"

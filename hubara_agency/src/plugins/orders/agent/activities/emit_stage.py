@@ -141,7 +141,8 @@ async def emit_order_stage_activity(
 
     ``notify_customer=False``: el evento CAPI de la etapa sale igual (Meta
     debe saber que se entregó) pero NO se despacha el OrderStageChangedEvent
-    → el cliente no recibe WhatsApp. Casos: el operador corrige un pedido
+    → el cliente no recibe WhatsApp. Una entrega emite además, SIEMPRE,
+    ``OrderDeliveredEvent`` (la invitación a calificar cuelga de él). Casos: el operador corrige un pedido
     que ya se entregó saltándose etapas, o el order-sentinel infiere la
     transición de un chat donde el humano ya avisó. Devuelve "capi_only".
 
@@ -158,7 +159,10 @@ async def emit_order_stage_activity(
         envelope_for,
     )
     from src.platform.temporal.client import get_activity_temporal_client
-    from src.plugins.orders.shared.contracts.events import OrderStageChangedEvent
+    from src.plugins.orders.shared.contracts.events import (
+        OrderDeliveredEvent,
+        OrderStageChangedEvent,
+    )
 
     # Normalizar display_id ("#6") → backend id: el handler pasa el order_id
     # CRUDO del path y el "#" rompe httpx (fragment). Cache L-2 primero; en
@@ -198,6 +202,22 @@ async def emit_order_stage_activity(
     except Exception as exc:  # noqa: BLE001 — atribución best-effort
         activity.logger.warning(
             "emit_order_stage: CAPI %s falló (no bloquea): %s", to_stage, exc
+        )
+
+    if to_stage == "delivered":
+        # Con o sin aviso al cliente: lo que depende de la entrega (la
+        # invitación a calificar) se entera igual (operador, 2026-10-23).
+        await dispatch_envelope_with_client(
+            envelope_for(
+                OrderDeliveredEvent(
+                    session_id=session_id,
+                    order_id=order_id,
+                    occurred_at_ms=int(time.time() * 1000),
+                ),
+                source_plugin="orders",
+                source_worker="reconcile",
+            ),
+            await get_activity_temporal_client(),
         )
 
     if not notify_customer:
