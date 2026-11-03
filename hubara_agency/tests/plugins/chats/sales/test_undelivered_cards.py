@@ -33,7 +33,7 @@ from src.plugins.chats.agent.sales.activities.flush_ui_intents import (
 )
 from src.plugins.chats.agent.sales.use_cases.undelivered_cards import card_words
 
-SID = "wa_573000000777"
+SID = "wa_573001234567"  # sintético de `forge/manifest.yaml` (forbidden_pattern_allow)
 PRODUCT = "Vela Cruz de Vida"
 
 

@@ -212,7 +212,7 @@ jobs:
         # gates AST (reintentos finitos, heartbeat de las entregas, workers con
         # apagado ordenado), el compose y los manifests de prod, y el
         # comportamiento: el corte por run, la entrega sin confirmar del V2, la
-        # tarjeta que no salió (el turno siguiente lo sabe, L-38), el buzón de
+        # tarjeta que no salió (el turno siguiente lo sabe, L-39), el buzón de
         # avisos de etapa, los reintentos del ETA y el cliente único.
         # Viven en tests/plugins/ y tests/platform/, que este job no corre
         # completos: se nombran uno por uno (~40 s). Guarda:
