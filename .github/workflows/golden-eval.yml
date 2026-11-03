@@ -57,7 +57,7 @@ jobs:
           docker run -d --name litellm -p 4000:4000 \
             -v "${{ github.workspace }}/exoclaw-temporal/litellm_config.yaml:/app/config.yaml:ro" \
             -e DEEPSEEK_API_KEY -e GEMINI_API_KEY \
-            ghcr.io/berriai/litellm:v1.86.2 --config /app/config.yaml --port 4000
+            ghcr.io/berriai/litellm:v1.86.2@sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b --config /app/config.yaml --port 4000
           echo "Esperando litellm…"
           for i in $(seq 1 40); do
             if curl -sf http://localhost:4000/health/liveliness >/dev/null 2>&1; then

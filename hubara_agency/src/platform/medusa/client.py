@@ -630,6 +630,25 @@ class HttpMedusaClient:
         data = await self._request("POST", "/admin/promotions", json=payload, idempotent=False)
         return data["promotion"]
 
+    async def upsert_product_review(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """`POST /admin/product-reviews` (módulo `productReview` de Hubara):
+        upsert por `external_id` — repetir la llamada no duplica."""
+        data = await self._request("POST", "/admin/product-reviews", json=payload)
+        return data["product_review"]
+
+    async def upload_file(self, filename: str, content: bytes, mime: str) -> str:
+        """`POST /admin/uploads` (multipart `files`) → URL pública del archivo
+        en el almacenamiento de Medusa (R2)."""
+        headers = await self._auth_headers()
+        resp = await self._http.post(
+            "/admin/uploads",
+            files={"files": (filename, content, mime)},
+            headers=headers,
+        )
+        if not resp.is_success:
+            raise MedusaAPIError(resp.status_code, "/admin/uploads", resp.text)
+        return str(resp.json()["files"][0]["url"])
+
     async def update_promotion(self, promotion_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         """`POST /admin/promotions/{id}` — código, estado, valor del método."""
         data = await self._request("POST", f"/admin/promotions/{promotion_id}", json=payload)

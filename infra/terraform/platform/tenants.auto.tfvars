@@ -90,6 +90,13 @@ tenants = {
       signal_inbound_meta     = true
       prompt_turn_context     = "team"
     }
+    # Reseñas tras la entrega (#428): encendido para todos de una vez
+    # (decisión del operador, 2026-10-22: «corregimos en el vuelo»). Invita a
+    # calificar cada pedido entregado (formulario en la ventana de 24 h; si no,
+    # la plantilla desde las 20 h). Apagar = "off" + apply + Backend deploy.
+    reviews = {
+      mode = "on"
+    }
   }
 
   vincenzo = {

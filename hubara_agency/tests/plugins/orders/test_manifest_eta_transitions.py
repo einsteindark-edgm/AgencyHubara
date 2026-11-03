@@ -59,8 +59,10 @@ def test_preparing_joins_the_live_eta_session_instead_of_replacing_it() -> None:
 
 @pytest.mark.parametrize("stage", STAGES)
 def test_every_stage_signals_with_start_the_same_eta_session(stage: str) -> None:
-    matching = _matching(stage)
-    assert len(matching) == 1, f"{stage}: expected 1 match, got {len(matching)}"
+    # Otros plugins también escuchan etapas (reseñas: `delivered` arranca la
+    # invitación a calificar); acá importa que el ETA reciba UNA por etapa.
+    matching = [t for t in _matching(stage) if t.action.target_plugin == "eta"]
+    assert len(matching) == 1, f"{stage}: expected 1 ETA match, got {len(matching)}"
     t = matching[0]
     assert t.action.via == "signal_with_start"
     assert t.action.signal_name == "notify_stage_change"
@@ -75,3 +77,13 @@ def test_no_order_stage_transition_terminates_the_eta_session() -> None:
         and t.action.via == "start_workflow_with_replace"
     ]
     assert offenders == [], f"transiciones que terminan la sesión ETA viva: {offenders}"
+
+
+def test_delivered_also_starts_one_review_invitation_per_order() -> None:
+    """Reseñas tras la entrega (2026-10-13): un workflow por pedido (id por
+    order_id: el evento repetido no invita dos veces) con la hora de entrega."""
+    [review] = [t for t in _matching("delivered") if t.action.target_plugin == "reviews"]
+    assert review.action.via == "start_workflow"
+    assert review.action.target_workflow == "ReviewRequestWorkflow"
+    assert review.action.workflow_id_template == "review-request-{event.order_id}"
+    assert review.action.input_mapping["occurred_at_ms"] == "$.occurred_at_ms"

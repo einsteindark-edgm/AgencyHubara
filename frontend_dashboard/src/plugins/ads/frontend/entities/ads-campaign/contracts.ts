@@ -231,7 +231,10 @@ export const backendAttributedConversationSchema = z.object({
 
   // Faltantes — backend devuelve null hasta integrar CRM / orders
   name: z.string().nullable(),
+  // Ciudad y barrio de entrega del pedido del episodio (de Orders, 2026-10-23).
+  // `.default(null)` tolera un backend viejo sin `neighborhood`.
   city: z.string().nullable(),
+  neighborhood: z.string().nullable().default(null),
 
   // Costo LLM del episodio (USD, congelado a la tarifa del momento) + tokens
   // totales — de `episode.llm_usage` en metadata.json. null si el episodio aún
@@ -297,3 +300,41 @@ export const backendAgentReferralsSchema = z.object({
   by_source: z.record(z.string(), z.number().int()),
 });
 export type BackendAgentReferrals = z.infer<typeof backendAgentReferralsSchema>;
+
+/* ── Dónde compran (`GET /api/ads/purchase-places`, 2026-10-23) ─────────── */
+
+const backendPurchaseZoneSchema = z.object({
+  zone: z.string().nullable(),
+  orders: z.number().int(),
+  value_cop: z.number(),
+});
+
+const backendPurchaseCampaignSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  orders: z.number().int(),
+  value_cop: z.number(),
+});
+
+const backendPurchaseCitySchema = z.object({
+  key: z.string(),
+  city: z.string(),
+  orders: z.number().int(),
+  paid_orders: z.number().int(),
+  value_cop: z.number(),
+  overall_orders: z.number().int().nullable(),
+  zones: z.array(backendPurchaseZoneSchema),
+  campaigns: z.array(backendPurchaseCampaignSchema),
+});
+
+export const backendPurchasePlacesSchema = z.object({
+  orders: z.number().int(),
+  paid_orders: z.number().int(),
+  value_cop: z.number(),
+  without_city: z.number().int(),
+  overall_orders: z.number().int().nullable(),
+  cities: z.array(backendPurchaseCitySchema),
+  orders_available: z.boolean(),
+  truncated: z.boolean(),
+});
+export type BackendPurchasePlaces = z.infer<typeof backendPurchasePlacesSchema>;

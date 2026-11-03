@@ -41,6 +41,11 @@ Lo que NO hace, por diseño:
   siembra desde este JSONL, que ahora es la copia completa.
 * Con un humano en el hilo (``active_route=humano``) NO toca el episodio ni
   el tag (misma regla que el ingest regular); el mensaje igual se persiste.
+* La respuesta del formulario de calificación (premortem C9) tampoco abre
+  episodio ni programa el reloj de la ventana (como en el ingest regular): se
+  guarda como «[calificación recibida] …» y se entrega al callable inyectado
+  ``on_review_reply`` (la composición lo cablea al MISMO emisor del ingest
+  regular, con su lista de pendientes y sus reintentos).
 
 Concurrencia: cada mutación (metadata + append al JSONL) va por
 ``FilesystemMetadataStore.update`` (flock por sesión), porque la sesión la
@@ -66,6 +71,7 @@ from src.plugins.chats.agent.sales.parsers import (
     echo_display_text,
     inbound_display_text,
 )
+from src.plugins.chats.agent.sales.translate import review_reply_text
 from src.plugins.chats.agent.sales.use_cases.episode_lifecycle import (
     count_session_jsonl_lines,
     ensure_active_episode,
@@ -154,8 +160,12 @@ class IngestStandby:
         now_ms: Callable[[], int] = _now_ms,
         is_customer_allowed: Callable[[str], bool],
         emit_window_events: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        on_review_reply: Callable[[str, str, dict[str, Any], int], Awaitable[None]] | None = None,
     ) -> None:
         self._metadata_store = metadata_store
+        # `(sesión, wamid, response_json, recibido_ms)`: la calificación al
+        # plugin de reseñas (premortem C9). Sin él, solo queda en el chat.
+        self._on_review_reply = on_review_reply
         self._history_store = history_store
         self._vault_dir = Path(vault_dir)
         self._now_ms = now_ms
@@ -186,7 +196,10 @@ class IngestStandby:
             written = self._ingest_inbound(session, msg, event.phone_number_id)
             if written is not None:
                 messages += 1
-                await self._schedule_watchdog(session, written)
+                if review_reply_text(msg) is not None:
+                    await self._hand_review(session, msg)
+                else:
+                    await self._schedule_watchdog(session, written)
             else:
                 duplicates += 1
             if session not in sessions:
@@ -222,18 +235,35 @@ class IngestStandby:
         except Exception as exc:  # noqa: BLE001 — el inbound ya está persistido; el reloj es best-effort
             logger.warning("[chats.standby] {} no se pudo programar el watchdog: {}", session, exc)
 
+    async def _hand_review(self, session: str, msg: WhatsAppMessage) -> None:
+        """La calificación al plugin de reseñas (C9). Un fallo se loguea: el
+        mensaje ya quedó en el chat."""
+        if self._on_review_reply is None:
+            logger.warning("[chats.standby] {} calificación sin destino (on_review_reply)", session)
+            return
+        response = (msg.interactive or {}).get("response_json") or {}
+        ts = str(msg.timestamp or "")
+        received_ms = int(ts) * 1000 if ts.isdigit() else self._now_ms()
+        try:
+            await self._on_review_reply(
+                session, msg.message_id or f"{session}-{received_ms}", dict(response), received_ms
+            )
+        except Exception as exc:  # noqa: BLE001 — el inbound ya está persistido
+            logger.error("[chats.standby] {} la calificación no llegó a reseñas: {}", session, exc)
+
     def _ingest_inbound(self, session: str, msg: WhatsAppMessage, phone_number_id: str) -> dict[str, Any] | None:
         """El metadata escrito, o ``None`` si el wamid ya estaba visto."""
         now_ms = self._now_ms()
         (self._vault_dir / session).mkdir(parents=True, exist_ok=True)
         applied: dict[str, bool] = {}
+        review_text = review_reply_text(msg)
 
         def _mutate(data: dict[str, Any]) -> dict[str, Any] | None:
             if _seen(data, msg.message_id):
                 return None
             if phone_number_id and not data.get("phone_number_id"):
                 data["phone_number_id"] = phone_number_id
-            if data.get("active_route") != ROUTE_HUMANO:
+            if data.get("active_route") != ROUTE_HUMANO and review_text is None:
                 # D1.10: el primer inbound tras un episodio cerrado abre uno nuevo
                 # (resetea tag/draft); con humano en el hilo no se rota.
                 ensure_active_episode(
@@ -257,7 +287,7 @@ class IngestStandby:
             # falla, el mutador aborta sin escribir y el wamid NO queda visto —
             # la reentrega de Meta vuelve a intentar en vez de perderse.
             self._history_store.append_user_event(
-                session, inbound_display_text(msg), wamid=msg.message_id, reply_to=_reply_to(msg)
+                session, review_text or inbound_display_text(msg), wamid=msg.message_id, reply_to=_reply_to(msg)
             )
             _mark_seen(data, msg.message_id)
             applied["ok"] = True

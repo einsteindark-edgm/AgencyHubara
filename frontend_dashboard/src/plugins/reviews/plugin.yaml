@@ -1,0 +1,90 @@
+# Manifest de reviews — generado por `hubara create plugin` (F-SDK-3).
+# Contrato: PLUGIN_CONTRACT.md · schema: ../_schema/plugin.schema.yaml
+# Regla de oro: campo nuevo ⇒ schema + modelo tipado + check (mismo PR).
+id: reviews
+version: 0.1.0
+archetype: full_stack  # P-29: el TCK audita esta identidad de por vida
+display_name: Reseñas
+description: |
+  Reseñas tras la entrega (decisión del operador 2026-10-13): cuando un pedido
+  pasa a entregado, invita al cliente a calificarlo con un formulario de
+  WhatsApp (dentro de la ventana de 24 h si se puede; si no, la plantilla de
+  marketing con el descuento al día siguiente). Quien califica recibe un cupón
+  personal (5 %, o 10 % con foto y permiso para publicarla) y el botón a Google
+  (sin premio: Google prohíbe premiar su reseña). Con 1–3 estrellas la
+  conversación pasa al equipo. El equipo modera las reseñas en el dashboard y
+  las aprobadas se publican en Medusa para la tienda web.
+
+# Dep DURA (guard test_session_plugins_depend_on_chats): reviews ESCRIBE en
+# conversaciones de clientes (invitación + gracias) y la respuesta del
+# formulario la recibe el ingest de chats (dueño del webhook), que también
+# cumple la promesa de baja («NO MÁS») de la plantilla de marketing. El paso al
+# equipo con 1–3 estrellas usa su contrato session-actions@v1 (cast). Además el
+# edge plugin→plugin del System Map sale de esta declaración (L-17/L-18).
+depends_on: [chats]
+
+consumes:
+  - provider: chats
+    contract: session-actions@v1
+    into: session-ref
+    cast: api/chats_cast
+
+# ── Frontend ───────────────────────────────────────────────────────────
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: reviews, label: Reseñas, order: 8, icon: smile }
+    sidebar:
+      - { route: /reviews, label: Reseñas, icon: smile }
+
+# ── API REST ────────────────────────────────────────────────────────────
+api:
+  python_module: src.plugins.reviews.api
+  prefix: /api/reviews
+  tags: [Reviews]
+
+# ── Agente Temporal ────────────────────────────────────────────────────
+# Worker único `requests`. SIN `owns_route`: el plugin no recibe inbounds ni
+# toma el turno conversacional — la respuesta del formulario le llega por el
+# evento `ReviewSubmittedEvent` que emite el ingest de chats (L-4: notificar ≠
+# poseer). Los dos workflows los arrancan transitions de OTROS plugins
+# (orders: pedido entregado; chats: formulario respondido).
+agent:
+  python_module: src.plugins.reviews.agent
+  workers:
+    - name: requests
+      module: src.plugins.reviews.workers.requests
+      task_queue: queue-reviews-requests
+      workflow_classes:
+        - ReviewRequestWorkflow
+        - ReviewSubmissionWorkflow
+      deployment:
+        replicas: 1
+        strategy: Recreate
+        cpu_request: 100m
+        memory_request: 256Mi
+        env_secrets:
+          - { var: WHATSAPP_ACCESS_TOKEN, secret: hubara-whatsapp-secret, key: WHATSAPP_ACCESS_TOKEN }
+          - { var: META_FLOW_ID_REVIEW,   secret: hubara-meta-secret,     key: META_FLOW_ID_REVIEW }
+          - { var: MEDUSA_BASE_URL,       secret: hubara-medusa-secret,   key: MEDUSA_BASE_URL }
+          - { var: MEDUSA_ADMIN_TOKEN,    secret: hubara-medusa-secret,   key: MEDUSA_ADMIN_TOKEN }
+      compose:
+        env:
+          TEMPORAL_URL: temporal:7233
+          WORKSPACE_VAULT_DIR: /app/hubara_vault
+          WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+          WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+          META_FLOW_ID_REVIEW: ${META_FLOW_ID_REVIEW}
+          MEDUSA_BASE_URL: ${MEDUSA_BASE_URL}
+          MEDUSA_ADMIN_TOKEN: ${MEDUSA_ADMIN_TOKEN}
+          # El service de la API en el compose LOCAL (en prod es `api`,
+          # infra/compose/docker-compose.prod.yml — PM-003).
+          HUBARA_API_BASE_URL: http://hubara-api:8000
+          HUBARA_SERVICE_TOKEN: ${HUBARA_SERVICE_TOKEN}
+          REVIEW_REQUESTS_MODE: ${REVIEW_REQUESTS_MODE:-off}
+          REVIEW_TEST_SESSIONS: ${REVIEW_TEST_SESSIONS:-}
+        volumes:
+          - hubara-vault-local:/app/hubara_vault
+        depends_on:
+          - temporal

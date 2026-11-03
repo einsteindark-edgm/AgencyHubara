@@ -39,6 +39,13 @@ from src.platform.whatsapp.client import (
     upload_media as upload_media,
 )
 
+# Descarga de un medio ENTRANTE por su `media_id` de Meta → (bytes, mime) o
+# None: la foto que el cliente sube en el formulario de calificación (plugin
+# reviews). Reintenta transitorios; `max_bytes` corta archivos enormes.
+from src.platform.audio.meta_media_fetcher import (
+    fetch_media_bytes as fetch_media_bytes,
+)
+
 # Etiqueta de diseño derivada del filename de una imagen del catálogo
 # (`Leo-01KX...webp` → "Leo"). Vive en platform porque el mapper de Meta
 # Catalog también la usa (item per-variante, 2026-07-16).

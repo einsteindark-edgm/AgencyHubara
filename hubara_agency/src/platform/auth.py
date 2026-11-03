@@ -251,8 +251,12 @@ def require_auth(request: Request) -> None:
 
     # 1b. Ticket SSE (SEC-06): el stream `/events` no puede mandar header, así
     #     que el frontend pasa un ticket firmado de corta vida por query — nunca
-    #     el access-token. Solo válido para el path del stream.
-    if request.url.path.endswith("/events"):
+    #     el access-token. Solo válido para el path del stream. La ruta es
+    #     `scope["path"]` (la que enruta el router), NO `request.url.path`:
+    #     Starlette arma la URL con la ruta ya decodificada y un `%3F` la corta
+    #     (`/api/orders/orders/events%3Fx` → `url.path == ".../events"`).
+    path = request.scope["path"]
+    if path.endswith("/events"):
         ticket = request.query_params.get("ticket", "")
         if ticket and sse_ticket.verify(_sse_ticket_secret(), ticket, time.time()):
             return
@@ -263,7 +267,7 @@ def require_auth(request: Request) -> None:
             logger.error(
                 "auth_misconfigured_in_prod",
                 reason="COGNITO_* ausente/placeholder en producción — 503 fail-closed",
-                path=request.url.path,
+                path=path,
             )
             raise HTTPException(
                 status_code=503,

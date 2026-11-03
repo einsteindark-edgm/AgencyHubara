@@ -191,6 +191,17 @@ async def test_list_returns_summaries_with_correct_shape(adapter):
     assert o.created_at_ms > 0
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_summary_carries_the_neighborhood(adapter):
+    """Ads cuenta las compras por ciudad y zona (2026-10-23): el barrio que
+    el formulario guarda en `address_2` viaja en el resumen, como la ciudad."""
+    await _list_single(_sample_order())
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].city == "Bogotá"
+    assert result.orders[0].neighborhood == "Chapinero"
+
+
 def _with_scheduled(order: dict, due_iso: str) -> dict:
     order["metadata"]["hubara_scheduled_delivery_iso"] = due_iso
     return order
@@ -992,3 +1003,19 @@ async def test_detail_item_exposes_the_color_and_aroma_of_the_line(adapter):
         "metadata": {"handle": "cubo-love", "color": "Rosado", "aroma": "Café"},
     })
     assert (it.color, it.aroma) == ("Rosado", "Café")
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_carries_the_medusa_product_id(adapter):
+    """Reseñas tras la entrega (2026-10-13): la calificación del pedido se
+    publica en la ficha de CADA producto en Medusa, por su product_id."""
+    it = await _detail_item(adapter, {"product_id": "prod_01DZ"})
+    assert it.product_id == "prod_01DZ"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_without_product_id_is_none(adapter):
+    it = await _detail_item(adapter, {})
+    assert it.product_id is None

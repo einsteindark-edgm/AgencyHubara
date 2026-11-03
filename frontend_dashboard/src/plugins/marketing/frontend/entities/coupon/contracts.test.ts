@@ -98,6 +98,7 @@ describe("backendCouponsResponseSchema", () => {
       acceptsUnits: true,
       units: { total: 5, left: 3 },
       firstPurchaseOnly: false,
+      grantedOnly: false,
     });
     expect(b?.products).toBe("all");
     expect(b?.manageable).toBe(false);
@@ -282,5 +283,32 @@ describe("solo primera compra (descuento de bienvenida, 2026-10-09)", () => {
     ).toMatchObject({ first_purchase_only: true });
     expect(couponPatchToBody({ firstPurchaseOnly: false })).toEqual({ first_purchase_only: false });
     expect(couponPatchToBody({ percentage: 10 })).toEqual({ percentage: 10 });
+  });
+
+  it("el backend dice si el cupón es personal («solo quien lo recibió»); null = no se pudo leer", () => {
+    const parsed = backendCouponsResponseSchema.parse({
+      coupons: [
+        { ...COUPON_FIXTURE, granted_only: true },
+        { ...COUPON_FIXTURE, granted_only: null },
+        COUPON_FIXTURE,
+      ],
+    });
+    expect(parsed.coupons.map(mapBackendCoupon).map((c) => c.grantedOnly)).toEqual([true, null, false]);
+  });
+
+  it("el alta y la edición mandan `granted_only`", () => {
+    expect(
+      couponInputToBody({
+        code: "GRACIAS10",
+        campaignName: "Gracias por calificar",
+        percentage: 10,
+        products: "all",
+        startsOn: "2026-10-14",
+        endsOn: "2027-12-31",
+        status: "active",
+        grantedOnly: true,
+      }),
+    ).toMatchObject({ granted_only: true, first_purchase_only: false });
+    expect(couponPatchToBody({ grantedOnly: false })).toEqual({ granted_only: false });
   });
 });

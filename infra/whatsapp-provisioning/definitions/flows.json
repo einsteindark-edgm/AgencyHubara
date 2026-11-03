@@ -1,10 +1,22 @@
 [
   {
     "name": "Hubara — Datos de envío v2",
-    "categories": ["SIGN_UP"],
+    "categories": [
+      "SIGN_UP"
+    ],
     "json": "hubara_agency/docs/whatsapp_flows/shipping_v2.json",
     "ssm_key": "META_FLOW_ID_SHIPPING",
     "publish": true,
     "semantics": "Formulario nativo de datos de envío (ciudad/barrio/dirección/teléfono/quién recibe/cédula opcional/pago). Endpoint-less v7.2. v2 (2026-08-31): + nombre de quien recibe (required) + cédula (opcional) + payment_options con description (contra entrega/anticipado Nequi-llave/link de pago con recargo)."
+  },
+  {
+    "name": "Hubara — Calificación del pedido v1",
+    "categories": [
+      "SURVEY"
+    ],
+    "json": "hubara_agency/docs/whatsapp_flows/review_v1.json",
+    "ssm_key": "META_FLOW_ID_REVIEW",
+    "publish": true,
+    "semantics": "Formulario de calificación tras la entrega (plugin reviews, 2026-10-13): estrellas 1–5, comentario, foto opcional (PhotoPicker) y permiso para publicar. Endpoint-less v7.2; la data de la pantalla (pedido, productos, premio) llega por flow_action_data. El flow_token review:<pedido>:<nonce> dice qué pedido se calificó."
   }
 ]

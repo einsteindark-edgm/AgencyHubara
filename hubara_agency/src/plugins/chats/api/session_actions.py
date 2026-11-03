@@ -92,6 +92,7 @@ from src.sdk.connectorkit import (
     schedule_capi_flush,
     ProductNotFoundError,
     get_catalog_client,
+    get_coupon_grants_store,
     get_coupon_sales_reader,
     get_order_registration_port,
     get_promo_quota_store,
@@ -136,6 +137,8 @@ class SessionActionsDeps:
     quotas: Any | None = None
     sales: Any | None = None
     quota_lock: Any | None = None
+    # Cupón personal (agradecimiento por calificar): se gasta al registrar.
+    coupon_grants: Any | None = None
 
 
 async def _notify_episode_closed(session_key: str, episode_id: str, closing_tag: str) -> None:
@@ -171,6 +174,7 @@ def get_session_actions_deps() -> SessionActionsDeps:
         quotas=_try("promo_quota_store", get_promo_quota_store),
         sales=_try("coupon_sales_reader", get_coupon_sales_reader),
         quota_lock=_try("quota_lock", get_quota_lock),
+        coupon_grants=_try("coupon_grants", get_coupon_grants_store),
     )
 
 
@@ -326,6 +330,11 @@ def _escalate(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms
     un humano ya tiene el hilo, NO pisa su estado (devuelve False)."""
     if data.get("active_route") == ROUTE_HUMANO:
         return False
+    _mark_human(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms)
+    return True
+
+
+def _mark_human(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms: int) -> None:
     data["active_route"] = ROUTE_HUMANO
     data["tag"] = "HUMANO"
     data["motivo"] = motivo
@@ -340,7 +349,24 @@ def _escalate(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms
             "source": _SOURCE,
         }
     )
+
+
+def _escalate_requested(data: dict[str, Any], *, reason_category: str, motivo: str, now_ms: int) -> bool:
+    """La escalación que se PIDE (endpoint ``/escalate``). Como `_escalate`,
+    salvo en la posventa: ruta humano con otro tag que HUMANO (COMPRA_EXITOSA)
+    es un hilo que nadie atiende y que a las 21:00 vuelve al bot — el pedido de
+    ayuda tiene que llegar a la bandeja del equipo (premortem de reseñas,
+    2026-10-14: una calificación de 2★ quedaba sin nadie)."""
+    if _escalate(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms):
+        return True
+    if data.get("tag") != _POST_SALE_TAG:
+        return False  # un humano trabaja el hilo (HUMANO, pago por verificar…): no se pisa
+    _mark_human(data, reason_category=reason_category, motivo=motivo, now_ms=now_ms)
     return True
+
+
+#: La posventa: ruta humano sin nadie atendiendo (la pone confirm-payment).
+_POST_SALE_TAG = "COMPRA_EXITOSA"
 
 
 def _episode_id_with_order(data: dict[str, Any], order_id: str) -> str | None:
@@ -590,7 +616,7 @@ async def _register(session: str, body: OrderBody, priced: Any, deps: SessionAct
     tool = RegisterOrderTool(
         str(deps.vault_dir), vault_dir=deps.vault_dir, port=deps.order_port, catalog=deps.catalog,
         quotas=deps.quotas, sales=deps.sales, quota_lock=deps.quota_lock, split_lines_guard=False,
-        closing_guard=False,
+        closing_guard=False, coupon_grants=deps.coupon_grants,
     )
     # Color/aroma de cada ítem (cupo por unidad): un valor que el producto no
     # tiene NO registra nada — mismo contrato que `present_order_confirmation`.
@@ -1015,7 +1041,7 @@ async def escalate(session_key: SessionKey, body: EscalateBody, deps: Deps) -> d
     outcome: dict[str, Any] = {}
 
     def _mutate(data: dict[str, Any]) -> dict[str, Any]:
-        outcome["escalated"] = _escalate(
+        outcome["escalated"] = _escalate_requested(
             data, reason_category=body.reason_category, motivo=body.summary, now_ms=now_ms
         )
         return data

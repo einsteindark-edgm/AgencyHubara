@@ -123,3 +123,22 @@ async def test_a_code_that_cannot_have_conditions_is_offered_as_always(tmp_path:
 
     assert promo.scope_unresolved is False
     assert promo.first_purchase_only is False
+
+
+def test_granted_only_condition_round_trips(store: CouponConditionsStore) -> None:
+    # Reseñas tras la entrega: GRACIAS5 solo lo usa quien lo recibió.
+    saved = store.put(CouponConditions("gracias5", granted_only=True))
+    assert store.get("GRACIAS5") == saved
+    assert saved.granted_only is True
+
+
+@pytest.mark.asyncio
+async def test_the_promotions_reader_carries_the_granted_only_condition() -> None:
+    conditions = FakeCouponConditionsStore()
+    conditions.put(CouponConditions("GRACIAS5", granted_only=True))
+    port = ConditionedPromotionsPort(FakePromotionsPort([_promo("GRACIAS5"), _promo("AMOR2026")]), lambda: conditions)
+
+    by_code = {p.code: p for p in await port.list_active()}
+
+    assert by_code["GRACIAS5"].granted_only is True
+    assert by_code["AMOR2026"].granted_only is False

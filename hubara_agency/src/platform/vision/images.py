@@ -21,13 +21,18 @@ from typing import Any
 #: Tamaño del número de la fila en la hoja (en píxeles).
 _LABEL_SIZE = 40
 
+#: Lo único que mandan WhatsApp y el catálogo. Pillow elige el decodificador por
+#: los bytes (no por el mime de Meta) y los bytes los manda cualquier cliente:
+#: TIFF, FlashPix, PSD… quedan fuera (revisión de seguridad del 2026-10-23).
+_FORMATS = ("JPEG", "PNG", "WEBP")
+
 
 def _open_rgb(image_bytes: bytes) -> Any | None:
     """La imagen en RGB (la transparencia, en blanco), o None si no abre."""
     from PIL import Image, UnidentifiedImageError
 
     try:
-        image = Image.open(io.BytesIO(image_bytes))
+        image = Image.open(io.BytesIO(image_bytes), formats=_FORMATS)
         image.load()
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         return None

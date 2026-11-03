@@ -18,7 +18,7 @@ def _request(bearer: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         headers=headers,
         query_params={},
-        url=SimpleNamespace(path="/api/marketing/coupons"),
+        scope={"path": "/api/marketing/coupons"},
         state=SimpleNamespace(),
     )
 
@@ -80,7 +80,7 @@ def test_request_without_state_does_not_break_auth(_cognito_on) -> None:
     # Dobles viejos de request sin `state` (tests de SSE/ticket) siguen andando.
     request = SimpleNamespace(
         headers={"Authorization": "Bearer secreto-interno-123"},
-        query_params={}, url=SimpleNamespace(path="/x"),
+        query_params={}, scope={"path": "/x"},
     )
     auth.require_auth(request)
     assert auth.current_actor(request) == "desconocido"

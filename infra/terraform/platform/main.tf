@@ -84,6 +84,15 @@ module "lab_config" {
   config = each.value.lab
 }
 
+# ── Reseñas tras la entrega: modo, tiempos, cupones y enlace (git = verdad) ──
+module "review_config" {
+  source   = "./modules/review-config"
+  for_each = var.tenants
+
+  tenant = each.key
+  config = each.value.reviews
+}
+
 # ── GraphAgents (subsistema separado): secretos SSM en /graphagents/ ─────────
 module "graphagents_secrets" {
   source      = "./modules/graphagents-secrets"

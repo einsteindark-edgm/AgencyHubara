@@ -146,6 +146,7 @@ describe("CouponForm — alta", () => {
       endsOn: "2026-09-27",
       status: "active",
       firstPurchaseOnly: false,
+      grantedOnly: false,
     });
   });
 
@@ -158,6 +159,19 @@ describe("CouponForm — alta", () => {
       code: "BIENVENIDA",
       percentage: 5,
       firstPurchaseOnly: true,
+    });
+  });
+
+  it("«Solo quien lo recibió» crea el cupón personal del agradecimiento por calificar", () => {
+    const { getByRole, getByLabelText } = render(<CouponForm />);
+    fill(getByLabelText, { ...VALID, "Código": "gracias10", "Descuento (%)": "10" });
+    fireEvent.click(getByLabelText("Solo quien lo recibió"));
+    fireEvent.click(getByRole("button", { name: "Crear y activar" }));
+    expect(createMock.mutate.mock.calls[0]?.[0]).toMatchObject({
+      code: "GRACIAS10",
+      percentage: 10,
+      grantedOnly: true,
+      firstPurchaseOnly: false,
     });
   });
 
@@ -238,6 +252,14 @@ describe("CouponForm — edición", () => {
     fireEvent.click(getByLabelText("Solo primera compra"));
     fireEvent.click(getByRole("button", { name: "Guardar cambios" }));
     expect(updateMock.mutate.mock.calls[0]?.[0]).toEqual({ firstPurchaseOnly: true });
+  });
+
+  it("quitar «Solo quien lo recibió» manda solo eso", () => {
+    const { getByRole, getByLabelText } = render(<CouponForm coupon={makeCoupon({ grantedOnly: true })} />);
+    expect((getByLabelText("Solo quien lo recibió") as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(getByLabelText("Solo quien lo recibió"));
+    fireEvent.click(getByRole("button", { name: "Guardar cambios" }));
+    expect(updateMock.mutate.mock.calls[0]?.[0]).toEqual({ grantedOnly: false });
   });
 
   it("un cupón de bienvenida abre con la casilla marcada", () => {

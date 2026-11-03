@@ -33,6 +33,7 @@ from typing import Any
 import structlog
 
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
+from src.plugins.chats.agent.sales.decisions.bundled import customer_text
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CuponEnJuego, PedidoDelCliente
 from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
@@ -120,7 +121,11 @@ class EngineReadings:
         # Cada capacidad por su nombre: el resolutor la toma del paquete de
         # decisión de la tienda o de su clase (PAQUETES_DE_DECISION.md §10.1).
         baja = capability("baja")
-        marketing = has_recent_marketing_context(dict(inbound.metadata), inbound.now_ms)
+        # El contexto lo da quien llama (ver `baja.yaml`); tras la invitación
+        # a calificar, solo con la frase sola (premortem C4).
+        marketing = has_recent_marketing_context(
+            dict(inbound.metadata), inbound.now_ms, text=customer_text(inbound) or ""
+        )
         compra_v, retoma_v, baja_v, cortesia_v = await asyncio.gather(
             run(capability("compra")),
             run(capability("retoma")),
@@ -169,7 +174,9 @@ def rules_readings(inbound: Inbound) -> Readings:
     kind, source = rules.purchase_signal(inbound)
     retoma = rules.reengagement(inbound)
     deferral = retoma.get("deferral")
-    marketing = has_recent_marketing_context(dict(inbound.metadata), inbound.now_ms)
+    marketing = has_recent_marketing_context(
+        dict(inbound.metadata), inbound.now_ms, text=customer_text(inbound) or ""
+    )
     return Readings(
         purchase=(kind, source),
         deferral=ReengagementDeferral(until_ms=int(deferral["until_ms"]), kind=str(deferral["kind"])) if deferral else None,

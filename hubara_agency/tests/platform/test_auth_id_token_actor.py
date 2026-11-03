@@ -97,7 +97,7 @@ def _request(access: str, id_token: str | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         headers=headers,
         query_params={},
-        url=SimpleNamespace(path="/api/marketing/coupons"),
+        scope={"path": "/api/marketing/coupons"},
         state=SimpleNamespace(),
     )
 

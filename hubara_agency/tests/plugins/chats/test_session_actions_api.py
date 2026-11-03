@@ -563,6 +563,39 @@ def test_escalate_marks_route_and_tag_together_and_is_idempotent_once_human(h: _
     assert h.meta()["motivo"] == "pide 30 unidades" and len(h.meta()["status_history"]) == 1
 
 
+def test_escalate_reaches_the_team_from_post_sale(h: _Harness) -> None:
+    """Premortem de reseñas (2026-10-14): tras una compra la conversación queda
+    en ruta humano con tag COMPRA_EXITOSA sin que nadie la atienda, y a las
+    21:00 vuelve al bot. Una escalación (p. ej. una calificación de 2★) tiene
+    que llegar a la bandeja del equipo: tag HUMANO + motivo."""
+    path = h.vault / _A / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"active_route": ROUTE_HUMANO, "tag": "COMPRA_EXITOSA", "motivo": "pagó"}), encoding="utf-8")
+
+    r = h.client.post(_url("escalate"), json={"reason_category": "LOW_RATING", "summary": "calificó 2★"})
+
+    assert r.json()["escalated"] is True and r.json()["already_human"] is False
+    m = h.meta()
+    assert (m["active_route"], m["tag"], m["escalation_reason"], m["motivo"]) == (
+        ROUTE_HUMANO, "HUMANO", "LOW_RATING", "calificó 2★")
+    assert m["status_history"][-1]["reason_category"] == "LOW_RATING"
+
+
+def test_escalate_does_not_retag_a_thread_a_human_is_working(h: _Harness) -> None:
+    """Revisión de gates: solo la posventa (COMPRA_EXITOSA) se re-etiqueta;
+    otro estado en ruta humano (p. ej. un pago por verificar) no se pisa."""
+    path = h.vault / _A / "metadata.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"active_route": ROUTE_HUMANO, "tag": "CONFIRMADO_PAGO_PENDIENTE",
+                                "escalation_reason": "PAYMENT_VERIFICATION_PENDING"}), encoding="utf-8")
+
+    r = h.client.post(_url("escalate"), json={"reason_category": "LOW_RATING", "summary": "calificó 2★"})
+
+    assert r.json()["escalated"] is False and r.json()["already_human"] is True
+    m = h.meta()
+    assert (m["tag"], m["escalation_reason"]) == ("CONFIRMADO_PAGO_PENDIENTE", "PAYMENT_VERIFICATION_PENDING")
+
+
 def test_escalate_validates_inputs(h: _Harness) -> None:
     assert h.client.post(_url("escalate"), json={"reason_category": "bulk order", "summary": "x"}).status_code == 422
     assert h.client.post(_url("escalate"), json={"reason_category": "BULK_ORDER", "summary": ""}).status_code == 422

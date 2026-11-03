@@ -520,6 +520,13 @@ o del cliente MUST llegar a un componente, al resumen ni a Medusa.
 - WHEN el formulario de envío (Flow o texto plano) arma las formas de pago
 - THEN "Contra entrega" aparece; el umbral vive en `config/shipping.py` y los prompts lo citan como "desde $45.000 en productos"
 
+#### Scenario: Los precios de lo que buscó y mostró sobreviven el historial (2026-10-26)
+
+- GIVEN el historial que leen los turnos siguientes (complemento, ghost, el próximo mensaje) guarda cada resultado de tool cortado a 500 caracteres (`exoclaw_conversation`)
+- WHEN `search_products` o `present_products` (con handles, una categoría o el catálogo completo) responden
+- THEN su resultado trae, antes de la lista, `prices`: el rango («de $47.000 a $54.000») y el precio de cada producto, del catálogo
+- AND con una lista que no cabe en el corte, el rango queda (incidente: el turno de complemento solo veía el primer precio y el bot escribió «desde $47.000 hasta $89.900»)
+
 ### Requirement: Tools de UI rica (decision tools)
 
 El sales-worker MUST tener 11 decision tools que emiten UI intents
@@ -1548,7 +1555,9 @@ cupones. Una frase del paquete son palabras (`*`, `a/b`, `…`), nunca un regex.
   foco (por unidad o por la cantidad, en vivo, con el cupón aplicado o con un
   cupón vigente que el texto le ofrece, con el recargo del link, y sus sumas),
   ni el total del pedido en OrderFacts, ni un monto de política en una
-  oración que lo dice (frases del paquete: «envío», «desde», «total»…).
+  oración que lo dice (frases del paquete: «envío», «desde», «total»…). Si el
+  texto no nombra ningún producto ni hay pedido, los precios se miran contra
+  los productos de la charla: lo que el bot acaba de mostrar (2026-10-26).
 - `pago_ajeno`: contra entrega ofrecida a un pedido cuyo subtotal de productos
   no llega al mínimo (no la regla general: «contra entrega es desde $45.000»),
   y un recargo del link distinto del vigente o «sin recargo».
@@ -1581,6 +1590,13 @@ UNA vez por texto: lo comparten esta revisión y la de la lista de opciones.
 - WHEN el bot escribe «Las cuadradas te quedan en $23.000 cada una»
 - THEN el texto vuelve una vez con el precio del catálogo
 - AND «las dos te quedan en $50.000» o «el total con envío es $66.940» salen
+
+#### Scenario: Un rango inventado sobre la lista que mostró (producción, 2026-10-25/26)
+
+- GIVEN el bot acaba de mostrar la lista de los navideños ($47.000 a $54.000), sin pedido anotado
+- WHEN escribe «Los precios van desde $47.000 hasta $89.900 según el motivo» (no nombra ningún producto)
+- THEN el texto vuelve una vez con el precio de cada producto de la lista
+- AND «van desde $47.000 hasta $54.000» sale
 
 #### Scenario: Contra entrega a un pedido que no llega al mínimo
 

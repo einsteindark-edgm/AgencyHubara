@@ -49,6 +49,9 @@ export interface Coupon {
   /** Solo para la primera compra del cliente (el descuento de bienvenida,
    *  condición de Hubara). null = no se pudo leer. */
   firstPurchaseOnly?: boolean | null;
+  /** Solo para quien lo recibió (cupón personal: el agradecimiento por
+   *  calificar, GRACIAS5/GRACIAS10). null = no se pudo leer. */
+  grantedOnly?: boolean | null;
 }
 
 export interface CouponUnitRow {
@@ -127,6 +130,8 @@ export interface CouponInput {
   status: "draft" | "active";
   /** Solo para la primera compra del cliente (el bot lo verifica). */
   firstPurchaseOnly?: boolean;
+  /** Solo para quien lo recibió (cupón personal; no va en campañas). */
+  grantedOnly?: boolean;
 }
 
 /** Edición parcial (PATCH): solo los campos que cambiaron. */

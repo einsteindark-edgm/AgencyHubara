@@ -113,8 +113,11 @@ class ListPromotionsTool(ToolBase):
         order_facts: Any = None,
         now_ms: Callable[[], int] | None = None,
         customer_orders: Any = None,
+        coupon_grants: Any = None,
     ) -> None:
-        """`quotas`/`sales`: cupo por unidad (almacén + lector de vendidas del
+        """`coupon_grants`: los cupones personales (agradecimiento por
+        calificar) — uno `granted_only` solo se lista a quien lo tiene.
+        `quotas`/`sales`: cupo por unidad (almacén + lector de vendidas del
         SDK). Sin ellos, los cupones se listan como siempre.
         `metadata_store`/`order_facts`/`customer_orders`: para decir si un
         cupón de primera compra le aplica a ESTE cliente (lo registrado en la
@@ -128,7 +131,18 @@ class ListPromotionsTool(ToolBase):
         self._store = metadata_store
         self._order_facts = order_facts
         self._customer_orders = customer_orders
+        self._coupon_grants = coupon_grants
         self._now_ms = now_ms or (lambda: int(time.time() * 1000))
+
+    def _personal_grant(self, session_key: str, code: str, now_ms: int) -> Any:
+        """La concesión vigente de un cupón personal, o None (sin wiring, sin
+        concesión o ilegible: no se anuncia)."""
+        if self._coupon_grants is None:
+            return None
+        try:
+            return self._coupon_grants.active(session_key, code, now_ms)
+        except Exception:  # noqa: BLE001 — ilegible = no se anuncia
+            return None
 
     async def _applies_to_customer(self, session_key: str) -> bool | None:
         """¿Un cupón de primera compra le aplica? None = no se sabe."""
@@ -164,6 +178,13 @@ class ListPromotionsTool(ToolBase):
                 # Lo que `apply_coupon` rechazaría no se ofrece: vencido, sin
                 # empezar, agotado, de envío o con reglas ilegibles.
                 continue
+            grant = None
+            if promo.granted_only:
+                # Cupón personal (agradecimiento por calificar): no es una
+                # promoción pública — solo lo ve quien lo recibió.
+                grant = self._personal_grant(ctx.session_key, promo.code, now_ms)
+                if grant is None:
+                    continue
             entry: dict[str, Any] = {
                 "code": promo.code,
                 "discount": describe_promotion(promo),
@@ -172,6 +193,15 @@ class ListPromotionsTool(ToolBase):
                 "ends_at_ms": promo.ends_at_ms,
                 "name": promo.description,
             }
+            if grant is not None:
+                entry["personal"] = True
+                entry["applies_to_customer"] = True
+                # Vence lo primero: la concesión o la promoción de Medusa
+                # (premortem C8: después de esa fecha ya no se aplica).
+                entry["ends_at_ms"] = min(
+                    grant.expires_at_ms,
+                    promo.ends_at_ms if promo.ends_at_ms is not None else grant.expires_at_ms,
+                )
             if promo.first_purchase_only:
                 entry["first_purchase_only"] = True
                 if self._store is not None:
@@ -248,8 +278,11 @@ class ApplyCouponTool(ToolBase):
         sales: Any = None,
         order_facts: Any = None,
         customer_orders: Any = None,
+        coupon_grants: Any = None,
     ) -> None:
-        """`metadata_store`: store de `metadata.json` del vault (DI desde la
+        """`coupon_grants`: cupones personales (sin él, uno `granted_only` no
+        se aplica — falla cerrada).
+        `metadata_store`: store de `metadata.json` del vault (DI desde la
         composición — `build_session_metadata_store`; las tools no importan
         platform ni el runtime del SDK, que arrastra temporalio: R-DIP).
         `quotas`/`sales`: cupo por unidad (sin ellos, como siempre).
@@ -265,6 +298,7 @@ class ApplyCouponTool(ToolBase):
         self._sales = sales
         self._order_facts = order_facts
         self._customer_orders = customer_orders
+        self._coupon_grants = coupon_grants
 
     async def execute_with_context(
         self, ctx: ToolContext, code: str, items: list[dict[str, Any]] | None = None
@@ -300,6 +334,13 @@ class ApplyCouponTool(ToolBase):
                 session_key=ctx.session_key,
             )
 
+        grants = self._coupon_grants
+
+        async def _has_grant(promo_code: str) -> bool:
+            if grants is None:
+                raise LookupError("sin cupones personales en este worker")
+            return grants.active(ctx.session_key, promo_code, now_ms) is not None
+
         application = await resolve_coupon_application(
             normalized,
             promotions=self._promotions,
@@ -308,6 +349,7 @@ class ApplyCouponTool(ToolBase):
             catalog=self._catalog,
             now_ms=now_ms,
             bought_before=_bought_before,
+            has_grant=_has_grant,
         )
         if application.reason == "unavailable":
             logger.warning("🎟️ [TOOL apply_coupon] unavailable session={}", ctx.session_key)

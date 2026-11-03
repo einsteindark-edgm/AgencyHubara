@@ -201,3 +201,13 @@ describe("AdsAttributedTable — costo de WhatsApp por conversación (2026-09-18
     expect(cell.querySelector("[title]")?.getAttribute("title")).toBe("El cliente no mandó notas de voz en esta conversación");
   });
 });
+
+describe("AdsAttributedTable — dónde se entrega (2026-10-23)", () => {
+  it("la columna Ciudad muestra la ciudad y el barrio del pedido", () => {
+    const { getByText } = render(
+      <AdsAttributedTable rows={[makeRow({ city: "Medellín", neighborhood: "Laureles" })]} />,
+    );
+    expect(getByText("Medellín")).toBeTruthy();
+    expect(getByText("Laureles")).toBeTruthy();
+  });
+});

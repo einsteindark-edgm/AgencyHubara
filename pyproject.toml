@@ -1,2 +1,22 @@
 [tool.uv.workspace]
 members = ["exoclaw-temporal", "hubara_agency"]
+
+[tool.uv]
+# Pisos de seguridad para dependencias que llegan de rebote (revisión del
+# 2026-10-23): un `uv lock` futuro no puede volver a una versión con fallas.
+#   certifi          — saca las raíces de emSign (CA eMudhra comprometida)
+#   python-multipart — DoS con cabeceras de partes sin límite (CVE-2026-42561, CVE-2026-53539)
+#   starlette        — límites de request.form() ignorados (CVE-2026-54283)
+#   aiohttp          — lectura fuera de rango en el parser C y DoS (CVE-2026-69244 y otros)
+#   urllib3          — bombas de descompresión y proxy TLS ignorado (CVE-2026-44432, CVE-2026-97687)
+#   cryptography     — wheels con OpenSSL vulnerable y oráculo Bleichenbacher (CVE-2026-69247)
+#   anyio            — nombre de host IDNA 2003 en TLSStream (CVE-2026-63374)
+constraint-dependencies = [
+    "certifi>=2026.10.19",
+    "python-multipart>=0.0.31",
+    "starlette>=1.3.1",
+    "aiohttp>=3.14.4",
+    "urllib3>=2.8.0",
+    "cryptography>=50.0.0",
+    "anyio>=4.14.2",
+]

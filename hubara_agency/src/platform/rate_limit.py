@@ -57,7 +57,9 @@ def client_ip(request) -> str:  # noqa: ANN001 — starlette Request
 def install_rate_limit_middleware(app, limiter, is_exempt=lambda _p: False):  # noqa: ANN001
     """Cuelga un middleware HTTP que aplica `limiter` por IP de cliente.
 
-    `is_exempt(path)` → True saltea el límite (ej. el webhook de Meta). Si el
+    `is_exempt(path)` → True saltea el límite (ej. el webhook de Meta). `path`
+    es `scope["path"]`, la ruta que enruta el router: `request.url.path` corta
+    en un `%3F` ya decodificado y `/x/webhook%3Fy` pasaría por el webhook. Si el
     limiter está desactivado (`max_requests <= 0`) el overhead es un `allow`
     que retorna True al toque.
     """
@@ -65,7 +67,8 @@ def install_rate_limit_middleware(app, limiter, is_exempt=lambda _p: False):  # 
 
     @app.middleware("http")
     async def _rate_limit(request, call_next):  # noqa: ANN001, ANN202
-        if not is_exempt(request.url.path) and not limiter.allow(client_ip(request)):
+        path = request.scope["path"]
+        if not is_exempt(path) and not limiter.allow(client_ip(request)):
             return JSONResponse(
                 {"detail": "rate limit exceeded"},
                 status_code=429,

@@ -49,6 +49,19 @@ class TemplateVariable:
 
 
 @dataclass(frozen=True)
+class TemplateButton:
+    """Botón de nivel plantilla aprobado en Meta (fuera de los carruseles).
+
+    Solo ``flow`` por ahora: abre un WhatsApp Flow publicado. Meta fija el Flow
+    al aprobar la plantilla; al enviar, el botón lleva el ``flow_token``.
+    """
+
+    type: str  # "flow"
+    text: str
+    navigate_screen: str | None = None
+
+
+@dataclass(frozen=True)
 class TemplateSpec:
     """Spec inmutable de un template aprobado.
 
@@ -80,6 +93,8 @@ class TemplateSpec:
     #: "product" (tarjetas del catálogo de Meta: precio+foto del catálogo,
     #: botón Ver) o "media" (foto por media_id + cuerpo + quick reply).
     carousel_kind: str = "media"
+    #: Botones de la plantilla (fuera del carrusel). Hoy solo FLOW.
+    buttons: tuple[TemplateButton, ...] = ()
 
 
 # =============================================================================
@@ -232,6 +247,8 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
             f"rango de Meta [{CAROUSEL_MIN_CARDS}, {CAROUSEL_MAX_CARDS}]"
         )
 
+    buttons = _parse_buttons(entry)
+
     variables_raw = entry["variables"]
     if not isinstance(variables_raw, list):
         raise ValueError(
@@ -267,7 +284,45 @@ def _build_template_spec_from_dict(entry: dict[str, Any]) -> TemplateSpec:
         header_format=header_format,
         carousel_cards=carousel_cards,
         carousel_kind=carousel_kind,
+        buttons=buttons,
     )
+
+
+#: Tipos de botón de plantilla que el builder sabe enviar.
+_VALID_BUTTON_TYPES: frozenset[str] = frozenset({"flow"})
+#: Límite de Meta para el texto de un botón de plantilla.
+MAX_TEMPLATE_BUTTON_TEXT = 25
+
+
+def _parse_buttons(entry: dict[str, Any]) -> tuple[TemplateButton, ...]:
+    raw = entry.get("buttons") or []
+    buttons: list[TemplateButton] = []
+    for item in raw:
+        name = entry.get("name")
+        if item.get("type") not in _VALID_BUTTON_TYPES:
+            raise ValueError(
+                f"Template {name!r}: button type {item.get('type')!r} inválido. "
+                f"Valid: {sorted(_VALID_BUTTON_TYPES)}"
+            )
+        text = str(item.get("text") or "")
+        if not text or len(text) > MAX_TEMPLATE_BUTTON_TEXT:
+            raise ValueError(
+                f"Template {name!r}: el texto del botón debe tener 1..25 caracteres "
+                f"(Meta), vino {len(text)}"
+            )
+        if item["type"] == "flow" and not item.get("navigate_screen"):
+            raise ValueError(
+                f"Template {name!r}: el botón FLOW necesita navigate_screen "
+                "(la pantalla del Flow que abre)"
+            )
+        buttons.append(
+            TemplateButton(
+                type=item["type"],
+                text=item["text"],
+                navigate_screen=item.get("navigate_screen"),
+            )
+        )
+    return tuple(buttons)
 
 
 # =============================================================================

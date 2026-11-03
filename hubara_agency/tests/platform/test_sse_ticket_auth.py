@@ -14,7 +14,7 @@ def _req(path: str, ticket: str | None = None, bearer: str | None = None):
     headers = {"Authorization": f"Bearer {bearer}"} if bearer else {}
     qp = {"ticket": ticket} if ticket is not None else {}
     return SimpleNamespace(
-        headers=headers, query_params=qp, url=SimpleNamespace(path=path)
+        headers=headers, query_params=qp, scope={"path": path}
     )
 
 

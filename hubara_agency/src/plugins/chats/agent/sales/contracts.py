@@ -191,6 +191,9 @@ class IngestState:
     #: La escritura del estado falló (no la saltó una lectura fallida): la
     #: activity lo reintenta.
     write_failed: bool = False
+    #: El mensaje es la respuesta del formulario de calificación (reseñas): no
+    #: abre episodio ni turno del bot; va al chat y al plugin `reviews`.
+    review_reply: bool = False
 
 
 @dataclass(frozen=True)

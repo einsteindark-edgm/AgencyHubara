@@ -85,6 +85,7 @@ from src.plugins.chats.agent.sales.decisions.guards import (
 from src.plugins.chats.agent.sales.pricing import (
     accepted_prices,
     format_cop,
+    price_list_line,
     quoted_amounts_mismatch,
 )
 from src.plugins.chats.agent.sales.config.payments import (
@@ -649,6 +650,7 @@ class PresentProductsTool(ToolBase):
             "queued": True,
             "kind": "products_list",
             "count": shown,
+            "prices": _shown_prices(sections, products),
             "pages": messages,
             "missing": missing,
             "summary": f"Lista de {shown} productos enviada al cliente.{_delivery_note(sections)}",
@@ -714,6 +716,7 @@ class PresentProductsTool(ToolBase):
             "queued": True,
             "kind": "products_list",
             "count": shown,
+            "prices": _shown_prices(sections, products),
             "total": len(products),
             "pages": messages,
             "summary": summary,
@@ -817,6 +820,7 @@ class PresentProductsTool(ToolBase):
             "kind": "products_list",
             "count": len(shown),
             "category": label,
+            "prices": _shown_prices(sections, shown),
             "total": len(products),
             "pages": messages,
             "summary": summary,
@@ -996,6 +1000,14 @@ def _shown_products(sections: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Lo que vio el cliente, en su orden: con esto el LLM anota con su handle
     el producto que el cliente elija."""
     return [{"handle": r["id"], "title": r["title"]} for s in sections for r in s["rows"]]
+
+
+def _shown_prices(sections: list[dict[str, Any]], products: list[Any]) -> str:
+    """El rango y el precio de lo que vio el cliente, en su orden, para el
+    principio del resultado: el historial de los turnos siguientes lo corta a
+    500 caracteres (`pricing.price_list_line`, incidente 2026-10-26)."""
+    by_handle = {p.handle: p for p in products}
+    return price_list_line(by_handle[r["id"]] for s in sections for r in s["rows"] if r["id"] in by_handle)
 
 
 def _meta_catalog_configured() -> bool:

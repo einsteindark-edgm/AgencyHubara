@@ -45,6 +45,9 @@ class CouponConditions:
     first_purchase_only: bool = False
     updated_at: str = ""
     updated_by: str = ""
+    #: Solo para quien lo recibió (cupón personal: `_promotions/grants/`),
+    #: una vez y antes de que venza. Reseñas tras la entrega (GRACIAS5/10).
+    granted_only: bool = False
 
 
 class CouponConditionsError(RuntimeError):
@@ -106,6 +109,7 @@ class VaultCouponConditionsStore:
             first_purchase_only=bool(data.get("first_purchase_only")),
             updated_at=str(data.get("updated_at") or ""),
             updated_by=str(data.get("updated_by") or ""),
+            granted_only=bool(data.get("granted_only")),
         )
 
     def put(self, conditions: CouponConditions) -> CouponConditions:
@@ -138,9 +142,13 @@ class ConditionedPromotionsPort:
             return promotion
         except CouponConditionsError:
             return replace(promotion, scope_unresolved=True)
-        if not found.first_purchase_only:
+        if not (found.first_purchase_only or found.granted_only):
             return promotion
-        return replace(promotion, first_purchase_only=True)
+        return replace(
+            promotion,
+            first_purchase_only=found.first_purchase_only,
+            granted_only=found.granted_only,
+        )
 
     async def list_active(self) -> list[Any]:
         return [self._with_conditions(p) for p in await self._inner.list_active()]

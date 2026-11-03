@@ -172,6 +172,9 @@ function CouponCard({
         {c.firstPurchaseOnly ? (
           <span className="text-[10.5px] text-fg-muted">Primera compra</span>
         ) : null}
+        {c.grantedOnly ? (
+          <span className="text-[10.5px] text-fg-muted">Solo quien lo recibió</span>
+        ) : null}
         {!c.manageable ? (
           <span className="text-[10.5px] text-fg-faint">Solo lectura</span>
         ) : null}

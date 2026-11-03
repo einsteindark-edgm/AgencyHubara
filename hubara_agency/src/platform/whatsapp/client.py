@@ -397,6 +397,8 @@ async def send_template(
     *,
     header_media_id: str | None = None,
     carousel_cards: list[wa_dtos.CarouselCard] | None = None,
+    flow_token: str | None = None,
+    flow_action_data: dict[str, Any] | None = None,
 ) -> wa_dtos.OutboundResult:
     """Envía un template aprobado por Meta.
 
@@ -414,6 +416,8 @@ async def send_template(
         variables,
         header_media_id=header_media_id,
         carousel_cards=carousel_cards,
+        flow_token=flow_token,
+        flow_action_data=flow_action_data,
     )
     return await _post_json(phone_number_id, data, label="template")
 

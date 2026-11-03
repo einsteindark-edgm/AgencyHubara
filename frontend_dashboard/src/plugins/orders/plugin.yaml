@@ -127,6 +127,27 @@ agent:
               session_id: "$.session_id"
               order_id: "$.order_id"
               to_stage: "$.to_stage"
+        # Reseñas tras la entrega (2026-10-13): el pedido entregado arranca la
+        # invitación a calificar — UN workflow por pedido (id por order_id: el
+        # evento repetido no invita dos veces). El plugin reviews decide
+        # cuándo y por dónde (ventana 24 h → formulario; si no, plantilla de
+        # marketing al día siguiente). Soft (P-SKIP): sin reviews habilitado
+        # no pasa nada. `notify_customer=false` (centinela, saltar etapas) no
+        # emite el evento: tampoco se invita.
+        - id: order_delivered_requests_review
+          on_event: OrderStageChangedEvent
+          when:
+            to_stage: delivered
+          action:
+            via: start_workflow
+            target_plugin: reviews
+            target_worker: requests
+            target_workflow: ReviewRequestWorkflow
+            workflow_id_template: "review-request-{event.order_id}"
+            input_mapping:
+              session_id: "$.session_id"
+              order_id: "$.order_id"
+              occurred_at_ms: "$.occurred_at_ms"
         - id: order_cancelled_notifies_eta
           on_event: OrderStageChangedEvent
           when:

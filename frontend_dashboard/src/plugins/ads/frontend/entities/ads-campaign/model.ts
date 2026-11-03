@@ -335,8 +335,11 @@ export interface AttributedConversation {
   // --- Disponibles parcialmente / faltantes ---
   /** Nombre del cliente. Null hasta CRM — la UI muestra phone. */
   name: string | null;
-  /** Null hasta CRM. */
+  /** Ciudad de entrega del pedido del episodio (de Orders). Null sin pedido. */
   city: string | null;
+  /** Barrio de entrega del pedido (de Orders). Opcional para tolerar fixtures
+   *  históricos. */
+  neighborhood?: string | null;
   /** "Sofía" / "Diego" / "IA Soporte" / null. Backend devuelve `active_route` como proxy. */
   agent: string | null;
   /** Null hasta clasificador conversacional. */
@@ -467,4 +470,52 @@ export interface AgentReferrals {
   total: number;
   withOrder: number;
   bySource: AgentReferralCount[];
+}
+
+/* ── Dónde compran (2026-10-23) ──────────────────────────────────────────── */
+
+/** Compras de una zona (barrio) de una ciudad. `zone: null` = el pedido no
+ *  trae barrio. */
+export interface PurchaseZone {
+  zone: string | null;
+  orders: number;
+  valueCop: number;
+}
+
+/** Cuántas compras de una ciudad trajo una campaña. */
+export interface PurchaseCampaignShare {
+  id: string;
+  name: string | null;
+  orders: number;
+  valueCop: number;
+}
+
+/** Compras de una ciudad. `overallOrders` = sus compras en TODAS las
+ *  campañas (solo en la vista de una campaña: el cotejo). */
+export interface PurchaseCity {
+  key: string;
+  city: string;
+  orders: number;
+  paidOrders: number;
+  valueCop: number;
+  overallOrders: number | null;
+  zones: PurchaseZone[];
+  campaigns: PurchaseCampaignShare[];
+}
+
+/** Las compras de la ventana por ciudad y zona — de una campaña o de todas.
+ *  Compra = pedido registrado (no cancelado ni de prueba), pagado o no. */
+export interface PurchasePlaces {
+  orders: number;
+  paidOrders: number;
+  valueCop: number;
+  /** Compras cuyo pedido no trae ciudad. */
+  withoutCity: number;
+  /** Todas las compras de la ventana (solo en la vista de una campaña). */
+  overallOrders: number | null;
+  cities: PurchaseCity[];
+  /** false = Orders no respondió: no hay datos (≠ cero compras). */
+  ordersAvailable: boolean;
+  /** true = había más pedidos que el tope que se lee por consulta. */
+  truncated: boolean;
 }

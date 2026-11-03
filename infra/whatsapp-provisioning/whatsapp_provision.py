@@ -603,7 +603,40 @@ def _template_components(cfg: dict, d: dict) -> list | None:
         if cards is None:
             return None
         components.append(cards)
+    if d.get("buttons"):
+        buttons = _template_buttons(cfg, d["buttons"])
+        if buttons is None:
+            return None
+        components.append({"type": "BUTTONS", "buttons": buttons})
     return components
+
+
+def _template_buttons(cfg: dict, defs: list) -> list | None:
+    """BUTTONS de nivel plantilla. FLOW: Meta exige el id de un Flow YA
+    PUBLICADO en el WABA (`flow_name` → id por `actual_flows`). Si aún no está
+    publicado, None: no se somete una plantilla con el botón roto (correr
+    `flows` primero)."""
+    out = []
+    published = None
+    for b in defs:
+        if b.get("type") != "FLOW":
+            out.append(dict(b))
+            continue
+        if published is None:
+            published = {f.get("name"): f.get("id") for f in actual_flows(cfg)
+                         if f.get("status") == "PUBLISHED"}
+        flow_id = published.get(b.get("flow_name"))
+        if not flow_id:
+            print(f"  ! el Flow {b.get('flow_name')!r} no está publicado — correr `flows` primero")
+            return None
+        out.append({
+            "type": "FLOW",
+            "text": b["text"],
+            "flow_id": flow_id,
+            "flow_action": b.get("flow_action", "navigate"),
+            "navigate_screen": b["navigate_screen"],
+        })
+    return out
 
 
 def _carousel_component(cfg: dict, carousel: dict) -> dict | None:
@@ -659,7 +692,8 @@ def step_templates(cfg: dict) -> None:
         components = _template_components(cfg, d)
         if components is None:
             print(f"  ! {d['name']} [{d['language']}]: no se pudo subir la foto de "
-                  f"ejemplo del encabezado — SKIP (reintentar)")
+                  f"ejemplo del encabezado o el Flow del botón no está publicado — "
+                  f"SKIP (reintentar)")
             continue
         payload = {
             "name": d["name"],

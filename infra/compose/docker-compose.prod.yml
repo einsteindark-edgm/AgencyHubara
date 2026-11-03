@@ -47,7 +47,10 @@ services:
       - api
 
   litellm:
-    image: ghcr.io/berriai/litellm:v1.86.2
+    # Por digest, no solo por etiqueta (2026-10-23): el 21-oct publicaron una
+    # LiteLLM con malware en etiquetas existentes y cada deploy hace `pull`.
+    # Guarda: hubara_agency/tests/infra/test_litellm_image_pinned_by_digest.py.
+    image: ghcr.io/berriai/litellm:v1.86.2@sha256:cae1ac3492d6d0bea69c26f4485381624e073eb753f3534ae7703a4204a4ce6b
     restart: unless-stopped
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
@@ -150,6 +153,20 @@ services:
     command: ["python", "-m", "src.plugins.marketing.workers.campaigns"]
     # CampaignSendWorkflow: envíos de campañas directas (sección Marketing).
     # Vault completo: _campaigns/ (historial) + wa_*/ (audiencia + touches).
+    volumes:
+      - /mnt/hubara-vault:/app/hubara_vault
+
+  worker-reviews-requests:
+    <<: *app
+    command: ["python", "-m", "src.plugins.reviews.workers.requests"]
+    # Reseñas tras la entrega: ReviewRequestWorkflow (invitación por pedido
+    # entregado) + ReviewSubmissionWorkflow (respuesta del formulario). Nace
+    # apagado por config (REVIEW_REQUESTS_MODE=off, Terraform review-config).
+    # Vault completo: _reviews/ + _promotions/grants/ + wa_*/.
+    environment:
+      # 1–3★: pasa la conversación al equipo por session-actions@v1 (HTTP a
+      # la API) — el service en ESTE compose se llama `api` (PM-003).
+      HUBARA_API_BASE_URL: http://api:8000
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
 

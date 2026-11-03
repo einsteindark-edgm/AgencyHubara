@@ -30,6 +30,8 @@ export interface CouponFormValues {
   endsOn: string;
   /** Solo para la primera compra del cliente (descuento de bienvenida). */
   firstPurchaseOnly: boolean;
+  /** Solo para quien lo recibió (cupón personal: agradecimiento por calificar). */
+  grantedOnly: boolean;
 }
 
 export type CouponFormErrors = Partial<Record<CouponFormField, string>>;
@@ -48,6 +50,7 @@ export function emptyCouponForm(startsOn: string, endsOn: string): CouponFormVal
     startsOn,
     endsOn,
     firstPurchaseOnly: false,
+    grantedOnly: false,
   };
 }
 
@@ -61,6 +64,7 @@ export function formFromCoupon(c: Coupon): CouponFormValues {
     startsOn: c.startsOn ?? "",
     endsOn: c.endsOn ?? "",
     firstPurchaseOnly: c.firstPurchaseOnly === true,
+    grantedOnly: c.grantedOnly === true,
   };
 }
 
@@ -108,6 +112,7 @@ export function formToInput(
     endsOn: v.endsOn,
     status,
     firstPurchaseOnly: v.firstPurchaseOnly,
+    grantedOnly: v.grantedOnly,
   };
 }
 
@@ -128,6 +133,7 @@ export function formToPatch(v: CouponFormValues, c: Coupon): CouponPatch {
   if (v.startsOn !== before.startsOn) patch.startsOn = v.startsOn;
   if (v.endsOn !== before.endsOn) patch.endsOn = v.endsOn;
   if (v.firstPurchaseOnly !== before.firstPurchaseOnly) patch.firstPurchaseOnly = v.firstPurchaseOnly;
+  if (v.grantedOnly !== before.grantedOnly) patch.grantedOnly = v.grantedOnly;
   return patch;
 }
 

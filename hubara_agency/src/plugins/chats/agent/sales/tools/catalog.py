@@ -38,6 +38,7 @@ from src.plugins.chats.agent.sales.decisions.guards import (
     decide_for_session,
 )
 from src.sdk.catalogkit import CategoryResolution
+from src.plugins.chats.agent.sales.pricing import price_list_line
 from src.plugins.chats.agent.sales.use_cases.product_options import pack_units
 from src.plugins.chats.shared.store_pack import store_domain, vocabulary
 from src.sdk.mediakit import derive_image_label, fold_for_match
@@ -165,6 +166,8 @@ class SearchProductsTool(ToolBase):
         envelope: dict[str, Any] = {
             "query": result.query,
             "count": result.count,
+            # Antes que `results`: es lo que queda en el historial (pricing.price_list_line).
+            "prices": price_list_line(result.results),
             "truncated": result.truncated,
             "results": [_with_box(_product_summary(p), p) for p in result.results],
         }

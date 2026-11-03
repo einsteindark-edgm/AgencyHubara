@@ -39,6 +39,9 @@ export const backendCouponSchema = z.object({
   /** Solo para la primera compra del cliente (condición de Hubara); null =
    *  no se pudo leer. */
   first_purchase_only: z.boolean().nullable().default(false),
+  /** Solo para quien lo recibió (cupón personal: el agradecimiento por
+   *  calificar); null = no se pudo leer. */
+  granted_only: z.boolean().nullable().default(false),
 });
 
 export type BackendCoupon = z.infer<typeof backendCouponSchema>;
