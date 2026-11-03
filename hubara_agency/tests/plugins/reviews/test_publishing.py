@@ -302,3 +302,55 @@ async def test_a_failed_rebuild_stays_pending(tmp_path):
     with pytest.raises(RuntimeError):
         await rebuild(NOW)
     assert rebuild.due_at_ms() == NOW + 600_000
+
+
+# ---------- el permiso que el cliente dio después, por el chat (2026-11-03) ----------
+
+
+@pytest.mark.asyncio
+async def test_a_consent_given_by_chat_republishes_with_the_text_and_name(tmp_path):
+    """El cliente calificó sin marcar «autorizo publicar»; el equipo le pidió
+    permiso por WhatsApp y dijo que sí. Queda registrado quién y cuándo, y la
+    reseña ya publicada (solo estrellas) sale con su comentario y su nombre."""
+    from src.plugins.reviews.agent.publishing import grant_consent
+
+    store, port, rebuild = ReviewsStore(tmp_path), FakeProductReviews(), _Rebuild()
+    review_id = _seed(store, publish_consent=False)
+    await publish_review(store, port, review_id, now_ms=NOW, rebuild=rebuild)
+    assert {r["body"] for r in port.rows.values()} == {None}
+
+    record = await grant_consent(store, port, review_id, by="equipo@hubara.co", now_ms=NOW + 60, rebuild=rebuild)
+
+    assert record.publish_consent is True
+    assert record.consent_granted == {"by": "equipo@hubara.co", "at_ms": NOW + 60, "via": "chat"}
+    assert {(r["body"], r["author_name"], r["author_city"]) for r in port.rows.values()} == {
+        ("Hermosa", "Ana G.", "Bogotá")}
+    assert rebuild.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_consent_on_a_pending_review_waits_for_publish(tmp_path):
+    from src.plugins.reviews.agent.publishing import grant_consent
+
+    store, port = ReviewsStore(tmp_path), FakeProductReviews()
+    review_id = _seed(store, publish_consent=False)
+
+    record = await grant_consent(store, port, review_id, by="equipo@hubara.co", now_ms=NOW, rebuild=_Rebuild())
+
+    assert record.publish_consent is True and record.status == "pending"
+    assert port.rows == {}  # nada sale hasta que el equipo la publique
+    await publish_review(store, port, review_id, now_ms=NOW + 5, rebuild=_Rebuild())
+    assert {r["body"] for r in port.rows.values()} == {"Hermosa"}
+
+
+@pytest.mark.asyncio
+async def test_the_customers_own_consent_is_never_overwritten(tmp_path):
+    """Si ya la autorizó en el formulario, el registro del equipo no la pisa."""
+    from src.plugins.reviews.agent.publishing import grant_consent
+
+    store, port = ReviewsStore(tmp_path), FakeProductReviews()
+    review_id = _seed(store, publish_consent=True)
+
+    record = await grant_consent(store, port, review_id, by="equipo@hubara.co", now_ms=NOW, rebuild=_Rebuild())
+
+    assert record.publish_consent is True and record.consent_granted == {}

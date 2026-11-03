@@ -65,6 +65,7 @@ export function mapBackendReview(b: BackendReview): Review {
     reply: b.reply,
     teamAlerted: b.team_alerted,
     published: b.published ? { atMs: b.published.at_ms, error: b.published.error } : null,
+    consentGranted: b.consent_granted ? { by: b.consent_granted.by, atMs: b.consent_granted.at_ms } : null,
   };
 }
 
@@ -195,6 +196,21 @@ export function useHideReview(reviewId: string) {
       return mapBackendReview(backendReviewEnvelopeSchema.parse(raw).review);
     },
     onSuccess: invalidate,
+  });
+}
+
+/** POST /reviews/{id}/consent — el cliente autorizó publicarla por el chat: lo
+ *  firma la sesión de quien lo registra y, si ya estaba publicada, vuelve a
+ *  salir con su comentario y su nombre. 502 `{detail}` si la tienda falla (el
+ *  permiso igual queda guardado). */
+export function useGrantReviewConsent(reviewId: string) {
+  const invalidate = useInvalidateReviews();
+  return useMutation<Review, Error, void>({
+    mutationFn: async () => {
+      const raw = await apiClient.post<unknown>(`${reviewPath(reviewId)}/consent`);
+      return mapBackendReview(backendReviewEnvelopeSchema.parse(raw).review);
+    },
+    onSettled: invalidate,
   });
 }
 

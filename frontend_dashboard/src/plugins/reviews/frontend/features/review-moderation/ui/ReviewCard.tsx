@@ -7,8 +7,11 @@
  *  - Ocultas:     Publicar, Responder
  * Sin permiso del cliente se publica igual, pero el botón dice «Publicar solo
  * estrellas»: el backend la manda a la tienda anónima («Cliente de Hubara»),
- * sin comentario, ciudad ni foto, y solo cuenta en el promedio. Los errores
- * salen de cada mutation (regla #3), no de un estado copiado.
+ * sin comentario, ciudad ni foto, y solo cuenta en el promedio. Si el cliente
+ * lo autoriza después por el chat, «El cliente autorizó publicarla» (confirmado
+ * en dos pasos, sin diálogos nativos — regla #6) lo registra con quien lo
+ * anotó y la reseña sale con su comentario y su nombre. Los errores salen de
+ * cada mutation (regla #3), no de un estado copiado.
  */
 
 import { useState } from "react";
@@ -23,6 +26,7 @@ import {
   formatReviewDate,
   reviewErrorDetail,
   useApproveReview,
+  useGrantReviewConsent,
   useHideReview,
   type Review,
 } from "@plugins/reviews/frontend/entities/review";
@@ -37,11 +41,13 @@ const BTN_SECONDARY =
 export function ReviewCard({ review }: { review: Review }) {
   const approve = useApproveReview(review.reviewId);
   const hide = useHideReview(review.reviewId);
+  const consent = useGrantReviewConsent(review.reviewId);
   const [replying, setReplying] = useState(false);
+  const [confirmingConsent, setConfirmingConsent] = useState(false);
 
   const orderLabel = `Pedido ${review.displayId ?? "sin número"}`;
   const author = review.authorName?.trim() || "Cliente";
-  const busy = approve.isPending || hide.isPending;
+  const busy = approve.isPending || hide.isPending || consent.isPending;
   const consentHintId = `reviews-consent-${review.reviewId}`;
   const publishError = approve.error
     ? reviewErrorDetail(approve.error)
@@ -132,6 +138,41 @@ export function ReviewCard({ review }: { review: Review }) {
           Sin permiso del cliente: en la web sale anónima, solo con sus estrellas (sin comentario ni foto).
         </p>
       ) : null}
+      {review.consentGranted ? (
+        <p className={`m-0 rounded-md px-2.5 py-1.5 text-[12px] ${TONE_CLASS.ok}`}>
+          Permiso dado por el chat · lo registró {review.consentGranted.by} el{" "}
+          {formatReviewDate(review.consentGranted.atMs)}
+        </p>
+      ) : null}
+      {confirmingConsent ? (
+        <div className={`flex flex-col gap-2 rounded-md px-2.5 py-2 text-[12px] ${TONE_CLASS.warn}`}>
+          <p className="m-0">
+            ¿El cliente te dijo por escrito que sí podemos publicar su comentario y su nombre en la web?
+            Queda registrado que lo anotaste tú.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={BTN_PRIMARY}
+              disabled={busy}
+              onClick={() => {
+                consent.mutate();
+                setConfirmingConsent(false);
+              }}
+            >
+              Sí, autorizó
+            </button>
+            <button type="button" className={BTN_SECONDARY} onClick={() => setConfirmingConsent(false)}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {consent.error ? (
+        <p role="alert" className={`m-0 rounded-md px-2.5 py-1.5 text-[12px] ${TONE_CLASS.danger}`}>
+          {reviewErrorDetail(consent.error)}
+        </p>
+      ) : null}
 
       {publishError ? (
         <p role="alert" className={`m-0 rounded-md px-2.5 py-1.5 text-[12px] ${TONE_CLASS.danger}`}>
@@ -186,6 +227,16 @@ export function ReviewCard({ review }: { review: Review }) {
             onClick={() => hide.mutate()}
           >
             {hide.isPending ? "Ocultando…" : "Ocultar"}
+          </button>
+        ) : null}
+        {!review.publishConsent && !confirmingConsent ? (
+          <button
+            type="button"
+            className={BTN_SECONDARY}
+            disabled={busy}
+            onClick={() => setConfirmingConsent(true)}
+          >
+            {consent.isPending ? "Registrando…" : "El cliente autorizó publicarla"}
           </button>
         ) : null}
         {!replying ? (
