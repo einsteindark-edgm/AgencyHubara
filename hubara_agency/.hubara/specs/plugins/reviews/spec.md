@@ -108,3 +108,11 @@ tienda.
   calificar: `orders` emite `OrderDeliveredEvent` con CADA entrega y la
   transición `order_delivered_requests_review` cuelga de él (operador,
   2026-10-23)
+
+#### Scenario: el cliente autoriza publicar después, por el chat
+- GIVEN una reseña sin permiso (publicada solo con estrellas, o pendiente)
+- WHEN alguien del equipo confirma en el panel «El cliente autorizó publicarla»
+- THEN queda registrado quién (la sesión verificada) y cuándo
+  (`consent_granted`), y la reseña sale con su comentario, su nombre y su
+  ciudad (ya publicada: de una; pendiente: al publicarla). El permiso dado en
+  el formulario nunca se pisa.

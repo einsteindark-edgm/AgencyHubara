@@ -332,3 +332,70 @@ describe("ReviewModeration — acciones", () => {
     );
   });
 });
+
+
+describe("ReviewModeration — el permiso que el cliente dio por el chat", () => {
+  it("«El cliente autorizó publicarla» pide confirmar y registra el permiso", async () => {
+    lists.pending = [{ ...BARE_REVIEW_FIXTURE, status: "pending" }];
+    actionResponse = {
+      status: 200,
+      body: {
+        review: {
+          ...BARE_REVIEW_FIXTURE,
+          publish_consent: true,
+          consent_granted: { by: "equipo@hubara.co", at_ms: 1791990000000 },
+        },
+      },
+    };
+    renderModeration();
+    const card = await findCard("#32");
+
+    fireEvent.click(within(card).getByRole("button", { name: "El cliente autorizó publicarla" }));
+    expect(within(card).getByText(/te dijo por escrito que sí/)).toBeInTheDocument();
+    expect(posts()).toEqual([]);
+
+    fireEvent.click(within(card).getByRole("button", { name: "Sí, autorizó" }));
+
+    await waitFor(() =>
+      expect(posts()).toEqual([
+        { url: "http://localhost:8000/api/reviews/reviews/rev_order_02K/consent", body: undefined },
+      ]),
+    );
+  });
+
+  it("Cancelar no registra nada", async () => {
+    lists.pending = [{ ...BARE_REVIEW_FIXTURE, status: "pending" }];
+    renderModeration();
+    const card = await findCard("#32");
+
+    fireEvent.click(within(card).getByRole("button", { name: "El cliente autorizó publicarla" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Cancelar" }));
+
+    expect(within(card).getByRole("button", { name: "El cliente autorizó publicarla" })).toBeInTheDocument();
+    expect(posts()).toEqual([]);
+  });
+
+  it("con permiso registrado por el equipo dice quién y cuándo, y ya no ofrece el botón", async () => {
+    lists.pending = [
+      {
+        ...BARE_REVIEW_FIXTURE,
+        status: "pending",
+        publish_consent: true,
+        consent_granted: { by: "equipo@hubara.co", at_ms: 1791990000000 },
+      },
+    ];
+    renderModeration();
+    const card = await findCard("#32");
+
+    expect(within(card).getByText(/Permiso dado por el chat · lo registró equipo@hubara\.co/)).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "El cliente autorizó publicarla" })).not.toBeInTheDocument();
+    expect(within(card).getByRole("button", { name: "Publicar" })).toBeEnabled();
+  });
+
+  it("una reseña con permiso desde el formulario no ofrece el botón", async () => {
+    renderModeration();
+    const card = await findCard();
+
+    expect(within(card).queryByRole("button", { name: "El cliente autorizó publicarla" })).not.toBeInTheDocument();
+  });
+});

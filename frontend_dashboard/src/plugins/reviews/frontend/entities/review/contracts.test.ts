@@ -51,6 +51,7 @@ describe("backendReviewListSchema (GET /api/reviews/reviews)", () => {
       reply: "¡Gracias!",
       teamAlerted: false,
       published: { atMs: 1791000100000, error: null },
+      consentGranted: null,
     });
   });
 
@@ -226,5 +227,21 @@ describe("backendSummarySchema (GET /api/reviews/summary)", () => {
       );
       expect(summary.settings.mode).toBe(mode);
     }
+  });
+});
+
+
+describe("consent_granted (el permiso que el cliente dio por el chat)", () => {
+  it("lo lee cuando viene y es null cuando falta", async () => {
+    const { backendReviewSchema } = await import("./contracts");
+    const { REVIEW_FIXTURE } = await import("./fixtures");
+    const granted = backendReviewSchema.parse({
+      ...REVIEW_FIXTURE,
+      consent_granted: { by: "equipo@hubara.co", at_ms: 1791990000000 },
+    });
+    expect(granted.consent_granted).toEqual({ by: "equipo@hubara.co", at_ms: 1791990000000 });
+    const legacy: Record<string, unknown> = { ...REVIEW_FIXTURE };
+    delete legacy.consent_granted; // un backend anterior no manda la llave
+    expect(backendReviewSchema.parse(legacy).consent_granted).toBeNull();
   });
 });
