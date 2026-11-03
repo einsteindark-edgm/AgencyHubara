@@ -214,6 +214,21 @@ class SendReplyTool(ToolBase):
             option_list_message(variant_type, labels, intro_before(text, labels)),
         )
 
+    async def held_reason(self, session_key: str, text: str) -> str | None:
+        """Las revisiones de `send_reply` sobre un texto ya limpio: el envelope
+        con que vuelve al modelo (una vez por mensaje del cliente), o None
+        (sale). Las pasa también el texto final suelto (el egreso del V2,
+        puerta de afirmaciones, 2026-11-03): la misma marca de retención."""
+        # Los hechos y la lista de opciones leen el mismo catálogo: UNA lectura
+        # (sin catálogo propio, los hechos leen el suyo y la lista no se revisa).
+        catalog = CatalogRead(self._catalog) if self._catalog is not None else None
+        return (
+            self._held_for_verified_photos(session_key, text)
+            or self._held_for_promise(session_key, text)
+            or await self._fact_check.held(session_key, text, tool=self.name, catalog=catalog)
+            or await self._held_for_option_list(session_key, text, catalog)
+        )
+
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
@@ -236,15 +251,7 @@ class SendReplyTool(ToolBase):
                 {"sent": False, "error": "internal_text", "message": _REJECTED_MESSAGE},
                 ensure_ascii=False,
             )
-        # Los hechos y la lista de opciones leen el mismo catálogo: UNA lectura
-        # (sin catálogo propio, los hechos leen el suyo y la lista no se revisa).
-        catalog = CatalogRead(self._catalog) if self._catalog is not None else None
-        held = (
-            self._held_for_verified_photos(ctx.session_key, cleaned)
-            or self._held_for_promise(ctx.session_key, cleaned)
-            or await self._fact_check.held(ctx.session_key, cleaned, tool=self.name, catalog=catalog)
-            or await self._held_for_option_list(ctx.session_key, cleaned, catalog)
-        )
+        held = await self.held_reason(ctx.session_key, cleaned)
         if held is not None:
             return held
         envelope: dict[str, Any] = {

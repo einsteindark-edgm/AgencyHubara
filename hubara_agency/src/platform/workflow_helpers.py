@@ -185,9 +185,14 @@ class TurnPolicy:
 #: `portavelas_included`, `admin_turn` y `raw_text` (lo que el LLM escribió
 #: antes del saneador, si el texto salió de él: el egreso decide la muletilla
 #: de presentación; si su saneado difiere del de la regla, lo informa en
-#: `sanitizer` y la traza lo muestra). Lo que devuelve viaja en
-#: `TurnResult.egress`. Lo pasa el workflow de ventas V2 (ejecuta la activity
-#: `decide_egress`); sin gancho, el turno de hoy.
+#: `sanitizer` y la traza lo muestra) y `tool_events` (cada tool del turno con
+#: su resultado acotado: los hechos de la puerta de afirmaciones). Lo que
+#: devuelve viaja en `TurnResult.egress`. Si trae `retain_note` (puerta de
+#: afirmaciones, 2026-11-03), el texto del modelo no sale: UNA ronda más con
+#: «Tu respuesta NO se envió. <nota>» y el texto nuevo vuelve a pasar por el
+#: gancho (`EGRESS_RETAIN_PATCH`; una vez por turno, nunca en un turno
+#: administrativo ni sin otra vuelta del modelo). Lo pasa el workflow de
+#: ventas V2 (ejecuta la activity `decide_egress`); sin gancho, el turno de hoy.
 EgressHook = Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
@@ -568,6 +573,12 @@ PROMISED_ACTIONS_PATCH = "promised-actions-round-v1"
 #: Una tool que falla tras sus reintentos (incidente del 2026-10-15): el
 #: modelo lee `tool_failed` en vez de que el `ActivityError` tumbe el workflow.
 TOOL_FAILURE_PATCH = "tool-failure-to-model-v1"
+
+#: La retención del egreso (puerta de afirmaciones, 2026-11-03): el gancho
+#: `egress` devuelve `retain_note` y el turno le da al modelo UNA ronda más.
+#: Solo se consulta cuando hay nota: una history sin el marcador re-juega el
+#: turno de antes (el texto salía tal cual).
+EGRESS_RETAIN_PATCH = "egress-retain-round-v1"
 
 
 def _kept_by_tool(payload: dict[str, Any] | None) -> bool:
@@ -1402,6 +1413,60 @@ async def _run_agent_turn_impl(
         steps.append({"kind": "carry", "at_ms": _now_ms(), "tools": carried.names})
     # El gancho `on_llm_outage` se rindió: el turno termina sin texto.
     llm_unavailable = False
+    # Lo que devolvió el gancho `egress` para el texto final. Con texto del
+    # modelo (suelto o por `send_reply`) se pide ANTES del `break`, en el
+    # mismo punto de la secuencia de comandos que después del bucle: así el
+    # egreso puede retener el texto con una nota (`retain_note`, puerta de
+    # afirmaciones, 2026-11-03) y el modelo tiene UNA ronda más.
+    egress_result: dict[str, Any] | None = None
+    retain_rounds = 0
+
+    def _egress_context() -> dict[str, Any]:
+        """Lo que el gancho de egreso sabe del turno (ver `EgressHook`)."""
+        return {
+            "first_contact": first_contact,
+            "tools_used": list(tools_used),
+            "outbound_tool_texts": list(outbound_tool_texts),
+            "order_registered": order_registered_decision is not None,
+            "portavelas_included": (
+                order_registered_decision.portavelas_included
+                if order_registered_decision is not None
+                else None
+            ),
+            "admin_turn": admin_turn,
+            # Lo que el LLM escribió antes del saneador (None si el texto
+            # no salió de él: una tool ya lo validó, o no lo escribió el
+            # LLM). El egreso decide ahí la muletilla de presentación
+            # (motor de decisiones, capacidad `preambulo`).
+            "raw_text": final_raw,
+            # Cada tool del turno con su resultado (acotado, lo mismo que la
+            # traza): los hechos con que el egreso decide si el texto afirma
+            # algo que el turno no consultó (puerta de afirmaciones).
+            "tool_events": [dict(e) for e in tool_events],
+        }
+
+    async def _egress_retain_note(text: str) -> str | None:
+        """Pide el egreso del texto final del modelo (queda en
+        `egress_result`) y devuelve su nota si el texto se retiene: UNA vez
+        por turno, nunca en un turno administrativo y solo si queda otra
+        vuelta del modelo (si no, el texto sale como antes). `patched()` va
+        ÚLTIMO: solo se consulta cuando el egreso devolvió una nota."""
+        nonlocal egress_result
+        if egress is None:
+            return None
+        egress_result = await egress(text, _egress_context())
+        note = egress_result.get("retain_note") if isinstance(egress_result, dict) else None
+        if (
+            not isinstance(note, str)
+            or not note.strip()
+            or admin_turn
+            or retain_rounds >= 1
+            or closing_round
+            or iteration >= max_rounds
+            or not workflow.patched(EGRESS_RETAIN_PATCH)
+        ):
+            return None
+        return note.strip()
 
     def _open_closing_round() -> bool:
         """Se agotaron las rondas sin nada para el cliente: UNA ronda más con
@@ -1880,6 +1945,26 @@ async def _run_agent_turn_impl(
                         continue
                     final_content = reply_text
                     sent_reply_ids = batch_reply_ids
+                    # La puerta del egreso (puerta de afirmaciones): el texto
+                    # todavía no salió; si el egreso lo retiene, como la ronda
+                    # de las promesas: no se graba y hay UNA ronda más.
+                    retain_note = await _egress_retain_note(reply_text)
+                    if retain_note:
+                        retain_rounds += 1
+                        steps.append(
+                            {"kind": "guard", "at_ms": _now_ms(), "name": "egress_retain_round",
+                             "before": reply_text, "after": retain_note, "tools": list(tools_used)}
+                        )
+                        for tc in response.tool_calls:
+                            if tc.id in batch_reply_ids:
+                                delivered_replies.pop(tc.id, None)
+                                withheld_reply_ids.append(tc.id)
+                                _forget_outbound_texts(outbound_tool_texts, tc.arguments)
+                        sent_reply_ids = []
+                        final_content = None
+                        egress_result = None
+                        messages = [*messages, {"role": "system", "content": f"Tu respuesta NO se envió. {retain_note}"}]
+                        continue
                     workflow.logger.info(
                         f"turno terminado por send_reply ({batch_tool_names})"
                     )
@@ -2231,6 +2316,24 @@ async def _run_agent_turn_impl(
                 final_raw = None
                 break
 
+            # La puerta del egreso también para el texto suelto (el camino que
+            # se saltaba las revisiones de `send_reply`): si lo retiene, el
+            # borrador no entra a `messages` (no se graba ni se recuerda) y hay
+            # UNA ronda más con la nota, como la segunda puerta.
+            retain_note = await _egress_retain_note(final_content)
+            if retain_note:
+                retain_rounds += 1
+                llm_step["text_fate"] = "discarded_egress"
+                steps.append(
+                    {"kind": "guard", "at_ms": _now_ms(), "name": "egress_retain_round",
+                     "before": final_content, "after": retain_note, "tools": list(tools_used)}
+                )
+                messages = [*messages, {"role": "system", "content": f"Tu respuesta NO se envió. {retain_note}"}]
+                final_content = None
+                final_raw = None
+                egress_result = None
+                continue
+
             msg_dict: dict[str, Any] = {"role": "assistant", "content": final_content}
             if response.reasoning_content is not None:
                 msg_dict["reasoning_content"] = response.reasoning_content
@@ -2279,7 +2382,6 @@ async def _run_agent_turn_impl(
     recorded = _history_view(messages[initial_len:], delivered_replies)
     if withheld_reply_ids:
         recorded = _without_calls(recorded, withheld_reply_ids)
-    egress_result: dict[str, Any] | None = None
     # Un turno que se rindió ante la caída del LLM no tiene texto que decidir:
     # sin egreso (que en un primer contacto pediría el saludo).
     if egress is not None and not llm_unavailable:
@@ -2287,27 +2389,11 @@ async def _run_agent_turn_impl(
         # donde corría el rescate, y lo REEMPLAZA (el workflow de ventas V2 no
         # tiene reglas de texto: le pregunta al motor). El historial guarda lo
         # que el egreso decidió enviar. Sin comandos nuevos para quien no pasa
-        # gancho: V1, remarketing y ETA siguen por la rama de abajo.
-        egress_result = await egress(
-            final_content,
-            {
-                "first_contact": first_contact,
-                "tools_used": list(tools_used),
-                "outbound_tool_texts": list(outbound_tool_texts),
-                "order_registered": order_registered_decision is not None,
-                "portavelas_included": (
-                    order_registered_decision.portavelas_included
-                    if order_registered_decision is not None
-                    else None
-                ),
-                "admin_turn": admin_turn,
-                # Lo que el LLM escribió antes del saneador (None si el texto
-                # no salió de él: una tool ya lo validó, o no lo escribió el
-                # LLM). El egreso decide ahí la muletilla de presentación
-                # (motor de decisiones, capacidad `preambulo`).
-                "raw_text": final_raw,
-            },
-        )
+        # gancho: V1, remarketing y ETA siguen por la rama de abajo. Si el
+        # texto del modelo ya pasó por el egreso dentro del bucle (la puerta),
+        # no se vuelve a pedir: es el mismo punto de la secuencia.
+        if egress_result is None:
+            egress_result = await egress(final_content, _egress_context())
         recorded, final_content, salvaged_leak = _record_egress(
             recorded,
             final_content,

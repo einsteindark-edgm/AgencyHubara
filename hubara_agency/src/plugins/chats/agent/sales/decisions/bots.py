@@ -78,8 +78,10 @@ CAPABILITIES: tuple[str, ...] = (
     # Decisiones del agente (F8) y la promesa del relevo a un colega
     # (red de seguridad antes de enviar, 2026-09-30).
     "contactar", "cierre", "relevo",
-    # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
-    "destinatario", "rescate", "portavelas", "saludo",
+    # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2. Y la
+    # puerta de afirmaciones (2026-11-03; paquetes desde la versión 8): nace
+    # apagada, se sube con `bot_control.sh` a sombra y después a jev.
+    "destinatario", "rescate", "portavelas", "saludo", "afirmacion_previa",
     # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
     # burbuja va primero en el chat y cómo se clasifica un incendio de chat.
     "burbuja", "incendio",

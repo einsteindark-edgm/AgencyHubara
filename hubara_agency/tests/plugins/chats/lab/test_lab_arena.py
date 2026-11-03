@@ -58,7 +58,9 @@ def test_the_second_gate_of_workflow_v2_counts_as_an_extra_round() -> None:
     m = arena_metrics([v2, _result(extra=True), _result()])
 
     assert m["extra_round_rate"] == pytest.approx(2 / 3)
-    assert m["extra_rounds"] == {"turn_policy_extra_round": 1, "contract_extra_round": 1, "promised_action_round": 0}
+    assert m["extra_rounds"] == {
+        "turn_policy_extra_round": 1, "contract_extra_round": 1, "promised_action_round": 0, "egress_retain_round": 0,
+    }
 
 
 def test_the_round_for_a_promised_action_counts_as_an_extra_round() -> None:
@@ -71,6 +73,19 @@ def test_the_round_for_a_promised_action_counts_as_an_extra_round() -> None:
 
     assert m["extra_round_rate"] == pytest.approx(1 / 2)
     assert m["extra_rounds"]["promised_action_round"] == 1
+
+
+def test_the_round_the_assertion_gate_gives_counts_as_an_extra_round() -> None:
+    """Puerta de afirmaciones (2026-11-03): el egreso retuvo el texto y el
+    turno le dio al LLM una ronda más (`egress_retain_round`): el laboratorio
+    la cuenta para comparar `B@ventas-N` contra B."""
+    retained = {"error": None, "llm_cost_usd": 0.01,
+                "trace": {"mode": "on", "steps": [{"kind": "guard", "name": "egress_retain_round"}]}}
+
+    m = arena_metrics([retained, _result()])
+
+    assert m["extra_round_rate"] == pytest.approx(1 / 2)
+    assert m["extra_rounds"]["egress_retain_round"] == 1
 
 
 # Las decisiones del motor que publica cada caso (sandbox/decisions.py).

@@ -106,7 +106,14 @@ fuera del resolutor.
   `when: "choice['q'] in opt['q']"` → `then: {expr: "opt['q'][choice['q']]"}`.
 - **Pregunta que solo a veces se hace:** `when: "inp.context && inp.asked_known == null"`
   (lee `inp` y `consts`). Los campos derivados (la ventana, lo que el texto
-  enumera) los da una `view:`.
+  enumera) los da una `view:`; varios hechos, una lista `view: [ … ]` (un
+  builtin por hecho: los `*_fact` de la puerta de afirmaciones).
+- **Retener antes de enviar (V2):** una capacidad del egreso cuyo valor es
+  una nota (`value: string`, "" = nada) la devuelve el egreso como
+  `retain_note`; `run_agent_turn` no envía el texto y le da UNA ronda más al
+  modelo (`egress_retain_round`). Así actúa `afirmacion_previa` (desde la
+  versión 8 del paquete); el texto suelto pasa además por las revisiones de
+  `send_reply`.
 - **Variante** (la misma decisión preguntada de otra forma, mismo
   interruptor): `control: <capacidad>`.
 - **La misma pregunta por cada oración / párrafo / término / dato:**
