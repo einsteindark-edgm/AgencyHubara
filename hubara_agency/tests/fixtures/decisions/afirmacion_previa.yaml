@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
 #
 # La puerta de afirmaciones (2026-11-03): la capacidad que el paquete siguiente
-# de la tienda (`ventas-8`) agrega como `capabilities/afirmacion_previa.yaml`.
-# Las pruebas (`test_decisions_assertion_gate.py`) la copian a un `ventas-8` de
-# prueba sobre `ventas-7`: certifica y decide con los hechos. NO es un paquete
+# de la tienda (`ventas-9`) agrega como `capabilities/afirmacion_previa.yaml`.
+# Las pruebas (`test_decisions_assertion_gate.py`) la copian a un `ventas-9` de
+# prueba sobre `ventas-8`: certifica y decide con los hechos. NO es un paquete
 # publicado: lo publica la sesión dueña del próximo `ventas-N` (con `decisions
 # check`, su huella y el laboratorio `B@ventas-N`).
 #

@@ -20,14 +20,22 @@ pregunta cerrada a Jev (`sombra` / `jev`), sobre el marco de
                 nada, la despedida aprobada.
   saludo        «¿alguno de estos mensajes ya saluda?». Regla:
                 `should_send_first_contact_greeting` con las entradas del V1.
+                Desde ventas-8 (saludo v2) el paquete lee además las horas
+                desde el último mensaje de la tienda (`hours_since_store`).
+
+Y dos decisiones que el paquete trae desde ventas-8 (sin ellas en el paquete
+activo no corren): `despedida` (las frases que la tienda no dice) y
+`saludo_repetido` (la bienvenida a quien ya conoce la tienda). Las dos
+devuelven el texto que sale ("" = sale igual); sin Jev, el texto sale igual.
 
 `decide_egress` las compone en el orden del V1: (0) el preámbulo, si el turno
 trae lo que escribió el LLM antes del saneador (`raw_text`: el V1 sanea con la
 regla dentro de `run_agent_turn`), (1) rescate antes de grabar (el V1 lo hace
-dentro de `run_agent_turn`), (3) portavelas, (4) destinatario y rescate sobre
+dentro de `run_agent_turn`), (3) portavelas y las frases del paquete
+(despedida, saludo repetido), (4) destinatario y rescate sobre
 lo que quedó y (5) el saludo con lo que DE VERDAD sale (un texto frenado no
 cuenta; el V1 lo decidía antes de frenarlo) y (6) la puerta de afirmaciones
-(`afirmacion_previa`, paquetes desde la versión 8; 2026-11-03): lo que el
+(`afirmacion_previa`, paquetes desde la versión 9; 2026-11-03): lo que el
 texto que sale afirma contra los hechos (`bundled_claims`); su valor es la
 nota con que `run_agent_turn` retiene el texto (`retain_note`). Con `reglas` el resultado es
 idéntico al del V1 salvo ese caso (tests de equivalencia). Lo que no es texto
@@ -73,9 +81,19 @@ RESCATE = "rescate"
 PORTAVELAS = "portavelas"
 SALUDO = "saludo"
 PREAMBULO = "preambulo"
-#: La puerta de afirmaciones (2026-11-03): el catálogo la pide desde la versión 8.
+DESPEDIDA = "despedida"
+SALUDO_REPETIDO = "saludo_repetido"
+#: La puerta de afirmaciones (2026-11-03): el catálogo la pide desde la versión 9.
 AFIRMACION_PREVIA = "afirmacion_previa"
-EGRESS_CAPABILITIES: tuple[str, ...] = (PREAMBULO, DESTINATARIO, RESCATE, PORTAVELAS, SALUDO, AFIRMACION_PREVIA)
+EGRESS_CAPABILITIES: tuple[str, ...] = (
+    PREAMBULO, DESTINATARIO, RESCATE, PORTAVELAS, SALUDO, DESPEDIDA, SALUDO_REPETIDO, AFIRMACION_PREVIA,
+)
+#: Las decisiones del paquete sobre el texto que sale (ventas-8, informe de
+#: huecos del 2026-11-03), en orden, con el nombre de su guarda en la traza.
+_TEXT_DECISIONS: tuple[tuple[str, str], ...] = (
+    (DESPEDIDA, "closing_phrase_guard"),
+    (SALUDO_REPETIDO, "regreeting_guard"),
+)
 
 _YES_NO = {"true": "sí", "false": "no"}
 _FOR_CUSTOMER = "mensaje_al_cliente"
@@ -150,6 +168,20 @@ class GreetingCheck:
     first_contact: bool
     tools_used: tuple[str, ...] = ()
     client_texts: tuple[str, ...] = ()
+    #: Horas enteras desde el último mensaje de la tienda (la cuenta de la vista
+    #: `reply_gap`); None = la tienda nunca escribió (saludo v2, ventas-8).
+    hours_since_store: int | None = None
+
+
+@dataclass(frozen=True)
+class OutgoingText:
+    """El texto que sale en el egreso, con lo que leen las decisiones del
+    paquete sobre él (ventas-8: `despedida`, `saludo_repetido`)."""
+
+    text: str
+    first_contact: bool = False
+    hours_since_store: int | None = None
+    order_registered: bool = False
 
 
 @dataclass(frozen=True)
@@ -517,15 +549,18 @@ async def decide_egress(
     redact: Sequence[str] = (),
     metrics: Any = None,
     decisions: Any = None,
+    hours_since_store: int | None = None,
     claim_facts: Callable[[], Awaitable[ClaimFacts]] | None = None,
 ) -> EgressOutput:
     """Los veredictos del egreso para el texto final del turno (ver el módulo).
     Nunca lanza por Jev: si falla, tarda o duda, decide la regla de hoy.
+    `hours_since_store`: horas desde el último mensaje de la tienda (None =
+    nunca escribió); lo lee la activity del historial.
     `claim_facts`: lo que el sistema sabe para la puerta de afirmaciones (el
     pedido, el catálogo, la llave pública, la frase de tiempos); lo reúne la
     activity, solo si la puerta le pregunta a Jev."""
     # Cada capacidad por su nombre (paquete de la tienda o su clase).
-    from src.plugins.chats.agent.sales.decisions.registry import capability
+    from src.plugins.chats.agent.sales.decisions.registry import capability, capability_if_present
 
     text = inp.final_text or ""
     # Lo que no es texto del LLM para el cliente no se le pregunta a Jev.
@@ -581,6 +616,24 @@ async def decide_egress(
         if stripped != llm_text:
             guards.append({"name": "portavelas_notice_guard", "before": llm_text, "after": stripped})
             final_text = stripped
+    # 3b · Las frases que la tienda no dice y la bienvenida a quien ya la conoce
+    # (ventas-8): el paquete devuelve el texto que sale ("" = sale igual). Un
+    # paquete anterior no las trae y no corren.
+    if final_text and not inp.admin_turn and not is_no_message_abstention(final_text):
+        for name, guard in _TEXT_DECISIONS:
+            decision = capability_if_present(name)
+            if decision is None:
+                continue
+            replaced, _ = await run(
+                decision,
+                OutgoingText(
+                    final_text, first_contact=bool(inp.first_contact), hours_since_store=hours_since_store,
+                    order_registered=bool(inp.order_registered),
+                ),
+            )
+            if replaced and replaced != final_text:
+                guards.append({"name": guard, "before": final_text, "after": str(replaced)})
+                final_text = str(replaced)
     # 4 · Destinatario y rescate sobre lo que quedó.
     blocked = salvaged_after = False
     if final_text and (await run(destinatario, TextCheck(final_text), key=final_text))[0]:
@@ -600,10 +653,11 @@ async def decide_egress(
             first_contact=bool(inp.first_contact),
             tools_used=tuple(inp.tools_used or ()),
             client_texts=(*(inp.outbound_tool_texts or ()), goes_out),
+            hours_since_store=hours_since_store,
         ),
     )
     # 6 · Puerta de afirmaciones: lo que el texto que sale le afirma al cliente
-    # contra los hechos. Solo si el paquete la trae (desde la versión 8) y con
+    # contra los hechos. Solo si el paquete la trae (desde la versión 9) y con
     # texto del LLM que sale; su valor es la nota para retener ("" = nada).
     retain_note = await _assertion_gate(inp, goes_out, ask_jev=ask_jev, provider_of=provider, run=run, claim_facts=claim_facts)
     return EgressOutput(

@@ -193,6 +193,14 @@ Skills del pipeline leen las tres:
 - **Reviewers** cross-ref findings contra Scenarios
 - **Archive** mergea deltas a specs al cerrar la HU
 
+## Ciclo Colossus (desarrollo AI-native del bot)
+
+El bot nuevo se mejora con un ciclo de cuatro agentes (tareas programadas de Claude Desktop): **Evaluador**, **Recepción**, **Taller** y **Estratega**. Las tarjetas viven en el tablero privado «Colossus · ciclo» y en el buzón privado `einsteindark-edgm/hubara-ciclo`. Sus datos, prompts y CLI viven en `einsteindark-edgm/hubara-ciclo-datos` (privado).
+
+- El operador aprueba (etiqueta `aprobado`) y mergea; los agentes nunca. Un hook de usuario (`~/.claude/hooks/ciclo_gate.py`) bloquea en sus sesiones aprobar, mergear, subir ramas que no sean `ciclo/…`, desplegar, `bot_control.sh` salvo `estado` y editar un test rojo bloqueado. Tus sesiones normales no pasan por esa puerta.
+- Los PRs del Taller salen de ramas `ciclo/<tarjeta>-<nombre>` con la etiqueta `hecho-por:agente` y se revisan con `REVIEW.md`.
+- Este repo es público: las cifras y la evidencia del bot van en la tarjeta privada, no en el PR.
+
 ## Otras refs
 
 - Spinal files (paths cross-plugin / protected): `hubara_agency/.hubara/spinal-files.yaml`

@@ -23,6 +23,7 @@ from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckContext, CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
 from src.plugins.chats.agent.sales.card_messages import named_in_form
+from src.plugins.chats.shared.operator_order import form_reply_slots_in_text
 from src.sdk.catalogkit import stem_word
 
 _SHIPPING_FLOW = "shipping_flow"
@@ -255,6 +256,15 @@ def check_form_with_reply(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     return passed("ENV-02")
 
 
+def _form_data_in_order(turn: Turn) -> bool:
+    """¿Cada dato que trajo el formulario quedó en el pedido de ese turno?
+    Desde el 2026-11-03 el ingest los escribe al llegar (no hace falta que el
+    modelo llame set_order_slot); un formulario vacío no prueba nada."""
+    slots = form_reply_slots_in_text(turn.inbound_text)
+    draft = turn.draft or {}
+    return bool(slots) and all(str(draft.get(slot) or "").strip() for slot in slots)
+
+
 @code_check("ENV-03")
 def check_form_data_recorded(traj: Trajectory, ctx: CheckContext) -> CheckResult:
     arrivals = [t for t in judged_turns(traj) if t.inbound_text.lower().startswith(_FORM_DATA_MARKER)]
@@ -262,10 +272,14 @@ def check_form_data_recorded(traj: Trajectory, ctx: CheckContext) -> CheckResult
         return not_judged("ENV-03", traj, "el cliente no envió el formulario")
     legacy = is_legacy(traj)
     for turn in arrivals:
-        recorded = turn.tool_attempted("set_order_slot") if legacy else turn.tool_ok("set_order_slot")
+        recorded = (
+            turn.tool_attempted("set_order_slot")
+            if legacy
+            else turn.tool_ok("set_order_slot") or _form_data_in_order(turn)
+        )
         if not recorded:
             return failed(
-                "ENV-03", turn.turn, f"turno {turn.turn}: llegaron los datos de envío y no quedaron con set_order_slot"
+                "ENV-03", turn.turn, f"turno {turn.turn}: llegaron los datos de envío y no quedaron en el pedido"
             )
     return passed("ENV-03")
 

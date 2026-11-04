@@ -465,6 +465,16 @@ def test_the_description_says_the_system_writes_the_form_message():
 
 
 @pytest.mark.asyncio
+async def test_the_summary_says_the_form_data_land_in_the_order_by_themselves(ctx, seeded_vault, tool):
+    """ENV-03 (2026-11-03): el ingest escribe los datos del formulario en el
+    pedido al llegar; set_order_slot queda para lo que el cliente dé por texto."""
+    summary = json.loads(await tool.execute_with_context(ctx, items=_items("vela")))["summary"]
+
+    assert "quedan anotados solos" in summary
+    assert "por texto" in summary and "set_order_slot" in summary
+
+
+@pytest.mark.asyncio
 async def test_summary_instructs_llm_to_wait_not_repeat(ctx, seeded_vault, tool):
     """El summary que devuelve la tool al LLM debe dejar claro que NO pida
     los mismos datos otra vez (anti-eco) y que espere la respuesta del

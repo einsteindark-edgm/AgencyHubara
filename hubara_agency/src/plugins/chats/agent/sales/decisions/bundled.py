@@ -398,6 +398,8 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
     "items": {
         "paragraphs": _PARTS,
         "sentences": _PARTS,
+        "phrase_sentences": _PARTS,
+        "known_data_items": _PARTS,
         "leading_sentences": _PARTS,
         "order_slot_values": _PARTS,
         "unavailable_term_items": _PARTS,

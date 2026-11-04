@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,27 @@ async def _loose_text_note(inp: EgressInput, text: str) -> str:
         return ""
 
 
+def _hours_since_store(session_id: str) -> int | None:
+    """Las horas enteras desde el último mensaje de la tienda en el historial
+    de la conversación (la cuenta de la vista `reply_gap`; saludo v2,
+    ventas-8). None si la tienda nunca escribió o el historial no se puede
+    leer (entonces decide el primer contacto del turno, como antes). Con un
+    paquete anterior a ventas-8 nadie lo lee: no se abre el historial (desde
+    esa versión el catálogo exige `saludo_repetido`, DB003)."""
+    from src.plugins.chats.agent.sales.composition import build_session_history_reader
+    from src.plugins.chats.agent.sales.decisions.bundled_ingest import hours_since_store
+    from src.plugins.chats.agent.sales.decisions.registry import capability_if_present
+
+    if capability_if_present(egress.SALUDO_REPETIDO) is None:
+        return None
+    try:
+        events = build_session_history_reader()(session_id)
+    except Exception as exc:  # noqa: BLE001 — es contexto: nunca frena el egreso
+        logger.warning("decisions.egress_history_unreadable", error=repr(exc)[:200])
+        return None
+    return hours_since_store(events, int(time.time() * 1000))
+
+
 @activity.defn(name="decide_egress")
 async def decide_egress_activity(inp: EgressInput) -> EgressOutput:
     try:
@@ -179,6 +201,9 @@ async def decide_egress_activity(inp: EgressInput) -> EgressOutput:
             metrics=DecisionMetrics(vault) if asks_jev else None,
             # Calidad LLM las muestra en su turno (2026-10-02).
             decisions=SessionDecisionLog(vault) if asks_jev else None,
+            # Saludo v2 (ventas-8): el primer contacto de verdad es «la tienda
+            # nunca escribió». Con `reglas` no se lee el historial.
+            hours_since_store=_hours_since_store(inp.session_id) if asks_jev else None,
             # Los hechos de la puerta de afirmaciones: solo si la puerta pregunta.
             claim_facts=facts,
         )

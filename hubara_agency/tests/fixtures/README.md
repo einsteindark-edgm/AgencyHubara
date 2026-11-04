@@ -48,6 +48,7 @@ sintética `wa_rafaga_v2` (dirección inventada), identidad del worker →
 | `history_sales_v2_continue_as_new_loop_prepatch_v1.json` | `HubaraSalesSessionWorkflowV2` | sintética, regla vieja de continue-as-new (código de 16c03158) |
 | `history_eta_continue_as_new_loop_prepatch_v1.json` | `HubaraEtaSessionWorkflow` | sintética, regla vieja de continue-as-new (código de 16c03158) |
 | `history_eta_rejected_text_prepatch_v1.json` | `HubaraEtaSessionWorkflow` | sintética, código actual con `eta-rejected-text-as-template-v1` forzado a «no» |
+| `history_sales_eval_prebands_v1.json` | `SalesEvalWorkflow` | sintética, barrido diario de antes de las bandas por regla (`scorecard-bands-v1` forzado a «no»); CONGELADA, replay en `tests/evals/test_replay_sales_eval_bands.py`, procedencia en `generate_sales_eval_prebands_fixture.py` |
 
 **`history_campaign_send_v1.json` está CONGELADA y NO se regenera.** Es el
 `CampaignSendWorkflow` (V1) tal como quedó cuando salió `CampaignSendWorkflowV2`

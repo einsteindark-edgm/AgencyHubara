@@ -97,6 +97,14 @@ tenants = {
     reviews = {
       mode = "on"
     }
+    # Alertas del scorecard de ventas (Ciclo Colossus F4, 2026-11-03): los
+    # issues [ALR] con la etiqueta origen:alerta van al repo PRIVADO del ciclo
+    # (AgencyHubara es público); la recepción del ciclo los vuelve tarjetas.
+    # Necesita además el token SCORECARD_ALERTS_GITHUB_TOKEN (fuera de banda);
+    # sin él no se abre nada. Apagar = repo "" + apply + Backend deploy.
+    eval_alerts = {
+      repo = "einsteindark-edgm/hubara-ciclo"
+    }
   }
 
   vincenzo = {

@@ -1,0 +1,64 @@
+# Dominio de la tienda del paquete `ventas` (Hubara, velas). PAQUETES_DE_DECISION.md F5.
+#
+# Lo que es de ESTA tienda: el agente lo ve en sus herramientas y en el
+# gancho de remarketing, y las condiciones del paquete lo leen como
+# `dom.campo`. Otra tienda (Vincenzo, zapatos) escribe el suyo; los campos y
+# sus tipos los declara `../builtins.yaml: domain` (DB014 si no cuadra).
+# Certificar: cd hubara_agency && uv run python -m src.sdk.cli decisions check
+store_name: Hubara
+farewell_order_registered: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+# Lo único que se cobra por caja, con las velas que trae (decisión del operador,
+# 2026-10-14: «solo aplica para las velas de deseos», las del 7 de diciembre).
+# El catálogo que lee el bot dice la caja de cada uno; `set_order_slot` anota
+# cajas, no velas (capacidades `cajas` y `caja_nombrada`) y `escalate_to_human`
+# no pasa como pedido al por mayor unas velas sueltas (`por_mayor`). Otro
+# producto que se venda por caja se agrega aquí, en una versión nueva del paquete.
+sold_by_box:
+  - {producto: velas-de-deseos-cuadradas, por_caja: 12}
+  - {producto: velas-de-deseos-onduladas, por_caja: 10}
+vocabulary:
+  search_examples: "'lavanda', 'religiosa', 'cera de palma'"
+  product_example: "'Luz Serena'"
+  scent_example: "'Lavanda'"
+  notes_examples: "'Plato: Leo', 'es para regalo'"
+  variant_label_examples: "'Lavanda', 'Azul'"
+  caption_example: "'aroma lavanda · 40 horas de duración'"
+  list_intro_example: "'Estas son nuestras velas religiosas:'"
+  tax_note: "Impuestos en COP. Velas artesanales suelen ser 0."
+  variant_question: "por aroma/color"
+  variant_dimensions: "aroma/color"
+  variant_kinds: "aromas / colores / tamaños"
+  variant_reply_examples: "'lavanda', 'el morado'"
+  variant_label_literal_examples: "'Lavanda', 'Verde menta', 'rosado'"
+  picker_intro_examples: "'Tenemos estos aromas:' o 'Estos son los colores disponibles:'"
+  hook_topic_examples: "'el Velón de Cristo', 'los aromas que viste'"
+  hook_examples:
+    - "¡Hola de nuevo! 🌿 Quedó pendiente lo del Velón de Cristo y los aromas — ¿lograste decidirte? 🤍"
+    - "Te escribo para retomar lo de la *Cruz de Vida* ✨ ¿Te ayudo a cerrar el pedido?"
+  # Remarketing del cliente que pidió, vio el catálogo y se calló (2026-10-13).
+  # Las cifras son las de `chats/agent/sales/config/shipping.py` y la skill
+  # `hubara_catalog`: si cambian allá, cambian acá (versión nueva del paquete).
+  practical_facts: >-
+    Tiempos de entrega: Bogotá 1 a 2 días hábiles; resto del país 2 a 3 días hábiles.
+    Envío: tarifas mínimas Bogotá y municipios cercanos $7.900, nivel nacional $16.940
+    (el valor definitivo se confirma al despachar según el tamaño y peso del paquete).
+    Pago contra entrega: compras desde $45.000 en productos. También pago anticipado
+    por Nequi o link de pago, dentro de este chat.
+  hook_examples_practical:
+    - "Te cuento lo práctico 🚚 A Bogotá llega en 1 a 2 días hábiles y al resto del país en 2 a 3. ¿A qué ciudad sería el envío?"
+    - "Por si te sirve: el envío a Bogotá arranca en $7.900 y a nivel nacional en $16.940 (tarifa mínima). Si tu compra es desde $45.000 puedes pagar contra entrega 🤍 ¿A qué ciudad lo enviaríamos?"
+  # Cómo corrige el bot algo que le dijo mal (pedido del operador, 2026-10-14:
+  # en el laboratorio salió «Ojo, te corrijo: …»; el cliente no debe sentirse
+  # regañado). Lo lee el mensaje con que un texto vuelve al modelo (los hechos).
+  # Sirve igual cuando se equivocó el bot (un precio) o el cliente (una suma).
+  correction_tone: >-
+    Corrígelo con calidez y sin culpar nunca al cliente: un tono suave, un emoji amable
+    (🙈, 🤍 o 😊) y nada que suene a regaño, como «ojo», «te corrijo» o «aclaro». Si el error
+    fue tuyo, asúmelo.
+  # Con huecos, sin cifras: el bot copia el ejemplo (laboratorio 2026-10-14).
+  correction_examples:
+    - "¡Ay, qué pena contigo! 🙈 Me equivoqué con el precio: [el producto] está en [el precio del catálogo], así que [la cantidad] queda en [el total] 🤍"
+  # Cuando el cliente sumó mal y el bot le iba a dar la razón (laboratorio 2026-10-14).
+  sum_correction_examples:
+    - "¡Casi! 😊 Te cuento cómo da la cuenta: [un producto] a [su precio] y [el otro] a [su precio] suman [el total] 🤍"
+

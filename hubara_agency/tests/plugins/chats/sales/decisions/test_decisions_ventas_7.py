@@ -222,9 +222,8 @@ def test_the_catalog_asks_for_it_from_version_7_and_the_published_versions_run_w
     _need_v7()
     catalog = _load(CATALOG_PATH)
 
-    # Las de la versión 7 (las versiones siguientes suman las suyas: la puerta
-    # de afirmaciones, desde la 8).
-    since_7 = {n: v for n, v in catalog["capabilities_since"].items() if v == 7}
+    # Las que nacen en ventas-7 (las de versiones posteriores tienen su prueba).
+    since_7 = {name: version for name, version in catalog["capabilities_since"].items() if version == 7}
     assert since_7 == dict.fromkeys(NEW, 7)
     assert all(catalog["about"][n]["where"] == ["herramientas"] for n in since_7)
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-6")

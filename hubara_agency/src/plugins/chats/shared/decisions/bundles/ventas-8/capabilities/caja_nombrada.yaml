@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El producto que va a anotar el asesor es el que pide el cliente, o el de
+# la caja que nombró?» (laboratorio de ···0686, 2026-10-14). Las velas de
+# deseos se cobran por caja: la cuadrada trae 12 velas y la ondulada 10. «Dos
+# cajas de 12, ¿cómo sería el envío y el pago?» y el bot anotó las onduladas;
+# una vez le escribió a la clienta «cada caja trae 10 velas, no 12». Solo las
+# velas de deseos se cobran por caja (`domain.yaml: sold_by_box`). El código
+# arma la comparación: el cliente nombró el tamaño de la caja de otro producto
+# y no el de este (`pack_quantity.other_box_named`). Jev lee la charla y dice
+# si quiere el otro producto. Lo pide `set_order_slot` al anotar por primera
+# vez un producto que va por caja: «otro» no lo anota y le dice al bot cuál es
+# la caja que nombró; «duda» lo devuelve una vez por mensaje del cliente (el
+# segundo intento se anota: un «otro» de más cuesta una vuelta, nunca el pedido).
+capability: caja_nombrada
+value: string
+input: CajaNombrada
+# Sin Jev no se sabe: «duda» (el bot lo revisa una vez).
+rule: {builtin: named_box_rule}
+state: {builtin: named_box_state}
+questions:
+  - id: caja_nombrada.pide_la_otra
+    kind: noul
+    text: "Según lo último que escribió el cliente, ¿quiere el otro producto (el de la otra caja) y no el que va a anotar el asesor?"
+    criteria:
+      "true": "sí: quiere el otro producto"
+      "false": "no: quiere el que va a anotar el asesor (lo nombró por su nombre o cambió de idea hacia él)"
+# Sonda con Jev real (2026-10-14, frases sintéticas ×2): la otra caja 0,87–0,92 («Dos cajas de
+# 12» y luego «multicolor», «me das las de 12 porfa»); «quiero 12 velitas de las onduladas»
+# 0,35–0,37 (duda: una vuelta) y «Dos cajas de 12, no mejor de las onduladas» 0,82–0,84 (un
+# «otro» de más: el bot lo revisa y lo vuelve a anotar). Preguntar «¿es el que pide?» daba
+# peor: 0,09 en el cambio de idea.
+thresholds: {"yes": 0.7, "no": 0.3}
+decide:
+  - when: "!('caja_nombrada.pide_la_otra' in p)"
+    then: doubt
+  - when: "p['caja_nombrada.pide_la_otra'] >= th['yes']"
+    then: otro
+  - when: "p['caja_nombrada.pide_la_otra'] <= th['no']"
+    then: este
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  # «Dos cajas de 12» y el asesor iba a anotar las onduladas (10): pide la otra.
+  - {answers: {caja_nombrada.pide_la_otra: 0.95}, expect: otro}
+  # «Quiero 12 velitas de las onduladas»: pide las onduladas.
+  - {answers: {caja_nombrada.pide_la_otra: 0.05}, expect: este}
+  # Bordes: 0,7 es la otra; 0,3 es este; en medio, duda (el bot lo revisa una vez).
+  - {answers: {caja_nombrada.pide_la_otra: 0.7}, expect: otro}
+  - {answers: {caja_nombrada.pide_la_otra: 0.3}, expect: este}
+  - {answers: {caja_nombrada.pide_la_otra: 0.5}, expect: doubt}
+  - {answers: {}, expect: doubt}

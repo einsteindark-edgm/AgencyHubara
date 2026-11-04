@@ -28,6 +28,9 @@ Env:
     `DECISIONS_PROBE_SCHEDULE_CRON` (default "0 7 * * *", tz America/Bogota) —
     la sonda diaria de Jev. Necesita `OPENROUTER_API_KEY`: sin ella (o con el
     placeholder de Terraform) no llama a nadie y el reporte dice `sin_llave`.
+  * `SCORECARD_ALERTS_GITHUB_TOKEN` / `SCORECARD_ALERTS_REPO` — alertas `[ALR]`
+    del scorecard (episodio en FALLA y bandas por regla del barrido diario) en
+    el repo del ciclo. Sin ellos, o con el placeholder de Terraform, no-op.
 
 R-DIP: importa `platform/` + el propio plugin `chats`; no plugins siblings.
 """
@@ -59,6 +62,9 @@ from src.sdk.runtime import WORKER_GRACEFUL_SHUTDOWN, run_worker
 from src.platform.plugin_manifest import get_task_queue
 from src.platform.plugin_runtime import ensure_plugin_enabled
 from src.platform.temporal.client import get_temporal_client
+from src.plugins.chats.agent.sales_eval.activities.bands_activities import (
+    compute_scorecard_bands_activity,
+)
 from src.plugins.chats.agent.sales_eval.activities.decisions_probe import (
     run_decisions_probe_activity,
 )
@@ -306,6 +312,8 @@ async def main() -> None:
             score_episode_scorecard_activity,
             # HU-SC-8: selección del scorecard en el barrido diario.
             select_scorecard_units_activity,
+            # Ciclo Colossus F4: bandas por regla + alertas [ALR] (barrido diario).
+            compute_scorecard_bands_activity,
             # Lanzador de corridas del laboratorio: exportar, orden, caja, SSM, avance.
             *LAB_LAUNCH_ACTIVITIES,
             # Sonda diaria de Jev: 20 ráfagas sintéticas, reporte en el vault.

@@ -109,3 +109,32 @@ async def test_github_tracker_finds_the_open_issue_by_marker_without_the_search_
     assert req.url.path == "/repos/acme/repo/issues"
     assert (req.url.params["labels"], req.url.params["state"]) == (alerts.LABEL, "open")
     assert req.headers["Authorization"] == "Bearer tok"
+
+
+async def test_episode_alerts_go_to_the_cycle_as_alr_issues() -> None:
+    """Ciclo Colossus F4: las alertas de producción llegan al repo privado del
+    ciclo con el prefijo `[ALR]` y la etiqueta `origen:alerta`; la recepción
+    del ciclo las vuelve tarjetas del tablero."""
+    tracker = FakeTracker()
+
+    await alerts.notify_failure(_record(), tracker=tracker)
+
+    title, _, labels = tracker.created[0]
+    assert title.startswith("[ALR] FALLA crítica: ")
+    assert labels == ["origen:alerta"]
+    assert alerts.LABEL == "origen:alerta"
+
+
+def test_the_terraform_placeholder_is_not_a_configuration(monkeypatch) -> None:
+    """Terraform crea el token con un placeholder hasta que el operador pone el
+    real: con el placeholder no se llama a GitHub."""
+    monkeypatch.setenv(alerts.TOKEN_ENV, "PLACEHOLDER_set_out_of_band")
+    monkeypatch.setenv(alerts.REPO_ENV, "acme/ciclo")
+    assert alerts.tracker_from_env() is None
+
+    monkeypatch.setenv(alerts.TOKEN_ENV, "tok")
+    monkeypatch.setenv(alerts.REPO_ENV, "PLACEHOLDER_set_out_of_band")
+    assert alerts.tracker_from_env() is None
+
+    monkeypatch.setenv(alerts.REPO_ENV, "acme/ciclo")
+    assert isinstance(alerts.tracker_from_env(), alerts.GithubIssueTracker)
