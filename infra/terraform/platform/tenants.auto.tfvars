@@ -61,7 +61,13 @@ tenants = {
     # cupón, la cifra del cliente, la negación falsa) y las cajas de las velas
     # de deseos (`cajas`, `caja_nombrada`, `por_mayor`); más `turno-v6` y
     # `rafaga-v9`. Las 12 nacen en reglas: a Jev las sube el control por
-    # comando. Volver atrás = "ventas-6".
+    # comando. Volver atrás = "ventas-6". `ventas-8` (2026-11-04, #465) es
+    # `ventas-7` con el saludo v2 (la burbuja pide la hora y la marca, y solo
+    # sale si la tienda nunca escribió) y tres capacidades nuevas: la
+    # bienvenida repetida (`saludo_repetido`) y las frases que la tienda no
+    # dice al cerrar (`despedida`), en el egreso de V2, y el dato que el pedido
+    # ya tiene (`repregunta`), en `send_reply`. Las tres nacen en reglas; el
+    # saludo cambia al promover. Volver atrás = "ventas-7".
     #
     # `internal_numbers`: teléfonos del equipo; sus conversaciones no entran al
     # banco del laboratorio. El del operador (2026-10-05) es el número con el
@@ -82,7 +88,7 @@ tenants = {
     # calidad vista en Calidad LLM → "on". Volver atrás = "off" + apply + Backend
     # deploy.
     lab = {
-      decisions_bundle        = "ventas-7"
+      decisions_bundle        = "ventas-8"
       internal_numbers        = ["+573125671604"]
       perception_mode_ceiling = "canary"
       capabilities_ceiling    = "canary"
