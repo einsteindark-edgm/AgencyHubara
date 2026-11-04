@@ -423,6 +423,19 @@ def test_asking_shipping_details_keeps_the_bot_guard_and_needs_a_resolvable_draf
     assert h.sent_texts() == []
 
 
+def test_the_operator_can_send_the_form_again_in_the_same_episode(h: _Harness) -> None:
+    # Una vez por episodio (ENV-01) es la guarda del bot: el operador decide
+    # (el cliente lo perdió, el pedido cambió).
+    h.seed(_human(episodes=_draft(_CHOSEN)))
+    row = {"id": "f-1", "kind": "shipping_flow", "ok": True, "wamid": "wamid.f1", "at_ms": _now() - _MIN}
+    (h.vault / _S / "ui_intents_delivered.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+    r = h.run("request_shipping_details", cid="s-again")
+
+    assert r.status_code == 200, r.text
+    assert r.json()["sent"] is True
+
+
 def test_asking_shipping_details_does_not_wait_for_a_yes(h: _Harness) -> None:
     h.seed(_human(episodes=_draft(_CHOSEN, confirmed=False)))
 

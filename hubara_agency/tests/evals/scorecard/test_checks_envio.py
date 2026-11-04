@@ -194,6 +194,30 @@ def test_env03_without_form_data_is_not_applicable() -> None:
     assert _run("ENV-03", traj(T(1, inbound="hola"))).verdict == "no_aplica"
 
 
+_FLOW_REPLY = (
+    "[datos de envío recibidos] city=Cali; neighborhood=Centro; address=Calle 1; phone=3000000000; "
+    "receiver_name=Ana Prueba; payment_method=cash_on_delivery; order_total_cop=40000; items_summary=2× Vela"
+)
+_FLOW_DRAFT = {
+    "ciudad": "Cali", "barrio": "Centro", "direccion": "Calle 1", "telefono": "3000000000",
+    "nombre_recibe": "Ana Prueba", "metodo_pago": "cash_on_delivery",
+}
+
+
+def test_env03_form_data_written_on_arrival_passes_without_set_order_slot() -> None:
+    """Desde el 2026-11-03 el ingest escribe los datos del formulario en el
+    pedido al llegar: lo que se mide es que queden en el pedido de ese turno."""
+    t = traj(T(1, inbound=_FLOW_REPLY, sent=["¡Gracias!"], draft={"producto": "Vela", **_FLOW_DRAFT}))
+    assert _run("ENV-03", t).verdict == "pasa"
+
+
+def test_env03_a_form_field_missing_from_the_order_fails() -> None:
+    draft = {k: v for k, v in _FLOW_DRAFT.items() if k != "direccion"}
+    t = traj(T(1, tools=[tool(_FORM)]), T(2, inbound=_FLOW_REPLY, sent=["¡Gracias!"], draft=draft))
+    r = _run("ENV-03", t)
+    assert (r.verdict, r.turn) == ("falla", 2)
+
+
 def test_env03_legacy_slot_name_present_passes() -> None:
     t = traj(T(1, inbound=_FORM_DATA, tools=[tool("set_order_slot", ok=None)]), fidelity="legacy")
     assert _run("ENV-03", t).verdict == "pasa"

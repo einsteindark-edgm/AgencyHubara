@@ -64,6 +64,15 @@ def shipping_form_in_episode(metadata: Mapping[str, Any], delivered: Iterable[Ma
     queued = metadata.get("pending_ui_intents") or []
     if any(isinstance(i, Mapping) and i.get("kind") == SHIPPING_FORM_KIND for i in queued):
         return True
+    return shipping_form_delivered_in_episode(metadata, delivered)
+
+
+def shipping_form_delivered_in_episode(
+    metadata: Mapping[str, Any], delivered: Iterable[Mapping[str, Any]]
+) -> bool:
+    """El formulario ya le LLEGÓ al cliente en el episodio activo (una fila
+    `ok` del registro de entregas desde que empezó). Un envío que falló no
+    cuenta: se puede volver a mandar."""
     episode = active_episode(dict(metadata)) or {}
     started = episode.get("started_at_ms")
     since = started if isinstance(started, int) else 0

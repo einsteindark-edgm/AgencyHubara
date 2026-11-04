@@ -1289,6 +1289,35 @@ def _shipping_precondition_rejection(session_key: str) -> dict[str, Any] | None:
     return None
 
 
+def _form_already_sent_rejection(session_key: str) -> dict[str, Any] | None:
+    """Envelope de rechazo si el formulario ya le llegó al cliente en el
+    episodio activo, o None si puede salir (ENV-01, informe de huecos del
+    2026-11-03: el bot lo volvía a mandar turnos después).
+
+    Solo cuenta lo ENTREGADO: el primero, el que falló al enviarse y el de un
+    episodio anterior no frenan; uno en la cola de este turno tampoco (la tool
+    no lo duplica, ver `_already_queued`)."""
+    from src.plugins.chats.agent.sales.use_cases.promised_shipping_form import (
+        delivered_rows,
+        shipping_form_delivered_in_episode,
+    )
+
+    data = read_retrying_transient_errors_sync(FilesystemMetadataStore(WORKSPACE_VAULT_DIR), session_key)
+    if not shipping_form_delivered_in_episode(data, delivered_rows(WORKSPACE_VAULT_DIR / session_key)):
+        return None
+    return {
+        "queued": False,
+        "error": "shipping_form_already_sent",
+        "message": (
+            "El formulario de envío ya le llegó al cliente en esta compra (lo "
+            "tiene arriba en el chat): no se vuelve a mandar. Si te corrige un "
+            "dato o falta alguno, pídeselo por texto con send_reply y anótalo "
+            "con set_order_slot; si ya tienes todos, sigue con "
+            "verify_order_for_checkout. No se mostró nada al cliente."
+        ),
+    }
+
+
 def _draft_items_of(session_key: str) -> list[dict[str, Any]]:
     """Los ítems del borrador del pedido en curso (producto y variantes) para
     el mensaje del formulario. Sin borrador proyectable (pedido ya
@@ -1370,12 +1399,21 @@ class RequestShippingDetailsTool(ToolBase):
         "required": ["items"],
     }
 
-    def __init__(self, workspace: str | Path, catalog: CatalogPort | None = None) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        catalog: CatalogPort | None = None,
+        *,
+        once_per_episode: bool = True,
+    ) -> None:
         self._workspace = Path(workspace)
         # Fuente del precio. Sin catálogo (dev/tests legacy) la tool NO puede
         # calcular el total → responde `catalog_unavailable` (fail-closed:
         # nunca vuelve a aceptar un monto del LLM).
         self._catalog = catalog
+        # Un formulario por episodio (ENV-01) es la guarda del bot; el
+        # operador decide desde la app (`api/operator_tools.py`, False).
+        self._once_per_episode = once_per_episode
 
     async def _price_items(
         self, ctx: ToolContext, items: list[dict[str, Any]] | None
@@ -1484,6 +1522,16 @@ class RequestShippingDetailsTool(ToolBase):
     ) -> str:
         # `order_total_cop` / `items_summary` ya NO están en el schema; se
         # aceptan solo para no romper histories en vuelo — y se ignoran.
+        # Una vez por episodio (ENV-01): si ya le llegó, un dato corregido o
+        # que falte se pide por texto.
+        if self._once_per_episode:
+            already_sent = _form_already_sent_rejection(ctx.session_key)
+            if already_sent is not None:
+                logger.warning(
+                    "📦 [TOOL request_shipping_details] session={} rechazada: {}",
+                    ctx.session_key, already_sent["error"],
+                )
+                return json.dumps(already_sent, ensure_ascii=False)
         priced = await self._price_items(ctx, items)
         if "error" in priced:
             logger.warning(
@@ -1612,9 +1660,9 @@ class RequestShippingDetailsTool(ToolBase):
                 "opcional, método de pago) con el mensaje de `customer_text`: "
                 "es lo que leyó. NO lo repitas ni vuelvas a pedir los datos; usa "
                 "`send_reply` solo si el cliente preguntó otra cosa. Los datos "
-                "llegan del formulario o por texto: anótalos con set_order_slot "
-                "y, cuando los tengas TODOS, continúa con "
-                "verify_order_for_checkout."
+                "del formulario quedan anotados solos en el pedido al llegar; "
+                "los que te dé por texto, anótalos con set_order_slot. Cuando "
+                "los tengas TODOS, continúa con verify_order_for_checkout."
             ),
         }, ensure_ascii=False)
 

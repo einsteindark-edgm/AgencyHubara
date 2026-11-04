@@ -140,6 +140,7 @@ from src.plugins.chats.agent.sales.decisions.readings import (
     read_coupon_talk,
 )
 from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
+from src.plugins.chats.agent.sales.use_cases.shipping_form_reply import record_form_reply
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
@@ -1389,6 +1390,27 @@ class IngestInboundMessage:
             msg_type=parsed.msg_type,
             tags=effective.debug_tags,
         )
+
+        # --- 5.5. Datos del formulario de envío: al pedido al llegar (ENV-03) ---
+        # Informe de huecos del 2026-11-03: llegan estructurados (`nfm_reply`)
+        # y solo quedaban en el borrador si el modelo llamaba set_order_slot
+        # en ese turno. Son hechos, no una decisión: se escriben como el
+        # carrito web (RMW sobre la lectura fresca, FM-01) y el modelo los lee
+        # en la nota del pedido. Con un humano al mando no se siembra nada (el
+        # borrador del operador lee el formulario del chat).
+        structured = effective.structured_payload or {}
+        if structured.get("kind") == "nfm_reply" and metadata.get("active_route") != ROUTE_HUMANO:
+            response_json = structured.get("response_json")
+
+            def _form_reply_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                return fresh if record_form_reply(fresh, response_json, now_ms=now_ms) else None
+
+            written_form = self._update_best_effort(session_id, _form_reply_mutator, what="datos_del_formulario")
+            if written_form is not None:
+                metadata = written_form
+                _rebase(base, metadata)
 
         # --- 5.7. Documento PDF inbound (comprobante de pago probable): bajar
         #     los bytes de Meta (cap 10 MB — arriba de eso NO se descarga) y
