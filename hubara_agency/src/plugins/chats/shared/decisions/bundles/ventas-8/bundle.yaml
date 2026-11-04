@@ -1,8 +1,9 @@
 # yaml-language-server: $schema=../../../../../../../schemas/decision-bundle.schema.json
 #
 # Paquete de decisión de Hubara (velas), ventas, versión 8. PAQUETES_DE_DECISION.md.
-# Es `ventas-7@7` con el saludo v2 y tres decisiones nuevas (dos del egreso y una de
-# `send_reply`, y nada más (una prueba lo exige: test_decisions_ventas_8.py).
+# Es `ventas-7@7` con el saludo v2, tres decisiones nuevas (dos del egreso y una de
+# `send_reply`) y la puerta de afirmaciones, y nada más (una prueba lo exige:
+# test_decisions_ventas_8.py).
 # Informe de huecos de producción del 2026-11-03 (bot V2, todo el tráfico):
 #   - `saludo` (APE-01): la pregunta a Jev aceptaba «hola» como saludo, así que
 #     un «¡Hola!» del modelo dejaba sin la burbuja con la hora y la marca. Ahora
@@ -25,7 +26,15 @@
 #     salen del borrador del pedido (el piso: nunca se pregunta por uno que no
 #     tiene); Jev dice si el texto se lo vuelve a pedir y el texto vuelve al
 #     modelo UNA vez con lo que ya está en el pedido. Sin Jev no revisa.
-# Las tres nuevas nacen apagadas (`reglas`): se encienden por comando
+#   - `afirmacion_previa` (CON-03, POS-01, DES-10, ENV-05, EST-05; la puerta de
+#     afirmaciones, #467): antes de enviar, Jev dice QUÉ afirma el texto como un
+#     hecho (pedido registrado, pago, precio, envío, datos bancarios, entrega) y
+#     la tabla lo cruza con lo consultado; si no se sostiene, el texto no sale y
+#     el modelo tiene UNA ronda más. Agregada el 2026-11-04 con ventas-8 ya vivo,
+#     editado en el lugar (decisión del operador: debió salir con él; huella
+#     anterior `539a1895…`). Su frase de tiempos: `domain.yaml:
+#     delivery_time_phrases`. Sin Jev no revisa.
+# Las cuatro nuevas nacen apagadas (`reglas`): se encienden por comando
 # (`bot_control.sh capacidad <c> shadow|canary`), después de promover el paquete.
 #
 # ventas-7:
@@ -173,6 +182,7 @@ oracle: jev-1.13
 capabilities:
   - acuse
   - afirmacion
+  - afirmacion_previa
   - aroma_ajeno
   - baja
   - caja_nombrada

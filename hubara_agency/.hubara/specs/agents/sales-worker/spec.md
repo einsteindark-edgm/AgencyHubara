@@ -1089,7 +1089,7 @@ consulta cuando hay nota).
 La nota sale de dos lugares:
 
 - la capacidad `afirmacion_previa` del paquete (el catálogo la pide desde la
-  versión 9; `ventas-8` salió sin ella): Jev dice QUÉ afirma el texto y la tabla decide con los hechos
+  versión 8; entró en `ventas-8` ya vivo, el 2026-11-04): Jev dice QUÉ afirma el texto y la tabla decide con los hechos
   (`order_registered_fact`, `paid_in_turn_fact`, `unexplained_amounts_fact`,
   `bank_details_fact`, `shipping_amounts_fact`, `approved_delivery_time_fact`).
   Nace apagada (`reglas`: ni retiene ni le pregunta a Jev);

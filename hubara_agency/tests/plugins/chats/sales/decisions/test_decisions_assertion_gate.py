@@ -3,17 +3,16 @@
 Colossus afirma hechos que nunca consultó (huecos del 10-28 al 11-03: 25 casos
 en 17 conversaciones de 1.034 turnos; CON-03, POS-01, DES-10, ENV-05, EST-05).
 El egreso del V2 corre antes de grabar y de enviar: si el paquete trae la
-capacidad `afirmacion_previa` (el catálogo la pide desde la versión 9), Jev
+capacidad `afirmacion_previa` (el catálogo la pide desde la versión 8), Jev
 dice QUÉ afirma el texto y la tabla decide con los hechos (`bundled_claims`);
 su valor es la nota con que `run_agent_turn` retiene el texto y le da UNA ronda
 más al modelo (`EgressOutput.retain_note`).
 
 Lo que estas pruebas fijan:
-  * `ventas-7` y `ventas-8` (los publicados) no traen la puerta: el egreso es
-    el de hoy;
-  * la capacidad propuesta (`tests/fixtures/decisions/afirmacion_previa.yaml`)
-    certifica en un `ventas-9` de prueba (copia de `ventas-8`): es el YAML
-    que lleva el paquete siguiente;
+  * `ventas-7` no trae la puerta: el egreso es el de antes;
+  * `ventas-8` la trae (editado en el lugar ya vivo, decisión del operador del
+    2026-11-04: debió salir con él) con su frase de tiempos en `domain.yaml`,
+    y certifica;
   * cada hecho retiene lo que no se sostiene y deja pasar lo que sí (el caso
     legítimo de cada fila: gotcha 16);
   * nace apagada (`reglas`): ni retiene ni le pregunta a Jev;
@@ -26,7 +25,6 @@ forge los paquetes de esta tienda no viajan: se salta.
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -36,19 +34,18 @@ from src.platform.perception.adapters.fake import FakePerceptionAdapter
 from src.plugins.chats.agent.sales.decisions import egress, registry
 from src.plugins.chats.agent.sales.decisions.bundled_claims import ClaimFacts
 from src.plugins.chats.agent.sales.decisions.contracts import EgressInput, EgressOutput
-from src.plugins.chats.shared import store_pack
 from src.sdk.connectorkit import TypedAnswer
 from src.sdk.decisionkit import check_bundle
 
 SID = "wa_573000000001"
-FIXTURE = Path(__file__).resolve().parents[4] / "fixtures" / "decisions" / "afirmacion_previa.yaml"
+GATE_YAML = registry.BUNDLES_DIR / "ventas-8" / "capabilities" / "afirmacion_previa.yaml"
 QID = "afirmacion.que_afirma"
 APPROVED = "1 a 2 dias habiles, 2 a 3 dias habiles"
 
 
 def _gate_note(choice: str) -> str:
-    """La nota que la tabla del YAML propuesto da para `choice` (sin hechos que la sostengan)."""
-    spec = yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
+    """La nota que la tabla de la puerta de ventas-8 da para `choice` (sin hechos que la sostengan)."""
+    spec = yaml.safe_load(GATE_YAML.read_text(encoding="utf-8"))
     for row in spec["decide"]:
         when = row.get("when", "")
         if f"== '{choice}'" in when:
@@ -61,30 +58,18 @@ pytestmark = pytest.mark.skipif(IN_FORGE_CLONE, reason="clon de forge: los paque
 
 
 @pytest.fixture
-def ventas_9(tmp_path: Path, monkeypatch) -> Path:
-    """Un `ventas-9` de prueba: `ventas-8` (el último publicado) + la puerta y la frase de tiempos."""
-    root = tmp_path / "bundles"
-    shutil.copytree(registry.BUNDLES_DIR, root)
-    shutil.copytree(root / "ventas-8", root / "ventas-9")
-    bundle = yaml.safe_load((root / "ventas-9" / "bundle.yaml").read_text(encoding="utf-8"))
-    bundle.update(id="ventas-9", version=9, capabilities=sorted([*bundle["capabilities"], "afirmacion_previa"]))
-    (root / "ventas-9" / "bundle.yaml").write_text(yaml.safe_dump(bundle, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    shutil.copy(FIXTURE, root / "ventas-9" / "capabilities" / "afirmacion_previa.yaml")
-    domain = yaml.safe_load((root / "ventas-9" / "domain.yaml").read_text(encoding="utf-8"))
-    domain["delivery_time_phrases"] = APPROVED
-    (root / "ventas-9" / "domain.yaml").write_text(yaml.safe_dump(domain, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    monkeypatch.setattr(registry, "BUNDLES_DIR", root)
-    monkeypatch.setattr(store_pack, "BUNDLES_DIR", root)
-    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-9")
+def ventas_8(monkeypatch) -> Path:
+    """El `ventas-8` publicado: trae la puerta y la frase de tiempos."""
+    monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-8")
     monkeypatch.delenv("DECISIONS_BOT", raising=False)
     registry.reset()
-    yield root
+    yield registry.BUNDLES_DIR
     registry.reset()
 
 
-@pytest.fixture(params=["ventas-7", "ventas-8"])
+@pytest.fixture(params=["ventas-7"])
 def published_bundle(request, monkeypatch):
-    """Los paquetes publicados: ninguno trae la puerta."""
+    """Los paquetes publicados antes de la puerta: no la traen."""
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", request.param)
     registry.reset()
     yield request.param
@@ -130,19 +115,25 @@ def _asked_gate(oracle: dict) -> bool:
 # ── el paquete ───────────────────────────────────────────────────────────────
 
 
-def test_the_proposed_capability_certifies_in_the_next_bundle(ventas_9: Path) -> None:
-    assert [str(d) for d in check_bundle(ventas_9 / "ventas-9", ventas_9 / "builtins.yaml")] == []
+def test_ventas_8_carries_the_gate_and_certifies(ventas_8: Path) -> None:
+    bundle = yaml.safe_load((ventas_8 / "ventas-8" / "bundle.yaml").read_text(encoding="utf-8"))
+    domain = yaml.safe_load((ventas_8 / "ventas-8" / "domain.yaml").read_text(encoding="utf-8"))
+
+    assert "afirmacion_previa" in bundle["capabilities"]
+    assert domain["delivery_time_phrases"] == APPROVED
+    assert [str(d) for d in check_bundle(ventas_8 / "ventas-8", ventas_8 / "builtins.yaml")] == []
+    assert registry.capability_if_present("afirmacion_previa").bundle == "ventas-8@8"
 
 
-def test_the_catalog_asks_for_the_gate_from_version_9() -> None:
-    """ventas-8 se publicó sin la puerta (2026-11-03): la pide el siguiente."""
+def test_the_catalog_asks_for_the_gate_from_version_8() -> None:
+    """La puerta entra en ventas-8 (2026-11-04): ventas-7 no la trae."""
     catalog = yaml.safe_load((registry.BUNDLES_DIR / "builtins.yaml").read_text(encoding="utf-8"))
 
-    assert catalog["capabilities_since"]["afirmacion_previa"] == 9
+    assert catalog["capabilities_since"]["afirmacion_previa"] == 8
     assert "antes_de_enviar" in catalog["about"]["afirmacion_previa"]["where"]
 
 
-async def test_the_published_bundles_have_no_gate_and_the_egress_is_the_one_of_today(published_bundle, oracle) -> None:
+async def test_ventas_7_has_no_gate_and_the_egress_is_the_one_of_before(published_bundle, oracle) -> None:
     _claims(oracle, "pedido_registrado")
 
     out = await _egress(_inp("¡Listo! Tu pedido quedó registrado 🤍"))
@@ -155,7 +146,7 @@ async def test_the_published_bundles_have_no_gate_and_the_egress_is_the_one_of_t
 # ── cada hecho ──────────────────────────────────────────────────────────────
 
 
-async def test_a_registered_order_claim_without_an_order_is_retained(ventas_9, oracle) -> None:
+async def test_a_registered_order_claim_without_an_order_is_retained(ventas_8, oracle) -> None:
     _claims(oracle, "pedido_registrado")
 
     out = await _egress(_inp("¡Listo! Tu pedido quedó registrado 🤍"))
@@ -167,7 +158,7 @@ async def test_a_registered_order_claim_without_an_order_is_retained(ventas_9, o
     assert verdict["by"] == "jev"
 
 
-async def test_a_registered_order_claim_with_the_order_goes_out(ventas_9, oracle) -> None:
+async def test_a_registered_order_claim_with_the_order_goes_out(ventas_8, oracle) -> None:
     _claims(oracle, "pedido_registrado")
 
     out = await _egress(_inp("¡Listo! Tu pedido quedó registrado 🤍", order_registered=True, tools_used=["register_order"]))
@@ -175,7 +166,7 @@ async def test_a_registered_order_claim_with_the_order_goes_out(ventas_9, oracle
     assert out.retain_note == ""
 
 
-async def test_a_payment_claim_is_retained_unless_check_order_status_said_paid(ventas_9, oracle) -> None:
+async def test_a_payment_claim_is_retained_unless_check_order_status_said_paid(ventas_8, oracle) -> None:
     _claims(oracle, "pago_recibido")
     paid = {"name": "check_order_status", "args": {}, "result": json.dumps({"orders": [{"payment_confirmed": True}]})}
 
@@ -186,7 +177,7 @@ async def test_a_payment_claim_is_retained_unless_check_order_status_said_paid(v
     assert verified.retain_note == ""
 
 
-async def test_a_price_the_catalog_does_not_explain_is_retained(ventas_9, oracle) -> None:
+async def test_a_price_the_catalog_does_not_explain_is_retained(ventas_8, oracle) -> None:
     _claims(oracle, "precio")
     facts = ClaimFacts(known_prices=(25_000,))
 
@@ -197,7 +188,7 @@ async def test_a_price_the_catalog_does_not_explain_is_retained(ventas_9, oracle
     assert right.retain_note == ""
 
 
-async def test_bank_details_are_retained_even_if_jev_sees_nothing(ventas_9, oracle) -> None:
+async def test_bank_details_are_retained_even_if_jev_sees_nothing(ventas_8, oracle) -> None:
     _claims(oracle, "nada")
     facts = ClaimFacts(public_keys=("3009990000",))
 
@@ -208,7 +199,7 @@ async def test_bank_details_are_retained_even_if_jev_sees_nothing(ventas_9, orac
     assert public_key.retain_note == ""
 
 
-async def test_a_delivery_promise_is_retained_but_the_approved_phrase_goes_out(ventas_9, oracle) -> None:
+async def test_a_delivery_promise_is_retained_but_the_approved_phrase_goes_out(ventas_8, oracle) -> None:
     _claims(oracle, "entrega")
     facts = ClaimFacts(delivery_phrases=APPROVED)
 
@@ -219,7 +210,7 @@ async def test_a_delivery_promise_is_retained_but_the_approved_phrase_goes_out(v
     assert approved.retain_note == ""
 
 
-async def test_a_shipping_value_in_the_text_is_retained(ventas_9, oracle) -> None:
+async def test_a_shipping_value_in_the_text_is_retained(ventas_8, oracle) -> None:
     _claims(oracle, "envio")
 
     out = await _egress(_inp("El envío de tu pedido te sale en $14.500 🤍"))
@@ -227,7 +218,7 @@ async def test_a_shipping_value_in_the_text_is_retained(ventas_9, oracle) -> Non
     assert out.retain_note == _gate_note("envio")
 
 
-async def test_a_plain_answer_goes_out(ventas_9, oracle) -> None:
+async def test_a_plain_answer_goes_out(ventas_8, oracle) -> None:
     """El caso legítimo de siempre: una pregunta o un saludo no afirma nada."""
     _claims(oracle, "nada")
 
@@ -239,7 +230,7 @@ async def test_a_plain_answer_goes_out(ventas_9, oracle) -> None:
 # ── cuándo no corre ─────────────────────────────────────────────────────────
 
 
-async def test_born_off_it_neither_retains_nor_asks_jev(ventas_9, oracle) -> None:
+async def test_born_off_it_neither_retains_nor_asks_jev(ventas_8, oracle) -> None:
     _claims(oracle, "pedido_registrado")
 
     out = await _egress(_inp("¡Listo! Tu pedido quedó registrado 🤍"), provider="reglas")
@@ -248,7 +239,7 @@ async def test_born_off_it_neither_retains_nor_asks_jev(ventas_9, oracle) -> Non
     assert not _asked_gate(oracle)
 
 
-async def test_admin_turns_the_sentinel_and_blocked_texts_never_reach_the_gate(ventas_9, oracle) -> None:
+async def test_admin_turns_the_sentinel_and_blocked_texts_never_reach_the_gate(ventas_8, oracle) -> None:
     _claims(oracle, "pedido_registrado")
 
     for inp in (
@@ -261,7 +252,7 @@ async def test_admin_turns_the_sentinel_and_blocked_texts_never_reach_the_gate(v
     assert not _asked_gate(oracle)
 
 
-async def test_the_output_still_travels_as_json(ventas_9, oracle) -> None:
+async def test_the_output_still_travels_as_json(ventas_8, oracle) -> None:
     import dataclasses
 
     _claims(oracle, "pedido_registrado")
@@ -289,7 +280,7 @@ class _Catalog:
 
 
 @pytest.fixture
-def activity_vault(tmp_path: Path, monkeypatch, ventas_9: Path):
+def activity_vault(tmp_path: Path, monkeypatch, ventas_8: Path):
     from src.plugins.chats.agent.sales.decisions import egress_activities
 
     vault = tmp_path / "vault"

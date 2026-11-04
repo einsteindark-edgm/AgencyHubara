@@ -48,7 +48,12 @@ PUBLISHED = {
     "ventas-7@7": "7a4f566b296650c59b61328d2f2e1a0f5e02107a19857869383ca971924fc194",
     # Saludo v2 y `saludo_repetido`, `despedida` y `repregunta` (informe de huecos de
     # producción del 2026-11-03; test_decisions_ventas_8.py).
-    "ventas-8@8": "539a1895f1bf5bb63882c6cd766b227de8ec98d80f29b2f49f4b9b4e9871c66f",
+    # Editado A PROPÓSITO el 2026-11-04, ya vivo (decisión del operador: debió salir
+    # con él): `afirmacion_previa`, la puerta de afirmaciones (#467), y su frase de
+    # tiempos en domain.yaml; la traza lo distingue por la capacidad, que antes no
+    # corría (test_decisions_assertion_gate.py).
+    # Antes: 539a1895f1bf5bb63882c6cd766b227de8ec98d80f29b2f49f4b9b4e9871c66f.
+    "ventas-8@8": "6cf7e048b4d6e6f1d1ce5f28a186a01ee203e9151935aa199bea83567dfa55f2",
     "centinela@1": "59200ee02051d7867a113259a44b396be8ae448c7cec88c2dd61e0f7767285ef",
     "operador@1": "136c79489136666aa6632bfee8c86329d2f04b5e29929e2cdaace15bd4434f26",
     "operador-2@2": "a48b58350cda620ec8f5db0b8b6676d80174cb429f5f8ed2cebcdd3d164d413b",

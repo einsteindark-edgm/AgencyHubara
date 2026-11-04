@@ -1,19 +1,17 @@
 # yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
 #
-# La puerta de afirmaciones (2026-11-03): la capacidad que el paquete siguiente
-# de la tienda (`ventas-9`) agrega como `capabilities/afirmacion_previa.yaml`.
-# Las pruebas (`test_decisions_assertion_gate.py`) la copian a un `ventas-9` de
-# prueba sobre `ventas-8`: certifica y decide con los hechos. NO es un paquete
-# publicado: lo publica la sesión dueña del próximo `ventas-N` (con `decisions
-# check`, su huella y el laboratorio `B@ventas-N`).
+# La puerta de afirmaciones (#467, 2026-11-03). Entra en `ventas-8` editado en
+# el lugar, ya vivo (decisión del operador, 2026-11-04: debió salir con él; el
+# PR del paquete, #465, la dejaba para esta misma versión). La frase aprobada
+# de tiempos va en `../domain.yaml` (`delivery_time_phrases`). Pruebas:
+# `test_decisions_assertion_gate.py`.
 #
 # Antes de enviar, el egreso del V2 le pregunta a Jev QUÉ afirma el texto como
 # un hecho y la tabla lo cruza con los HECHOS (las vistas `*_fact`, un builtin
 # por hecho). Si no se sostiene, el valor es la nota para el modelo: el texto
 # no sale, el turno le da UNA ronda más («Tu respuesta NO se envió. <nota>») y
 # lo que vuelva a escribir sale. "" = nada que retener. Nace apagada (`reglas`:
-# la regla es "", el turno de hoy); se sube con `bot_control.sh` a sombra y
-# después a jev, con la vara de siempre.
+# la regla es "", el turno de hoy); se sube con `bot_control.sh`.
 #
 # Las reglas del scorecard que cubre: CON-03 (pedido registrado), POS-01
 # (pago), DES-10 (precio), ENV-05 (datos bancarios y valor del envío) y EST-05

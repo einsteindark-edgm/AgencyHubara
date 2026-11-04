@@ -83,6 +83,7 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   saludo_repetido: "Bienvenida a quien ya conoce la tienda",
   despedida: "Frases que la tienda no dice",
   repregunta: "Volver a pedir un dato",
+  afirmacion_previa: "Puerta de afirmaciones",
   burbuja: "Burbuja principal (App Operador)",
   incendio: "Incendio de chat (App Operador)",
 };
@@ -372,6 +373,11 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
     return asked.length
       ? warn(`Devuelve el texto al modelo: le vuelve a pedir ${asked.join(", ")}, que el pedido ya tiene`)
       : plain("No le vuelve a pedir datos que el pedido ya tiene");
+  },
+  // La puerta de afirmaciones (ventas-8, 2026-11-04): la nota con que el texto vuelve al modelo ("" = sale).
+  afirmacion_previa: (value) => {
+    const note = str(value);
+    return note ? warn(`Devuelve el texto al modelo: «${note}»`) : plain("No afirma nada que no se sostenga");
   },
   burbuja: (value) => {
     const raw = str(value);

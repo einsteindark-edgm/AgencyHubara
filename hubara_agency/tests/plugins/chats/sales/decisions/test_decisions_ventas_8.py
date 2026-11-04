@@ -1,4 +1,5 @@
-"""`ventas-8`: es `ventas-7@7` con el saludo v2 y tres decisiones nuevas, y nada más.
+"""`ventas-8`: es `ventas-7@7` con el saludo v2, tres decisiones nuevas y la
+puerta de afirmaciones, y nada más.
 
 Informe de huecos de producción del 2026-11-03 (bot V2, todo el tráfico):
 
@@ -13,6 +14,11 @@ Informe de huecos de producción del 2026-11-03 (bot V2, todo el tráfico):
   nada y el pedido quedó registrado, la despedida aprobada del dominio.
 * `repregunta` (VAR-06, ENV-04): el dato que el pedido ya tiene, en `send_reply`
   (la prueba de la tool: `tests/plugins/chats/sales/test_send_reply_known_data.py`).
+* `afirmacion_previa` (CON-03, POS-01, DES-10, ENV-05, EST-05): la puerta de
+  afirmaciones (#467) entra en ventas-8, editado en el lugar ya vivo (decisión
+  del operador, 2026-11-04: debió salir con él); su frase de tiempos aprobada
+  va en `domain.yaml` (`delivery_time_phrases`). Sus pruebas:
+  `test_decisions_assertion_gate.py`.
 
 Textos sintéticos con la forma de los casos (nunca el de un cliente). En un clon
 de forge `ventas-8` no viaja (experimento de esta tienda): se salta.
@@ -39,6 +45,8 @@ V8 = BUNDLES_DIR / "ventas-8"
 IN_FORGE_CLONE = not (Path(__file__).resolve().parents[6] / "forge").is_dir()
 SID = "wa_573001111111"
 NEW = ("saludo_repetido", "despedida", "repregunta")
+#: La puerta de afirmaciones (#467), en ventas-8 desde el 2026-11-04.
+GATE = "afirmacion_previa"
 
 #: Con la forma de los casos del informe (sintéticos).
 REGREETING = (
@@ -106,22 +114,25 @@ async def _decide(name: str, inp: object, vault: Path):
 # ── El paquete: ventas-7 + esto, y nada más ─────────────────────────────────
 
 
-def test_ventas_8_is_ventas_7_with_the_greeting_v2_and_three_new_decisions() -> None:
+def test_ventas_8_is_ventas_7_with_the_greeting_v2_three_new_decisions_and_the_gate() -> None:
     _need_v8()
     files7 = {p.relative_to(V7) for p in V7.rglob("*.yaml")}
     files8 = {p.relative_to(V8) for p in V8.rglob("*.yaml")}
 
-    assert files8 - files7 == {Path(f"capabilities/{name}.yaml") for name in NEW}
+    assert files8 - files7 == {Path(f"capabilities/{name}.yaml") for name in (*NEW, GATE)}
     assert files7 <= files8
     changed = {p for p in files7 if (V7 / p).read_bytes() != (V8 / p).read_bytes()}
-    assert changed == {Path("bundle.yaml"), Path("capabilities/saludo.yaml")}
+    assert changed == {Path("bundle.yaml"), Path("capabilities/saludo.yaml"), Path("domain.yaml")}
+    d7, d8 = _load(V7 / "domain.yaml"), _load(V8 / "domain.yaml")
+    assert {k: v for k, v in d8.items() if k != "delivery_time_phrases"} == d7
+    assert d8["delivery_time_phrases"] == "1 a 2 dias habiles, 2 a 3 dias habiles"
 
     b7, b8 = _load(V7 / "bundle.yaml"), _load(V8 / "bundle.yaml")
     assert (b8["id"], b8["version"]) == ("ventas-8", 8)
     assert {k: v for k, v in b8.items() if k not in ("id", "version", "capabilities")} == {
         k: v for k, v in b7.items() if k not in ("id", "version", "capabilities")
     }
-    assert set(b8["capabilities"]) == set(b7["capabilities"]) | set(NEW)
+    assert set(b8["capabilities"]) == set(b7["capabilities"]) | set(NEW) | {GATE}
 
 
 def test_the_greeting_v2_changes_only_its_question_and_the_store_wrote_row() -> None:
@@ -146,7 +157,7 @@ def test_the_catalog_asks_for_the_new_decisions_from_version_8_and_ventas_7_runs
     catalog = _load(CATALOG_PATH)
 
     assert check_bundle(V8, CATALOG_PATH) == []
-    for name in NEW:
+    for name in (*NEW, GATE):
         assert catalog["capabilities_since"][name] == 8
         assert registry.capability_if_present(name).bundle == "ventas-8@8"
     assert catalog["about"]["saludo_repetido"]["where"] == ["antes_de_enviar"]
@@ -154,7 +165,7 @@ def test_the_catalog_asks_for_the_new_decisions_from_version_8_and_ventas_7_runs
     assert catalog["about"]["repregunta"]["where"] == ["herramientas"]
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")
     registry.reset()
-    assert all(registry.capability_if_present(name) is None for name in NEW)
+    assert all(registry.capability_if_present(name) is None for name in (*NEW, GATE))
 
 
 def test_each_new_decision_has_its_switch_and_is_born_off(tmp_path: Path) -> None:

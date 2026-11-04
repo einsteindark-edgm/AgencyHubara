@@ -170,6 +170,16 @@ describe("DecisionsControlPanel", () => {
     expect(within(repeated).getByText("¿el texto le vuelve a pedir un dato que el pedido ya tiene? (solo con Jev)")).toBeInTheDocument();
   });
 
+  it("nombra la puerta de afirmaciones de ventas-8 (2026-11-04)", async () => {
+    state = payload({ afirmacion_previa: "off" });
+    renderPanel();
+
+    const gate = await screen.findByRole("group", { name: "Puerta de afirmaciones" });
+    expect(
+      within(gate).getByText("¿afirma un hecho que no consultó? Si no se sostiene, el texto vuelve al modelo (solo con Jev)"),
+    ).toBeInTheDocument();
+  });
+
   it("nombra el acuse tras la despedida con su pregunta", async () => {
     state = payload({ acuse: "off" });
     renderPanel();
