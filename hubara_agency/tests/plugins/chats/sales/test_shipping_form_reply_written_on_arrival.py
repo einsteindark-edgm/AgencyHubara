@@ -23,8 +23,8 @@ import pytest
 from src.plugins.chats.agent.sales.parsers import WhatsAppMessage
 from tests.metadata_store_fakes import MergingMetadataStoreMixin
 
-SID = "wa_570000000102"  # synthetic
-PHONE = "570000000102"
+SID = "wa_573001234567"  # synthetic
+PHONE = "573001234567"
 # The ingest closes an idle episode by the wall clock: the episode is recent.
 NOW_MS = int(time.time() * 1000)
 STARTED_MS = NOW_MS - 10 * 60_000
@@ -38,7 +38,7 @@ FORM = {
     "payment_method": "cash_on_delivery",
     "order_total_cop": "40000",
     "items_summary": "2× Vela",
-    "flow_token": "shipping_wa_570000000102_1789406000",
+    "flow_token": "shipping_wa_573001234567_1789406000",
 }
 
 

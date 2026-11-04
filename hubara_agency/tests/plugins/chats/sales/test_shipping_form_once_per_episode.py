@@ -25,7 +25,7 @@ from exoclaw.agent.tools import ToolContext
 from src.platform.catalog import CatalogPriceDTO, CatalogProductDTO, CatalogVariantDTO, ProductNotFoundError
 from src.plugins.chats.agent.sales.tools.ui_intents import RequestShippingDetailsTool
 
-SID = "wa_570000000101"  # synthetic
+SID = "wa_573001234567"  # synthetic
 EPISODE_START = 1_790_000_000_000
 ITEMS = [{"handle": "vela", "quantity": 2}]
 
