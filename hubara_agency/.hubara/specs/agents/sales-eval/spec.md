@@ -444,10 +444,41 @@ que se saltó las revisiones de `send_reply`, afirmación sin consultar que Jev
 leyó en sombra), sin textos. Escribirla NUNCA SHALL afectar el turno. El
 informe (`python -m src.plugins.chats.agent.sales_eval.huecos --dias N`) SHALL
 juntar el testigo con los scorecards (v8 o posterior) de la ventana y decir, por propuesta,
-cuántos casos hubo por bot y si vale la pena arreglarla: una regla crítica con
+cuántos casos hubo y si vale la pena arreglarla: una regla crítica con
 un caso; una mayor con 2 casos por cada 100 turnos o 3 conversaciones; una
 menor con 5 por cada 100 (con menos de 50 turnos, a lo sumo «quizás»). El
 informe NO SHALL llevar textos ni números completos de clientes.
+
+### Requirement: La evaluación del ciclo mira solo el bot en producción
+
+El informe de huecos (`sales_eval/huecos.py`) y las bandas por regla
+(`sales_eval/bands.py`, también en el barrido diario y sus alertas `[ALR]`)
+SHALL contar por defecto solo los episodios del bot en producción
+(`huecos.PRODUCTION_BOT = "nuevo"`: Colossus, el workflow v2 con Jev). Botsito
+(v1, «actual») está retirado: sus episodios NO SHALL mover un veredicto, un
+motivo, los ejemplos, los casos por regla o por hueco del testigo, el control
+del paso 2, la muestra, ni ninguna de las dos ventanas de las bandas (la
+reciente Y la base). El bot de cada episodio lo dicen las trazas de los turnos
+del cliente (requirement «El bot Jev es el workflow nuevo»); un episodio mixto
+NO SHALL contar como Colossus. Los dos informes SHALL decir qué bot cuentan
+(`"bot": "nuevo" | "actual" | "todos"`) y cuántos episodios dejaron fuera por
+ser de otro bot (`muestra.excluidos_otro_bot`); `por_bot` SHALL traer solo los
+bots contados. `--bot actual` cuenta solo Botsito y `--bot todos` SHALL
+reproducir los números de los dos bots juntos, para comparar.
+
+#### Scenario: Una falla que solo tuvo Botsito no vale la pena arreglarla
+
+- GIVEN en la ventana Colossus no falló TAG-02 y Botsito lo falló una vez
+- WHEN se corre el informe de huecos sin `--bot`
+- THEN la propuesta `motivo_verificacion_pago` queda «sin casos todavía», con TAG-02 en 0 y sin ejemplos
+- AND con `--bot todos` queda «sí», como antes
+
+#### Scenario: Botsito no infla la base de las bandas
+
+- GIVEN Colossus sube una regla de 1 a 6 fallas por cada 100 turnos y Botsito fallaba esa regla mucho más en la base
+- WHEN el barrido diario calcula las bandas
+- THEN la base solo tiene los turnos y fallas de Colossus y la regla queda en `abrir`
+- AND una subida que solo tuvo Botsito en la semana no abre alerta
 
 ## Out of scope
 

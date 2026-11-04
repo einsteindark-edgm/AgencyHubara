@@ -14,7 +14,7 @@ from src.plugins.chats.agent.sales_eval.activities import bands_activities as ba
 from src.plugins.chats.agent.sales_eval.evals import composition
 from src.plugins.chats.agent.sales_eval.evals.contracts import BandsInput
 from src.plugins.chats.agent.sales_eval.scorecard import alerts
-from tests.evals.test_scorecard_bands import END, MAYOR, _history
+from tests.evals.test_scorecard_bands import BOTSITO, END, MAYOR, _day, _history, _put
 
 
 class Tracker:
@@ -98,3 +98,24 @@ async def test_an_unreadable_vault_never_breaks_the_sweep(tmp_path: Path, monkey
 
     assert "vault ilegible" in summary.error
     assert summary.to_open == 0
+
+
+async def test_the_daily_run_counts_only_the_production_bot(tmp_path: Path, monkeypatch) -> None:
+    """El barrido no recibe el bot: usa el de producción (Colossus). Una subida
+    que solo tuvo Botsito no abre alerta."""
+    tracker = Tracker()
+    _history(tmp_path, base_fails={MAYOR: 1}, recent_fails={MAYOR: 1})
+    for offset in range(0, 7):
+        _put(tmp_path, day=_day(offset), turns=100, fails={MAYOR: 9}, session=BOTSITO, workflow="v1")
+    monkeypatch.setattr(composition, "get_vault_dir", lambda: tmp_path)
+    monkeypatch.setattr(alerts, "tracker_from_env", lambda: tracker)
+
+    summary = await ActivityEnvironment().run(
+        ba.compute_scorecard_bands_activity, BandsInput(alert=True, end=END.isoformat())
+    )
+
+    assert (summary.to_open, summary.opened, summary.error) == (0, 0, "")
+    assert tracker.created == []
+    saved = _saved(tmp_path)
+    assert saved["bot"] == "nuevo"
+    assert next(r for r in saved["reglas"] if r["regla"] == MAYOR)["banda"] == "normal"
