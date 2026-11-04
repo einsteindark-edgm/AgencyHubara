@@ -137,6 +137,24 @@ class _Episode:
     order: str | None = None
 
 
+#: Relevo de rutina: el bot registró el pedido y el equipo verifica el pago.
+PAYMENT_CHECK = "PAYMENT_VERIFICATION_PENDING"
+NORTH_STAR = (
+    "Conversaciones en las que intervino el equipo (al menos un relevo o un mensaje del equipo) por cada 100 "
+    "conversaciones de la ventana. «relevos_sin_verificar_pago_por_100» deja fuera la verificación del pago de un "
+    "pedido que ya registró el bot. Bajar es mejor."
+)
+OBJECTIONS = {
+    "disponible": False,
+    "motivo": (
+        "Producción no registra el tipo de objeción ni si se resolvió: el scorecard solo califica si el bot escaló "
+        "cuando el guion lo exige (TAG-03) y el motor de decisiones no tiene una capacidad de objeciones."
+    ),
+    "faltante": (
+        "Una capacidad «objecion» en el paquete de decisiones (tipo cerrado: precio, envío, tiempo de entrega, "
+        "confianza, producto) que deje en evals/decisions.jsonl el tipo y si el cliente siguió hacia la compra."
+    ),
+}
 JEV_NOTE = (
     "Solo las decisiones en las que Jev participó (proveedor jev o sombra). «jev_dudo»: Jev no llegó al umbral "
     "y decidió la regla; «valor_duda»: la capacidad respondió «duda». En sombra la duda no queda registrada: "
@@ -443,6 +461,31 @@ def _jev_section(episodes: list[_Episode]) -> dict[str, Any]:
     }
 
 
+def _per_100(part: int, whole: int) -> float | None:
+    return round(100 * part / whole, 1) if whole else None
+
+
+def _north_star_section(episodes: list[_Episode]) -> dict[str, Any]:
+    n = len(episodes)
+    handoffs = [h for ep in episodes for h in ep.handoffs]
+    return {
+        "conversaciones": n,
+        "con_intervencion": sum(1 for ep in episodes if ep.handoffs or ep.team),
+        "por_100": _per_100(sum(1 for ep in episodes if ep.handoffs or ep.team), n),
+        "relevos_por_100": _per_100(len(handoffs), n),
+        "relevos_sin_verificar_pago_por_100": _per_100(sum(1 for h in handoffs if h.reason != PAYMENT_CHECK), n),
+        "mensajes_del_equipo_por_100": _per_100(sum(len(ep.team) for ep in episodes), n),
+    }
+
+
+def _north_star(by_window: dict[str, Any]) -> dict[str, Any]:
+    def change(bot: str) -> float | None:
+        now, before = by_window["actual"][bot]["por_100"], by_window["base"][bot]["por_100"]
+        return round(now - before, 1) if now is not None and before is not None else None
+
+    return {"definicion": NORTH_STAR, **by_window, "cambio_por_100": {bot: change(bot) for bot in BOTS}}
+
+
 def _team_section(episodes: list[_Episode]) -> dict[str, Any]:
     items = [m for ep in episodes for m in ep.team]
     return {
@@ -542,4 +585,6 @@ async def build_report(
         "equipo": per_window(_team_section),
         "embudo": _funnel(per_window(_funnel_section), episodes),
         "jev_dudas": {"nota": JEV_NOTE, **per_window(_jev_section)},
+        "objeciones": dict(OBJECTIONS),
+        "intervenciones_por_100": _north_star(per_window(_north_star_section)),
     }

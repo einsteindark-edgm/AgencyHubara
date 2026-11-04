@@ -252,3 +252,43 @@ async def test_jev_doubts_are_counted_per_capability(tmp_path: Path) -> None:
     assert list(colossus["por_capacidad"])[:2] == ["cajas", "compra"]  # primero las que más dudan
     assert colossus["respaldo_por_motivo"] == {"otro": 1, "timeout": 1}
     assert "sombra" in jev["nota"]
+
+
+async def test_interventions_per_100_conversations_compare_both_windows(tmp_path: Path) -> None:
+    during = RECENT_MS + MINUTE_MS + 1_000
+    _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2",
+                  status_history=[_handoff(during, "CATALOG_GAP")])
+    _conversation(tmp_path, "wa_100000000002", started_ms=RECENT_MS, workflow="v2")
+    _chat(tmp_path, "wa_100000000002", _team(during), _team(during))
+    _conversation(tmp_path, "wa_100000000003", started_ms=RECENT_MS, workflow="v2",
+                  status_history=[_handoff(during, "PAYMENT_VERIFICATION_PENDING")])
+    _conversation(tmp_path, "wa_100000000004", started_ms=RECENT_MS, workflow="v2")
+    older = OLDER_MS + MINUTE_MS + 1_000
+    _conversation(tmp_path, "wa_100000000005", started_ms=OLDER_MS, workflow="v2",
+                  status_history=[_handoff(older, "EXPLICIT_REQUEST")])
+    _conversation(tmp_path, "wa_100000000006", started_ms=OLDER_MS, workflow="v2")
+    _chat(tmp_path, "wa_100000000006", _team(older))
+
+    north_star = (await _report(tmp_path))["intervenciones_por_100"]
+
+    assert north_star["actual"]["colossus"] == {
+        "conversaciones": 4,
+        "con_intervencion": 3,
+        "por_100": 75.0,
+        "relevos_por_100": 50.0,
+        "relevos_sin_verificar_pago_por_100": 25.0,
+        "mensajes_del_equipo_por_100": 50.0,
+    }
+    assert north_star["base"]["colossus"]["por_100"] == 100.0
+    assert north_star["cambio_por_100"]["colossus"] == -25.0
+    assert north_star["actual"]["botsito"]["por_100"] is None  # sin conversaciones no hay tasa
+    assert north_star["definicion"]
+
+
+async def test_objections_are_reported_as_missing_instead_of_invented(tmp_path: Path) -> None:
+    _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2")
+
+    objections = (await _report(tmp_path))["objeciones"]
+
+    assert objections["disponible"] is False
+    assert objections["motivo"] and objections["faltante"]
