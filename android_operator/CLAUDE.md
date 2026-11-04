@@ -322,7 +322,9 @@ cd android_operator && ./gradlew :app:bundleRelease \
     foto del teléfono (solo una clave `outbox:` puede mostrar un `file://`: `Message.forDisplay`); si falla, además
     «Reintentar / Descartar» abajo. **Trampa del emulador (S38):** Android 11 sin el selector nuevo cae al de archivos,
     que ignora `input tap` (llega sin tipo de dedo, `SelectionTracker` lo descarta): el paso `finger_tap` toca por la
-    consola del emulador.
+    consola del emulador. Y la foto se pone con `add_photo` (`content call … scan_file`, síncrono): con el aviso
+    `MEDIA_SCANNER_SCAN_FILE` pasaba en local (la galería ya la tenía) y en el emulador nuevo de CI el selector salía
+    vacío; además le borra la memoria al selector, que abre donde la app lo dejó («Downloads», sin la foto).
 
 ## Endpoints
 

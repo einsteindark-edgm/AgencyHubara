@@ -965,9 +965,10 @@ scenarios:
     # por el outbox en dos pasos (POST …/media y POST …/messages con attachment_id): un reintento no la vuelve a subir.
     setup: *laura_tomada
     script:
-      # Una foto en la galería del emulador (la captura de la pantalla de ese momento: solo datos de prueba).
-      - {adb: "screencap -p /sdcard/Pictures/hubara_e2e_vela.png"}
-      - {adb: "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/hubara_e2e_vela.png"}
+      # Una foto en la galería del emulador (la captura de la pantalla de ese momento: solo datos de prueba). Primer rojo
+      # en CI (2026-11-04): con el aviso asíncrono al escáner la foto no llegó a la galería y el selector decía
+      # «No items»; `add_photo` la registra en MediaStore antes de seguir.
+      - {add_photo: hubara_e2e_vela.png}
       - {tap: "Adjuntar fotos"}
       # El selector de archivos de Android 11 ignora `input tap` (el toque llega sin tipo de dedo): va por el panel táctil.
       - {finger_tap: "hubara_e2e_vela.png"}

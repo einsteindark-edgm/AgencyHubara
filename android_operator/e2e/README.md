@@ -49,7 +49,10 @@ los mismos chequeos:
    `notifications`, `swipe` (`{at: texto, dx, dy}`; «at» y no «on», que YAML lee como verdadero), `assert`…
    Un texto con «=» adelante se busca exacto; también encuentra la descripción para TalkBack («Cargando…»).
    `finger_tap` toca con el panel táctil del emulador (`adb emu event send`): en Android 11 `input tap` llega sin
-   tipo de dedo y el selector de archivos del sistema lo ignora (elegir una foto en S38).
+   tipo de dedo y el selector de archivos del sistema lo ignora (elegir una foto en S38). `add_photo` deja una foto
+   en la galería ya registrada en MediaStore (`content call … scan_file`): con el aviso asíncrono al escáner, en el
+   emulador recién creado de CI la foto no aparecía en el selector. También borra la memoria del selector, que abre
+   donde la app lo dejó (p. ej. «Downloads», sin la foto): así siempre arranca en «Recent».
 2. Córrelo solo: `android_operator/e2e/qa.sh --only <id>`.
 3. Si nació de una falla, que el primer rojo quede anotado en el comentario del escenario.
 

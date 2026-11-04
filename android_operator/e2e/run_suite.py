@@ -108,6 +108,7 @@ class Run:
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".
         Con argumento: {"link": uri}, {"wait": s}, {"inject": "fire …"}, {"adb": "shell cmd"},
+        {"add_photo": "nombre.png"} (una foto en la galería, ya registrada en MediaStore cuando sigue el paso),
         {"tap": "texto" | {text, above}}, {"finger_tap": "texto"} (como `tap`, pero con el panel táctil del emulador:
         para el selector de archivos del sistema, que en Android 11 ignora `input tap`),
         {"type": "ascii"}, {"swipe": {"at": "texto", "dx": px, "dy": px}},
@@ -143,6 +144,11 @@ class Run:
             sandbox(arg)
         elif kind == "adb":
             dev.sh(arg)
+        elif kind == "add_photo":
+            try:
+                dev.add_photo(arg)
+            except RuntimeError as e:
+                raise StepFailed(str(e)) from e
         elif kind == "tap":
             text, timeout = _text_and_timeout(arg, 20)
             above = arg.get("above") if isinstance(arg, dict) else None

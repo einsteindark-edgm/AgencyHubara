@@ -141,6 +141,27 @@ class Device:
             if "OK" not in out.stdout:
                 raise RuntimeError(f"la consola del emulador no aceptó el toque: {(out.stdout + out.stderr).strip()[:200]}")
 
+    def add_photo(self, name: str) -> str:
+        """Deja una foto en la galería (la captura de la pantalla de ese momento) y la registra en MediaStore en el acto;
+        devuelve su `content://`. Con el aviso `MEDIA_SCANNER_SCAN_FILE` (asíncrono, sin respuesta) la foto no llegó a
+        la galería en el emulador recién creado de CI (S38, 2026-11-04: el selector decía «No items»), aunque en un
+        emulador local sí. `content call … scan_file` la escanea antes de volver y dice qué registró.
+
+        Además borra la memoria del selector de archivos (DocumentsUI): abre donde la app lo dejó la última vez (en
+        local, «Downloads», donde la foto no está) y en un emulador nuevo abre «Recent». Así siempre arranca en
+        «Recent», donde sale la foto recién registrada."""
+        for pkg in re.findall(r"package:(\S*documentsui\S*)", self.sh("pm list packages documentsui")):
+            self.sh(f"pm clear {pkg}")
+        path = f"/storage/emulated/0/Pictures/{name}"
+        made = self.sh(f"mkdir -p /storage/emulated/0/Pictures && screencap -p {shlex.quote(path)} && ls {shlex.quote(path)}")
+        if path not in made:
+            raise RuntimeError(f"no se pudo crear {path}: {made.strip()[:200]}")
+        scanned = self.sh(f"content call --uri content://media --method scan_file --arg {shlex.quote(path)}")
+        uri = re.search(r"content://media/\S+/images/media/\d+", scanned)
+        if not uri:
+            raise RuntimeError(f"MediaStore no registró {path}: {scanned.strip()[:200]}")
+        return uri.group(0)
+
     def _screen_size(self) -> tuple[int, int]:
         m = re.search(r"Physical size: (\d+)x(\d+)", self.sh("wm size"))
         if not m:
