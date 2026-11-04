@@ -25,6 +25,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales.decisions.decision_log import read_decisions
 from src.plugins.chats.agent.sales.turn_trace import STAGES, project_stage
 from src.plugins.chats.agent.sales_eval.scorecard.bot import episode_bot
 from src.plugins.chats.shared import turn_traces
@@ -92,6 +93,36 @@ def _team_kind(event: dict[str, Any]) -> str:
     return "texto"
 
 
+@dataclass(frozen=True)
+class _Decision:
+    """Una decisión en la que Jev participó (`evals/decisions.jsonl`)."""
+
+    capability: str
+    #: `jev_dudo` (Jev no alcanzó el umbral y decidió la regla) o `valor_duda`
+    #: (la capacidad resolvió «duda»: cajas, por_mayor, caja_nombrada…).
+    doubt: str | None
+    #: Por qué decidió la regla cuando no fue duda (falla, tiempo, modelo).
+    fallback: str | None
+    shadow: bool
+
+
+def _decision(row: dict[str, Any]) -> _Decision:
+    reason = row.get("reason")
+    if row.get("value") == "duda":
+        doubt: str | None = "valor_duda"
+    elif reason == "duda":
+        doubt = "jev_dudo"
+    else:
+        doubt = None
+    failed = row.get("by") == "respaldo" and reason != "duda"
+    return _Decision(
+        capability=_code(row.get("capability"), "sin_capacidad"),
+        doubt=doubt,
+        fallback=_code(reason, "sin_motivo") if failed else None,
+        shadow=row.get("provider") == "sombra",
+    )
+
+
 @dataclass
 class _Episode:
     window: str
@@ -101,9 +132,16 @@ class _Episode:
     order_id: str | None = None
     handoffs: list[_Handoff] = field(default_factory=list)
     team: list[_TeamMessage] = field(default_factory=list)
+    decisions: list[_Decision] = field(default_factory=list)
     #: Lo que dice OrderFacts del pedido del episodio (None: sin pedido).
     order: str | None = None
 
+
+JEV_NOTE = (
+    "Solo las decisiones en las que Jev participó (proveedor jev o sombra). «jev_dudo»: Jev no llegó al umbral "
+    "y decidió la regla; «valor_duda»: la capacidad respondió «duda». En sombra la duda no queda registrada: "
+    "esas decisiones se cuentan en «en_sombra»."
+)
 
 #: Estados del pedido de un episodio según OrderFacts.
 ORDER_PAID, ORDER_PLACED, ORDER_CANCELLED, ORDER_TEST, ORDER_UNCONFIRMED = (
@@ -289,6 +327,16 @@ def _team_messages(events: list[dict[str, Any]], timeline: _Timeline) -> dict[st
     return out
 
 
+def _decisions_by_episode(rows: list[dict[str, Any]], timeline: _Timeline) -> dict[str, list[_Decision]]:
+    out: dict[str, list[_Decision]] = {}
+    for row in rows:
+        at_ms = _ms(row.get("at_ms"))
+        episode_id = timeline.episode_at(at_ms) if at_ms is not None else None
+        if episode_id is not None:
+            out.setdefault(episode_id, []).append(_decision(row))
+    return out
+
+
 def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_Episode]:
     metadata = _read_metadata(vault_dir, session_id)
     raw = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
@@ -299,6 +347,7 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
     timeline = _Timeline(raw, traces)
     handoffs = _handoffs(metadata, timeline)
     team = _team_messages(_team_events(vault_dir, session_id), timeline)
+    decisions = _decisions_by_episode(read_decisions(vault_dir, session_id), timeline)
     out: list[_Episode] = []
     for episode, window in in_window:
         if window is None:
@@ -312,6 +361,7 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
             furthest=_furthest([*(t.get("stage_out") for t in own), project_stage(episode)]),
             order_id=str(episode["order_id"]) if episode.get("order_id") else None,
             handoffs=handoffs.get(episode_id, []), team=team.get(episode_id, []),
+            decisions=decisions.get(episode_id, []),
         ))
     return out
 
@@ -365,6 +415,31 @@ def _funnel_section(episodes: list[_Episode]) -> dict[str, Any]:
             "sin_confirmar": sum(1 for ep in episodes if ep.order == ORDER_UNCONFIRMED),
         },
         "conversion_a_pedido_pct": _pct(len(placed), len(episodes)),
+    }
+
+
+def _jev_section(episodes: list[_Episode]) -> dict[str, Any]:
+    items = [d for ep in episodes for d in ep.decisions]
+    by_capability: dict[str, dict[str, int]] = {}
+    for d in items:
+        row = by_capability.setdefault(d.capability, {
+            "decisiones": 0, "dudas": 0, "jev_dudo": 0, "valor_duda": 0, "respaldo_por_falla": 0, "en_sombra": 0,
+        })
+        row["decisiones"] += 1
+        if d.doubt:
+            row["dudas"] += 1
+            row[d.doubt] += 1
+        row["respaldo_por_falla"] += d.fallback is not None
+        row["en_sombra"] += d.shadow
+    # Primero las que más dudan; a igual número, la que duda más seguido.
+    ordered = sorted(
+        by_capability.items(), key=lambda kv: (-kv[1]["dudas"], -kv[1]["dudas"] / kv[1]["decisiones"], kv[0])
+    )
+    return {
+        "decisiones": len(items),
+        "dudas": sum(1 for d in items if d.doubt),
+        "por_capacidad": dict(ordered),
+        "respaldo_por_motivo": _counts(d.fallback for d in items if d.fallback),
     }
 
 
@@ -466,4 +541,5 @@ async def build_report(
         "relevos": per_window(_handoff_section),
         "equipo": per_window(_team_section),
         "embudo": _funnel(per_window(_funnel_section), episodes),
+        "jev_dudas": {"nota": JEV_NOTE, **per_window(_jev_section)},
     }

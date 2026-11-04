@@ -213,3 +213,42 @@ async def test_orders_that_medusa_could_not_confirm_are_not_counted_as_lost_sale
     assert funnel["pedidos"]["con_pedido"] == 0
     assert funnel["sin_pedido_se_quedan_en"] == {}
     assert "aviso" in report["embudo"]
+
+
+def _decisions(vault: Path, sid: str, *rows: dict) -> None:
+    """Decisiones de Jev de la conversación (`evals/decisions.jsonl`, `decision_log`)."""
+    path = vault / sid / "evals" / "decisions.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps({"stage": "turno", **row}, ensure_ascii=False) + "\n")
+
+
+async def test_jev_doubts_are_counted_per_capability(tmp_path: Path) -> None:
+    sid = "wa_100000000001"
+    _conversation(tmp_path, sid, started_ms=RECENT_MS, workflow="v2")
+    at = RECENT_MS + 2 * MINUTE_MS
+    _decisions(tmp_path, sid,
+               {"at_ms": at, "capability": "compra", "by": "respaldo", "provider": "jev", "value": False, "reason": "duda"},
+               {"at_ms": at, "capability": "compra", "by": "jev", "provider": "jev", "value": True, "jev": True},
+               {"at_ms": at, "capability": "compra", "by": "respaldo", "provider": "jev", "value": False,
+                "reason": "timeout"},
+               {"at_ms": at, "capability": "compra", "by": "respaldo", "provider": "jev", "value": False,
+                "reason": "error con texto del cliente adentro"},
+               {"at_ms": at, "capability": "cajas", "by": "jev", "provider": "jev", "value": "duda", "jev": "duda"},
+               {"at_ms": at, "capability": "baja", "by": "reglas", "provider": "sombra", "value": False},
+               {"at_ms": ANCIENT_MS, "capability": "compra", "by": "respaldo", "provider": "jev", "reason": "duda"})
+
+    jev = (await _report(tmp_path))["jev_dudas"]
+
+    colossus = jev["actual"]["colossus"]
+    assert colossus["decisiones"] == 6
+    assert colossus["dudas"] == 2
+    assert colossus["por_capacidad"]["compra"] == {
+        "decisiones": 4, "dudas": 1, "jev_dudo": 1, "valor_duda": 0, "respaldo_por_falla": 2, "en_sombra": 0,
+    }
+    assert colossus["por_capacidad"]["cajas"]["valor_duda"] == 1
+    assert colossus["por_capacidad"]["baja"]["en_sombra"] == 1
+    assert list(colossus["por_capacidad"])[:2] == ["cajas", "compra"]  # primero las que más dudan
+    assert colossus["respaldo_por_motivo"] == {"otro": 1, "timeout": 1}
+    assert "sombra" in jev["nota"]
