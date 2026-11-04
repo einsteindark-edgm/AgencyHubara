@@ -112,7 +112,7 @@ fuera del resolutor.
   una nota (`value: string`, "" = nada) la devuelve el egreso como
   `retain_note`; `run_agent_turn` no envía el texto y le da UNA ronda más al
   modelo (`egress_retain_round`). Así actúa `afirmacion_previa` (desde la
-  versión 9 del paquete); el texto suelto pasa además por las revisiones de
+  versión 8 del paquete); el texto suelto pasa además por las revisiones de
   `send_reply`.
 - **Variante** (la misma decisión preguntada de otra forma, mismo
   interruptor): `control: <capacidad>`.

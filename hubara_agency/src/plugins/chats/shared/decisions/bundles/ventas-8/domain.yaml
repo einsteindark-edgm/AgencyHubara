@@ -7,6 +7,10 @@
 # Certificar: cd hubara_agency && uv run python -m src.sdk.cli decisions check
 store_name: Hubara
 farewell_order_registered: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+# Las frases aprobadas para hablar de tiempos de entrega (puerta de
+# afirmaciones, EST-05; las mismas de `practical_facts`): «2 a 3 días hábiles»
+# no es una promesa; «te llega mañana» sí. En ventas-8 desde el 2026-11-04.
+delivery_time_phrases: "1 a 2 dias habiles, 2 a 3 dias habiles"
 # Lo único que se cobra por caja, con las velas que trae (decisión del operador,
 # 2026-10-14: «solo aplica para las velas de deseos», las del 7 de diciembre).
 # El catálogo que lee el bot dice la caja de cada uno; `set_order_slot` anota

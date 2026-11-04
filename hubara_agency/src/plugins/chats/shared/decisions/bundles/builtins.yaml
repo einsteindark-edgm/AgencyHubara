@@ -672,8 +672,9 @@ capabilities_since:
   # afirma (pedido registrado, pago, precio, envío, datos bancarios, entrega)
   # contra los hechos; si no se sostiene, el egreso retiene el texto con la
   # nota que decide la tabla y el modelo tiene UNA ronda más. La pide el egreso
-  # del V2 (`egress.decide_egress`).
-  afirmacion_previa: 9
+  # del V2 (`egress.decide_egress`). En ventas-8, editado en el lugar ya vivo
+  # (decisión del operador, 2026-11-04: debió salir con él).
+  afirmacion_previa: 8
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.

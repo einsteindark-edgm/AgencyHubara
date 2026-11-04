@@ -181,6 +181,16 @@ describe("aromas de otro producto", () => {
     );
   });
 
+  it("la puerta de afirmaciones se lee en palabras (ventas-8, 2026-11-04)", () => {
+    const gate = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "afirmacion_previa" });
+
+    expect(capabilityLabel("afirmacion_previa")).toBe("Puerta de afirmaciones");
+    expect(decisionSentence(gate("Le dices que su pago llegó y no lo verificaste en este turno.")).text).toBe(
+      "Devuelve el texto al modelo: «Le dices que su pago llegó y no lo verificaste en este turno.»",
+    );
+    expect(decisionSentence(gate("")).text).toBe("No afirma nada que no se sostenga");
+  });
+
   it("el precio de la caja dicho por unidad se lee en palabras (ventas-7, 2026-10-16)", () => {
     const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_por_unidad", rule: [] });
 

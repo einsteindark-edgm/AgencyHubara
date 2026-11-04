@@ -35,7 +35,7 @@ dentro de `run_agent_turn`), (3) portavelas y las frases del paquete
 (despedida, saludo repetido), (4) destinatario y rescate sobre
 lo que quedó y (5) el saludo con lo que DE VERDAD sale (un texto frenado no
 cuenta; el V1 lo decidía antes de frenarlo) y (6) la puerta de afirmaciones
-(`afirmacion_previa`, paquetes desde la versión 9; 2026-11-03): lo que el
+(`afirmacion_previa`, paquetes desde la versión 8; 2026-11-03): lo que el
 texto que sale afirma contra los hechos (`bundled_claims`); su valor es la
 nota con que `run_agent_turn` retiene el texto (`retain_note`). Con `reglas` el resultado es
 idéntico al del V1 salvo ese caso (tests de equivalencia). Lo que no es texto
@@ -83,7 +83,7 @@ SALUDO = "saludo"
 PREAMBULO = "preambulo"
 DESPEDIDA = "despedida"
 SALUDO_REPETIDO = "saludo_repetido"
-#: La puerta de afirmaciones (2026-11-03): el catálogo la pide desde la versión 9.
+#: La puerta de afirmaciones (2026-11-03): el catálogo la pide desde la versión 8.
 AFIRMACION_PREVIA = "afirmacion_previa"
 EGRESS_CAPABILITIES: tuple[str, ...] = (
     PREAMBULO, DESTINATARIO, RESCATE, PORTAVELAS, SALUDO, DESPEDIDA, SALUDO_REPETIDO, AFIRMACION_PREVIA,
@@ -657,7 +657,7 @@ async def decide_egress(
         ),
     )
     # 6 · Puerta de afirmaciones: lo que el texto que sale le afirma al cliente
-    # contra los hechos. Solo si el paquete la trae (desde la versión 9) y con
+    # contra los hechos. Solo si el paquete la trae (desde la versión 8) y con
     # texto del LLM que sale; su valor es la nota para retener ("" = nada).
     retain_note = await _assertion_gate(inp, goes_out, ask_jev=ask_jev, provider_of=provider, run=run, claim_facts=claim_facts)
     return EgressOutput(

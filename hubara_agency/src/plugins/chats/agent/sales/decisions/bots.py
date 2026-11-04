@@ -86,7 +86,7 @@ CAPABILITIES: tuple[str, ...] = (
     # dice, en el egreso de V2 (ventas-8, 2026-11-03).
     "saludo_repetido", "despedida",
     # La puerta de afirmaciones del egreso de V2 (2026-11-03; paquetes desde la
-    # versión 9): nace apagada, se sube con `bot_control.sh` a sombra y después a jev.
+    # versión 8): nace apagada, se sube con `bot_control.sh`.
     "afirmacion_previa",
     # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
     # burbuja va primero en el chat y cómo se clasifica un incendio de chat.

@@ -77,6 +77,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   saludo_repetido: "Bienvenida a quien ya conoce la tienda",
   despedida: "Frases que la tienda no dice",
   repregunta: "Volver a pedir un dato",
+  afirmacion_previa: "Puerta de afirmaciones",
   burbuja: "Burbuja principal (App Operador)",
   incendio: "Incendio de chat (App Operador)",
 };
@@ -103,6 +104,7 @@ const CAPABILITY_HINT: Record<string, string> = {
   por_mayor: "¿lo que el bot iba a pasar como pedido al por mayor son unas velas sueltas?",
   caja_por_unidad: "¿le dice que cada vela cuesta lo que cuesta la caja? (solo con Jev)",
   repregunta: "¿el texto le vuelve a pedir un dato que el pedido ya tiene? (solo con Jev)",
+  afirmacion_previa: "¿afirma un hecho que no consultó? Si no se sostiene, el texto vuelve al modelo (solo con Jev)",
   saludo_repetido: "¿el texto le da la bienvenida a quien ya conoce la tienda? (solo con Jev)",
   despedida: "¿el texto dice una frase que la tienda no dice? (solo con Jev)",
   cantidad: "¿cuántas unidades dijo?",
