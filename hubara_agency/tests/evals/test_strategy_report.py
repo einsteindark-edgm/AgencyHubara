@@ -128,3 +128,47 @@ async def test_handoffs_count_each_entry_to_the_team_by_reason_stage_and_origin(
     assert colossus["por_origen"] == {"bot": 1, "dashboard_intervene": 1, "safety_net": 1}
     assert colossus["por_motivo_y_etapa"]["CATALOG_GAP"] == {"variantes": 1}
     assert relevos["botsito"]["por_motivo"] == {"EXPLICIT_REQUEST": 1}
+
+
+def _chat(vault: Path, sid: str, *events: dict) -> None:
+    """Eventos del historial del chat (`sessions/<id>.jsonl`, el del dashboard)."""
+    path = vault / sid / "sessions" / f"{sid}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for event in events:
+            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+def _at(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000, UTC).isoformat()
+
+
+def _team(at_ms: int, **fields) -> dict:
+    return {"role": "assistant", "sender": "human", "content": "texto del colega que nunca sale", "timestamp": _at(at_ms),
+            **fields}
+
+
+async def test_what_the_team_sent_is_counted_by_type_and_stage_without_its_text(tmp_path: Path) -> None:
+    sid = "wa_100000000001"
+    _conversation(tmp_path, sid, started_ms=RECENT_MS, workflow="v2", stages=("descubrimiento", "variantes"))
+    first, second = RECENT_MS + MINUTE_MS + 30_000, RECENT_MS + 3 * MINUTE_MS
+    _chat(tmp_path, sid,
+          {"role": "user", "content": "hola", "timestamp": _at(RECENT_MS)},
+          {"role": "assistant", "content": "respuesta del bot", "timestamp": _at(first)},
+          _team(first),
+          _team(second, kind="template", template_name="seguimiento_humano"),
+          _team(second, kind="ui_component", component_kind="shipping_flow", operator_tool="request_shipping_details"),
+          _team(second, image_url="media/out/foto.jpg"))
+    _conversation(tmp_path, "wa_100000000002", started_ms=RECENT_MS, workflow="v1")
+    _chat(tmp_path, "wa_100000000002", _team(first))
+
+    report = await _report(tmp_path)
+
+    colossus = report["equipo"]["actual"]["colossus"]
+    assert colossus["mensajes"] == 4
+    assert colossus["conversaciones"] == 1
+    assert colossus["por_tipo"] == {"foto": 1, "formulario_de_envio": 1, "plantilla": 1, "texto": 1}
+    assert colossus["por_etapa"] == {"variantes": 3, "descubrimiento": 1}
+    assert colossus["herramientas_de_la_app"] == {"request_shipping_details": 1}
+    assert report["equipo"]["actual"]["botsito"]["mensajes"] == 1
+    assert "texto del colega" not in json.dumps(report, ensure_ascii=False)

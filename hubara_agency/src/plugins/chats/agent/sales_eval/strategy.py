@@ -16,6 +16,7 @@ ventana por cuándo empezó (UTC). En producción, dentro del worker `sales_eval
 from __future__ import annotations
 
 import bisect
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable
@@ -54,12 +55,49 @@ class _Handoff:
     source: str
 
 
+@dataclass(frozen=True)
+class _TeamMessage:
+    kind: str
+    stage: str
+    tool: str | None
+
+
+#: Lo que mandó el equipo con una herramienta de la app (`operator_tool`).
+_TOOL_KIND = {
+    "present_products": "catalogo",
+    "present_product_detail": "producto",
+    "present_product_gallery": "producto",
+    "present_variant_picker": "variantes",
+    "request_shipping_details": "formulario_de_envio",
+    "send_shipping_rates": "tarifas_de_envio",
+    "present_order_confirmation": "resumen_del_pedido",
+    "send_quick_replies": "botones",
+    "send_payment_methods": "datos_de_pago",
+    "apply_coupon": "cupon",
+}
+
+
+def _team_kind(event: dict[str, Any]) -> str:
+    """El tipo de un mensaje del equipo por sus campos, sin leer el texto."""
+    tool = event.get("operator_tool")
+    if tool:
+        return _TOOL_KIND.get(str(tool), "otra_herramienta")
+    if event.get("kind") == "template":
+        return "plantilla"
+    if event.get("document_url"):
+        return "documento"
+    if event.get("image_url"):
+        return "foto"
+    return "texto"
+
+
 @dataclass
 class _Episode:
     window: str
     bot: str
     turns: int
     handoffs: list[_Handoff] = field(default_factory=list)
+    team: list[_TeamMessage] = field(default_factory=list)
 
 
 @dataclass
@@ -188,6 +226,52 @@ def _handoffs(metadata: dict[str, Any], timeline: _Timeline) -> dict[str, list[_
     return out
 
 
+def _iso_ms(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return int((moment if moment.tzinfo else moment.replace(tzinfo=UTC)).timestamp() * 1000)
+
+
+def _team_events(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
+    """Los mensajes del equipo del historial del chat (`sender: human`)."""
+    path = vault_dir / session_id / "sessions" / f"{session_id}.jsonl"
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines:
+        if '"human"' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict) and event.get("sender") == "human":
+            out.append(event)
+    return out
+
+
+def _team_messages(events: list[dict[str, Any]], timeline: _Timeline) -> dict[str, list[_TeamMessage]]:
+    out: dict[str, list[_TeamMessage]] = {}
+    for event in events:
+        at_ms = _iso_ms(event.get("timestamp"))
+        episode_id = timeline.episode_at(at_ms) if at_ms is not None else None
+        if episode_id is None or at_ms is None:
+            continue
+        tool = event.get("operator_tool")
+        out.setdefault(episode_id, []).append(_TeamMessage(
+            kind=_team_kind(event),
+            stage=timeline.stage_at(episode_id, at_ms),
+            tool=_code(tool, "otro") if tool else None,
+        ))
+    return out
+
+
 def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_Episode]:
     metadata = _read_metadata(vault_dir, session_id)
     raw = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
@@ -197,6 +281,7 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
     traces = [t for t in turn_traces.read_traces(vault_dir, session_id) if _is_prod(t)]
     timeline = _Timeline(raw, traces)
     handoffs = _handoffs(metadata, timeline)
+    team = _team_messages(_team_events(vault_dir, session_id), timeline)
     out: list[_Episode] = []
     for episode, window in in_window:
         if window is None:
@@ -205,13 +290,27 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
         own = [t for t in traces if t.get("episode_id") == episode_id]
         customer = [t for t in own if t.get("trigger", "customer") == "customer"]
         bot = _BOT_OF_EPISODE.get(episode_bot(customer), "botsito") if customer else "sin_bot"
-        out.append(_Episode(window=window, bot=bot, turns=len(customer), handoffs=handoffs.get(episode_id, [])))
+        out.append(_Episode(
+            window=window, bot=bot, turns=len(customer),
+            handoffs=handoffs.get(episode_id, []), team=team.get(episode_id, []),
+        ))
     return out
 
 
 def _counts(values: Iterable[str]) -> dict[str, int]:
     """Conteo ordenado de mayor a menor (empates por nombre)."""
     return dict(sorted(Counter(values).items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _team_section(episodes: list[_Episode]) -> dict[str, Any]:
+    items = [m for ep in episodes for m in ep.team]
+    return {
+        "mensajes": len(items),
+        "conversaciones": sum(1 for ep in episodes if ep.team),
+        "por_tipo": _counts(m.kind for m in items),
+        "por_etapa": _counts(m.stage for m in items),
+        "herramientas_de_la_app": _counts(m.tool for m in items if m.tool),
+    }
 
 
 def _handoff_section(episodes: list[_Episode]) -> dict[str, Any]:
@@ -282,4 +381,5 @@ async def build_report(
         "ventanas": {w: _window_info(windows.dates[w]) for w in WINDOWS},
         "muestra": sample,
         "relevos": per_window(_handoff_section),
+        "equipo": per_window(_team_section),
     }
