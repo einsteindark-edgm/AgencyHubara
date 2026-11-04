@@ -219,14 +219,16 @@ def _session_dirs(vault_dir: Path, first_day: date | None) -> list[Path]:
     return sorted(out)
 
 
-def _read_metadata(vault_dir: Path, session_id: str) -> dict[str, Any]:
-    from src.sdk.runtime import FilesystemMetadataStore
-
+def _read_metadata(vault_dir: Path, session_id: str) -> dict[str, Any] | None:
+    """El metadata tal como está, o None si no se puede leer. No pasa por
+    `FilesystemMetadataStore`: ese avisa un documento dañado con un ERROR que
+    nombra la conversación (el número del cliente), y la salida de este
+    informe llega al Estratega."""
     try:
-        data = FilesystemMetadataStore(vault_dir).read(session_id)
-    except Exception:  # noqa: BLE001 — una conversación ilegible no tumba el informe
-        return {}
-    return data if isinstance(data, dict) else {}
+        data = json.loads((vault_dir / session_id / "metadata.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
 
 
 def _test_numbers(vault_dir: Path) -> frozenset[str]:
@@ -360,8 +362,7 @@ def _decisions_by_episode(rows: list[dict[str, Any]], timeline: _Timeline) -> di
     return out
 
 
-def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_Episode]:
-    metadata = _read_metadata(vault_dir, session_id)
+def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, windows: _Windows) -> list[_Episode]:
     raw = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
     in_window = [(e, windows.of(e.get("started_at_ms"))) for e in raw]
     if not any(w for _, w in in_window):
@@ -556,12 +557,16 @@ async def build_report(
     windows = _windows(days, base_days, now, since)
     test_numbers = _test_numbers(vault_dir)
     episodes: list[_Episode] = []
-    excluded = 0
+    excluded = unreadable = 0
     for session_dir in _session_dirs(vault_dir, windows.first_day()):
         if session_dir.name in test_numbers:
             excluded += 1
             continue
-        episodes.extend(_episodes_of(vault_dir, session_dir.name, windows))
+        metadata = _read_metadata(vault_dir, session_dir.name)
+        if metadata is None:
+            unreadable += 1
+            continue
+        episodes.extend(_episodes_of(vault_dir, metadata, session_dir.name, windows))
 
     await _resolve_orders(episodes, order_facts)
 
@@ -579,6 +584,7 @@ async def build_report(
             turns[ep.bot] += ep.turns
         sample[window] = {"conversaciones": conversations, "turnos": turns}
     sample["excluidas_numeros_de_prueba"] = excluded
+    sample["sesiones_ilegibles"] = unreadable
     return {
         "generado": now.isoformat(timespec="seconds"),
         "ventanas": {w: _window_info(windows.dates[w]) for w in WINDOWS},

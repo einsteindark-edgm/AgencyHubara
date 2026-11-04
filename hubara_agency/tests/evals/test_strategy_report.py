@@ -316,6 +316,23 @@ async def test_the_report_carries_no_conversation_ids_phone_numbers_or_texts(tmp
         assert private not in dumped
 
 
+async def test_a_damaged_conversation_is_counted_without_logging_its_number(
+    tmp_path: Path, caplog, capsys
+) -> None:
+    _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2")
+    damaged = tmp_path / "wa_109876544567" / "metadata.json"
+    damaged.parent.mkdir(parents=True)
+    damaged.write_text('{"episodes": [', encoding="utf-8")
+
+    with caplog.at_level("DEBUG"):
+        report = await _report(tmp_path)
+
+    assert report["muestra"]["sesiones_ilegibles"] == 1
+    assert report["muestra"]["actual"]["conversaciones"]["colossus"] == 1
+    captured = capsys.readouterr()
+    assert "109876544567" not in caplog.text + captured.err + captured.out
+
+
 def test_the_cli_prints_the_report_as_json(tmp_path: Path, monkeypatch, capsys) -> None:
     from src.plugins.chats.agent.sales_eval.evals import composition
 
