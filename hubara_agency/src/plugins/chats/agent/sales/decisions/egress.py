@@ -34,7 +34,10 @@ regla dentro de `run_agent_turn`), (1) rescate antes de grabar (el V1 lo hace
 dentro de `run_agent_turn`), (3) portavelas y las frases del paquete
 (despedida, saludo repetido), (4) destinatario y rescate sobre
 lo que quedó y (5) el saludo con lo que DE VERDAD sale (un texto frenado no
-cuenta; el V1 lo decidía antes de frenarlo). Con `reglas` el resultado es
+cuenta; el V1 lo decidía antes de frenarlo) y (6) la puerta de afirmaciones
+(`afirmacion_previa`, paquetes desde la versión 9; 2026-11-03): lo que el
+texto que sale afirma contra los hechos (`bundled_claims`); su valor es la
+nota con que `run_agent_turn` retiene el texto (`retain_note`). Con `reglas` el resultado es
 idéntico al del V1 salvo ese caso (tests de equivalencia). Lo que no es texto
 del LLM no se le pregunta a Jev: el centinela `NO_MESSAGE` (protocolo) y el
 texto de un turno administrativo (nunca sale) los decide la regla, y el mismo
@@ -46,10 +49,11 @@ Sin Temporal ni I/O propio: lo llama la activity `decide_egress`
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from src.plugins.chats.agent.sales.decisions.bundled_claims import ClaimCheck, ClaimFacts
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_JEV, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.contracts import EgressInput, EgressOutput
 from src.plugins.chats.agent.sales.decisions.plan import answer_of
@@ -79,7 +83,11 @@ SALUDO = "saludo"
 PREAMBULO = "preambulo"
 DESPEDIDA = "despedida"
 SALUDO_REPETIDO = "saludo_repetido"
-EGRESS_CAPABILITIES: tuple[str, ...] = (PREAMBULO, DESTINATARIO, RESCATE, PORTAVELAS, SALUDO, DESPEDIDA, SALUDO_REPETIDO)
+#: La puerta de afirmaciones (2026-11-03): el catálogo la pide desde la versión 9.
+AFIRMACION_PREVIA = "afirmacion_previa"
+EGRESS_CAPABILITIES: tuple[str, ...] = (
+    PREAMBULO, DESTINATARIO, RESCATE, PORTAVELAS, SALUDO, DESPEDIDA, SALUDO_REPETIDO, AFIRMACION_PREVIA,
+)
 #: Las decisiones del paquete sobre el texto que sale (ventas-8, informe de
 #: huecos del 2026-11-03), en orden, con el nombre de su guarda en la traza.
 _TEXT_DECISIONS: tuple[tuple[str, str], ...] = (
@@ -542,11 +550,15 @@ async def decide_egress(
     metrics: Any = None,
     decisions: Any = None,
     hours_since_store: int | None = None,
+    claim_facts: Callable[[], Awaitable[ClaimFacts]] | None = None,
 ) -> EgressOutput:
     """Los veredictos del egreso para el texto final del turno (ver el módulo).
     Nunca lanza por Jev: si falla, tarda o duda, decide la regla de hoy.
     `hours_since_store`: horas desde el último mensaje de la tienda (None =
-    nunca escribió); lo lee la activity del historial."""
+    nunca escribió); lo lee la activity del historial.
+    `claim_facts`: lo que el sistema sabe para la puerta de afirmaciones (el
+    pedido, el catálogo, la llave pública, la frase de tiempos); lo reúne la
+    activity, solo si la puerta le pregunta a Jev."""
     # Cada capacidad por su nombre (paquete de la tienda o su clase).
     from src.plugins.chats.agent.sales.decisions.registry import capability, capability_if_present
 
@@ -644,6 +656,10 @@ async def decide_egress(
             hours_since_store=hours_since_store,
         ),
     )
+    # 6 · Puerta de afirmaciones: lo que el texto que sale le afirma al cliente
+    # contra los hechos. Solo si el paquete la trae (desde la versión 9) y con
+    # texto del LLM que sale; su valor es la nota para retener ("" = nada).
+    retain_note = await _assertion_gate(inp, goes_out, ask_jev=ask_jev, provider_of=provider, run=run, claim_facts=claim_facts)
     return EgressOutput(
         text="" if (inp.admin_turn or blocked) else final_text,
         blocked=blocked,
@@ -656,4 +672,41 @@ async def decide_egress(
         rescued_before_record=rescued_before_record,
         guards=guards,
         sanitizer=sanitizer,
+        retain_note=retain_note,
     )
+
+
+async def _assertion_gate(
+    inp: EgressInput,
+    text: str,
+    *,
+    ask_jev: bool,
+    provider_of: Callable[[str], str],
+    run: Callable[..., Awaitable[tuple[Any, str]]],
+    claim_facts: Callable[[], Awaitable[ClaimFacts]] | None,
+) -> str:
+    """La nota de la puerta de afirmaciones para `text` (lo que sale), o "".
+
+    No corre si el paquete no trae la capacidad, si no sale texto del LLM
+    (turno administrativo, el centinela, un texto frenado) ni con `reglas`
+    (nace apagada: la regla del paquete es "" y no se reúnen hechos). Los
+    hechos del sistema se piden solo cuando la puerta va a preguntar."""
+    from src.plugins.chats.agent.sales.decisions.registry import capability_if_present
+
+    gate = capability_if_present(AFIRMACION_PREVIA)
+    if gate is None or not text or not ask_jev or provider_of(gate.name) == "reglas":
+        return ""
+    facts = ClaimFacts()
+    if claim_facts is not None:
+        facts = await claim_facts()
+    note, _by = await run(
+        gate,
+        ClaimCheck(
+            text=text,
+            tools_used=tuple(inp.tools_used or ()),
+            tool_events=tuple(e for e in inp.tool_events or () if isinstance(e, dict)),
+            turn_registered=bool(inp.order_registered),
+            facts=facts,
+        ),
+    )
+    return str(note or "").strip()

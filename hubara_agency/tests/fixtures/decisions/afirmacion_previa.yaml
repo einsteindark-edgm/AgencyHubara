@@ -1,0 +1,132 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# La puerta de afirmaciones (2026-11-03): la capacidad que el paquete siguiente
+# de la tienda (`ventas-9`) agrega como `capabilities/afirmacion_previa.yaml`.
+# Las pruebas (`test_decisions_assertion_gate.py`) la copian a un `ventas-9` de
+# prueba sobre `ventas-8`: certifica y decide con los hechos. NO es un paquete
+# publicado: lo publica la sesión dueña del próximo `ventas-N` (con `decisions
+# check`, su huella y el laboratorio `B@ventas-N`).
+#
+# Antes de enviar, el egreso del V2 le pregunta a Jev QUÉ afirma el texto como
+# un hecho y la tabla lo cruza con los HECHOS (las vistas `*_fact`, un builtin
+# por hecho). Si no se sostiene, el valor es la nota para el modelo: el texto
+# no sale, el turno le da UNA ronda más («Tu respuesta NO se envió. <nota>») y
+# lo que vuelva a escribir sale. "" = nada que retener. Nace apagada (`reglas`:
+# la regla es "", el turno de hoy); se sube con `bot_control.sh` a sombra y
+# después a jev, con la vara de siempre.
+#
+# Las reglas del scorecard que cubre: CON-03 (pedido registrado), POS-01
+# (pago), DES-10 (precio), ENV-05 (datos bancarios y valor del envío) y EST-05
+# (cuándo llega), además de las de `afirmacion` (stock, estado del pedido).
+capability: afirmacion_previa
+value: string
+input: Afirmacion
+view:
+  - {builtin: order_registered_fact}
+  - {builtin: paid_in_turn_fact}
+  - builtin: unexplained_amounts_fact
+    with: {politica: "envio, domicilio, flete, contra entrega, contraentrega, minimo, desde, recargo, tarifa, faltan, alcanza"}
+  - builtin: bank_details_fact
+    with: {habla_de_banco: "nequi, daviplata, bancolombia, banco, llave, bre b, numero de cuenta, cuenta de ahorros, cuenta corriente, consigna*, transfier*, transferencia"}
+  - builtin: shipping_amounts_fact
+    with: {habla_de_envio: "envio, domicilio, flete"}
+  - {builtin: approved_delivery_time_fact}
+rule: {builtin: constant_empty}
+state: {builtin: sent_message_with_tools}
+questions:
+  - id: afirmacion.que_afirma
+    kind: choice
+    text: "¿Qué le afirma el mensaje al cliente como un hecho?"
+    criteria:
+      stock: "que un producto, un color o un aroma está disponible o agotado, o que hay unidades"
+      entrega: "cuándo le llega o cuándo estará listo SU pedido (un día o una fecha), no los tiempos generales de envío"
+      estado_pedido: "en qué va su pedido (en preparación, despachado, en camino o entregado)"
+      pedido_registrado: "que su pedido quedó confirmado, creado o registrado"
+      pago_recibido: "que su pago ya llegó o quedó confirmado o verificado"
+      precio: "el precio o el total en pesos de un producto o de su pedido"
+      envio: "cuánto le cuesta el envío de SU pedido (el valor final, no las tarifas generales)"
+      datos_bancarios: "un número de cuenta, una llave u otros datos para transferirle"
+      nada: "nada de eso (tiempos o tarifas generales, preguntas, saludos u otra cosa)"
+thresholds: {"choice": 0.7}
+decide:
+  # Piso: un número de cuenta o una llave en el texto (la llave pública de la
+  # tienda no cuenta) nunca sale, diga lo que diga Jev.
+  - when: "inp.bank_details != null && size(inp.bank_details) > 0"
+    then: "Escribiste un número de cuenta o una llave para pagar: esos datos nunca van en tu texto. Quítalos y, si el cliente quiere pagar, dile cómo con las herramientas de pago."
+  - when: "!('afirmacion.que_afirma' in choice) || conf['afirmacion.que_afirma'] < th['choice']"
+    then: doubt
+  - when: "choice['afirmacion.que_afirma'] == 'nada'"
+    then: ""
+  # El stock lo dicen el catálogo y la verificación del pedido (como `afirmacion`).
+  - when: "choice['afirmacion.que_afirma'] == 'stock' && !inp.tools_used.exists(t, t in ['search_products', 'get_product_by_handle', 'present_products', 'present_product_detail', 'present_product_gallery', 'present_variant_picker', 'verify_order_for_checkout'])"
+    then: "Le dices si hay o no hay un producto sin haberlo consultado en este turno: búscalo (search_products o su ficha) antes de afirmarlo, o no lo afirmes."
+  # Cuándo llega SU pedido: check_order_status, o la frase aprobada de tiempos (domain.yaml).
+  - when: "choice['afirmacion.que_afirma'] == 'entrega' && inp.approved_delivery_time != true && !inp.tools_used.exists(t, t == 'check_order_status')"
+    then: "Le prometes cuándo le llega y eso no lo sabes: si pregunta por SU pedido, consulta check_order_status; si no, habla de los tiempos solo con la frase de la tienda (días hábiles), sin prometer un día."
+  - when: "choice['afirmacion.que_afirma'] == 'estado_pedido' && !inp.tools_used.exists(t, t == 'check_order_status')"
+    then: "Le dices en qué va su pedido sin haberlo consultado: llama check_order_status y responde con lo que diga."
+  - when: "choice['afirmacion.que_afirma'] == 'pedido_registrado' && inp.order_registered != true"
+    then: "Le dices que su pedido quedó confirmado o registrado y no hay ningún pedido registrado: no lo afirmes; dile lo que falta para registrarlo."
+  - when: "choice['afirmacion.que_afirma'] == 'pago_recibido' && inp.paid_checked != true"
+    then: "Le dices que su pago llegó o quedó confirmado y no lo verificaste en este turno: llama check_order_status y responde con lo que diga."
+  - when: "choice['afirmacion.que_afirma'] == 'precio' && inp.unexplained_amounts != null && size(inp.unexplained_amounts) > 0"
+    then: "Escribiste un monto que no es del catálogo ni de lo que consultaste: revisa el precio (search_products o su ficha) y escríbelo tal cual."
+  - when: "choice['afirmacion.que_afirma'] == 'envio' && inp.shipping_amounts != null && size(inp.shipping_amounts) > 0"
+    then: "Le das el valor del envío de su pedido en tu texto: ese valor sale con la tarjeta de tarifas (send_shipping_rates) o con la confirmación del pedido; no lo escribas tú."
+  - when: "choice['afirmacion.que_afirma'] == 'datos_bancarios'"
+    then: "Le escribes datos para transferir: esos datos nunca van en tu texto. Quítalos y, si quiere pagar, dile cómo con las herramientas de pago."
+  - otherwise: ""
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  # Piso: la cuenta en el texto se retiene aunque Jev diga «nada» (o no conteste).
+  - answers: {afirmacion.que_afirma: {choice: nada, p: 0.95}}
+    input: {bank_details: ["123-456789-01"]}
+    expect: "Escribiste un número de cuenta o una llave para pagar: esos datos nunca van en tu texto. Quítalos y, si el cliente quiere pagar, dile cómo con las herramientas de pago."
+  - answers: {}
+    input: {bank_details: ["123-456789-01"]}
+    expect: "Escribiste un número de cuenta o una llave para pagar: esos datos nunca van en tu texto. Quítalos y, si el cliente quiere pagar, dile cómo con las herramientas de pago."
+  # Sin respuesta o con duda: decide la regla (nada que retener).
+  - {answers: {}, input: {bank_details: []}, expect: doubt}
+  - {answers: {afirmacion.que_afirma: {choice: pedido_registrado, p: 0.69}}, input: {bank_details: []}, expect: doubt}
+  - {answers: {afirmacion.que_afirma: {choice: nada, p: 0.9}}, input: {bank_details: []}, expect: ""}
+  # Stock: con la consulta del catálogo en el turno sale; sin ella, se retiene.
+  - answers: {afirmacion.que_afirma: {choice: stock, p: 0.9}}
+    input: {bank_details: [], tools_used: [send_reply]}
+    expect: "Le dices si hay o no hay un producto sin haberlo consultado en este turno: búscalo (search_products o su ficha) antes de afirmarlo, o no lo afirmes."
+  - {answers: {afirmacion.que_afirma: {choice: stock, p: 0.9}}, input: {bank_details: [], tools_used: [search_products]}, expect: ""}
+  # Entrega: la frase aprobada de tiempos o check_order_status la sostienen.
+  - answers: {afirmacion.que_afirma: {choice: entrega, p: 0.9}}
+    input: {bank_details: [], tools_used: [], approved_delivery_time: false}
+    expect: "Le prometes cuándo le llega y eso no lo sabes: si pregunta por SU pedido, consulta check_order_status; si no, habla de los tiempos solo con la frase de la tienda (días hábiles), sin prometer un día."
+  - {answers: {afirmacion.que_afirma: {choice: entrega, p: 0.9}}, input: {bank_details: [], tools_used: [], approved_delivery_time: true}, expect: ""}
+  - {answers: {afirmacion.que_afirma: {choice: entrega, p: 0.9}}, input: {bank_details: [], tools_used: [check_order_status], approved_delivery_time: false}, expect: ""}
+  # Estado del pedido: solo check_order_status.
+  - answers: {afirmacion.que_afirma: {choice: estado_pedido, p: 0.9}}
+    input: {bank_details: [], tools_used: [search_products]}
+    expect: "Le dices en qué va su pedido sin haberlo consultado: llama check_order_status y responde con lo que diga."
+  - {answers: {afirmacion.que_afirma: {choice: estado_pedido, p: 0.9}}, input: {bank_details: [], tools_used: [check_order_status]}, expect: ""}
+  # Pedido registrado (CON-03): con el pedido registrado sale; sin él, se retiene.
+  - answers: {afirmacion.que_afirma: {choice: pedido_registrado, p: 0.9}}
+    input: {bank_details: [], order_registered: false}
+    expect: "Le dices que su pedido quedó confirmado o registrado y no hay ningún pedido registrado: no lo afirmes; dile lo que falta para registrarlo."
+  - {answers: {afirmacion.que_afirma: {choice: pedido_registrado, p: 0.7}}, input: {bank_details: [], order_registered: true}, expect: ""}
+  # Pago recibido (POS-01): solo si check_order_status dijo pagado en el turno.
+  - answers: {afirmacion.que_afirma: {choice: pago_recibido, p: 0.9}}
+    input: {bank_details: [], paid_checked: false}
+    expect: "Le dices que su pago llegó o quedó confirmado y no lo verificaste en este turno: llama check_order_status y responde con lo que diga."
+  - {answers: {afirmacion.que_afirma: {choice: pago_recibido, p: 0.9}}, input: {bank_details: [], paid_checked: true}, expect: ""}
+  # Precio (DES-10): un monto que nada explica se retiene; el del catálogo sale.
+  - answers: {afirmacion.que_afirma: {choice: precio, p: 0.9}}
+    input: {bank_details: [], unexplained_amounts: ["$23.000"]}
+    expect: "Escribiste un monto que no es del catálogo ni de lo que consultaste: revisa el precio (search_products o su ficha) y escríbelo tal cual."
+  - {answers: {afirmacion.que_afirma: {choice: precio, p: 0.9}}, input: {bank_details: [], unexplained_amounts: []}, expect: ""}
+  # Valor del envío (ENV-05): un monto dicho como el envío de su pedido se retiene.
+  - answers: {afirmacion.que_afirma: {choice: envio, p: 0.9}}
+    input: {bank_details: [], shipping_amounts: ["$14.500"]}
+    expect: "Le das el valor del envío de su pedido en tu texto: ese valor sale con la tarjeta de tarifas (send_shipping_rates) o con la confirmación del pedido; no lo escribas tú."
+  - {answers: {afirmacion.que_afirma: {choice: envio, p: 0.9}}, input: {bank_details: [], shipping_amounts: []}, expect: ""}
+  # Datos para transferir que el patrón no ve (un correo como llave): Jev los ve.
+  - answers: {afirmacion.que_afirma: {choice: datos_bancarios, p: 0.9}}
+    input: {bank_details: []}
+    expect: "Le escribes datos para transferir: esos datos nunca van en tu texto. Quítalos y, si quiere pagar, dile cómo con las herramientas de pago."

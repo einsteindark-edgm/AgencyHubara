@@ -85,6 +85,9 @@ CAPABILITIES: tuple[str, ...] = (
     # La bienvenida a quien ya conoce la tienda y las frases que la tienda no
     # dice, en el egreso de V2 (ventas-8, 2026-11-03).
     "saludo_repetido", "despedida",
+    # La puerta de afirmaciones del egreso de V2 (2026-11-03; paquetes desde la
+    # versión 9): nace apagada, se sube con `bot_control.sh` a sombra y después a jev.
+    "afirmacion_previa",
     # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
     # burbuja va primero en el chat y cómo se clasifica un incendio de chat.
     "burbuja", "incendio",

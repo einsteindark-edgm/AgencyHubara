@@ -624,6 +624,52 @@ async def test_v2_sends_what_the_engine_decided_not_what_the_llm_wrote(tmp_path:
     assert trace["egress"]["verdicts"] == []
 
 
+async def test_v2_gives_the_engine_the_tools_of_the_turn_with_their_results(tmp_path: Path) -> None:
+    """Puerta de afirmaciones (2026-11-03): el egreso decide con lo que el
+    turno consultó (el pago de `check_order_status`), no solo con los nombres."""
+    seen: list[EgressInput] = []
+    paid = json.dumps({"orders": [{"order_id": "o_1", "payment_confirmed": True}]})
+    verdict = EgressOutput(text="Tu pago quedó confirmado 🤍", llm_text="Tu pago quedó confirmado 🤍")
+
+    await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        responses=[_tool_resp("check_order_status"), _final_resp("Tu pago quedó confirmado 🤍")],
+        tool_results={"check_order_status": paid},
+        replace=[_scripted_egress(verdict, seen)],
+    )
+
+    [event] = seen[0].tool_events
+    assert (event["name"], json.loads(event["result"])) == ("check_order_status", json.loads(paid))
+
+
+async def test_v2_retains_what_the_engine_retains_and_sends_the_new_text(tmp_path: Path) -> None:
+    """El egreso retiene el texto con una nota: el cliente nunca lo recibe, el
+    modelo tiene una ronda más y sale lo que escribe después."""
+    seen: list[EgressInput] = []
+    claim, fixed = "¡Listo! Tu pedido quedó registrado 🤍", "Para registrar tu pedido me faltan tus datos de envío 🤍"
+
+    @activity.defn(name="decide_egress")
+    async def decide_egress(inp: EgressInput) -> EgressOutput:
+        seen.append(inp)
+        note = "No hay ningún pedido registrado." if len(seen) == 1 else ""
+        return EgressOutput(text=inp.final_text, llm_text=inp.final_text, final_text=inp.final_text, retain_note=note)
+
+    tracker = await _run(
+        HubaraSalesSessionWorkflowV2, tmp_path,
+        responses=[_final_resp(claim), _final_resp(fixed)],
+        replace=[decide_egress],
+    )
+
+    # El turno del cliente: el texto retenido y el nuevo (después viene el de cierre por silencio).
+    assert [i.final_text for i in seen][:2] == [claim, fixed]
+    assert fixed in _sent(tracker) and claim not in _sent(tracker)
+    assert claim not in _persisted(tracker)
+    # La traza lo muestra en el «Paso a paso», como las otras rondas del turno.
+    trace = _customer_trace(tracker)
+    [retained] = [s for s in trace["steps"] if s.get("kind") == "guard" and s.get("name") == "egress_retain_round"]
+    assert (retained["before"], retained["after"]) == (claim, "No hay ningún pedido registrado.")
+
+
 async def test_v2_blocks_when_the_engine_blocks(tmp_path: Path) -> None:
     verdict = EgressOutput(
         text="", blocked=True, llm_text="Etiqueta registrada.", final_text="Etiqueta registrada.",

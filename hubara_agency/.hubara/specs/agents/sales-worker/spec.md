@@ -1073,6 +1073,49 @@ mide con TAG-09; el paso a paso lo muestra en palabras.
 - WHEN el texto dice «Si quieres te envío las fotos del Velón Koala.»
 - THEN `send_reply` no graba `promises` y el turno sigue como siempre
 
+### Requirement: Lo que el bot afirma antes de enviar se sostiene en los hechos (bot nuevo, 2026-11-03)
+
+Huecos del 10-07 al 11-03: el bot nuevo afirmó hechos que nunca consultó (69
+casos en 51 conversaciones; 25 la última semana: CON-03, POS-01, DES-10,
+ENV-05, EST-05). El egreso del V2 corre antes de grabar y de enviar y SHALL
+poder devolver `retain_note` («retener, con esta nota»). Con nota, `run_agent_turn`
+SHALL no enviar ni grabar el texto del modelo (suelto o de `send_reply`) y dar
+UNA ronda más con «Tu respuesta NO se envió. <nota>»; el texto nuevo vuelve a
+pasar por el egreso. Una segunda nota no retiene otra vez (el texto sale), y no
+hay ronda en un turno administrativo ni sin otra vuelta del modelo (el texto
+sale como antes). Va detrás del parche `egress-retain-round-v1` (solo se
+consulta cuando hay nota).
+
+La nota sale de dos lugares:
+
+- la capacidad `afirmacion_previa` del paquete (el catálogo la pide desde la
+  versión 9; `ventas-8` salió sin ella): Jev dice QUÉ afirma el texto y la tabla decide con los hechos
+  (`order_registered_fact`, `paid_in_turn_fact`, `unexplained_amounts_fact`,
+  `bank_details_fact`, `shipping_amounts_fact`, `approved_delivery_time_fact`).
+  Nace apagada (`reglas`: ni retiene ni le pregunta a Jev);
+- el texto final SUELTO pasa por las mismas revisiones que `send_reply`
+  (`SendReplyTool.held_reason`: la foto verificada, «te confirmo después», los
+  hechos y la lista para el selector), con la misma marca: una retención por
+  mensaje del cliente entre los dos caminos.
+
+#### Scenario: Afirma un pedido registrado sin pedido
+
+- GIVEN el paquete trae `afirmacion_previa` encendida y no hay pedido registrado
+- WHEN el texto dice «¡Listo! Tu pedido quedó registrado 🤍»
+- THEN el texto no sale y el modelo recibe la nota del paquete en una ronda más
+- AND lo que escribe después sale (aunque vuelva a afirmarlo)
+
+#### Scenario: La frase aprobada de tiempos no es una promesa
+
+- GIVEN el dominio de la tienda trae `delivery_time_phrases: "1 a 2 dias habiles"`
+- WHEN el texto dice «En Bogotá llega en 1 a 2 días hábiles»
+- THEN la puerta no retiene
+
+#### Scenario: El texto suelto que promete revisar después
+
+- WHEN el modelo contesta sin `send_reply` «Déjame revisar y te confirmo en un momento»
+- THEN el texto no sale y el modelo recibe el mismo mensaje con que lo retendría `send_reply`
+
 ### Requirement: El formulario y las tarifas que el texto promete salen
 
 Detrás de la ronda (por si el modelo insiste sin la tool), antes de enviar el

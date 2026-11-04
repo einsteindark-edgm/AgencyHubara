@@ -211,7 +211,9 @@ examples:                            # el certificador los corre
   `inp` y `consts`, nunca respuestas (todavía no hay).
 - `view:` en la capacidad: un builtin deriva campos de la entrada (la
   ventana de lo que vio el cliente, lo que el texto enumera) que se leen como
-  `inp.campo`.
+  `inp.campo`. Una lista (`view: [ … ]`) pide varias vistas: cada hecho en su
+  builtin (la puerta de afirmaciones, 2026-11-03); dos vistas no dan el mismo
+  campo (DB004).
 - `control:` una variante de otra capacidad (la misma decisión preguntada de
   otra forma) comparte su interruptor, su fila del panel y su nombre en la
   traza.

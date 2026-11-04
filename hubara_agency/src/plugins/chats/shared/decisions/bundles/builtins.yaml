@@ -118,6 +118,10 @@ domain:
     correction_tone: "string?"                # el tono de la corrección (suave, sin regaño)
     correction_examples: "list<string>?"      # ejemplos de corregir un precio
     sum_correction_examples: "list<string>?"  # ejemplos de corregirle una suma al cliente
+  # La frase aprobada para hablar de tiempos de entrega (puerta de afirmaciones,
+  # EST-05, 2026-11-03): frases separadas por comas (fact_rules.phrases), p. ej.
+  # «2 a 3 dias habiles». Opcional: sin ella, ningún texto la usa.
+  delivery_time_phrases: "string?"
 
 builtins:
   # ── reglas ──
@@ -509,6 +513,42 @@ builtins:
     input: TextoCatalogo
     fields: {found_scents: "tuple<string>", found_colors: "tuple<string>"}
     doc: "Los aromas y colores del catálogo que el texto enumera."
+  # Los hechos de la puerta de afirmaciones (2026-11-03): uno por builtin; la
+  # capacidad pide los que lee (`view: [ … ]`). Calculados con lo que el turno
+  # y el sistema ya saben (`bundled_claims.py`); sin un dato, el hecho no se afirma.
+  order_registered_fact:
+    kind: view
+    input: Afirmacion
+    fields: {order_registered: bool}
+    doc: "Hay un pedido registrado de esta compra: este turno lo registró o el metadata lo tiene (uno de una compra anterior no cuenta). CON-03."
+  paid_in_turn_fact:
+    kind: view
+    input: Afirmacion
+    fields: {paid_checked: bool}
+    doc: "`check_order_status` dijo en este turno que el pago de un pedido está confirmado. POS-01."
+  unexplained_amounts_fact:
+    kind: view
+    input: Afirmacion
+    params: {politica: str}
+    fields: {unexplained_amounts: "tuple<string>"}
+    doc: "Los montos del texto que no explica un precio del catálogo (por cantidad o sumado, con el recargo del link), un monto de lo que el turno consultó ni la política en una oración con una frase de `politica` (price_quotes.find_unexplained_amounts). Sin precios conocidos, ninguno. DES-10."
+  bank_details_fact:
+    kind: view
+    input: Afirmacion
+    params: {habla_de_banco: str}
+    fields: {bank_details: "tuple<string>"}
+    doc: "Los números de cuenta o llaves (6+ dígitos, no un precio) en una oración con una frase de `habla_de_banco`; la llave pública de la tienda no cuenta. Frases del paquete (fact_rules.phrases). ENV-05."
+  shipping_amounts_fact:
+    kind: view
+    input: Afirmacion
+    params: {habla_de_envio: str}
+    fields: {shipping_amounts: "tuple<string>"}
+    doc: "Los montos de una oración con una frase de `habla_de_envio` (el valor del envío dicho en el texto). Frases del paquete (fact_rules.phrases). ENV-05."
+  approved_delivery_time_fact:
+    kind: view
+    input: Afirmacion
+    fields: {approved_delivery_time: bool}
+    doc: "El texto usa la frase aprobada de la tienda para hablar de tiempos de entrega (`domain.yaml: delivery_time_phrases`); sin frase aprobada, false. EST-05."
   # ── pisos ──
   jev:
     kind: floor
@@ -628,6 +668,12 @@ capabilities_since:
   saludo_repetido: 8
   despedida: 8
   repregunta: 8
+  # La puerta de afirmaciones (2026-11-03): antes de enviar, lo que el texto
+  # afirma (pedido registrado, pago, precio, envío, datos bancarios, entrega)
+  # contra los hechos; si no se sostiene, el egreso retiene el texto con la
+  # nota que decide la tabla y el modelo tiene UNA ronda más. La pide el egreso
+  # del V2 (`egress.decide_egress`).
+  afirmacion_previa: 9
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -1045,6 +1091,15 @@ about:
       Revisa, después de enviar, si el bot afirmó algo que solo se sabe
       consultando (el stock, la entrega, el estado del pedido) sin haberlo
       consultado. Por ahora solo mide: no cambia nada.
+  afirmacion_previa:
+    name: Puerta de afirmaciones
+    where: [antes_de_enviar]
+    solves: >-
+      Antes de enviar, revisa lo que el bot le afirma al cliente como un
+      hecho (que su pedido quedó registrado, que su pago llegó, un precio, el
+      valor del envío, una cuenta para transferir, cuándo le llega) contra lo
+      que el sistema sabe. Si no se sostiene, el texto no sale: el bot lo
+      consulta o lo corrige en una ronda más.
   contactar:
     name: Escribirle de nuevo
     where: [remarketing]

@@ -138,7 +138,8 @@ class _CapabilityCheck:
         """(dónde, referencia, clase) de cada builtin que pide la capacidad."""
         spec = self.spec
         refs = [(slot, getattr(spec, slot), slot) for slot in _SLOTS]
-        refs.append(("view", spec.view, "view"))
+        views = spec.views
+        refs += [("view" if len(views) == 1 else f"view[{i}]", ref, "view") for i, ref in enumerate(views)]
         refs.append(("items", spec.items, "items"))
         refs += [(f"questions[{i}].options", q.options, "options") for i, q in enumerate(spec.questions)]
         return [(where, ref, kind) for where, ref, kind in refs if ref is not None]

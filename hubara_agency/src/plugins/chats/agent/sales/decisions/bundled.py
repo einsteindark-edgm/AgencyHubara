@@ -334,6 +334,7 @@ _INGEST = "src.plugins.chats.agent.sales.decisions.bundled_ingest"
 _CATALOG = "src.plugins.chats.agent.sales.decisions.bundled_catalog"
 _EGRESS = "src.plugins.chats.agent.sales.decisions.bundled_egress"
 _PARTS = "src.plugins.chats.agent.sales.decisions.bundled_parts"
+_CLAIMS = "src.plugins.chats.agent.sales.decisions.bundled_claims"
 LAZY_BUILTINS: dict[str, dict[str, str]] = {
     "rule": {
         "opt_out_text": _INGEST,
@@ -386,6 +387,13 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "purchase_window": _INGEST,
         "reply_gap": _INGEST,
         "enumeration_found": _CATALOG,
+        # Los hechos de la puerta de afirmaciones (2026-11-03), uno por builtin.
+        "order_registered_fact": _CLAIMS,
+        "paid_in_turn_fact": _CLAIMS,
+        "unexplained_amounts_fact": _CLAIMS,
+        "bank_details_fact": _CLAIMS,
+        "shipping_amounts_fact": _CLAIMS,
+        "approved_delivery_time_fact": _CLAIMS,
     },
     "items": {
         "paragraphs": _PARTS,
@@ -467,8 +475,8 @@ class BundledCapability:
         """Lo que las condiciones leen como `inp`: los campos declarados y los
         que deriva la vista."""
         out = {name: getattr(inp, name, None) for name in self._table.input_fields}
-        if self._spec.view is not None:
-            out.update(self._call("view", self._spec.view, inp))
+        for view in self._spec.views:
+            out.update(self._call("view", view, inp))
         return out
 
     def _options(self, inp: Any) -> dict[str, dict[str, tuple[str, Any]]]:
