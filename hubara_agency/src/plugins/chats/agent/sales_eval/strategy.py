@@ -25,6 +25,7 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.agent.sales.turn_trace import STAGES, project_stage
 from src.plugins.chats.agent.sales_eval.scorecard.bot import episode_bot
 from src.plugins.chats.shared import turn_traces
 
@@ -96,8 +97,24 @@ class _Episode:
     window: str
     bot: str
     turns: int
+    furthest: str = STAGES[0]
+    order_id: str | None = None
     handoffs: list[_Handoff] = field(default_factory=list)
     team: list[_TeamMessage] = field(default_factory=list)
+    #: Lo que dice OrderFacts del pedido del episodio (None: sin pedido).
+    order: str | None = None
+
+
+#: Estados del pedido de un episodio según OrderFacts.
+ORDER_PAID, ORDER_PLACED, ORDER_CANCELLED, ORDER_TEST, ORDER_UNCONFIRMED = (
+    "pagado", "pedido", "cancelado", "de_prueba", "sin_confirmar",
+)
+_STAGE_RANK = {stage: i for i, stage in enumerate(STAGES)}
+
+
+def _furthest(stages: Iterable[Any]) -> str:
+    known = [s for s in stages if s in _STAGE_RANK]
+    return max(known, key=_STAGE_RANK.__getitem__) if known else STAGES[0]
 
 
 @dataclass
@@ -292,6 +309,8 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
         bot = _BOT_OF_EPISODE.get(episode_bot(customer), "botsito") if customer else "sin_bot"
         out.append(_Episode(
             window=window, bot=bot, turns=len(customer),
+            furthest=_furthest([*(t.get("stage_out") for t in own), project_stage(episode)]),
+            order_id=str(episode["order_id"]) if episode.get("order_id") else None,
             handoffs=handoffs.get(episode_id, []), team=team.get(episode_id, []),
         ))
     return out
@@ -300,6 +319,53 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
 def _counts(values: Iterable[str]) -> dict[str, int]:
     """Conteo ordenado de mayor a menor (empates por nombre)."""
     return dict(sorted(Counter(values).items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+async def _resolve_orders(episodes: list[_Episode], order_facts: Any) -> None:
+    """El pedido de cada episodio, de OrderFacts (gotcha 13): el vault solo
+    guarda el vínculo conversación → `order_id`."""
+    ids = {ep.order_id for ep in episodes if ep.order_id}
+    if not ids:
+        return
+    snapshot = await order_facts.get_facts(ids)
+    for ep in episodes:
+        if not ep.order_id:
+            continue
+        fact = snapshot.facts.get(ep.order_id)
+        if fact is None:
+            ep.order = ORDER_UNCONFIRMED if ep.order_id in snapshot.unresolved else None
+        elif fact.is_test:
+            ep.order = ORDER_TEST
+        elif fact.stage == "cancelled":
+            ep.order = ORDER_CANCELLED
+        else:
+            ep.order = ORDER_PAID if fact.counts_as_revenue else ORDER_PLACED
+
+
+def _pct(part: int, whole: int) -> float | None:
+    return round(100 * part / whole, 1) if whole else None
+
+
+def _funnel_section(episodes: list[_Episode]) -> dict[str, Any]:
+    placed = [ep for ep in episodes if ep.order in (ORDER_PAID, ORDER_PLACED)]
+    lost = [ep for ep in episodes if ep.order not in (ORDER_PAID, ORDER_PLACED, ORDER_UNCONFIRMED)]
+    furthest = Counter(ep.furthest for ep in episodes)
+    return {
+        "conversaciones": len(episodes),
+        "por_etapa_mas_lejana": _counts(ep.furthest for ep in episodes),
+        "llegaron_a": {
+            stage: sum(n for s, n in furthest.items() if _STAGE_RANK[s] >= _STAGE_RANK[stage]) for stage in STAGES
+        },
+        "sin_pedido_se_quedan_en": _counts(ep.furthest for ep in lost),
+        "pedidos": {
+            "con_pedido": len(placed),
+            "pagados": sum(1 for ep in episodes if ep.order == ORDER_PAID),
+            "cancelados": sum(1 for ep in episodes if ep.order == ORDER_CANCELLED),
+            "de_prueba": sum(1 for ep in episodes if ep.order == ORDER_TEST),
+            "sin_confirmar": sum(1 for ep in episodes if ep.order == ORDER_UNCONFIRMED),
+        },
+        "conversion_a_pedido_pct": _pct(len(placed), len(episodes)),
+    }
 
 
 def _team_section(episodes: list[_Episode]) -> dict[str, Any]:
@@ -340,6 +406,17 @@ def _window_info(days: list[date]) -> dict[str, Any]:
     }
 
 
+def _funnel(by_window: dict[str, Any], episodes: list[_Episode]) -> dict[str, Any]:
+    unconfirmed = sum(1 for ep in episodes if ep.order == ORDER_UNCONFIRMED)
+    out: dict[str, Any] = {"etapas": list(STAGES), "fuente_pedidos": "OrderFacts", **by_window}
+    if unconfirmed:
+        out["aviso"] = (
+            f"Medusa no confirmó {unconfirmed} pedido(s): no cuentan como venta ni como conversación sin pedido; "
+            "la conversión puede estar por debajo."
+        )
+    return out
+
+
 async def build_report(
     vault_dir: Path,
     *,
@@ -362,6 +439,12 @@ async def build_report(
             continue
         episodes.extend(_episodes_of(vault_dir, session_dir.name, windows))
 
+    if order_facts is None:
+        from src.sdk.connectorkit import get_order_facts_port
+
+        order_facts = get_order_facts_port()
+    await _resolve_orders(episodes, order_facts)
+
     def per_window(section: Any) -> dict[str, Any]:
         return {
             w: {bot: section([e for e in episodes if e.window == w and e.bot == bot]) for bot in BOTS}
@@ -382,4 +465,5 @@ async def build_report(
         "muestra": sample,
         "relevos": per_window(_handoff_section),
         "equipo": per_window(_team_section),
+        "embudo": _funnel(per_window(_funnel_section), episodes),
     }

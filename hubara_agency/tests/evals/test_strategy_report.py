@@ -15,7 +15,7 @@ from pathlib import Path
 
 from src.plugins.chats.agent.sales_eval import strategy
 from src.plugins.chats.shared import turn_traces
-from src.sdk.connectorkit import InMemoryOrderFacts
+from src.sdk.connectorkit import InMemoryOrderFacts, OrderFacts
 
 NOW = datetime(2026, 10, 10, 15, 0, tzinfo=UTC)
 #: Dentro de la ventana actual (7 días: 2026-10-04 a 2026-10-10).
@@ -172,3 +172,44 @@ async def test_what_the_team_sent_is_counted_by_type_and_stage_without_its_text(
     assert colossus["herramientas_de_la_app"] == {"request_shipping_details": 1}
     assert report["equipo"]["actual"]["botsito"]["mensajes"] == 1
     assert "texto del colega" not in json.dumps(report, ensure_ascii=False)
+
+
+def _order(order_id: str, *, pay_status: str = "pending", stage: str = "new", is_test: bool = False) -> OrderFacts:
+    return OrderFacts(order_id=order_id, display_id="1", total_cop=1, currency_code="cop", pay_status=pay_status,
+                      stage=stage, customer="Cliente sintético", is_draft=False, is_test=is_test)
+
+
+async def test_the_funnel_says_where_conversations_stop_and_orders_come_from_order_facts(tmp_path: Path) -> None:
+    _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2", order_id="ord_paid",
+                  stages=("descubrimiento", "variantes", "confirmacion", "datos_envio", "cierre"))
+    _conversation(tmp_path, "wa_100000000002", started_ms=RECENT_MS, workflow="v2", stages=("descubrimiento", "variantes"))
+    _conversation(tmp_path, "wa_100000000003", started_ms=RECENT_MS, workflow="v2", order_id="ord_cancelled")
+    _conversation(tmp_path, "wa_100000000004", started_ms=RECENT_MS, workflow="v2", order_id="ord_test")
+    facts = InMemoryOrderFacts([
+        _order("ord_paid", pay_status="paid"),
+        _order("ord_cancelled", stage="cancelled"),
+        _order("ord_test", is_test=True),
+    ])
+
+    report = await _report(tmp_path, order_facts=facts)
+
+    funnel = report["embudo"]["actual"]["colossus"]
+    assert funnel["conversaciones"] == 4
+    assert funnel["por_etapa_mas_lejana"] == {"postcierre": 3, "variantes": 1}
+    assert funnel["llegaron_a"]["variantes"] == 4 and funnel["llegaron_a"]["confirmacion"] == 3
+    assert funnel["sin_pedido_se_quedan_en"] == {"postcierre": 2, "variantes": 1}
+    assert funnel["pedidos"] == {"con_pedido": 1, "pagados": 1, "cancelados": 1, "de_prueba": 1, "sin_confirmar": 0}
+    assert funnel["conversion_a_pedido_pct"] == 25.0
+    assert report["embudo"]["fuente_pedidos"] == "OrderFacts"
+
+
+async def test_orders_that_medusa_could_not_confirm_are_not_counted_as_lost_sales(tmp_path: Path) -> None:
+    _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2", order_id="ord_unknown")
+
+    report = await _report(tmp_path, order_facts=InMemoryOrderFacts(available=False))
+
+    funnel = report["embudo"]["actual"]["colossus"]
+    assert funnel["pedidos"]["sin_confirmar"] == 1
+    assert funnel["pedidos"]["con_pedido"] == 0
+    assert funnel["sin_pedido_se_quedan_en"] == {}
+    assert "aviso" in report["embudo"]
