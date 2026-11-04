@@ -52,6 +52,12 @@ def _need_v7() -> None:
     assert (V7 / "bundle.yaml").is_file(), "falta el paquete ventas-7"
 
 
+def _need_v6() -> None:
+    """Lo de antes (`ventas-6`): en un clon de forge solo viaja el paquete que corre la tienda."""
+    if not (V6 / "bundle.yaml").is_file():
+        pytest.skip("clon de forge: ventas-6 (experimento de esta tienda) no viaja")
+
+
 def _topic(bundle: Path, topic: str) -> dict[str, Any]:
     raw = yaml.safe_load((bundle / "turn.yaml").read_text(encoding="utf-8"))
     return next(t for t in raw["questionnaire"]["topics"] if t["id"] == topic)
@@ -143,6 +149,7 @@ async def test_with_ventas_6_the_verification_sees_only_this_turn_and_the_card_n
     monkeypatch: pytest.MonkeyPatch, _isolate_vault_dir: Path
 ) -> None:
     """Lo que pasó el 2026-10-13: por eso el arreglo va con el paquete."""
+    _need_v6()
     state, _ = await _verify_turn_2(monkeypatch, _isolate_vault_dir, "ventas-6")
 
     assert "velitas" not in state and WHOLE not in state

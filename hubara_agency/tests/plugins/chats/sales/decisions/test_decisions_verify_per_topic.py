@@ -19,6 +19,7 @@ import copy
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 from src.plugins.chats.agent.sales.decisions.context import TurnContext, Window
@@ -27,7 +28,10 @@ from src.plugins.chats.agent.sales.decisions.policies import turno_v1
 from src.plugins.chats.agent.sales.decisions.questionnaire import questionnaire_of
 from src.plugins.chats.shared.store_pack import BUNDLES_DIR
 
-V6_RAW = yaml.safe_load((BUNDLES_DIR / "ventas-6" / "turn.yaml").read_text(encoding="utf-8"))["questionnaire"]
+V6_TURN = BUNDLES_DIR / "ventas-6" / "turn.yaml"
+if not V6_TURN.is_file():  # en un clon de forge solo viajan `ventas` y el paquete de la tienda
+    pytest.skip("clon de forge: ventas-6 (experimento de esta tienda) no viaja", allow_module_level=True)
+V6_RAW = yaml.safe_load(V6_TURN.read_text(encoding="utf-8"))["questionnaire"]
 CATALOG_VERIFY = {
     "text": "¿La respuesta le MUESTRA al cliente los productos que pidió{where}",
     "criteria": {"true": "sí: se los muestra", "false": "no: solo le pregunta o le ofrece verlos"},

@@ -60,3 +60,83 @@ def test_workspaces_del_overlay_existen(plan):
         for req in required:
             real = req.replace("catalog/", "hubara_catalog/")
             assert (forge.REPO / ws / real).exists(), f"{agent}: {real} ya no existe en el motor"
+
+
+def test_el_paquete_del_clon_es_el_que_corre_la_tienda_madre():
+    """Promover un paquete en Hubara (`tenants.hubara.lab.decisions_bundle`)
+    sin avisarle a forge dejaría a los clones con la inteligencia vieja."""
+    import re
+
+    db = forge.load_manifest()["decision_bundles"]
+    tfvars = (forge.REPO / "infra/terraform/platform/tenants.auto.tfvars").read_text()
+    running = re.findall(r'^\s*decisions_bundle\s*=\s*"([^"]+)"', tfvars, re.M)
+    assert running == [db["store"]], (
+        f"la tienda madre corre {running} y forge clona {db['store']!r}: "
+        "actualizar decision_bundles.store en forge/manifest.yaml"
+    )
+    bundles = forge.REPO / db["dir"]
+    for b in {db["default"], db["store"]}:
+        assert (bundles / b / "bundle.yaml").is_file(), f"no existe el paquete {b}"
+
+
+def test_cada_campo_del_dominio_lo_siembra_init_o_es_de_la_tienda_madre():
+    """El motor declara el dominio de una tienda en `builtins.yaml → domain`. Un
+    campo nuevo (aunque sea opcional) que `init` no siembra deja al clon sin esa
+    función y nadie se entera: pasó con ventas-7 (el 2.º toque del remarketing y
+    el tono de las correcciones). Va al template o a `decision_bundles.not_seeded`."""
+    import yaml
+
+    def fields(node: dict, prefix: str = "") -> set[str]:
+        out: set[str] = set()
+        for key, value in node.items():
+            out |= fields(value, f"{prefix}{key}.") if isinstance(value, dict) else {prefix + key}
+        return out
+
+    db = forge.load_manifest()["decision_bundles"]
+    declared = fields(yaml.safe_load((forge.REPO / db["dir"] / "builtins.yaml").read_text(encoding="utf-8"))["domain"])
+    seeded = fields(yaml.safe_load((forge.ROOT / "templates" / "sales_domain.yaml.tpl").read_text(encoding="utf-8")))
+    not_seeded = set(db.get("not_seeded", []))
+
+    assert declared - seeded - not_seeded == set(), "campos del dominio que el clon no recibe"
+    assert not_seeded <= declared, f"not_seeded nombra campos que el motor ya no tiene: {not_seeded - declared}"
+    assert not (not_seeded & seeded), "un campo sembrado no puede estar en not_seeded"
+
+
+def test_las_cifras_de_commerce_literals_son_las_de_la_tienda_madre():
+    """`commerce_literals` es la política de la tienda madre tal como la citan
+    sus workspaces (premortem 2026-10-09): si una tarifa cambia en el código y
+    no acá, la voz del agente del clon heredaría la vieja."""
+    import re
+
+    sales = forge.REPO / "hubara_agency/src/plugins/chats/agent/sales/config"
+    shipping = (sales / "shipping.py").read_text(encoding="utf-8")
+    payments = (sales / "payments.py").read_text(encoding="utf-8")
+    # el mínimo de contra entrega lo leen ventas y remarketing (chats/shared, 2026-10-19)
+    terms = (forge.REPO / "hubara_agency/src/plugins/chats/shared/payment_terms.py").read_text(encoding="utf-8")
+
+    def amount(name: str, src: str = shipping) -> str:
+        return forge.commerce_text(int(re.search(rf"{name}(?:: int)? = ([\d_]+)", src).group(1).replace("_", "")))
+
+    def text(src: str, name: str) -> str:
+        return re.search(rf'{name}: str = "([^"]+)"', src).group(1)
+
+    expected = {
+        amount("local_cop"): "shipping_rate_local_cop",
+        amount("national_cop"): "shipping_rate_national_cop",
+        amount("DEFAULT_CASH_ON_DELIVERY_MIN_COP", terms): "cash_on_delivery_min_cop",
+        text(payments, "link_surcharge_local"): "payment_link_surcharge_local",
+        text(payments, "link_surcharge_other"): "payment_link_surcharge_other",
+        text(shipping, "local_zone"): "shipping_local_zone",
+        forge.INIT_REAL_DATA["3229041190"]: "payment_nequi_number",
+    }
+    manifest = forge.load_manifest()
+    assert manifest["commerce_literals"] == expected
+    voices = "".join(
+        p.read_text(encoding="utf-8")
+        for ws, _ in forge.overlay_agents(manifest).values()
+        for p in sorted((forge.REPO / ws).rglob("*"))
+        if p.is_file() and p.suffix in {".md", ".yaml"}
+    )
+    for literal, field in expected.items():
+        if field != "payment_nequi_number":  # la llave se siembra como marca (INIT_REAL_DATA)
+            assert literal in voices, f"{literal} ({field}) ya no está en los workspaces: la regla sobra"

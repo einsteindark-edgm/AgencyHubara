@@ -33,6 +33,15 @@ STORE_EXAMPLES = (
     "aromas / colores", "por aroma/color", "elegir aroma/color", "opciones de aroma/color",
 )
 
+#: Los de ventas-7 que el agente lee solo en un toque o un turno concreto (no en
+#: los textos de arriba): los prueban test_remarketing_catalog_silent (2.º toque,
+#: el 1.º que explica) y test_send_reply_fact_check (la corrección). El dominio de
+#: un clon de forge los trae también en `ventas`.
+CONDITIONAL_VOCABULARY = {
+    "hook_examples_explain", "practical_facts", "hook_examples_practical",
+    "correction_tone", "correction_examples", "sum_correction_examples",
+}
+
 
 @pytest.fixture(autouse=True)
 def _default_store(monkeypatch):
@@ -80,6 +89,8 @@ def test_the_store_domain_is_certified_and_feeds_the_agent() -> None:
 
     assert domain["store_name"].strip()
     for key, value in domain["vocabulary"].items():
+        if key in CONDITIONAL_VOCABULARY:
+            continue
         for piece in value if isinstance(value, list) else [value]:
             assert piece in texts, f"vocabulary.{key} no llega a lo que lee el agente: {piece!r}"
 

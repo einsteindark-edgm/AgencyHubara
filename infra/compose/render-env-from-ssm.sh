@@ -55,7 +55,7 @@ _require_real_auth_param() {
       echo "  HUBARA_ENV=production exige los 4 params de auth provisionados:"
       echo "  COGNITO_* (via 'terraform apply' de platform) + WHATSAPP_APP_SECRET"
       echo "  y HUBARA_SERVICE_TOKEN (via 'aws ssm put-parameter --overwrite')."
-      echo "  Detalle y orden: infra/DEPLOY_RUNBOOK.md FASE 2.1."
+      echo "  Detalle y orden: infra/DEPLOY_RUNBOOK.md FASE 2.1 (en un clon de forge: NEXT_STEPS.md F3)."
     } >&2
     exit 1
   fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """migrate — la migración completa a un cliente nuevo, como STEPS con estado.
 
-  python3 forge/migrate.py status <slug> [--dest <clon>]
+  python3 forge/migrate.py status <slug> [--dest <clon>] [--json]
   python3 forge/migrate.py run    <slug> <step> --dest <clon> [--allow-todos]
   python3 forge/migrate.py done   <slug> <step>      # marcar un step guiado
 
@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -37,11 +38,17 @@ PY = sys.executable or "python3"
 # ── Definición de steps ───────────────────────────────────────────────────────
 
 
+def _q(path: Path) -> str:
+    """Una ruta lista para pegar en la terminal (forge ya rechaza las raras)."""
+    return shlex.quote(str(path))
+
+
+
 def _guide_whatsapp(vars_: dict, dest: Path) -> str:
     return f"""\
 # S5 — WhatsApp/Meta: el CLI de aprobaciones, DESDE EL CLON (camino crítico:
 #      Meta tarda días/semanas — arrancar este step lo antes posible)
-cd {dest}/infra/whatsapp-provisioning
+cd {_q(dest / "infra/whatsapp-provisioning")}
 cp tenants/{vars_["slug"]}.env.example tenants/{vars_["slug"]}.env   # completar con el BM de {vars_["company"]}
 python3 whatsapp_provision.py discover  --config tenants/{vars_["slug"]}.env
 python3 whatsapp_provision.py plan      --config tenants/{vars_["slug"]}.env
@@ -56,36 +63,46 @@ python3 whatsapp_provision.py ads-token --config tenants/{vars_["slug"]}.env   #
 
 def _guide_bootstrap(vars_: dict, dest: Path) -> str:
     return f"""\
-# S6 — Bootstrap AWS del cliente (una vez, con TUS creds admin, DESDE EL CLON)
-cd {dest}
+# S7 — Bootstrap AWS del cliente (una vez, con TUS creds admin, DESDE EL CLON)
+cd {_q(dest)}
 python3 infra/scripts/aws_bootstrap.py state          # bucket {vars_["prefix"]}-tfstate + lock
+#   ⚠ si dice «bucket ya existe» y esta tienda no lo creó, ese slug ya es de OTRO proyecto: parar
+# repo del cliente en GitHub (privado), SIN push todavía: S8 le carga las variables y S9 empuja
+gh repo create {vars_["repo"]} --private --source . --remote origin
 ssh-keygen -t ed25519 -f ~/.ssh/{vars_["slug"]}_ops -C "{vars_["slug"]}-ops"
-#   → pública a infra/terraform/compute/tenants.auto.tfvars, privada al secret EC2_SSH_KEY
-python3 infra/scripts/aws_bootstrap.py github --repo {vars_["repo"]}
+#   → pública a infra/terraform/compute/tenants.auto.tfvars (la privada la sube S8 a GitHub)
 #   + crear el environment `production` en GitHub con required reviewers"""
 
 
 def _guide_platform(vars_: dict, dest: Path) -> str:
+    slug = vars_["slug"]
     return f"""\
 # S8 — Platform + secretos (DESDE EL CLON; state propio {vars_["prefix"]}-tfstate)
-cd {dest}/infra/terraform/platform
-cp envs/real.s3.tfbackend.example envs/real.s3.tfbackend   # (primera vez; revisar bucket/region)
+cd {_q(dest / "infra/terraform/platform")}
+cp envs/real.s3.tfbackend.example envs/real.s3.tfbackend   # (primera vez; el bucket es {vars_["prefix"]}-tfstate)
 terraform init -backend-config=envs/real.s3.tfbackend && terraform apply
 #   (project.auto.tfvars ya trae create_github_oidc_provider=false)
-# Secretos reales → SSM {vars_["ssm_prefix"]}/{vars_["slug"]}/* :
-cd {dest}
-python3 infra/scripts/aws_bootstrap.py secrets --tenant {vars_["slug"]} --file secrets.{vars_["slug"]}.env
-# + los bloques `aws ssm put-parameter` que imprimieron los steps S4 (Medusa) y S5 (Temporal)"""
+# GitHub del repo — DESPUÉS del apply (lee sus outputs): vars AWS_*/TF_STATE_* + secret EC2_SSH_KEY
+cd {_q(dest)}
+python3 infra/scripts/aws_bootstrap.py github --repo {vars_["repo"]} --platform-dir infra/terraform/platform --ssh-key-file ~/.ssh/{slug}_ops
+# Secretos reales → SSM {vars_["ssm_prefix"]}/{slug}/* (la copia la ignora git):
+cp infra/scripts/secrets.example.env infra/scripts/secrets.{slug}.env   # llenar
+python3 infra/scripts/aws_bootstrap.py secrets --tenant {slug} --file infra/scripts/secrets.{slug}.env
+python3 infra/scripts/aws_bootstrap.py verify --tenant {slug}    # lo que falta antes del deploy
+#   obligatorios para el primer deploy: WHATSAPP_APP_SECRET, HUBARA_SERVICE_TOKEN, COGNITO_* (apply)
+# + los bloques `aws ssm put-parameter` que imprimieron los steps S4 (seed de Medusa) y S6 (Temporal)
+# + llave Nequi de la tienda: store.payment_nequi_number en tenants.auto.tfvars → apply"""
 
 
 def _guide_compute(vars_: dict, dest: Path) -> str:
     return f"""\
 # S9 — Compute + primer deploy + schedules (DESDE EL CLON)
-cd {dest}/infra/terraform/compute
+cd {_q(dest / "infra/terraform/compute")}
+cp envs/real.s3.tfbackend.example envs/real.s3.tfbackend   # (primera vez)
 terraform init -backend-config=envs/real.s3.tfbackend && terraform apply   # caja + EIP
 #   → poner domain "<ip-con-guiones>.sslip.io" en tenants.auto.tfvars + api_url en platform → re-apply
-cd {dest} && git push origin main       # dispara backend-deploy + frontend-deploy del CLON
-# Después: webhook Meta + seed de catálogo + schedules — checklist completo en {dest}/NEXT_STEPS.md (F7/F8)"""
+cd {_q(dest)} && git push origin main       # dispara backend-deploy + frontend-deploy del CLON
+# Después: webhook Meta + Sync del catálogo + schedules + App Operador — checklist en {_q(dest / "NEXT_STEPS.md")} (F7/F8)"""
 
 
 STEPS: list[dict] = [
@@ -120,14 +137,23 @@ def mark(bundle: Path, step: str, status: str) -> None:
     state_file(bundle).write_text(json.dumps(st, indent=2))
 
 
+def has_commit(dest: Path) -> bool:
+    """El clon existe de verdad: `.git` CON su primer commit (si el commit falló,
+    queda `.git` sin HEAD y no es un clon)."""
+    return (dest / ".git").exists() and subprocess.run(
+        ["git", "-C", str(dest), "rev-parse", "--verify", "-q", "HEAD"], capture_output=True
+    ).returncode == 0
+
+
 def auto_done(step: str, bundle: Path, dest: Path | None) -> bool:
     """Evidencia en disco de que un step auto ya corrió (además del estado)."""
     if step == "clone":
-        return dest is not None and (dest / ".git").exists()
+        return dest is not None and has_commit(dest)
     if step == "supabase":
         return (bundle / ".outputs.supabase.json").exists()
-    if step == "medusa":
-        return (bundle / ".outputs.medusa.json").exists()
+    if step == "medusa":  # el avance se guarda a mitad: hecho = con su base_url
+        out = bundle / ".outputs.medusa.json"
+        return out.exists() and bool(json.loads(out.read_text()).get("base_url"))
     return False
 
 
@@ -135,6 +161,7 @@ def auto_done(step: str, bundle: Path, dest: Path | None) -> bool:
 
 
 def guard_dest(dest: Path) -> None:
+    forge.check_dest(dest)  # sin espacios: los pasos guiados la imprimen en `cd <destino>`
     protected = forge.main_repo_root(forge.REPO)  # cubre también correr desde un worktree
     if dest.resolve().is_relative_to(protected.resolve()):
         raise forge.ForgeError(
@@ -176,11 +203,33 @@ def run_step(slug: str, step: str, bundle: Path, dest: Path | None, allow_todos:
     code = runner(argv).returncode
     if code == 0 and spec["kind"] == "auto":
         mark(bundle, step, "done")
+    if code == 0 and step == "clone" and dest is not None:
+        # una migración dura días: la consola vuelve a encontrar el clon (y sabe
+        # si es uno de prueba, que no va a producción)
+        st = load_state(bundle)
+        st["dest"] = str(dest.resolve())
+        st["test_clone"] = bool(allow_todos)
+        state_file(bundle).write_text(json.dumps(st, indent=2))
     return code
 
 
-def cmd_status(slug: str, bundle: Path, dest: Path | None) -> None:
+def step_rows(bundle: Path, dest: Path | None) -> list[dict]:
+    st = load_state(bundle)["steps"]
+    return [
+        {"id": s["id"], "title": s["title"], "kind": s["kind"],
+         "done": st.get(s["id"]) == "done" or auto_done(s["id"], bundle, dest)}
+        for s in STEPS
+    ]
+
+
+def cmd_status(slug: str, bundle: Path, dest: Path | None, as_json: bool = False) -> None:
     vars_ = forge.render_vars(forge.load_client(bundle))
+    if as_json:  # lo consume Acktos Studio (Forge Console → Migración)
+        st = load_state(bundle)
+        print(json.dumps({"slug": slug, "company": vars_["company"], "dest": st.get("dest"),
+                          "test_clone": st.get("test_clone", False), "steps": step_rows(bundle, dest)},
+                         ensure_ascii=False))
+        return
     st = load_state(bundle)["steps"]
     print(f"Migración de {vars_['company']} ({slug}) — SSM {vars_['ssm_prefix']}/{slug}, "
           f"recursos {vars_['prefix']}-*\n")
@@ -196,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="migrate", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("status"); p.add_argument("slug"); p.add_argument("--dest")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("run"); p.add_argument("slug"); p.add_argument("step")
     p.add_argument("--dest"); p.add_argument("--allow-todos", action="store_true")
     p = sub.add_parser("done"); p.add_argument("slug"); p.add_argument("step")
@@ -203,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     bundle = forge.CLIENTS / a.slug
     try:
         if a.cmd == "status":
-            cmd_status(a.slug, bundle, Path(a.dest) if a.dest else None)
+            cmd_status(a.slug, bundle, Path(a.dest) if a.dest else None, a.json)
         elif a.cmd == "done":
             forge.render_vars(forge.load_client(bundle))  # guards
             if a.step not in STEP_IDS:

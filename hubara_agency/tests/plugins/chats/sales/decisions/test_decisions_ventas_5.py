@@ -175,6 +175,8 @@ async def test_with_ventas_5_the_yes_to_the_announced_close_is_a_purchase(monkey
 
 async def test_with_ventas_4_the_yes_was_retracted(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lo que pasó en producción: por eso el arreglo se promueve con el paquete."""
+    if not (V4 / "bundle.yaml").is_file():
+        pytest.skip("clon de forge: ventas-4 (experimento de esta tienda) no viaja")
     verdict = await _compra(monkeypatch, "ventas-4", asked=0.10)
 
     assert (verdict.value, verdict.by) == ([None, "text"], "jev")

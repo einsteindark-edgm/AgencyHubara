@@ -10,6 +10,7 @@ con el handle de cada producto para seguir la venta sin buscarlo.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from tests.metadata_store_fakes import MergingMetadataStoreMixin
 
 from typing import Any
@@ -215,6 +216,8 @@ def test_the_note_says_the_quantity_is_boxes() -> None:
 
 @pytest.mark.asyncio
 async def test_the_ingest_reads_what_the_store_sells_by_box(monkeypatch) -> None:
+    if not (Path(__file__).resolve().parents[5] / "forge").is_dir():
+        pytest.skip("clon de forge: las cajas (las velas de deseos) son de la tienda madre")
     from src.plugins.chats.shared import store_pack
 
     monkeypatch.setenv("SALES_DECISIONS_BUNDLE", "ventas-7")

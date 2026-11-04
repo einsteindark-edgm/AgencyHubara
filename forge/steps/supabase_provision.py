@@ -102,17 +102,17 @@ def cmd_apply(vars_: dict, bundle: Path, api=http, sleep=time.sleep) -> dict:
     if not org or org.startswith("TODO"):
         raise forge.ForgeError("client.yaml: medusa.supabase_org sin completar (id de la org)")
     existing = find_project(vars_, api)
+    out_file = bundle / ".outputs.supabase.json"
     if existing:
-        print(f"= proyecto {name} ya existe (ref {existing['id']}) — no-op")
-        ref = existing["id"]
-        outputs_file = bundle / ".outputs.supabase.json"
-        if not outputs_file.exists():
+        print(f"= proyecto {name} ya existe (ref {existing['id']})")
+        if not out_file.exists():
             raise forge.ForgeError(
                 f"{name} existe pero no tengo sus outputs locales — la DB pass no es "
                 "recuperable por API; resetearla en el dashboard y escribir "
-                f"{outputs_file} a mano"
+                f"{out_file} a mano"
             )
-        return json.loads(outputs_file.read_text())
+        _wait_healthy(existing["id"], api, sleep)
+        return json.loads(out_file.read_text())
     password = gen_db_pass()
     created = api(
         "POST",
@@ -125,19 +125,30 @@ def cmd_apply(vars_: dict, bundle: Path, api=http, sleep=time.sleep) -> dict:
         },
     )
     ref = created["id"]
-    print(f"+ proyecto {name} creado (ref {ref}) — esperando ACTIVE_HEALTHY…")
-    for _ in range(60):
-        status = api("GET", f"/projects/{ref}").get("status", "")
-        if status == "ACTIVE_HEALTHY":
-            break
-        sleep(10)
-    else:
-        print("⚠ el proyecto no llegó a ACTIVE_HEALTHY en 10 min — revisá el dashboard")
+    # La clave solo existe AHORA (no se recupera por API): se guarda antes de
+    # esperar, así un corte, un 503 o «Detener» no la pierden.
     outputs = {"ref": ref, "region": region, **db_urls(ref, password, region)}
-    out_file = bundle / ".outputs.supabase.json"
+    out_file.touch(mode=0o600, exist_ok=True)
+    out_file.chmod(0o600)
     out_file.write_text(json.dumps(outputs, indent=2))
-    print(f"✓ outputs → {out_file} (gitignored; la DATABASE_URL lleva la credencial)")
+    print(f"+ proyecto {name} creado (ref {ref}); outputs → {out_file} (gitignored; la DATABASE_URL lleva la credencial)")
+    _wait_healthy(ref, api, sleep)
     return outputs
+
+
+def _wait_healthy(ref: str, api, sleep, tries: int = 60) -> None:
+    """Espera ACTIVE_HEALTHY (~10 min); si no llega, el paso FALLA (no queda hecho):
+    repetirlo vuelve a esperar sin crear nada."""
+    print(f"  esperando que {ref} quede ACTIVE_HEALTHY…")
+    for _ in range(tries):
+        if api("GET", f"/projects/{ref}").get("status", "") == "ACTIVE_HEALTHY":
+            print("✓ ACTIVE_HEALTHY")
+            return
+        sleep(10)
+    raise forge.ForgeError(
+        f"el proyecto {ref} no llegó a ACTIVE_HEALTHY en 10 min — revisá el dashboard de Supabase "
+        "y repetí el paso (la clave ya quedó guardada)"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

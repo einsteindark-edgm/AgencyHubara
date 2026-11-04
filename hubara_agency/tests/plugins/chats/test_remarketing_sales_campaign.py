@@ -165,6 +165,8 @@ def _env(monkeypatch):
 
 
 async def test_the_context_of_a_campaign_lead_brings_its_touch_with_prices(_isolate_vault_dir, monkeypatch, _env) -> None:
+    if not (Path(__file__).resolve().parents[4] / "forge").is_dir():
+        pytest.skip("clon de forge: las cajas (las velas de deseos) son de la tienda madre")
     from temporalio.testing import ActivityEnvironment
 
     context_mod, campaign = _env

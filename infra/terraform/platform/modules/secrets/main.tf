@@ -2,8 +2,10 @@
 # Coincide con INFRASTRUCTURE.md §3.7.
 #
 # Terraform crea la CLAVE con un placeholder; el VALOR real se setea fuera de banda
-# (`aws ssm put-parameter --overwrite`) y NO entra al state ni a git. El
-# `ignore_changes = [value]` evita que un `apply` posterior pise el secreto real.
+# (`aws ssm put-parameter --overwrite`), nunca en git. El `ignore_changes = [value]`
+# evita que un `apply` posterior pise el secreto real — pero el refresh SÍ lo lee
+# y queda EN CLARO en el state: el bucket del state es tan secreto como SSM (el CI
+# de solo lectura no lee objetos de buckets de otros proyectos, github-oidc).
 #
 # El instance profile de ../../compute leerá este prefijo (ssm:GetParametersByPath).
 
