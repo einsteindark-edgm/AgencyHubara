@@ -15,6 +15,8 @@ ventana por cuándo empezó (UTC). En producción, dentro del worker `sales_eval
 """
 from __future__ import annotations
 
+import argparse
+import asyncio
 import bisect
 import json
 import re
@@ -42,6 +44,35 @@ _ROUTE_HUMAN = "humano"
 #: Solo códigos (motivos, orígenes, capacidades) llegan al informe: un valor con
 #: forma de texto libre se cuenta como `otro`, nunca se copia.
 _CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_:.-]{0,63}$")
+#: Relevo de rutina: el bot registró el pedido y el equipo verifica el pago.
+PAYMENT_CHECK = "PAYMENT_VERIFICATION_PENDING"
+NORTH_STAR = (
+    "Conversaciones en las que intervino el equipo (al menos un relevo o un mensaje del equipo) por cada 100 "
+    "conversaciones de la ventana. «relevos_sin_verificar_pago_por_100» deja fuera la verificación del pago de un "
+    "pedido que ya registró el bot. Bajar es mejor."
+)
+OBJECTIONS = {
+    "disponible": False,
+    "motivo": (
+        "Producción no registra el tipo de objeción ni si se resolvió: el scorecard solo califica si el bot escaló "
+        "cuando el guion lo exige (TAG-03) y el motor de decisiones no tiene una capacidad de objeciones."
+    ),
+    "faltante": (
+        "Una capacidad «objecion» en el paquete de decisiones (tipo cerrado: precio, envío, tiempo de entrega, "
+        "confianza, producto) que deje en evals/decisions.jsonl el tipo y si el cliente siguió hacia la compra."
+    ),
+}
+JEV_NOTE = (
+    "Solo las decisiones en las que Jev participó (proveedor jev o sombra). «jev_dudo»: Jev no llegó al umbral "
+    "y decidió la regla; «valor_duda»: la capacidad respondió «duda». En sombra la duda no queda registrada: "
+    "esas decisiones se cuentan en «en_sombra»."
+)
+
+#: Estados del pedido de un episodio según OrderFacts.
+ORDER_PAID, ORDER_PLACED, ORDER_CANCELLED, ORDER_TEST, ORDER_UNCONFIRMED = (
+    "pagado", "pedido", "cancelado", "de_prueba", "sin_confirmar",
+)
+_STAGE_RANK = {stage: i for i, stage in enumerate(STAGES)}
 
 
 def _code(value: Any, default: str) -> str:
@@ -137,35 +168,6 @@ class _Episode:
     order: str | None = None
 
 
-#: Relevo de rutina: el bot registró el pedido y el equipo verifica el pago.
-PAYMENT_CHECK = "PAYMENT_VERIFICATION_PENDING"
-NORTH_STAR = (
-    "Conversaciones en las que intervino el equipo (al menos un relevo o un mensaje del equipo) por cada 100 "
-    "conversaciones de la ventana. «relevos_sin_verificar_pago_por_100» deja fuera la verificación del pago de un "
-    "pedido que ya registró el bot. Bajar es mejor."
-)
-OBJECTIONS = {
-    "disponible": False,
-    "motivo": (
-        "Producción no registra el tipo de objeción ni si se resolvió: el scorecard solo califica si el bot escaló "
-        "cuando el guion lo exige (TAG-03) y el motor de decisiones no tiene una capacidad de objeciones."
-    ),
-    "faltante": (
-        "Una capacidad «objecion» en el paquete de decisiones (tipo cerrado: precio, envío, tiempo de entrega, "
-        "confianza, producto) que deje en evals/decisions.jsonl el tipo y si el cliente siguió hacia la compra."
-    ),
-}
-JEV_NOTE = (
-    "Solo las decisiones en las que Jev participó (proveedor jev o sombra). «jev_dudo»: Jev no llegó al umbral "
-    "y decidió la regla; «valor_duda»: la capacidad respondió «duda». En sombra la duda no queda registrada: "
-    "esas decisiones se cuentan en «en_sombra»."
-)
-
-#: Estados del pedido de un episodio según OrderFacts.
-ORDER_PAID, ORDER_PLACED, ORDER_CANCELLED, ORDER_TEST, ORDER_UNCONFIRMED = (
-    "pagado", "pedido", "cancelado", "de_prueba", "sin_confirmar",
-)
-_STAGE_RANK = {stage: i for i, stage in enumerate(STAGES)}
 
 
 def _furthest(stages: Iterable[Any]) -> str:
@@ -193,8 +195,11 @@ def _windows(days: int, base_days: int, now: datetime, since: date | None) -> _W
     recent = [today - timedelta(days=i) for i in range(max(1, days))]
     start = min(recent)
     older = [start - timedelta(days=i) for i in range(1, max(0, base_days) + 1)]
-    keep = (lambda ds: [d for d in ds if since is None or d >= since])
-    return _Windows({"actual": sorted(keep(recent)), "base": sorted(keep(older))})
+
+    def keep(days_: list[date]) -> list[date]:
+        return sorted(d for d in days_ if since is None or d >= since)
+
+    return _Windows({"actual": keep(recent), "base": keep(older)})
 
 
 def _session_dirs(vault_dir: Path, first_day: date | None) -> list[Path]:
@@ -395,6 +400,10 @@ async def _resolve_orders(episodes: list[_Episode], order_facts: Any) -> None:
     ids = {ep.order_id for ep in episodes if ep.order_id}
     if not ids:
         return
+    if order_facts is None:
+        from src.sdk.connectorkit import get_order_facts_port
+
+        order_facts = get_order_facts_port()
     snapshot = await order_facts.get_facts(ids)
     for ep in episodes:
         if not ep.order_id:
@@ -410,7 +419,7 @@ async def _resolve_orders(episodes: list[_Episode], order_facts: Any) -> None:
             ep.order = ORDER_PAID if fact.counts_as_revenue else ORDER_PLACED
 
 
-def _pct(part: int, whole: int) -> float | None:
+def _per_100(part: int, whole: int) -> float | None:
     return round(100 * part / whole, 1) if whole else None
 
 
@@ -432,7 +441,7 @@ def _funnel_section(episodes: list[_Episode]) -> dict[str, Any]:
             "de_prueba": sum(1 for ep in episodes if ep.order == ORDER_TEST),
             "sin_confirmar": sum(1 for ep in episodes if ep.order == ORDER_UNCONFIRMED),
         },
-        "conversion_a_pedido_pct": _pct(len(placed), len(episodes)),
+        "conversion_a_pedido_pct": _per_100(len(placed), len(episodes)),
     }
 
 
@@ -461,17 +470,14 @@ def _jev_section(episodes: list[_Episode]) -> dict[str, Any]:
     }
 
 
-def _per_100(part: int, whole: int) -> float | None:
-    return round(100 * part / whole, 1) if whole else None
-
-
 def _north_star_section(episodes: list[_Episode]) -> dict[str, Any]:
     n = len(episodes)
     handoffs = [h for ep in episodes for h in ep.handoffs]
+    intervened = sum(1 for ep in episodes if ep.handoffs or ep.team)
     return {
         "conversaciones": n,
-        "con_intervencion": sum(1 for ep in episodes if ep.handoffs or ep.team),
-        "por_100": _per_100(sum(1 for ep in episodes if ep.handoffs or ep.team), n),
+        "con_intervencion": intervened,
+        "por_100": _per_100(intervened, n),
         "relevos_por_100": _per_100(len(handoffs), n),
         "relevos_sin_verificar_pago_por_100": _per_100(sum(1 for h in handoffs if h.reason != PAYMENT_CHECK), n),
         "mensajes_del_equipo_por_100": _per_100(sum(len(ep.team) for ep in episodes), n),
@@ -557,10 +563,6 @@ async def build_report(
             continue
         episodes.extend(_episodes_of(vault_dir, session_dir.name, windows))
 
-    if order_facts is None:
-        from src.sdk.connectorkit import get_order_facts_port
-
-        order_facts = get_order_facts_port()
     await _resolve_orders(episodes, order_facts)
 
     def per_window(section: Any) -> dict[str, Any]:
@@ -588,3 +590,71 @@ async def build_report(
         "objeciones": dict(OBJECTIONS),
         "intervenciones_por_100": _north_star(per_window(_north_star_section)),
     }
+
+
+_BOT_LABEL = {"colossus": "Colossus", "botsito": "Botsito", "mixto": "Mixto", "sin_bot": "Sin bot"}
+
+
+def _top(counts: dict[str, int], n: int = 3) -> str:
+    return ", ".join(f"{k} {v}" for k, v in list(counts.items())[:n]) or "—"
+
+
+def render(report: dict[str, Any]) -> str:
+    """El informe en Markdown, en español llano (solo cifras)."""
+    w = report["ventanas"]
+    star = report["intervenciones_por_100"]
+    lines = [
+        f"# Informe para el Estratega · {w['actual']['desde']} a {w['actual']['hasta']}",
+        "",
+        f"Comparado con {w['base']['desde']} a {w['base']['hasta']}.",
+        "",
+        "## Intervenciones por cada 100 conversaciones",
+        "",
+        "| Bot | Conversaciones | Ahora | Antes | Cambio | Relevos sin pago | Mensajes del equipo |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for bot in BOTS:
+        now, before = star["actual"][bot], star["base"][bot]
+        lines.append(
+            f"| {_BOT_LABEL[bot]} | {now['conversaciones']} | {now['por_100']} | {before['por_100']} "
+            f"| {star['cambio_por_100'][bot]} | {now['relevos_sin_verificar_pago_por_100']} "
+            f"| {now['mensajes_del_equipo_por_100']} |"
+        )
+    lines += ["", "## Por bot (ventana actual)", ""]
+    for bot in ("colossus", "botsito"):
+        handoffs = report["relevos"]["actual"][bot]
+        team = report["equipo"]["actual"][bot]
+        funnel = report["embudo"]["actual"][bot]
+        doubts = report["jev_dudas"]["actual"][bot]
+        lines += [
+            f"### {_BOT_LABEL[bot]}",
+            f"- Relevos: {handoffs['total']} ({_top(handoffs['por_motivo'])}); por etapa: {_top(handoffs['por_etapa'])}",
+            f"- Mensajes del equipo: {team['mensajes']} ({_top(team['por_tipo'])})",
+            f"- Conversión a pedido: {funnel['conversion_a_pedido_pct']} %; sin pedido se quedan en: "
+            f"{_top(funnel['sin_pedido_se_quedan_en'])}",
+            f"- Dudas de Jev: {doubts['dudas']} de {doubts['decisiones']} decisiones "
+            f"({_top({k: v['dudas'] for k, v in doubts['por_capacidad'].items() if v['dudas']})})",
+            "",
+        ]
+    lines.append(f"Objeciones: no disponible. {report['objeciones']['motivo']}")
+    if report["embudo"].get("aviso"):
+        lines.append(f"Aviso: {report['embudo']['aviso']}")
+    return "\n".join(lines) + "\n"
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    from src.plugins.chats.agent.sales_eval.evals.composition import get_vault_dir
+
+    parser = argparse.ArgumentParser(description="Informe agregado para el Estratega del ciclo Colossus.")
+    parser.add_argument("--dias", type=int, default=7, help="días de la ventana actual (incluye hoy, UTC)")
+    parser.add_argument("--base", type=int, default=28, help="días de la ventana de comparación, justo antes")
+    parser.add_argument("--desde", type=date.fromisoformat, default=None, help="no contar antes de esta fecha")
+    parser.add_argument("--json", action="store_true", help="el informe como JSON")
+    args = parser.parse_args(list(argv) if argv is not None else None)
+    report = asyncio.run(build_report(Path(get_vault_dir()), days=args.dias, base_days=args.base, since=args.desde))
+    print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else render(report))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -292,3 +292,47 @@ async def test_objections_are_reported_as_missing_instead_of_invented(tmp_path: 
 
     assert objections["disponible"] is False
     assert objections["motivo"] and objections["faltante"]
+
+
+def _busy_conversation(vault: Path, sid: str) -> None:
+    """Una conversación con todo lo que el informe lee, llena de texto personal."""
+    during = RECENT_MS + MINUTE_MS + 1_000
+    _conversation(vault, sid, started_ms=RECENT_MS, workflow="v2", order_id="ord_paid",
+                  status_history=[_handoff(during, "Quiero hablar con alguien, soy Ana Pérez")])
+    _chat(vault, sid, {"role": "user", "content": "Calle falsa 123, Ana Pérez", "timestamp": _at(RECENT_MS)},
+          _team(during), _team(during, operator_tool="enviar a Ana Pérez"))
+    _decisions(vault, sid, {"at_ms": during, "capability": "compra", "by": "respaldo", "provider": "jev",
+                            "value": "Ana Pérez", "reason": "duda"})
+
+
+async def test_the_report_carries_no_conversation_ids_phone_numbers_or_texts(tmp_path: Path) -> None:
+    _busy_conversation(tmp_path, "wa_109876544567")
+
+    report = await _report(tmp_path, order_facts=InMemoryOrderFacts([_order("ord_paid", pay_status="paid")]))
+
+    dumped = json.dumps(report, ensure_ascii=False)
+    assert report["relevos"]["actual"]["colossus"]["total"] == 1  # sí leyó la conversación
+    for private in ("109876544567", "4567", "wa_", "ord_paid", "Ana", "Calle", "texto del colega", "texto libre"):
+        assert private not in dumped
+
+
+def test_the_cli_prints_the_report_as_json(tmp_path: Path, monkeypatch, capsys) -> None:
+    from src.plugins.chats.agent.sales_eval.evals import composition
+
+    _conversation(tmp_path, "wa_100000000001", started_ms=int(datetime.now(UTC).timestamp() * 1000), workflow="v2")
+    monkeypatch.setattr(composition, "get_vault_dir", lambda: tmp_path)
+
+    assert strategy.main(["--dias", "3", "--base", "14", "--json"]) == 0
+
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["ventanas"]["actual"]["dias"] == 3 and printed["ventanas"]["base"]["dias"] == 14
+    assert printed["muestra"]["actual"]["conversaciones"]["colossus"] == 1
+
+
+async def test_the_plain_report_reads_in_spanish_without_ids(tmp_path: Path) -> None:
+    _busy_conversation(tmp_path, "wa_109876544567")
+
+    text = strategy.render(await _report(tmp_path))
+
+    assert "Intervenciones por cada 100 conversaciones" in text
+    assert "109876544567" not in text and "Ana" not in text
