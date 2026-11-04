@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from src.plugins.chats.agent.sales_eval.scorecard import catalog_context, store
 from src.plugins.chats.api import evals as evals_api
 from src.plugins.chats.api import quality as api
+from src.plugins.chats.shared import turn_traces
 from tests.evals.scorecard.incidents import CATALOG_CTX
 from tests.evals.test_quality_view import SID, _decisions, _ms, _seed
 
@@ -67,6 +68,37 @@ def test_the_list_filters_by_bot(client: TestClient, tmp_path: Path) -> None:
 
     assert [r["session_id"] for r in jev["conversations"]] == [SID] and current["conversations"] == []
     assert client.get("/api/chats/evals/production/conversations", params={"bot": "otro"}).status_code == 422
+
+
+def test_the_list_does_not_read_the_full_traces(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    """Calidad LLM sin 504 (2026-11-03): la lista abre con la pestaña y va a
+    56 días; el bot, los turnos y lo último de cada conversación salen del
+    resumen de sus trazas, no de las trazas completas."""
+    _card(tmp_path)
+    expected = client.get("/api/chats/evals/production/conversations", params={"days": 7}).json()
+
+    def boom(*_a, **_k):
+        raise AssertionError("no debería leer las trazas completas")
+
+    monkeypatch.setattr(turn_traces, "read_traces", boom)
+
+    assert client.get("/api/chats/evals/production/conversations", params={"days": 7}).json() == expected
+    jev = client.get("/api/chats/evals/production/conversations", params={"days": 7, "bot": "nuevo"}).json()
+    assert [r["session_id"] for r in jev["conversations"]] == [SID]
+
+
+def test_the_evaluations_read_only_the_records_of_the_conversation(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    """Abrir una conversación no parsea los 120 días de scorecards: del índice
+    sale dónde está cada registro de la conversación."""
+    _card(tmp_path)
+    other = "wa_100000000077"
+    store.append_scorecard(store.scorecards_dir(tmp_path), {"session_id": other, "episode_id": "ep_001", "verdict": "PASA",
+                                                            "mode": "turn", "by_turn": [], "results": []})
+    monkeypatch.setattr(store, "read_scorecards", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("todo el día")))
+
+    body = client.get(f"/api/chats/evals/production/conversations/{SID}/evaluations").json()
+
+    assert [(e["episode_id"], e["registry_version"]) for e in body["episodes"]] == [("ep_001", 999)]
 
 
 def test_the_thread_of_a_conversation_and_of_one_episode(client: TestClient) -> None:

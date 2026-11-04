@@ -285,6 +285,27 @@ contrato `evals@v1` (`/api/chats/evals/production/*`, cast
 `/api/agents/evals/production/*`); un episodio sin calificar en modo turno
 SHALL calificarse al vuelo con el código.
 
+### Requirement: Calidad LLM abre sin releer el historial completo
+
+Desde el 2026-11-03 (la pestaña daba 504: cuatro listas a la vez sobre 56
+días, cada una parseando todos los scorecards con sus checks por turno y
+todas las trazas con sus tools, y el cast corta a los 15 s), la lista, las
+gráficas, el filtro por bot, la alerta y la cola de Calibración SHALL leer el
+índice compacto de cada día de scorecards (`_evals/scorecards/index/`) y el
+resumen de las trazas de cada sesión (`evals/turn_traces.summary.json`),
+nunca los registros completos. Ese índice SHALL ponerse al día leyendo solo
+lo que el archivo ganó; un archivo que no cambió NO SHALL volver a leerse, y
+uno reescrito SHALL rearmarse. Abrir una conversación SHALL leer del día solo
+los registros de esa conversación. El Resumen NO SHALL pedir la lista de
+conversaciones (es de la pestaña Conversaciones). El índice es derivado: si
+falta o no se puede escribir, la respuesta SHALL ser la misma.
+
+#### Scenario: La pestaña con 56 días de producción
+
+- GIVEN 56 días de scorecards en modo turno ya indexados y las trazas de cada conversación resumidas
+- WHEN el operador abre Calidad LLM y el dashboard pide a la vez la alerta, cómo le fue a cada bot, dónde terminan y la semana a semana
+- THEN cada respuesta sale del índice en menos de un segundo, sin parsear los registros completos ni las trazas
+
 ### Requirement: Calidad LLM muestra el motor de decisiones
 
 La pestaña «Motor de decisiones» de Calidad LLM SHALL mostrar la versión del

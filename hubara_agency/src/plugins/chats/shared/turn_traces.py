@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from src.plugins.chats.shared import jsonl_index
+
 # Cola leída para `last_trace`: una traza con muchas tools (24 × args + extracto)
 # puede pasar los 64 KB; si la cola no cubre la última línea entera, `previous`
 # se pierde y la numeración de turnos reinicia.
@@ -77,3 +79,34 @@ def traces_for_episode(
     return [
         t for t in read_traces(vault_dir, session_id) if t.get("episode_id") == episode_id
     ]
+
+
+# ── El resumen (Calidad LLM sin 504, 2026-11-03) ───────────────────────────
+#: Lo que la lista de Calidad LLM y el filtro por bot usan de cada traza
+#: (episodio, turno, quién lo disparó, cuándo empezó y qué workflow respondió).
+SUMMARY_FIELDS = ("episode_id", "turn", "trigger", "turn_started_ms", "workflow")
+#: Subirla si cambia lo que guarda el resumen: los guardados se rearman.
+_SUMMARY_VERSION = 1
+
+
+def summary_path(vault_dir: Path, session_id: str) -> Path:
+    return trace_path(vault_dir, session_id).with_name("turn_traces.summary.json")
+
+
+def _summary(trace: dict[str, Any], _at: int, _length: int) -> dict[str, Any]:
+    row = {k: trace[k] for k in SUMMARY_FIELDS if k in trace}
+    if "egress" in trace:
+        # Las trazas de antes de `workflow`: el workflow nuevo deja la salida
+        # de Jev y el actual nunca (`scorecard.bot.turn_workflow`).
+        row["egress"] = True
+    return row
+
+
+def read_summaries(vault_dir: Path, session_id: str) -> list[dict[str, Any]]:
+    """De cada traza de la sesión, solo `SUMMARY_FIELDS` (y `egress: True` si
+    trajo la salida de Jev): sin las tools, sus argumentos ni sus extractos.
+    Se guarda al lado de las trazas y se pone al día leyendo solo los turnos
+    nuevos (`jsonl_index`); una sesión sin turnos nuevos no se vuelve a leer."""
+    return jsonl_index.indexed_lines(
+        trace_path(vault_dir, session_id), summary_path(vault_dir, session_id), _summary, version=_SUMMARY_VERSION
+    )

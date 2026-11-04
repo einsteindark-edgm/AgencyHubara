@@ -129,6 +129,16 @@ describe("Calidad LLM: el Resumen compara a los dos bots", () => {
     expect(screen.queryByRole("table", { name: /matriz de cumplimiento/i })).not.toBeInTheDocument();
   });
 
+  it("no pide la lista de conversaciones: es de la pestaña Conversaciones (Calidad LLM sin 504, 2026-11-03)", async () => {
+    renderIt();
+    await screen.findByRole("table", { name: /resultado por bot/i });
+    await waitFor(() => expect(called("/api/agents/evals/checks/stats")).toBe(true));
+    expect(called("/api/agents/evals/production/conversations")).toBe(false);
+
+    await openConversations();
+    expect(called("/api/agents/evals/production/conversations?days=56")).toBe(true);
+  });
+
   it("cómo le fue a cada bot va en porcentajes, Botsito y Colossus", async () => {
     renderIt();
     const table = await screen.findByRole("table", { name: /resultado por bot/i });

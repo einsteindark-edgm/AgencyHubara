@@ -50,12 +50,14 @@ async function fetchJevReport(days: number, bot: QualityBot, signal?: AbortSigna
   return jevReportSchema.parse(raw);
 }
 
-/** Las conversaciones calificadas de la ventana (veredicto y bot por episodio). */
-export function useQualityConversations(days: number, bot: QualityBot | null) {
+/** Las conversaciones calificadas de la ventana (veredicto y bot por episodio).
+ *  `enabled: false` mientras no se vea la lista (va a 56 días). */
+export function useQualityConversations(days: number, bot: QualityBot | null, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: productionQualityKeys.conversations(days, bot),
     queryFn: ({ signal }) => fetchConversations(days, bot, signal),
-    // Lista pesada (lee las trazas de cada conversación): no se recarga con cada foco.
+    enabled: options.enabled ?? true,
+    // Lista de toda la ventana: no se recarga con cada foco.
     staleTime: 60_000,
   });
 }
