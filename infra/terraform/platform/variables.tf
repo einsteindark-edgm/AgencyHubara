@@ -103,7 +103,20 @@ variable "tenants" {
       # Directo a la ficha de Google: no depende de que la web esté publicada.
       google_review_url = optional(string, "https://g.page/r/CdsqIGl0gWaWECE/review")
     }), {})
+
+    # Alertas del scorecard de ventas (worker sales_eval, Ciclo Colossus F4): el
+    # repo de GitHub (owner/repo) donde se abren los issues [ALR]. "" = sin
+    # alertas. El token es el secreto SCORECARD_ALERTS_GITHUB_TOKEN.
+    # modules/eval-alerts-config.
+    eval_alerts = optional(object({
+      repo = optional(string, "")
+    }), {})
   }))
+
+  validation {
+    condition     = alltrue([for t in values(var.tenants) : t.eval_alerts.repo == "" || can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", t.eval_alerts.repo))])
+    error_message = "tenants.*.eval_alerts.repo: vacío (sin alertas) u owner/repo de GitHub (p.ej. einsteindark-edgm/hubara-ciclo)."
+  }
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : contains(["off", "test", "on"], t.reviews.mode)])
@@ -279,6 +292,12 @@ variable "secret_keys" {
     # de ahí salen las opciones con las que el teléfono arranca Firebase. Nunca va
     # en el repo (es público). `FIREBASE_ANDROID_CONFIG_JSON=@ruta/google-services.json`.
     "FIREBASE_ANDROID_CONFIG_JSON",
+    # Token de GitHub con el que el worker sales_eval abre las alertas [ALR] del
+    # scorecard (episodio en FALLA y bandas por regla) en el repo que nombra
+    # tenants.<t>.eval_alerts.repo. Token fino (fine-grained) con acceso SOLO a
+    # ese repo y permiso Issues: lectura y escritura. Con el placeholder no se
+    # llama a GitHub (las alertas quedan apagadas).
+    "SCORECARD_ALERTS_GITHUB_TOKEN",
   ]
 }
 
