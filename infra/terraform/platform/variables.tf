@@ -115,7 +115,7 @@ variable "tenants" {
 
   validation {
     condition     = alltrue([for t in values(var.tenants) : t.eval_alerts.repo == "" || can(regex("^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$", t.eval_alerts.repo))])
-    error_message = "tenants.*.eval_alerts.repo: vacío (sin alertas) u owner/repo de GitHub (p.ej. einsteindark-edgm/hubara-ciclo)."
+    error_message = "tenants.*.eval_alerts.repo: vacío (sin alertas) u owner/repo de GitHub (p.ej. acme/ciclo)."
   }
 
   validation {

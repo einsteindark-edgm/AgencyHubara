@@ -109,15 +109,16 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           # A mano: la entrada `bundle` (vacía = el del código, ventas). En el
-          # cron y en los PR: el que corre la tienda, el `decisions_bundle` del
-          # tenant hubara en Terraform (tenants.auto.tfvars). Si el PR toca UN
-          # solo paquete, ese paquete (es el que cambió).
+          # cron y en los PR: el que corre la tienda, el primer `decisions_bundle`
+          # de Terraform (tenants.auto.tfvars: el primer tenant es la tienda en
+          # producción). Si el PR toca UN solo paquete, ese paquete (es el que
+          # cambió).
           bundles=hubara_agency/src/plugins/chats/shared/decisions/bundles
           if [ "$EVENT" = "workflow_dispatch" ]; then
             bundle="$INPUT_BUNDLE"
           else
-            bundle=$(awk '/^  hubara = \{/,/^  \}/' infra/terraform/platform/tenants.auto.tfvars \
-              | sed -n 's/^ *decisions_bundle *= *"\([a-z0-9-]*\)".*/\1/p' | head -1)
+            bundle=$(sed -n 's/^ *decisions_bundle *= *"\([a-z0-9-]*\)".*/\1/p' \
+              infra/terraform/platform/tenants.auto.tfvars | head -1)
             if [ "$EVENT" = "pull_request" ]; then
               touched=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename' \
                 | sed -n "s#^$bundles/\([a-z0-9-]*\)/.*#\1#p" | sort -u)
