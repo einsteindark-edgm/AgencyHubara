@@ -427,7 +427,8 @@ def main() -> None:
     wanted = [
         "/api/dashboard/sessions", "/api/dashboard/sessions/{session_id}",
         "/api/dashboard/sessions/{session_id}/intervene", "/api/dashboard/sessions/{session_id}/return-to-bot",
-        "/api/dashboard/sessions/{session_id}/messages", "/api/dashboard/whatsapp-templates",
+        "/api/dashboard/sessions/{session_id}/messages", "/api/dashboard/sessions/{session_id}/media",
+        "/api/dashboard/whatsapp-templates",
         "/api/dashboard/sessions/{session_id}/template-messages", "/api/dashboard/sse-ticket",
         "/api/dashboard/events", "/api/dashboard/media/{session_id}/{filename}",
         "/api/chats/mobile/suggestions/{session_id}", "/api/chats/mobile/fires", "/api/chats/mobile/hot",

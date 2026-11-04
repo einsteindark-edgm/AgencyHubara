@@ -1,6 +1,12 @@
 package com.hubara.operator.feature.chat
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.compose.foundation.layout.Column
+import com.hubara.operator.core.data.outbox.OutboxRepository
 import com.hubara.operator.core.designsystem.LoadingState
 import com.hubara.operator.core.designsystem.LoadError
 import androidx.compose.ui.Alignment
@@ -75,12 +81,18 @@ fun ChatIsland(
         onPauseOrDispose { vm.onVisible(false) }
     }
     val ui by vm.state.collectAsStateWithLifecycle()
+    // El selector de fotos del sistema: no pide permisos y en Android 11 cae solo al de archivos si no lo tiene.
+    val picker = rememberLauncherForActivityResult(PickMultipleVisualMedia(OutboxRepository.MAX_PHOTOS)) { uris ->
+        if (uris.isNotEmpty()) vm.attach(uris.map(Uri::toString))
+    }
     ChatBody(
         ui = ui, draft = vm.draft, modifier = modifier,
         actions = ChatActions(
             onMore = onMore, onReactivate = onReactivate, onIntervene = vm::intervene, onSend = vm::send, onSendText = vm::sendText,
             onUndo = vm::undo, onRetry = vm::retry, onDismiss = vm::dismiss, onClearError = vm::clearError, onReload = vm::refresh,
             onOpen = onOpen, onPull = vm::pull,
+            onAttach = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            onRemoveAttachment = vm::removeAttachment,
         ),
     )
 }
@@ -101,6 +113,10 @@ class ChatActions(
     val onOpen: (String) -> Unit = {},
     /** Tirar hacia abajo el historial: la conversación al servidor ya, sin esperar al tiempo real. */
     val onPull: () -> Unit = {},
+    /** Abre el selector de fotos del sistema. */
+    val onAttach: () -> Unit = {},
+    /** Quita una foto elegida antes de enviarla. */
+    val onRemoveAttachment: (String) -> Unit = {},
 )
 
 /** Para los tests: el historial (se tira hacia abajo para pedirlo al servidor). */
@@ -137,7 +153,10 @@ fun ChatBody(ui: ChatUiState, draft: TextFieldState, actions: ChatActions, modif
                         onEdit = { actions.onMore() },
                         onMore = actions.onMore,
                     )
-                    Composer(draft, enabled = true, onSend = actions.onSendText)
+                    Composer(
+                        draft, enabled = true, onSend = actions.onSendText,
+                        attachments = ui.attachments, onAttach = actions.onAttach, onRemoveAttachment = actions.onRemoveAttachment,
+                    )
                 }
             }
         }

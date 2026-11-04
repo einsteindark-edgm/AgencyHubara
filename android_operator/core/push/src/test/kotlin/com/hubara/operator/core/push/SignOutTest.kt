@@ -8,6 +8,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
+import com.hubara.operator.core.data.outbox.AndroidPhotoPreparer
 import com.hubara.operator.core.data.screens.FileScreenDataCache
 import com.hubara.operator.core.data.auth.AuthRepository
 import com.hubara.operator.core.data.auth.InMemoryTokenStore
@@ -71,8 +72,14 @@ class SignOutTest {
         val push = PushRegistrar(pushApi, FakePushTransport(), pushCache, { "1.0.0" }) { 0L }
         push.sync()
 
+        // Una foto que el operador iba a mandarle a un cliente (puede ser su comprobante o su pedido).
+        val photo = java.io.File(context.filesDir, "${AndroidPhotoPreparer.DIR}/pendiente.jpg").apply {
+            parentFile!!.mkdirs()
+            writeBytes(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte()))
+        }
+
         var widgetRefreshed = 0
-        SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ }, screenData, push)()
+        SignOut(context, auth, db, seen, ambient, HotWidgetUpdater { widgetRefreshed++ }, screenData, push, AndroidPhotoPreparer(context))()
 
         assertThat(db.conversations().observeAll().first()).isEmpty()
         assertThat(ambient.pages.first()).isEqualTo(WidgetPages())  // ni ventas, ni incendios, ni quién atiende
@@ -82,5 +89,6 @@ class SignOutTest {
         assertThat(screenData.read("ventas|pedidos|/api/orders/orders")).isNull()  // ni lo último de las pantallas del servidor
         assertThat(pushApi.unregistered).containsExactly("token-1")                  // ni avisos push a este teléfono
         assertThat(pushCache.registration()).isNull()
+        assertThat(photo.exists()).isFalse()                                         // ni las fotos que iban a salir
     }
 }

@@ -5,7 +5,9 @@ import com.hubara.operator.core.data.Clock
 import com.hubara.operator.core.data.auth.AuthRepository
 import com.hubara.operator.core.data.auth.TinkTokenStore
 import com.hubara.operator.core.data.auth.TokenStore
+import com.hubara.operator.core.data.outbox.AndroidPhotoPreparer
 import com.hubara.operator.core.data.outbox.OutboxScheduler
+import com.hubara.operator.core.data.outbox.PhotoPreparer
 import com.hubara.operator.core.data.outbox.WorkManagerOutboxScheduler
 import com.hubara.operator.core.network.di.AccessTokenProvider
 import dagger.Binds
@@ -24,6 +26,7 @@ abstract class DataBindings {
     @Binds abstract fun tokenStore(impl: TinkTokenStore): TokenStore
     @Binds abstract fun accessTokens(impl: AuthRepository): AccessTokenProvider
     @Binds abstract fun outboxScheduler(impl: WorkManagerOutboxScheduler): OutboxScheduler
+    @Binds abstract fun photoPreparer(impl: AndroidPhotoPreparer): PhotoPreparer
 }
 
 @Module
