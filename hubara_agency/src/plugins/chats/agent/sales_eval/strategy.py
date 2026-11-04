@@ -15,6 +15,10 @@ ventana por cuándo empezó (UTC). En producción, dentro del worker `sales_eval
 """
 from __future__ import annotations
 
+import bisect
+import re
+from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -26,6 +30,28 @@ from src.plugins.chats.shared import turn_traces
 BOTS = ("colossus", "botsito", "mixto", "sin_bot")
 WINDOWS = ("actual", "base")
 _BOT_OF_EPISODE = {"nuevo": "colossus", "actual": "botsito", "mixto": "mixto"}
+#: Relevo sin motivo del bot: el equipo tomó la conversación desde el panel o la app.
+TEAM_TOOK_OVER = "TOMADO_POR_EL_EQUIPO"
+NO_REASON = "SIN_MOTIVO"
+#: Lo que pasó antes del primer turno del bot en el episodio.
+NO_BOT_TURN = "sin_turnos_del_bot"
+_ROUTE_HUMAN = "humano"
+#: Solo códigos (motivos, orígenes, capacidades) llegan al informe: un valor con
+#: forma de texto libre se cuenta como `otro`, nunca se copia.
+_CODE = re.compile(r"^[A-Za-z][A-Za-z0-9_:.-]{0,63}$")
+
+
+def _code(value: Any, default: str) -> str:
+    if value is None or value == "":
+        return default
+    return value if isinstance(value, str) and _CODE.fullmatch(value) else "otro"
+
+
+@dataclass(frozen=True)
+class _Handoff:
+    reason: str
+    stage: str
+    source: str
 
 
 @dataclass
@@ -33,6 +59,7 @@ class _Episode:
     window: str
     bot: str
     turns: int
+    handoffs: list[_Handoff] = field(default_factory=list)
 
 
 @dataclass
@@ -100,6 +127,67 @@ def _is_prod(trace: dict[str, Any]) -> bool:
     return str(trace.get("source") or "prod") == "prod"
 
 
+def _ms(value: Any) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+class _Timeline:
+    """Ubica un momento en su episodio (el último que ya había empezado, como
+    `enrich_turn_trace`) y en la etapa en que iba: la salida del último turno
+    del bot que ya había empezado."""
+
+    def __init__(self, episodes: list[dict[str, Any]], traces: list[dict[str, Any]]) -> None:
+        dated = sorted((ms, str(e.get("episode_id") or "")) for e in episodes
+                       if (ms := _ms(e.get("started_at_ms"))) is not None)
+        self._starts = [ms for ms, _ in dated]
+        self._ids = [eid for _, eid in dated]
+        self._turns: dict[str, list[tuple[int, str]]] = {}
+        for t in traces:
+            start = _ms(t.get("turn_started_ms")) or _ms(t.get("recorded_at_ms"))
+            if start is not None:
+                self._turns.setdefault(str(t.get("episode_id") or ""), []).append((start, str(t.get("stage_out") or "")))
+        for turns in self._turns.values():
+            turns.sort()
+
+    def episode_at(self, at_ms: int) -> str | None:
+        i = bisect.bisect_right(self._starts, at_ms)
+        return self._ids[i - 1] if i else None
+
+    def stage_at(self, episode_id: str, at_ms: int) -> str:
+        turns = self._turns.get(episode_id) or []
+        i = bisect.bisect_right(turns, (at_ms, "\uffff"))
+        return (turns[i - 1][1] or NO_BOT_TURN) if i else NO_BOT_TURN
+
+
+def _handoffs(metadata: dict[str, Any], timeline: _Timeline) -> dict[str, list[_Handoff]]:
+    """Cada paso a la ruta del equipo (`status_history`), por episodio. Una
+    entrada que llega con la conversación ya en el equipo no es otro relevo."""
+    out: dict[str, list[_Handoff]] = {}
+    with_team = False
+    for entry in metadata.get("status_history") or []:
+        if not isinstance(entry, dict):
+            continue
+        route = entry.get("active_route")
+        human = route == _ROUTE_HUMAN or (not route and entry.get("tag") == "HUMANO")
+        if human and not with_team:
+            at = entry.get("timestamp")
+            at_ms = int(at * 1000) if isinstance(at, (int, float)) and not isinstance(at, bool) else None
+            episode_id = timeline.episode_at(at_ms) if at_ms is not None else None
+            if episode_id is not None and at_ms is not None:
+                source = _code(entry.get("source"), "bot")
+                default = TEAM_TOOK_OVER if source == "dashboard_intervene" else NO_REASON
+                out.setdefault(episode_id, []).append(_Handoff(
+                    reason=_code(entry.get("reason_category"), default),
+                    stage=timeline.stage_at(episode_id, at_ms),
+                    source=source,
+                ))
+        if human:
+            with_team = True
+        elif route:
+            with_team = False
+    return out
+
+
 def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_Episode]:
     metadata = _read_metadata(vault_dir, session_id)
     raw = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
@@ -107,15 +195,38 @@ def _episodes_of(vault_dir: Path, session_id: str, windows: _Windows) -> list[_E
     if not any(w for _, w in in_window):
         return []
     traces = [t for t in turn_traces.read_traces(vault_dir, session_id) if _is_prod(t)]
+    timeline = _Timeline(raw, traces)
+    handoffs = _handoffs(metadata, timeline)
     out: list[_Episode] = []
     for episode, window in in_window:
         if window is None:
             continue
-        own = [t for t in traces if t.get("episode_id") == episode.get("episode_id")]
+        episode_id = str(episode.get("episode_id") or "")
+        own = [t for t in traces if t.get("episode_id") == episode_id]
         customer = [t for t in own if t.get("trigger", "customer") == "customer"]
         bot = _BOT_OF_EPISODE.get(episode_bot(customer), "botsito") if customer else "sin_bot"
-        out.append(_Episode(window=window, bot=bot, turns=len(customer)))
+        out.append(_Episode(window=window, bot=bot, turns=len(customer), handoffs=handoffs.get(episode_id, [])))
     return out
+
+
+def _counts(values: Iterable[str]) -> dict[str, int]:
+    """Conteo ordenado de mayor a menor (empates por nombre)."""
+    return dict(sorted(Counter(values).items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _handoff_section(episodes: list[_Episode]) -> dict[str, Any]:
+    items = [h for ep in episodes for h in ep.handoffs]
+    by_reason_stage: dict[str, list[str]] = {}
+    for h in items:
+        by_reason_stage.setdefault(h.reason, []).append(h.stage)
+    return {
+        "total": len(items),
+        "conversaciones": sum(1 for ep in episodes if ep.handoffs),
+        "por_motivo": _counts(h.reason for h in items),
+        "por_etapa": _counts(h.stage for h in items),
+        "por_origen": _counts(h.source for h in items),
+        "por_motivo_y_etapa": {r: _counts(stages) for r, stages in sorted(by_reason_stage.items())},
+    }
 
 
 def _per_bot(value: int = 0) -> dict[str, int]:
@@ -152,6 +263,12 @@ async def build_report(
             continue
         episodes.extend(_episodes_of(vault_dir, session_dir.name, windows))
 
+    def per_window(section: Any) -> dict[str, Any]:
+        return {
+            w: {bot: section([e for e in episodes if e.window == w and e.bot == bot]) for bot in BOTS}
+            for w in WINDOWS
+        }
+
     sample: dict[str, Any] = {}
     for window in WINDOWS:
         conversations, turns = _per_bot(), _per_bot()
@@ -164,4 +281,5 @@ async def build_report(
         "generado": now.isoformat(timespec="seconds"),
         "ventanas": {w: _window_info(windows.dates[w]) for w in WINDOWS},
         "muestra": sample,
+        "relevos": per_window(_handoff_section),
     }

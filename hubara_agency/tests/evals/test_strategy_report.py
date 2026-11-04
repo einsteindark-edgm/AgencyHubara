@@ -92,3 +92,39 @@ async def test_the_operator_test_numbers_are_left_out(tmp_path: Path) -> None:
 
     assert report["muestra"]["actual"]["conversaciones"]["colossus"] == 1
     assert report["muestra"]["excluidas_numeros_de_prueba"] == 1
+
+
+def _handoff(at_ms: int, reason: str | None = None, *, source: str | None = None, route: str = "humano") -> dict:
+    entry = {"tag": "HUMANO" if route == "humano" else "", "active_route": route, "timestamp": at_ms / 1000,
+             "motivo": "texto libre del motivo que nunca sale del vault"}
+    if reason:
+        entry["reason_category"] = reason
+    if source:
+        entry["source"] = source
+    return entry
+
+
+async def test_handoffs_count_each_entry_to_the_team_by_reason_stage_and_origin(tmp_path: Path) -> None:
+    turn = RECENT_MS + MINUTE_MS  # el turno n empieza en RECENT_MS + n minutos
+    _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2",
+                  stages=("descubrimiento", "variantes"),
+                  status_history=[_handoff(turn + 2 * MINUTE_MS, "CATALOG_GAP")])
+    _conversation(tmp_path, "wa_100000000002", started_ms=RECENT_MS, workflow="v2", status_history=[
+        _handoff(turn + 1_000, source="dashboard_intervene"),
+        _handoff(turn + 2_000, "EXPLICIT_REQUEST"),  # ya estaba con el equipo: no es otro relevo
+        _handoff(turn + 3_000, route="ventas"),  # «Devolver al bot»
+        _handoff(turn + 4_000, "PAYMENT_VERIFICATION_PENDING", source="safety_net"),
+    ])
+    _conversation(tmp_path, "wa_100000000003", started_ms=RECENT_MS, workflow="v1",
+                  status_history=[_handoff(turn + 1_000, "EXPLICIT_REQUEST")])
+
+    relevos = (await _report(tmp_path))["relevos"]["actual"]
+
+    colossus = relevos["colossus"]
+    assert colossus["total"] == 3
+    assert colossus["conversaciones"] == 2
+    assert colossus["por_motivo"] == {"CATALOG_GAP": 1, "PAYMENT_VERIFICATION_PENDING": 1, "TOMADO_POR_EL_EQUIPO": 1}
+    assert colossus["por_etapa"] == {"descubrimiento": 2, "variantes": 1}
+    assert colossus["por_origen"] == {"bot": 1, "dashboard_intervene": 1, "safety_net": 1}
+    assert colossus["por_motivo_y_etapa"]["CATALOG_GAP"] == {"variantes": 1}
+    assert relevos["botsito"]["por_motivo"] == {"EXPLICIT_REQUEST": 1}
