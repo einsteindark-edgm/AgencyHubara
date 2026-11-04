@@ -101,8 +101,13 @@ export const chatMessageSchema = z.object({
   tool_calls: z.array(z.unknown()).optional(),
   /** Quién escribió un turno `assistant` que no fue el bot: "human" =
    *  operador via dashboard handoff; "mba" = eco de Meta Business Agent
-   *  (webhook standby, D1.4). Los turnos del bot no llevan este campo. */
-  sender: z.enum(["human", "mba"]).optional(),
+   *  (webhook standby, D1.4); "aviso" / "reviews" = aviso automático
+   *  (`kind: notice`, p. ej. la invitación a calificar). Los turnos del bot no
+   *  llevan este campo. El vocabulario lo pone el backend y crece con él: un
+   *  texto que el panel no conoce se acepta (se pinta como del bot) y un valor
+   *  raro se ignora. Caso 2026-11-04: el enum cerrado `human|mba` dejó en
+   *  blanco cada conversación con la invitación a calificar (L-10). */
+  sender: z.string().optional().catch(undefined),
   timestamp: z.union([z.string(), z.number()]).optional(),
   name: z.string().optional(),
   /** Ref relativa a una imagen inbound que el cliente envió por WhatsApp
