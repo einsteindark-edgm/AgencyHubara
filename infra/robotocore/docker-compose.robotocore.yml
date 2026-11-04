@@ -9,7 +9,8 @@
 # apuntado acá → "probar para no equivocarnos en la real".
 services:
   aws:
-    image: jackdanger/robotocore:latest
+    # El mismo digest que el CI (.github/workflows/local-aws-test.yml): `:latest` cambió y rompe la EC2.
+    image: jackdanger/robotocore@sha256:82f3a46fcf1f2debe7625b26c15651ec8285b9210c47a6bc1122f326e5ba857d
     container_name: robotocore
     ports:
       - "4566:4566"
