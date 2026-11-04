@@ -108,7 +108,9 @@ class Run:
     def step(self, step: dict | str) -> None:
         """Un paso. Sin argumento: "reset", "clear_app", "launch", "home", "back", "notifications".
         Con argumento: {"link": uri}, {"wait": s}, {"inject": "fire …"}, {"adb": "shell cmd"},
-        {"tap": "texto" | {text, above}}, {"type": "ascii"}, {"swipe": {"at": "texto", "dx": px, "dy": px}},
+        {"tap": "texto" | {text, above}}, {"finger_tap": "texto"} (como `tap`, pero con el panel táctil del emulador:
+        para el selector de archivos del sistema, que en Android 11 ignora `input tap`),
+        {"type": "ascii"}, {"swipe": {"at": "texto", "dx": px, "dy": px}},
         {"expect": "texto"}, {"expect_gone": "texto"},
         {"expect_all": [...] | {texts, in_order, above_focused}}, {"assert": {<chequeo>}},
         {"shot": "nombre"} (captura a mitad del escenario, la que muestra el comentario del PR),
@@ -148,6 +150,12 @@ class Run:
             if not node:
                 raise StepFailed(f"no apareció «{text}»{f' encima de «{above}»' if above else ''} para tocarlo")
             dev.tap(node)
+        elif kind == "finger_tap":
+            text, timeout = _text_and_timeout(arg, 20)
+            node, _ = dev.wait_for(text, timeout=timeout)
+            if not node:
+                raise StepFailed(f"no apareció «{text}» para tocarlo")
+            dev.finger_tap(node)
         elif kind == "type":
             dev.type_ascii(arg)
         elif kind == "swipe":

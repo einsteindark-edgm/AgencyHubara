@@ -121,6 +121,32 @@ class Device:
         x, y = node.center
         self.sh(f"input tap {x} {y}")
 
+    def finger_tap(self, node: Node) -> None:
+        """Toque con el panel táctil del emulador (consola `adb emu`), no con `input tap`.
+
+        En Android 11 `input tap` inyecta el toque sin tipo de puntero (TOOL_TYPE_UNKNOWN; desde Android 12 es
+        FINGER) y lo que usa `SelectionTracker` lo ignora: en el selector de archivos del sistema tocar una foto no
+        hace nada. Por la consola el toque entra por el dispositivo táctil virtual, como un dedo. Solo emulador.
+        """
+        x, y = node.center
+        width, height = self._screen_size()
+        span = 32767  # rango ABS_MT_POSITION_* de virtio_input_multi_touch
+        down = ["EV_ABS:ABS_MT_TRACKING_ID:1", f"EV_ABS:ABS_MT_POSITION_X:{x * span // width}",
+                f"EV_ABS:ABS_MT_POSITION_Y:{y * span // height}", "EV_ABS:ABS_MT_PRESSURE:100", "EV_KEY:BTN_TOUCH:1",
+                "EV_SYN:0:0"]
+        up = ["EV_ABS:ABS_MT_TRACKING_ID:-1", "EV_KEY:BTN_TOUCH:0", "EV_SYN:0:0"]
+        for events in (down, up):
+            out = subprocess.run([ADB, "-s", self.serial, "emu", "event", "send", *events],
+                                 capture_output=True, text=True, timeout=15)
+            if "OK" not in out.stdout:
+                raise RuntimeError(f"la consola del emulador no aceptó el toque: {(out.stdout + out.stderr).strip()[:200]}")
+
+    def _screen_size(self) -> tuple[int, int]:
+        m = re.search(r"Physical size: (\d+)x(\d+)", self.sh("wm size"))
+        if not m:
+            raise RuntimeError("no se pudo leer el tamaño de la pantalla (wm size)")
+        return int(m.group(1)), int(m.group(2))
+
     def type_ascii(self, text: str, chunk: int = 10) -> None:
         """Teclea como el teclado (eventos de tecla al campo con foco). Solo ASCII. Por trozos: un solo
         `input text` largo llegaba cortado al campo («Hola Laura, ya te comparto » y el resto se perdía)."""

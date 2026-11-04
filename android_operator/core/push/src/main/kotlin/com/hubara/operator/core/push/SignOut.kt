@@ -3,6 +3,7 @@ package com.hubara.operator.core.push
 import android.content.Context
 import androidx.core.app.NotificationManagerCompat
 import com.hubara.operator.core.data.auth.AuthRepository
+import com.hubara.operator.core.data.outbox.PhotoPreparer
 import com.hubara.operator.core.data.repo.SeenRepository
 import com.hubara.operator.core.data.screens.ScreenDataCache
 import com.hubara.operator.core.database.OperatorDatabase
@@ -21,6 +22,7 @@ class SignOut @Inject constructor(
     private val widget: HotWidgetUpdater,
     private val screenData: ScreenDataCache,
     private val push: PushRegistrar,
+    private val photos: PhotoPreparer,
 ) {
     suspend operator fun invoke() {
         push.unregister()                                     // antes de revocar: el DELETE va con la sesión
@@ -28,6 +30,7 @@ class SignOut @Inject constructor(
         withContext(Dispatchers.IO) { db.clearAllTables() }   // bandeja, mensajes, outbox, borradores, incendios
         seen.clear()
         withContext(Dispatchers.IO) { screenData.clear() }    // lo último que mostró cada pantalla del servidor
+        photos.clear()                                        // las fotos que el operador iba a mandar
         ambient.clear()                                       // ventas calientes del widget y avisados
         NotificationManagerCompat.from(context).cancelAll()
         widget.update(context)                                // la pantalla de inicio deja de mostrar nombres

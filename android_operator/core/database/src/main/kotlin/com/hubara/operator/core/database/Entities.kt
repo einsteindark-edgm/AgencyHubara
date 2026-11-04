@@ -52,7 +52,7 @@ data class MessageEntity(
 data class OutboxEntity(
     @PrimaryKey val clientActionId: String,
     val sessionId: String,
-    /** `text` o `tool`. */
+    /** `text`, `tool`, `template` o `photo` (en `argsJson` el archivo y su subida; en `text`, el pie). */
     val kind: String,
     val text: String?,
     val toolName: String?,

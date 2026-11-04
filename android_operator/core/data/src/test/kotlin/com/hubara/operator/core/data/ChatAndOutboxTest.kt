@@ -48,7 +48,7 @@ class ChatAndOutboxTest {
         db = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), OperatorDatabase::class.java)
             .allowMainThreadQueries().build()
         chats = ChatRepository(api, db.conversations(), db.messages(), db.outbox(), db.drafts())
-        outbox = OutboxRepository(db.outbox(), scheduler) { 10_000L }
+        outbox = OutboxRepository(db.outbox(), scheduler, FakePhotoPreparer()) { 10_000L }
         processor = OutboxProcessor(db.outbox(), api, OperatorService(api), chats, SuggestionRepository(api, db.suggestions()))
         api.details["wa_test_laura"] = SessionDetailsDto(
             sessionId = "wa_test_laura", phoneNumber = "x", activeAgentRoute = "humano",

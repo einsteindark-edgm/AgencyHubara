@@ -957,3 +957,44 @@ scenarios:
     checks:
       - screen_has: "En vivo"
       - screen_lacks: "Reconectando"
+
+  - id: S38_enviar_foto
+    title: Mandarle una foto al cliente desde el chat
+    resumen: "Con el chat tomado, el operador toca «Adjuntar fotos» y elige una de la galería (en Android 11 sale el selector de archivos del sistema). La ve en el composer con «Quitar», la quita, la vuelve a elegir, escribe un pie y la envía: el backend la sube a WhatsApp una vez y la manda como foto con ese pie; en el chat queda la burbuja del operador con la foto y el campo vuelve a «Escribe un mensaje…»."
+    # Pedido del operador (2026-11-03): adjuntar imágenes en las conversaciones que atiende una persona. La foto sale
+    # por el outbox en dos pasos (POST …/media y POST …/messages con attachment_id): un reintento no la vuelve a subir.
+    setup: *laura_tomada
+    script:
+      # Una foto en la galería del emulador (la captura de la pantalla de ese momento: solo datos de prueba).
+      - {adb: "screencap -p /sdcard/Pictures/hubara_e2e_vela.png"}
+      - {adb: "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Pictures/hubara_e2e_vela.png"}
+      - {tap: "Adjuntar fotos"}
+      # El selector de archivos de Android 11 ignora `input tap` (el toque llega sin tipo de dedo): va por el panel táctil.
+      - {finger_tap: "hubara_e2e_vela.png"}
+      - {expect_all: ["Foto para enviar", "Quitar foto", "Añade un pie de foto…"]}
+      - {tap: "Quitar foto"}
+      - {expect_gone: "Foto para enviar"}
+      - {expect: "Escribe un mensaje…"}
+      - {tap: "Adjuntar fotos"}
+      - {finger_tap: "hubara_e2e_vela.png"}
+      - {expect: "Foto para enviar"}
+      - {shot: foto-elegida}
+      - {tap: "Añade un pie de foto…"}
+      - {type: "Asi queda la vela de lavanda"}
+      - {expect: "Asi queda la vela de lavanda"}
+      - {tap: "=Enviar"}
+      - {expect_gone: "Foto para enviar"}
+      - {expect: {text: "=Foto enviada", timeout: 30}}
+      - {expect: "Escribe un mensaje…"}
+      - {shot: foto-enviada}
+    goal: |
+      Estás en el chat 000000000101 y ya atiendes tú. En la galería del teléfono hay una foto llamada hubara_e2e_vela.png.
+      1. Toca el botón de adjuntar fotos (a la izquierda del campo de texto) y elige esa foto.
+      2. Confirma que la foto aparece encima del campo de texto antes de enviarla y que se puede quitar.
+      3. Escribe como pie: Asi queda la vela de lavanda
+      4. Envíala y confirma que en el chat aparece tu mensaje con la foto y el pie, y que el campo quedó vacío.
+      Reporta lo que viste en cada paso.
+    checks:
+      - sent_contains: ['"label": "upload"', '"mime": "image/jpeg"']
+      - sent_contains: ['"to": "000000000101"', '"type": "image"', "Asi queda la vela de lavanda"]
+      - screen_lacks: "Foto para enviar"
