@@ -14,7 +14,7 @@ let messagesState: { data: unknown[]; isError: boolean; refetch: () => void };
 
 vi.mock("@plugins/chats/frontend/entities/chat", () => ({
   useChatInbox: () => ({
-    data: [{ id: "wa_570000000001", name: "Cliente", short: "CL", color: "a" }],
+    data: [{ id: "wa_573000000001", name: "Cliente", short: "CL", color: "a" }],
   }),
   useChatMessages: () => messagesState,
 }));
@@ -35,7 +35,7 @@ describe("ChatsConversation · error al leer la conversación", () => {
   it("muestra que no se pudo cargar y deja reintentar", () => {
     messagesState = { data: [], isError: true, refetch };
 
-    render(<ChatsConversation chatId="wa_570000000001" />);
+    render(<ChatsConversation chatId="wa_573000000001" />);
 
     expect(screen.getByRole("alert").textContent).toContain(
       "No se pudo cargar esta conversación",
@@ -49,7 +49,7 @@ describe("ChatsConversation · error al leer la conversación", () => {
   it("sin error pinta los mensajes como siempre", () => {
     messagesState = { data: [], isError: false, refetch };
 
-    render(<ChatsConversation chatId="wa_570000000001" />);
+    render(<ChatsConversation chatId="wa_573000000001" />);
 
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByTestId("message-list")).toBeTruthy();

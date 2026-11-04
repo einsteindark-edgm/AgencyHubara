@@ -10,8 +10,8 @@ import { describe, expect, it } from "vitest";
 import { sessionDetailsSchema } from "./contracts";
 
 const detail = (messages: unknown[]) => ({
-  session_id: "wa_570000000001",
-  phone_number: "570000000001",
+  session_id: "wa_573000000001",
+  phone_number: "573000000001",
   tag: "HUMANO",
   motivo: "Intervención desde la app",
   memory_content: null,
