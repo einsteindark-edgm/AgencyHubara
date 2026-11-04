@@ -4,7 +4,9 @@ El barrido diario (`SalesEvalWorkflow`, 23:00 Bogotá) la corre después de
 calificar los episodios del día: calcula las bandas (`sales_eval/bands.py`),
 abre o comenta la alerta `[ALR]` de cada regla en `abrir` (`band_alerts.py`,
 no-op sin configuración) y guarda el informe en `<vault>/_evals/bands/<día>.json`
-(lo que se anotó, y lo que lee el evaluador externo).
+(lo que se anotó, y lo que lee el evaluador externo). Cuenta solo el bot en
+producción (el default de `bands.build_report`, Colossus): `BandsInput` no
+trae el bot, así el payload de la activity no cambia.
 
 R-HEARTBEAT: lee hasta 35 días de scorecards (puede pasar de 10 s) → el cálculo
 va en un hilo y `@with_heartbeat` late mientras tanto. R-JSON: entra

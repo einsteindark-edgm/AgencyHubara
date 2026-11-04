@@ -41,16 +41,22 @@ binomial usa media falla (`0,5/n_base`) para no dividir por cero.
 **Muestra chica.** Con menos de 200 turnos en la base, o menos de 7 días con
 turnos, la base no alcanza para decir qué es normal: nada pasa de `anotar`.
 
+**El bot.** Por defecto solo cuentan los episodios del bot en producción
+(`huecos.PRODUCTION_BOT`, Colossus), en la ventana reciente Y en la base: un
+bot retirado no infla ni desinfla la base. Lo dicen las trazas de los turnos
+del cliente (`huecos.bot_of`); un episodio mixto no es de Colossus. `--bot
+todos` junta los dos para comparar.
+
 El informe nunca trae el número completo de una sesión (solo sus últimos 4
 dígitos) y la evidencia pasa por `redact_pii`.
 
 En producción, dentro del worker `sales_eval` (solo lee; `--alert` abre o
 comenta las alertas como el barrido diario):
 
-    python -m src.plugins.chats.agent.sales_eval.bands [--json] [--alert] [--hasta AAAA-MM-DD]
+    python -m src.plugins.chats.agent.sales_eval.bands [--json] [--alert] [--hasta AAAA-MM-DD] [--bot nuevo|actual|todos]
 
-El barrido diario (`SalesEvalWorkflow`, 23:00 Bogotá) lo corre con las alertas
-y guarda el informe en `<vault>/_evals/bands/<fecha>.json`.
+El barrido diario (`SalesEvalWorkflow`, 23:00 Bogotá) lo corre con las alertas,
+con el bot en producción, y guarda el informe en `<vault>/_evals/bands/<fecha>.json`.
 """
 from __future__ import annotations
 
@@ -66,7 +72,16 @@ from pathlib import Path
 from typing import Any
 
 from src.plugins.chats.agent.sales_eval.evals.redaction import redact_pii
-from src.plugins.chats.agent.sales_eval.huecos import MIN_REGISTRY_VERSION
+from src.plugins.chats.agent.sales_eval.huecos import (
+    ALL_BOTS,
+    BOT_CHOICES,
+    MIN_REGISTRY_VERSION,
+    PRODUCTION_BOT,
+    bot_arg,
+    bot_of,
+    bot_title,
+    counted_bots,
+)
 from src.plugins.chats.agent.sales_eval.scorecard import store
 from src.plugins.chats.agent.sales_eval.scorecard.registry import CHECKS, SPECS_BY_ID
 
@@ -181,9 +196,13 @@ def _rule_row(rule_id: str, tally: _Tally, recent: list[str], base: list[str]) -
 
 
 def build_report(
-    vault_dir: Path, *, now: datetime | None = None, end: date | None = None
+    vault_dir: Path, *, now: datetime | None = None, end: date | None = None, bot: str | None = PRODUCTION_BOT
 ) -> dict[str, Any]:
-    """El informe de bandas: una fila por regla del registro, lo más grave primero."""
+    """El informe de bandas: una fila por regla del registro, lo más grave primero.
+
+    Solo cuentan los episodios de `bot` (reciente y base); con `bot=None`, los
+    de los dos bots juntos."""
+    bots = counted_bots(bot)
     now = now or datetime.now(UTC)
     end = end or now.astimezone(UTC).date()
     recent, base = _windows(end)
@@ -191,10 +210,15 @@ def build_report(
     records = store.latest_by_unit(store.read_scorecards(store.scorecards_dir(vault_dir), dates=window))
 
     tallies: dict[str, _Tally] = {rule_id: _Tally() for rule_id in SPECS_BY_ID}
-    kept = old = turns_recent = turns_base = 0
+    traces: dict[str, list[dict[str, Any]]] = {}
+    kept = old = other_bot = turns_recent = turns_base = 0
     for rec in records:
         day = str(rec.get("episode_date") or rec.get("date") or "")[:10]
         if rec.get("mode") != "turn" or day not in window:
+            continue
+        sid, ep = str(rec.get("session_id") or ""), str(rec.get("episode_id") or "")
+        if bot is not None and bot_of(vault_dir, sid, ep, traces) not in bots:
+            other_bot += 1
             continue
         if int(rec.get("registry_version") or 0) < MIN_REGISTRY_VERSION:
             old += 1
@@ -212,7 +236,6 @@ def build_report(
             seen.setdefault(rule_id, set()).add(turn)
             if row.get("verdict") == "falla":
                 failed.setdefault(rule_id, {}).setdefault(turn, str(row.get("evidence") or ""))
-        sid, ep = str(rec.get("session_id") or ""), str(rec.get("episode_id") or "")
         for rule_id, turns in seen.items():
             tallies[rule_id].turns[day] += len(turns)
         for rule_id, by_turn in failed.items():
@@ -224,6 +247,7 @@ def build_report(
     rows.sort(key=lambda r: (_BAND_RANK[r["banda"]], -r["desvio"], r["regla"]))
     return {
         "generado": now.isoformat(timespec="seconds"),
+        "bot": bot or ALL_BOTS,
         "ventanas": {
             "reciente": {"desde": recent[0], "hasta": recent[-1], "dias": RECENT_DAYS},
             "base": {"desde": base[0], "hasta": base[-1], "dias": BASELINE_DAYS},
@@ -231,6 +255,7 @@ def build_report(
         "muestra": {
             "episodios": kept,
             "excluidos_version_vieja": old,
+            "excluidos_otro_bot": other_bot,
             "turnos_recientes": turns_recent,
             "turnos_base": turns_base,
         },
@@ -256,10 +281,11 @@ def render(report: dict[str, Any]) -> str:
     rec, base, sample = report["ventanas"]["reciente"], report["ventanas"]["base"], report["muestra"]
     count = report["conteo"]
     lines = [
-        f"# Bandas por regla · {rec['desde']} a {rec['hasta']}",
+        f"# Bandas por regla · {bot_title(report['bot'])} · {rec['desde']} a {rec['hasta']}",
         "",
         f"Base: {base['desde']} a {base['hasta']}. Episodios calificados: {sample['episodios']} "
-        f"(excluidos por calificación vieja: {sample['excluidos_version_vieja']}). "
+        f"(excluidos por calificación vieja: {sample['excluidos_version_vieja']}; "
+        f"de otro bot: {sample['excluidos_otro_bot']}). "
         f"Turnos: {sample['turnos_recientes']} en los últimos 7 días, {sample['turnos_base']} en la base.",
         "",
         f"Abrir: {count['abrir']} · diagnosticar: {count['diagnosticar']} · anotar: {count['anotar']} · "
@@ -306,8 +332,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--hasta", type=date.fromisoformat, default=None, help="último día de la ventana (UTC; default hoy)")
     parser.add_argument("--json", action="store_true", help="el informe como JSON")
     parser.add_argument("--alert", action="store_true", help="abre o comenta las alertas de las reglas en `abrir`")
+    parser.add_argument(
+        "--bot", choices=BOT_CHOICES, default=PRODUCTION_BOT,
+        help="qué bot contar: nuevo (Colossus, el de producción; default), actual (Botsito) o todos",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
-    report = build_report(Path(get_vault_dir()), end=args.hasta)
+    report = build_report(Path(get_vault_dir()), end=args.hasta, bot=bot_arg(args.bot))
     if args.alert:
         report["alertas"] = asyncio.run(band_alerts.notify_bands(report))
     print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else render(report))

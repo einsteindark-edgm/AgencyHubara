@@ -18,6 +18,7 @@ import hashlib
 from typing import Any
 
 from src.plugins.chats.agent.sales_eval.evals.redaction import redact_pii
+from src.plugins.chats.agent.sales_eval.huecos import bot_title
 from src.plugins.chats.agent.sales_eval.scorecard import alerts
 
 _TITLES = {
@@ -66,6 +67,7 @@ def render_issue(row: dict[str, Any], report: dict[str, Any]) -> tuple[str, str]
         "",
         f"**Regla:** {row['regla']} · {row['nombre']} (nivel {row['nivel']}, familia {row['familia']})",
         f"**Motivo:** {why}",
+        *([f"**Cuenta:** {bot_title(report['bot'])}, en los últimos 7 días y en la base."] if report.get("bot") else []),
         "",
         "| | Fallas | Turnos calificados | Por cada 100 turnos |",
         "|---|---|---|---|",

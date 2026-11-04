@@ -56,6 +56,7 @@ def _report(*rows: dict) -> dict:
             "reciente": {"desde": "2026-10-25", "hasta": "2026-10-31", "dias": 7},
             "base": {"desde": "2026-09-27", "hasta": "2026-10-24", "dias": 28},
         },
+        "bot": "nuevo",
         "reglas": list(rows),
     }
 
@@ -72,6 +73,7 @@ async def test_a_rule_out_of_its_band_opens_an_alert_for_the_cycle() -> None:
     for expected in ("6.0", "42", "700", "1.0", "28", "2800", "0.376", "13.3", "2026-10-25", "2026-09-27"):
         assert expected in body, expected
     assert "Calidad LLM" in body
+    assert "Colossus" in body  # solo cuenta el bot en producción
     assert "…0001" in body and "ep_012" in body and "turno 3" in body
     assert band_alerts.fingerprint("VAR-06") in body
 

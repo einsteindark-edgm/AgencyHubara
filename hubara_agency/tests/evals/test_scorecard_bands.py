@@ -4,7 +4,9 @@ Cada regla del scorecard tiene su tasa: fallas por cada 100 turnos calificados.
 La de los últimos 7 días se compara con la de los 28 días anteriores (la
 base). Una subida de 1σ se anota, de 2σ se diagnostica (el evaluador externo
 la mira) y de 3σ abre una alerta; una regla crítica que nunca fallaba y ahora
-falla también abre. Con poca base no se pasa de anotar.
+falla también abre. Con poca base no se pasa de anotar. Solo cuenta el bot en
+producción, Colossus (workflow v2), en las dos ventanas; `--bot todos` junta
+los dos bots para comparar.
 
 Datos sintéticos: sesiones `wa_1000000000NN`, fechas inventadas, sin textos de
 conversaciones reales.
@@ -18,6 +20,7 @@ from pathlib import Path
 from src.plugins.chats.agent.sales_eval import bands
 from src.plugins.chats.agent.sales_eval.scorecard import store
 from src.plugins.chats.agent.sales_eval.scorecard.registry import SPECS_BY_ID
+from src.plugins.chats.shared import turn_traces
 
 END = date(2026, 10, 31)
 NOW = datetime(2026, 10, 31, 4, 0, tzinfo=UTC)
@@ -46,10 +49,15 @@ def _put(
     version: int = 11,
     mode: str = "turn",
     evidence: str = "repreguntó la cantidad",
+    workflow: str = "v2",
 ) -> None:
     """Un episodio de `turns` turnos con su fila por regla y turno; las
-    primeras `fails[regla]` filas de la regla fallan."""
+    primeras `fails[regla]` filas de la regla fallan. `workflow` dice qué bot
+    contestó (la traza del turno del cliente): `v2` Colossus, `v1` Botsito.
+    Una traza por episodio alcanza para saber su bot."""
     fails = fails or {}
+    episode = episode or f"ep_{day}"
+    turn_traces.append_trace(vault, session, {"episode_id": episode, "turn": 1, "workflow": workflow})
     results = []
     for turn in range(1, turns + 1):
         for rule in rules:
@@ -65,7 +73,7 @@ def _put(
         "mode": mode,
         "registry_version": version,
         "session_id": session,
-        "episode_id": episode or f"ep_{day}",
+        "episode_id": episode,
         "by_turn": [{"turn": n} for n in range(1, turns + 1)],
         "results": results,
         "episode_date": day,
@@ -276,3 +284,89 @@ def test_the_saved_report_is_the_record_of_the_day(tmp_path: Path) -> None:
 
     assert path == tmp_path / "_evals" / "bands" / f"{END.isoformat()}.json"
     assert json.loads(path.read_text(encoding="utf-8")) == report
+
+
+BOTSITO = "wa_100000000099"
+
+
+def test_a_surge_only_botsito_had_does_not_move_the_band(tmp_path: Path) -> None:
+    _history(tmp_path, base_fails={MAYOR: 1}, recent_fails={MAYOR: 1})
+    for offset in range(0, 7):
+        _put(tmp_path, day=_day(offset), turns=100, fails={MAYOR: 9}, session=BOTSITO, workflow="v1")
+
+    report = bands.build_report(tmp_path, now=NOW)
+
+    row = _rule(report, MAYOR)
+    assert row["banda"] == "normal"
+    assert row["reciente"] == {"fallas": 7, "turnos": 700, "tasa": 1.0}
+    assert all(e["sesion"] != "…0099" for e in row["ejemplos"])
+    assert report["bot"] == "nuevo"
+    assert report["muestra"]["episodios"] == 35
+    assert report["muestra"]["excluidos_otro_bot"] == 7
+
+
+def _botsito_inflates_the_base(vault: Path) -> None:
+    """Colossus sube de 1 a 6 por cada 100 turnos; Botsito, que fallaba mucho
+    en la base y ya no atiende, la inflaría hasta tapar la subida."""
+    _history(vault, base_fails={MAYOR: 1}, recent_fails={MAYOR: 6})
+    for offset in range(7, 35):
+        _put(vault, day=_day(offset), turns=100, fails={MAYOR: 10}, session=BOTSITO, workflow="v1")
+
+
+def test_the_base_only_counts_the_production_bot(tmp_path: Path) -> None:
+    _botsito_inflates_the_base(tmp_path)
+
+    report = bands.build_report(tmp_path, now=NOW)
+
+    row = _rule(report, MAYOR)
+    assert row["base"] == {"fallas": 28, "turnos": 2800, "tasa": 1.0, "dias": 28}
+    assert row["banda"] == "abrir"
+    assert report["muestra"]["turnos_base"] == 2800
+    assert report["muestra"]["excluidos_otro_bot"] == 28
+
+
+def test_bot_todos_counts_both_bots_for_comparing(tmp_path: Path) -> None:
+    _botsito_inflates_the_base(tmp_path)
+
+    report = bands.build_report(tmp_path, now=NOW, bot=None)
+
+    row = _rule(report, MAYOR)
+    assert row["base"] == {"fallas": 308, "turnos": 5600, "tasa": 5.5, "dias": 28}
+    assert row["banda"] != "abrir"
+    assert report["bot"] == "todos"
+    assert report["muestra"]["excluidos_otro_bot"] == 0
+
+
+def test_a_mixed_episode_is_not_colossus(tmp_path: Path) -> None:
+    """Un episodio con turnos de los dos workflows no se le carga a Colossus."""
+    _history(tmp_path, base_fails={}, recent_fails={})
+    _put(tmp_path, day=_day(1), turns=1, fails={CRITICA: 1}, session="wa_100000000008", workflow="v1")
+    turn_traces.append_trace(tmp_path, "wa_100000000008", {"episode_id": f"ep_{_day(1)}", "turn": 2, "workflow": "v2"})
+
+    row = _rule(bands.build_report(tmp_path, now=NOW), CRITICA)
+
+    assert row["reciente"]["fallas"] == 0
+    assert row["banda"] == "normal"
+
+
+def test_the_markdown_says_which_bot_it_counts(tmp_path: Path) -> None:
+    _botsito_inflates_the_base(tmp_path)
+
+    assert "Colossus" in bands.render(bands.build_report(tmp_path, now=NOW))
+    assert "Botsito" in bands.render(bands.build_report(tmp_path, now=NOW, bot=None))
+
+
+def test_the_cli_bot_flag_defaults_to_the_production_bot(tmp_path: Path, monkeypatch, capsys) -> None:
+    from src.plugins.chats.agent.sales_eval.evals import composition
+
+    _botsito_inflates_the_base(tmp_path)
+    monkeypatch.setattr(composition, "get_vault_dir", lambda: tmp_path)
+
+    def run(*flags: str) -> dict:
+        assert bands.main(["--json", "--hasta", END.isoformat(), *flags]) == 0
+        return json.loads(capsys.readouterr().out)
+
+    default, todos, botsito = run(), run("--bot", "todos"), run("--bot", "actual")
+    assert (default["bot"], _rule(default, MAYOR)["base"]["fallas"]) == ("nuevo", 28)
+    assert (todos["bot"], _rule(todos, MAYOR)["base"]["fallas"]) == ("todos", 308)
+    assert (botsito["bot"], _rule(botsito, MAYOR)["base"]["fallas"]) == ("actual", 280)
