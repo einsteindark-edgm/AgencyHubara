@@ -149,6 +149,38 @@ describe("aromas de otro producto", () => {
     );
   });
 
+  it("el saludo v2, la despedida y la repregunta se leen en palabras (ventas-8, 2026-11-03)", () => {
+    const of = (capability: string, value: unknown): EngineDecisionView => ({ ...view(value), capability });
+
+    expect(capabilityLabel("saludo_repetido")).toBe("Bienvenida a quien ya conoce la tienda");
+    expect(capabilityLabel("despedida")).toBe("Frases que la tienda no dice");
+    expect(capabilityLabel("repregunta")).toBe("Volver a pedir un dato");
+    expect(decisionSentence(of("saludo_repetido", "Buenos días. ¿Te ayudo?")).text).toBe(
+      "Quita la bienvenida: sale «Buenos días. ¿Te ayudo?»",
+    );
+    expect(decisionSentence(of("saludo_repetido", "")).text).toBe("No había bienvenida que quitar");
+    expect(decisionSentence(of("despedida", "Cuando lo llenes, seguimos 🤍")).text).toBe(
+      "Quita las frases que la tienda no dice: sale «Cuando lo llenes, seguimos 🤍»",
+    );
+    expect(decisionSentence(of("despedida", "")).text).toBe("No dice frases que la tienda no dice");
+    expect(decisionSentence(of("repregunta", ["el dato «cantidad»"])).text).toBe(
+      "Devuelve el texto al modelo: le vuelve a pedir el dato «cantidad», que el pedido ya tiene",
+    );
+    expect(decisionSentence(of("repregunta", [])).text).toBe("No le vuelve a pedir datos que el pedido ya tiene");
+    expect(jevAnswers({ ...of("saludo", true), answers: [{ q: "egreso.saludo_hora_marca", p: 0.1 }] })[0]).toContain(
+      "¿Algún mensaje ya saluda con la hora del día y nombra a la tienda?",
+    );
+    expect(jevAnswers({ ...of("saludo_repetido", ""), answers: [{ q: "saludo_repetido.2", p: 0.9 }] })[0]).toContain(
+      "¿La oración 2 le da la bienvenida como si fuera la primera vez?",
+    );
+    expect(jevAnswers({ ...of("despedida", ""), answers: [{ q: "despedida.1", p: 0.9 }] })[0]).toContain(
+      "¿La oración 1 dice algo que la tienda no dice?",
+    );
+    expect(jevAnswers({ ...of("repregunta", []), answers: [{ q: "repregunta.dato_3", p: 0.9 }] })[0]).toContain(
+      "¿El texto le vuelve a pedir el dato 3 del pedido?",
+    );
+  });
+
   it("el precio de la caja dicho por unidad se lee en palabras (ventas-7, 2026-10-16)", () => {
     const box = (value: unknown): EngineDecisionView => ({ ...view(value), capability: "caja_por_unidad", rule: [] });
 

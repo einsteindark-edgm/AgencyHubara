@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Le pide un dato que el pedido ya tiene?» (ventas-8, VAR-06 y ENV-04).
+# Informe de huecos del 2026-11-03: con la cantidad ya anotada, el bot preguntó
+# «¿te sirve la caja completa o prefieres ajustar la cantidad?»; con la ciudad,
+# el barrio y la dirección ya en el pedido, volvió a pedir «dos cosas de la
+# dirección». Los dos salieron por `send_reply`.
+#
+# El borrador del pedido es el piso: los ítems son SOLO los datos que el pedido
+# ya tiene (los arma `send_reply` desde el borrador), así que nunca se marca uno
+# que falta. Jev dice, por cada uno, si el texto se lo vuelve a pedir; si es así,
+# el texto vuelve al modelo UNA vez (por mensaje del cliente) con lo que ya está
+# en el pedido, y el segundo intento sale. Solo si el texto pregunta algo.
+# Sin Jev no revisa (`no_items`). Valor: los datos que vuelve a pedir.
+capability: repregunta
+value: "tuple<string>"
+input: KnownOrderData
+items: {builtin: known_data_items}
+rule: {builtin: no_items}
+state: {builtin: text_and_claim_facts}
+each:
+  id: "repregunta.dato_{n}"
+  kind: noul
+  when: "inp.text.contains('?')"
+  text: "¿El texto le vuelve a pedir al cliente {term}, o le pide confirmarlo otra vez? Lo que dice el sistema: {fact}."
+  criteria:
+    "true": "sí: se lo vuelve a pedir o le pide confirmarlo otra vez"
+    "false": "no: no se lo pide (lo usa, lo resume, le pide un dato que falta o le pide confirmar el resumen completo del pedido)"
+thresholds: {"yes": 0.85}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, has(i.p) && i.p >= th['yes']).map(i, i.term)"}
+floor: {builtin: jev}
+same: {builtin: set_eq}
+examples:
+  # Sonda con Jev real (jev-v5, textos sintéticos, 2026-11-03): «¿te sirve la caja completa o
+  # ajustas la cantidad?» 0,88 (el método de pago 0,05); «¿la dirección y el barrio son los
+  # mismos?» 0,92–0,93 (la ciudad 0,13); ofrecer el resumen, pedir lo que falta o confirmar el
+  # resumen completo 0,07–0,43.
+  # VAR-06 (sintético): la cantidad ya estaba en el pedido y le pregunta si la ajusta.
+  - items:
+      - {term: la cantidad, fact: "el pedido ya tiene la cantidad: 1 × Velas de deseos cuadradas", p: 0.93}
+      - {term: el método de pago, fact: "el pedido ya tiene el método de pago: contra entrega", p: 0.04}
+    expect: [la cantidad]
+  # ENV-04 (sintético): le vuelve a pedir la dirección.
+  - items:
+      - {term: la dirección de envío, fact: el pedido ya tiene la dirección de envío, p: 0.90}
+      - {term: el barrio, fact: el pedido ya tiene el barrio, p: 0.88}
+      - {term: la ciudad de envío, fact: el pedido ya tiene la ciudad de envío, p: 0.10}
+    expect: [la dirección de envío, el barrio]
+  # Borde de la certeza: 0,85 se marca; 0,84 no.
+  - items:
+      - {term: a, fact: x, p: 0.85}
+      - {term: b, fact: x, p: 0.84}
+    expect: [a]
+  # Lo que Jev no contestó no se marca (sin Jev no revisa).
+  - items: [{term: a, fact: x, p: 0.9}, {term: b, fact: x}]
+    expect: [a]
+  - items: [{term: a, fact: x}]
+    expect: doubt

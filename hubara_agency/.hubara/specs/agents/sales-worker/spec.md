@@ -619,6 +619,74 @@ preguntes en qué más puedes ayudar».
 - WHEN el LLM responde solo texto (sin tools outbound), ej. "¡Buenas tardes! Bienvenido a *Hubara*... ¿Buscas algo para ti o es para regalo?"
 - THEN el texto sale como siempre y no se inyecta nada (caso run a15bb71c)
 
+Delta 2026-11-03 (`ventas-8`, saludo v2; informe de huecos de producción, bot
+V2). Con Jev decidiendo `saludo`:
+
+- Un «hola» o una bienvenida sin la hora NO cuentan como saludo: Jev contesta
+  si algún mensaje saluda con la hora del día Y nombra a la tienda; si no, sale
+  la Burbuja 1 (APE-01).
+- El primer contacto de verdad es «la tienda nunca escribió»: el egreso lee del
+  historial las horas desde el último mensaje de la tienda (`hours_since_store`,
+  la cuenta de la vista `reply_gap`). Si la tienda ya escribió (una campaña, un
+  colega, otro episodio), la Burbuja 1 NO sale.
+- Fuera de ese primer contacto, `saludo_repetido` SHALL quitar del texto que
+  sale (también el de `send_reply`) las oraciones que dan la bienvenida o
+  presentan la tienda como si fuera la primera vez (APE-04: el modelo, no la
+  burbuja, le escribía «Bienvenido a *Hubara*, velas artesanales…» al cliente
+  que volvía). La regla de palabras del paquete propone; Jev decide; si todo el
+  texto es la bienvenida, sale igual. Sin Jev no revisa.
+
+#### Scenario: «¡Hola!» ya no deja sin la burbuja (ventas-8)
+
+- GIVEN primer contacto y la tienda nunca escribió
+- WHEN el único texto del turno es «¡Hola! ¿En qué te ayudo?»
+- THEN Jev contesta que no saluda con la hora ni nombra a la tienda y sale la Burbuja 1
+
+#### Scenario: el cliente contesta una campaña (ventas-8)
+
+- GIVEN el historial del LLM no tiene mensajes del agente, pero la tienda le escribió hace 20 horas
+- WHEN el turno sale
+- THEN NO sale la Burbuja 1
+- AND si el texto le da la bienvenida a Hubara, `saludo_repetido` la quita
+
+#### Scenario: el cliente vuelve en otro episodio (informe de huecos, 2026-11-03)
+
+- GIVEN el primer turno del segundo episodio
+- WHEN el modelo escribe «Buenos días. Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma… ¿Buscas algo para regalar o para tu casa?»
+- THEN sale «Buenos días. ¿Buscas algo para regalar o para tu casa?» (guarda `regreeting_guard`)
+
+### Requirement: Lo que la tienda no dice y lo que el pedido ya tiene (`ventas-8`, 2026-11-03)
+
+Con `ventas-8`, el egreso de V2 (que ve el texto final y el de `send_reply`)
+SHALL pasar el texto por `despedida`: las oraciones con una frase que la tienda
+no dice (dar la compra o el pago por hechos, «caso cerrado», «pedido
+transferido», «te confirmo en un rato», «ahí te dejé», «te cuadro el pedido»;
+frases del paquete) que Jev confirma se quitan, y si no queda nada con el pedido
+registrado, sale la despedida aprobada del dominio (CIE-05). Sin pedido
+registrado y sin nada que quede, el texto sale igual.
+
+`send_reply` SHALL devolver UNA vez por mensaje del cliente el texto que le
+vuelve a pedir un dato que el pedido ya tiene (`repregunta`: la cantidad de cada
+producto y los datos de envío y de pago del borrador; VAR-06, ENV-04), con lo
+que ya está en el pedido (sin el valor de un dato personal). Solo si el texto
+pregunta algo; los datos salen del borrador (nunca uno que falta). El segundo
+intento sale. Sin Jev, con un paquete anterior o si algo falla, el texto sale.
+
+Las tres decisiones nuevas nacen apagadas (`reglas`) y se encienden por comando.
+
+#### Scenario: «ahí te dejé el formulario» (informe de huecos, 2026-11-03)
+
+- GIVEN un turno que pide los datos de envío
+- WHEN el texto es «Con gusto, ahí te dejé el formulario. Cuando lo llenes, seguimos con tu pedido 🤍»
+- THEN sale «Cuando lo llenes, seguimos con tu pedido 🤍» (guarda `closing_phrase_guard`)
+
+#### Scenario: la cantidad ya estaba en el pedido (VAR-06)
+
+- GIVEN el borrador con 1 × Velas de deseos cuadradas
+- WHEN `send_reply` recibe «¿Te sirve la caja completa o prefieres ajustar la cantidad?»
+- THEN el texto vuelve al modelo con «el pedido ya tiene la cantidad: 1 × Velas de deseos cuadradas»
+- AND el segundo intento sale
+
 ### Requirement: Todo turno lleva la hora de Bogotá (2026-09-29)
 
 Cada turno que llega al LLM MUST traer en `plugin_context` el bloque «Hora

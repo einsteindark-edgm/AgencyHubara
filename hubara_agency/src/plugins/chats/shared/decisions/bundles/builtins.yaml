@@ -52,7 +52,9 @@ inputs:
   PedidoPorMayor: {charla: string, cifras: "tuple<int>", productos: "tuple<string>", por_caja: "tuple<int>"}
   CajaNombrada: {producto: string, por_caja: int, otro: string, otro_por_caja: int, charla: string}
   TextCheck: {text: string, extended: bool}
-  GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>"}
+  # `hours_since_store` (ventas-8): horas enteras desde el último mensaje de la tienda
+  # (la cuenta de la vista `reply_gap`); null = la tienda nunca escribió.
+  GreetingCheck: {first_contact: bool, tools_used: "tuple<string>", client_texts: "tuple<string>", hours_since_store: "int?"}
   Frases: {parts: "tuple<string>"}
   OracionesPrecio: {sentences: "tuple<string>"}
   DatosDelPedido: {}
@@ -60,6 +62,13 @@ inputs:
   PreambuloCheck: {text: string}
   OracionesCheck: {parts: "tuple<string>"}
   PortavelasCheck: {text: string, order_registered: bool, portavelas_included: "bool?"}
+  # ventas-8: el texto que sale en el egreso de V2, si es primer contacto, las horas
+  # desde el último mensaje de la tienda (null = nunca escribió) y si el pedido quedó
+  # registrado (`saludo_repetido`, `despedida`).
+  OutgoingText: {text: string, first_contact: bool, hours_since_store: "int?", order_registered: bool}
+  # ventas-8: el texto de `send_reply` y los datos que el borrador del pedido ya tiene,
+  # con lo que dice el sistema de cada uno (`repregunta`).
+  KnownOrderData: {text: string, terms: "tuple<string>", facts: "tuple<string>"}
 
 constants:
   # messagingkit: la pausa abierta de «yo les escribo cuando…».
@@ -452,6 +461,16 @@ builtins:
     params: {por_unidad: str, habla_de_caja: str}
     fields: {term: string, fact: string}
     doc: "Lo que se cobra por caja dicho con un precio por unidad: un ítem por producto por caja en foco si una cláusula dice una frase de `por_unidad` (y no la niega) sin una de `habla_de_caja`; lo que dice el texto (term) y lo cierto de la caja (fact). Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  phrase_sentences:
+    kind: items
+    params: {frases: str}
+    fields: {text: string, hit: bool}
+    doc: "Las oraciones de `text` (el mismo corte mecánico del egreso), cada una con `hit` = dice una de `frases`. Frases del paquete separadas por comas (fact_rules.phrases): `*` = cualquier final, `a/b` = una u otra palabra, `…` = hasta tres palabras en medio; sin tildes ni mayúsculas."
+  known_data_items:
+    kind: items
+    input: KnownOrderData
+    fields: {term: string, fact: string}
+    doc: "Un ítem por dato que el pedido ya tiene: su nombre (term) y lo que dice el sistema de él (fact). Los arma desde el borrador quien pregunta: nunca un dato que el pedido no tiene."
   foreign_label_items:
     kind: items
     input: OpcionesDelTexto
@@ -601,6 +620,14 @@ capabilities_since:
   # una caja de 12. La pide `send_reply` con las demás. En ventas-7, editado en el
   # lugar (decisión del operador: emergencia).
   caja_por_unidad: 7
+  # Informe de huecos de producción del 2026-11-03 (bot V2). Las dos primeras
+  # las pide el egreso de V2 sobre el texto que sale (también el de
+  # `send_reply`): la bienvenida a quien ya conoce la tienda (APE-04) y las
+  # frases que la tienda no dice al cerrar (CIE-05). `repregunta` la pide
+  # `send_reply`: el dato que el pedido ya tiene (VAR-06, ENV-04).
+  saludo_repetido: 8
+  despedida: 8
+  repregunta: 8
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -800,6 +827,14 @@ about:
     solves: >-
       Antes de guardar un dato de envío o de pago, confirma que el cliente de
       verdad lo dio. Evita guardar datos que el bot supuso o inventó.
+  repregunta:
+    name: Volver a pedir un dato
+    where: [herramientas]
+    solves: >-
+      Antes de enviar, revisa que el bot no le vuelva a pedir al cliente un dato
+      que el pedido ya tiene (la cantidad, la ciudad, la dirección, el
+      teléfono…). Si se lo vuelve a pedir, el bot corrige el mensaje una vez,
+      con lo que ya está en el pedido. Solo con Jev.
   zona_de_envio:
     name: Zona de envío
     where: [herramientas]
@@ -973,6 +1008,22 @@ about:
     solves: >-
       En el primer contacto, decide si hace falta la burbuja de bienvenida o
       si la respuesta ya saluda, para no saludar dos veces.
+  saludo_repetido:
+    name: Bienvenida a quien ya conoce la tienda
+    where: [antes_de_enviar]
+    solves: >-
+      Cuando la tienda ya le había escrito al cliente (vuelve otro día, contesta
+      una campaña o sigue la conversación), quita del mensaje las oraciones que
+      le dan la bienvenida o le presentan la tienda como si fuera la primera vez.
+      Solo con Jev.
+  despedida:
+    name: Frases que la tienda no dice
+    where: [antes_de_enviar]
+    solves: >-
+      Quita del mensaje las frases que la tienda no le dice al cliente: dar la
+      compra o el pago por hechos, anunciar que la conversación se cierra o se
+      transfiere, o muletillas como «ahí te dejé el formulario». Si no queda
+      nada y el pedido quedó registrado, sale la despedida aprobada. Solo con Jev.
   enumeracion:
     name: Lista de opciones
     where: [antes_de_enviar]
