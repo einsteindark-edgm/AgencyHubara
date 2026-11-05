@@ -48,6 +48,9 @@ class CostLine:
     group: str | None = None
     quantity: float | None = None
     unit: str | None = None
+    #: Native micros the provider gives for the whole range, not per day
+    #: (e.g. an ad campaign's spend). Negative = a deduction.
+    undated: int = 0
     # Filled by ``ProviderReport.priced``:
     usd_micros: int | None = None
     cop_micros: int | None = None
@@ -55,11 +58,23 @@ class CostLine:
 
     @property
     def amount_micros(self) -> int:
-        return sum(self.daily.values())
+        return sum(self.daily.values()) + self.undated
 
-    def priced(self, fx: FxTable) -> CostLine:
+    def priced(self, fx: FxTable, start: date, end: date) -> CostLine:
         daily_usd: dict[date, int] = {}
-        cop = 0
+        cop: int | None = 0
+        if self.undated:
+            usd = fx.usd_micros_over(self.undated, self.currency, start, end)
+            if usd is None:
+                return replace(self, usd_micros=None, cop_micros=None, daily_usd=None)
+            cop = (
+                self.undated
+                if self.currency.upper() == "COP"
+                else fx.cop_micros_over(usd, start, end)
+            )
+            undated_usd = usd
+        else:
+            undated_usd = 0
         for day, micros in self.daily.items():
             usd = fx.usd_micros(micros, self.currency, day)
             if usd is None:
@@ -71,7 +86,10 @@ class CostLine:
                 day_cop = fx.cop_micros(usd, day)
                 cop = None if (cop is None or day_cop is None) else cop + day_cop
         return replace(
-            self, usd_micros=sum(daily_usd.values()), cop_micros=cop, daily_usd=daily_usd
+            self,
+            usd_micros=sum(daily_usd.values()) + undated_usd,
+            cop_micros=cop,
+            daily_usd=daily_usd,
         )
 
     def to_json(self) -> dict:
@@ -164,7 +182,7 @@ class ProviderReport:
     def priced(self, fx: FxTable) -> ProviderReport:
         if self.status is not Status.OK:
             return replace(self, fx_note=fx.note or None)
-        lines = tuple(line.priced(fx) for line in self.lines)
+        lines = tuple(line.priced(fx, self.start, self.end) for line in self.lines)
         warnings = list(self.warnings)
         missing = sorted({ln.currency for ln in lines if ln.usd_micros is None})
         for cur in missing:

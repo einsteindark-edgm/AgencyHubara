@@ -110,3 +110,28 @@ def test_without_non_production_lines_there_is_no_other_total() -> None:
 
     assert out.other_usd_micros is None
     assert out.production_usd_micros == 0
+
+
+def test_an_amount_without_days_uses_the_average_trm_of_the_range() -> None:
+    fx = FxTable(
+        cop_per_usd={date(2026, 11, 2): Decimal("3000"), date(2026, 11, 3): Decimal("5000")},
+        note="",
+    )
+    line = _line(currency="COP", daily={}, undated=to_micros("8000"))
+    out = ProviderReport.ok("campaigns", RANGE, Source.METERED, [line]).priced(fx)
+
+    assert out.lines[0].amount_micros == to_micros("8000")
+    assert out.lines[0].usd_micros == 2_000_000  # 8000 COP / 4000 average
+    assert out.production_usd_micros == 2_000_000
+    assert out.daily_production_usd == ((date(2026, 11, 2), 0), (date(2026, 11, 3), 0))
+
+
+def test_a_deduction_lowers_the_total() -> None:
+    lines = [
+        _line(key="meta", daily={date(2026, 11, 2): 3_000_000}),
+        _line(key="minus", daily={}, undated=-1_000_000),
+    ]
+    out = ProviderReport.ok("whatsapp", RANGE, Source.METERED, lines).priced(FX)
+
+    assert out.production_usd_micros == 2_000_000
+    assert out.to_json()["lines"][1]["usd_micros"] == -1_000_000

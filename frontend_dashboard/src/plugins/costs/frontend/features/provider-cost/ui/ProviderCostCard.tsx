@@ -124,13 +124,13 @@ function LineRows({ lines }: { lines: CostLine[] }) {
                 key={line.key}
                 className="flex flex-wrap items-baseline justify-between gap-x-3 border-b border-line py-1 text-[12.5px] last:border-b-0"
               >
-                <span className="min-w-0 flex-1 text-fg">
+                <span className="min-w-0 flex-1 break-words text-fg [overflow-wrap:anywhere]">
                   {line.label}
                   {quantityText(line) ? (
                     <span className="ml-2 text-[11.5px] text-fg-muted">{quantityText(line)}</span>
                   ) : null}
                 </span>
-                <span className="flex items-baseline gap-2 tabular-nums">
+                <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
                   {line.currency !== "USD" ? (
                     <span className="text-[11.5px] text-fg-muted">{fmtMoney(line.amountMicros, line.currency)}</span>
                   ) : null}

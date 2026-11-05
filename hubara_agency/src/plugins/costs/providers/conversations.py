@@ -36,6 +36,7 @@ import httpx
 
 from src.plugins.costs.domain.period import BOGOTA, DateRange
 from src.plugins.costs.domain.report import CostLine, ProviderReport, Source
+from src.plugins.costs.providers.base import FetchContext
 from src.sdk.runtime import BoundedTTLCache, is_vault_session_id
 
 #: Cost kinds read from each episode.
@@ -200,7 +201,11 @@ class ConversationCostProvider:
         self._reader = reader
 
     async def fetch(
-        self, client: httpx.AsyncClient, rng: DateRange, now: datetime
+        self,
+        client: httpx.AsyncClient,
+        rng: DateRange,
+        now: datetime,
+        ctx: FetchContext | None = None,
     ) -> ProviderReport:
         costs = await self._reader.costs(rng)
         if not costs.vault_found:

@@ -7,15 +7,24 @@ display_name: Costos
 description: |
   Cuánto cuesta el sistema productivo en un rango de fechas. DeepSeek (el bot),
   Jev (OpenRouter) y Gemini (fotos y audios) salen de los costos que cada
-  conversación ya guarda en el vault; WhatsApp, del pricing_analytics de Meta
-  (incluye campañas y envíos fuera de una conversación); Temporal Cloud, de su
-  uso diario × la tarifa publicada. Un endpoint por proveedor, con tiempo
-  máximo y caché, para que ninguna consulta cuelgue la pestaña.
+  conversación ya guarda en el vault; WhatsApp, del pricing_analytics de Meta;
+  Campañas, de la sección Ads (gasto de cada campaña de Meta Ads y costo de
+  cada campaña de WhatsApp, que la tarjeta de WhatsApp descuenta para no
+  contarla dos veces); Temporal Cloud, de su uso diario × la tarifa publicada.
+  Un endpoint por proveedor, con tiempo máximo y caché, para que ninguna
+  consulta cuelgue la pestaña.
 
-# Lee los costos que el ingest y los workers de `chats` escriben en cada
-# episodio (`llm_usage`, `jev_usage`, `vision_usage`, `audio_usage` de
-# `wa_*/metadata.json`): sin chats no hay conversaciones que sumar. Solo lee.
-depends_on: [chats]
+# - chats: lee los costos que el ingest y los workers de chats escriben en cada
+#   episodio (`llm_usage`, `jev_usage`, `vision_usage`, `audio_usage` de
+#   `wa_*/metadata.json`); sin chats no hay conversaciones que sumar. Solo lee.
+# - ads: provider del cast de la tarjeta Campañas (ver `consumes`).
+depends_on: [chats, ads]
+
+consumes:
+  - provider: ads
+    contract: campaigns@v1   # GET /api/ads/campaigns?from&to (spend de Meta Ads + whatsapp_send)
+    into: campaigns-cost
+    cast: api/ads_cast
 
 frontend:
   entry: ./frontend

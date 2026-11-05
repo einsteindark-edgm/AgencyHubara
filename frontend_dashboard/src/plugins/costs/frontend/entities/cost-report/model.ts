@@ -77,16 +77,19 @@ function decimals(value: number, digits: number): string {
   });
 }
 
+/** Un descuento (monto negativo) lleva el signo menos delante del símbolo. */
+const sign = (micros: number) => (micros < 0 ? "−" : "");
+
 /** Dólares: centavos; por debajo de US$1 (y distinto de 0), cuatro decimales. */
 export function fmtUsd(micros: number): string {
-  const usd = micros / MICROS;
-  const digits = usd !== 0 && Math.abs(usd) < 1 ? 4 : 2;
-  return `US$${decimals(usd, digits)}`;
+  const usd = Math.abs(micros) / MICROS;
+  const digits = usd !== 0 && usd < 1 ? 4 : 2;
+  return `${sign(micros)}US$${decimals(usd, digits)}`;
 }
 
 /** Pesos sin decimales. */
 export function fmtCop(micros: number): string {
-  return `$${decimals(Math.round(micros / MICROS), 0)} COP`;
+  return `${sign(micros)}$${decimals(Math.round(Math.abs(micros) / MICROS), 0)} COP`;
 }
 
 /** Una cifra en su propia moneda (las líneas vienen en la del proveedor). */
@@ -95,7 +98,7 @@ export function fmtMoney(micros: number, currency: string): string {
   if (cur === "USD") return fmtUsd(micros);
   if (cur === "COP") return fmtCop(micros);
   const symbol = cur === "CNY" ? "¥" : "";
-  return `${symbol}${decimals(micros / MICROS, 2)} ${cur}`;
+  return `${sign(micros)}${symbol}${decimals(Math.abs(micros) / MICROS, 2)} ${cur}`;
 }
 
 /** Estado de una tarjeta para el total: lo que respondió, lo que falta. */
@@ -152,6 +155,7 @@ export const PROVIDER_COLOR: Record<string, string> = {
   openrouter: "bg-purple",
   gemini: "bg-teal",
   whatsapp: "bg-green",
+  campaigns: "bg-pink",
   temporal: "bg-orange",
 };
 

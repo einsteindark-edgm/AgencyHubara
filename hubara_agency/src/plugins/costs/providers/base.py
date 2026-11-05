@@ -8,12 +8,26 @@ the service owns timeouts. Secrets go in headers, never in URLs.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import httpx
 
 from src.plugins.costs.domain.period import BOGOTA, DateRange
 from src.plugins.costs.domain.report import ProviderReport
+
+
+@dataclass(frozen=True)
+class FetchContext:
+    """What one request lends to the adapters: the cast to another plugin's API.
+
+    ``cast_get(path, params)`` is ``castkit.forward(request, "GET", …)`` bound to
+    the incoming request (it carries the operator's identity, L-16). Built by
+    the API router; ``None`` outside a request.
+    """
+
+    cast_get: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None
 
 
 class ProviderError(Exception):
@@ -28,7 +42,11 @@ class CostProvider(Protocol):
     def connected(self) -> bool: ...
 
     async def fetch(
-        self, client: httpx.AsyncClient, rng: DateRange, now: datetime
+        self,
+        client: httpx.AsyncClient,
+        rng: DateRange,
+        now: datetime,
+        ctx: FetchContext | None = None,
     ) -> ProviderReport: ...
 
 

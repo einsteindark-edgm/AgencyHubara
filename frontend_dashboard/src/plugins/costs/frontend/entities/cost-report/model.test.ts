@@ -18,6 +18,11 @@ describe("money formatting", () => {
     expect(fmtCop(3_222_400_000)).toBe("$3.222 COP");
   });
 
+  it("shows a deduction with a minus sign in front", () => {
+    expect(fmtUsd(-750_000)).toBe("−US$0,7500");
+    expect(fmtMoney(-3_200_000_000, "COP")).toBe("−$3.200 COP");
+  });
+
   it("formats each line in its own currency", () => {
     expect(fmtMoney(3_550_000, "CNY")).toBe("¥3,55 CNY");
     expect(fmtMoney(3_200_000_000, "COP")).toBe("$3.200 COP");

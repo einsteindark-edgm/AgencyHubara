@@ -35,6 +35,7 @@ que solo se mira al leer crece sin límite (incidente 2026-09-25).
 """
 from __future__ import annotations
 
+import datetime
 import functools
 import logging
 import threading
@@ -190,6 +191,30 @@ def _meta_ads():
     return get_ads_port()
 
 
+_BOGOTA = datetime.timezone(datetime.timedelta(hours=-5))
+
+
+def _meta_dates(since_ms: int | None, until_ms: int | None) -> tuple[Any, Any]:
+    """`(since, until)` as Meta insights want them: INCLUSIVE Bogotá dates.
+
+    `until_ms` from `_window` is EXCLUSIVE (midnight after `to`), so the last
+    day is the one just before it — `date.fromtimestamp(until_ms)` asked Meta
+    for one extra day (guard `test_meta_window_inclusive.py`, 2026-11-05).
+    Without a window, the last 90 days up to today in Bogotá.
+    """
+    until_d = (
+        datetime.datetime.fromtimestamp((until_ms - 1) / 1000, _BOGOTA).date()
+        if until_ms
+        else datetime.datetime.now(_BOGOTA).date()
+    )
+    since_d = (
+        datetime.datetime.fromtimestamp(since_ms / 1000, _BOGOTA).date()
+        if since_ms
+        else until_d - datetime.timedelta(days=90)
+    )
+    return since_d, until_d
+
+
 def _cached_meta_campaigns(
     since_ms: int | None, until_ms: int | None
 ) -> tuple[list, list]:
@@ -200,8 +225,6 @@ def _cached_meta_campaigns(
     Sin ventana ("Total") las métricas se acotan a 90 días — insights necesita
     un rango y el spend histórico completo no aporta al operador.
     """
-    from datetime import date, timedelta
-
     try:
         token = _meta_store().load()
     except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
@@ -209,10 +232,7 @@ def _cached_meta_campaigns(
     if token is None or not token.account_id:
         return [], []
 
-    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
-    since_d = (
-        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
-    )
+    since_d, until_d = _meta_dates(since_ms, until_ms)
     key = f"{since_d}|{until_d}"
     hit = _meta_campaign_cache.get(key)
     if hit is not None:
@@ -245,8 +265,6 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
     Best-effort como toda la capa Meta: sin conexión / Graph caído → `[]`
     y el drill-down queda solo-vault (nunca 500).
     """
-    from datetime import date, timedelta
-
     try:
         token = _meta_store().load()
     except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
@@ -254,10 +272,7 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
     if token is None or not token.account_id:
         return []
 
-    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
-    since_d = (
-        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
-    )
+    since_d, until_d = _meta_dates(since_ms, until_ms)
     key = f"{since_d}|{until_d}"
     hit = _meta_adset_cache.get(key)
     if hit is not None:
@@ -285,8 +300,6 @@ _meta_ad_cache: BoundedTTLCache[str, list] = BoundedTTLCache(
 def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
     """Insights level=ad del Marketing API para la ventana pedida. Best-effort:
     sin conexión / Graph caído → `[]` y el drill-down queda solo-vault."""
-    from datetime import date, timedelta
-
     try:
         token = _meta_store().load()
     except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
@@ -294,10 +307,7 @@ def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
     if token is None or not token.account_id:
         return []
 
-    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
-    since_d = (
-        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
-    )
+    since_d, until_d = _meta_dates(since_ms, until_ms)
     key = f"{since_d}|{until_d}"
     hit = _meta_ad_cache.get(key)
     if hit is not None:

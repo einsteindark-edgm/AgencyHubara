@@ -13,7 +13,8 @@ fechas. Solo lee: no escribe en el vault ni en otros plugins.
 | DeepSeek (el bot) | `episodes[].llm_usage.cost_usd` de cada conversación del vault | ninguna |
 | Jev (OpenRouter) | `episodes[].jev_usage` (lo que OpenRouter cobró por pregunta) | ninguna |
 | Gemini (fotos y audios) | `episodes[].vision_usage` + `audio_usage` | ninguna |
-| WhatsApp | `pricing_analytics` DAILY del WABA (incluye campañas y envíos fuera de una conversación) | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_BUSINESS_ACCOUNT_ID` |
+| WhatsApp | `pricing_analytics` DAILY del WABA, menos las campañas de WhatsApp (van en Campañas) | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_BUSINESS_ACCOUNT_ID` |
+| Campañas | cast a Ads `GET /api/ads/campaigns?from&to` (`campaigns@v1`): `spend` de cada campaña de Meta Ads + `whatsapp_send.cost_usd_micros` de cada campaña de WhatsApp | ninguna (la de Ads) |
 | Temporal Cloud | `GET /cloud/usage` × tarifa de `costs.yaml` + tarifa del plan | `TEMPORAL_API_KEY`, `TEMPORAL_NAMESPACE` |
 
 ## Requirements
@@ -88,6 +89,21 @@ sin tasa SHALL marcarse y no sumarse.
 - GIVEN un mes con 100.000 acciones, 5 GB-hora activos y 500 GB-hora retenidos
 - WHEN se valora con US$50/M acciones, US$0,042 y US$0,00105 por GB-hora y 10 % de tarifa del plan
 - THEN el total es US$6,3085 (la misma fórmula cuadró al centavo con una factura real de Temporal)
+
+### Requirement: Campañas aparte, sin contar dos veces
+
+La tarjeta Campañas SHALL mostrar, por campaña, lo que Meta Ads cobró en el
+rango (moneda de la cuenta publicitaria) y el costo de los mensajes de cada
+campaña de WhatsApp. La tarjeta de WhatsApp SHALL descontar ese costo de las
+campañas de WhatsApp con una línea negativa, para que el total no lo cuente dos
+veces; si no puede leerlo, SHALL avisarlo.
+
+#### Scenario: Rango cerrado contra Meta
+
+- GIVEN el rango del 2026-10-01 al 2026-10-31
+- WHEN se pide la tarjeta Campañas
+- THEN Ads pide a Meta `since=2026-10-01`, `until=2026-10-31` (ambos incluidos)
+- AND la suma de los anuncios es igual al gasto de la cuenta en Meta para ese mes
 
 ### Requirement: Rutas autenticadas
 

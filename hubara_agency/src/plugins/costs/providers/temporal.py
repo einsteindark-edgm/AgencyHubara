@@ -22,7 +22,7 @@ import httpx
 from src.plugins.costs.domain.money import to_micros
 from src.plugins.costs.domain.period import DateRange
 from src.plugins.costs.domain.report import CostLine, ProviderReport, Source
-from src.plugins.costs.providers.base import ProviderError, request_json, utc_day
+from src.plugins.costs.providers.base import FetchContext, ProviderError, request_json, utc_day
 
 USAGE_URL = "https://saas-api.tmprl.cloud/cloud/usage"
 API_VERSION = "v0.7.0"
@@ -134,7 +134,11 @@ class TemporalProvider:
         return lines, incomplete
 
     async def fetch(
-        self, client: httpx.AsyncClient, rng: DateRange, now: datetime
+        self,
+        client: httpx.AsyncClient,
+        rng: DateRange,
+        now: datetime,
+        ctx: FetchContext | None = None,
     ) -> ProviderReport:
         if not self.connected:
             return ProviderReport.not_connected(self.id, rng, how_to_connect=_HOW_TO_CONNECT)

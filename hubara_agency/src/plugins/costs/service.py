@@ -22,7 +22,7 @@ import httpx
 from src.plugins.costs.domain.fx import FxTable
 from src.plugins.costs.domain.period import BOGOTA, DateRange
 from src.plugins.costs.domain.report import ProviderReport, Status
-from src.plugins.costs.providers.base import CostProvider
+from src.plugins.costs.providers.base import CostProvider, FetchContext
 from src.sdk.runtime import BoundedTTLCache
 
 logger = logging.getLogger(__name__)
@@ -109,11 +109,15 @@ class CostsService:
         return table
 
     async def _fetch(
-        self, provider: CostProvider, client: httpx.AsyncClient, rng: DateRange
+        self,
+        provider: CostProvider,
+        client: httpx.AsyncClient,
+        rng: DateRange,
+        ctx: FetchContext | None,
     ) -> ProviderReport:
         try:
             return await asyncio.wait_for(
-                provider.fetch(client, rng, self._now()), self._timeout_s
+                provider.fetch(client, rng, self._now(), ctx), self._timeout_s
             )
         except TimeoutError:
             return ProviderReport.failed(
@@ -131,7 +135,12 @@ class CostsService:
             )
 
     async def report(
-        self, provider_id: str, rng: DateRange, *, refresh: bool = False
+        self,
+        provider_id: str,
+        rng: DateRange,
+        *,
+        refresh: bool = False,
+        ctx: FetchContext | None = None,
     ) -> ServedReport:
         provider = self._providers.get(provider_id)
         if provider is None:
@@ -153,7 +162,7 @@ class CostsService:
                 headers={"User-Agent": "Hubara-Costs/1.0"},
             ) as client:
                 raw, fx = await asyncio.gather(
-                    self._fetch(provider, client, rng), self._fx_table(client, rng)
+                    self._fetch(provider, client, rng, ctx), self._fx_table(client, rng)
                 )
             served = ServedReport(raw.priced(fx), self._now(), cached=False)
             if served.report.status is not Status.ERROR:

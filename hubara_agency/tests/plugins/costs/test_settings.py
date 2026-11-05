@@ -13,11 +13,11 @@ def _by_id(settings: CostsSettings) -> dict:
     return {p.id: p for p in build_providers(settings)}
 
 
-def test_the_tab_lists_the_five_providers_in_a_fixed_order() -> None:
+def test_the_tab_lists_the_cards_in_a_fixed_order() -> None:
     settings = CostsSettings.from_env({}, load_config())
 
     assert [p.id for p in build_providers(settings)] == [
-        "deepseek", "openrouter", "gemini", "whatsapp", "temporal",
+        "deepseek", "openrouter", "gemini", "whatsapp", "campaigns", "temporal",
     ]
 
 

@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from src.plugins.costs.api.ads_cast import ads_cast_context
 from src.plugins.costs.composition import get_costs_service
 from src.plugins.costs.domain.period import BOGOTA, MAX_DAYS, DateRange, InvalidDateRange
 from src.plugins.costs.service import CostsService, UnknownProvider
@@ -40,6 +41,7 @@ def list_providers(service: CostsService = Depends(get_costs_service)) -> dict:
 
 @router.get("/providers/{provider_id}")
 async def provider_report(
+    request: Request,
     provider_id: str,
     start: str | None = Query(None, description="Primer día (AAAA-MM-DD, Bogotá)"),
     end: str | None = Query(None, description="Último día (AAAA-MM-DD, Bogotá)"),
@@ -56,7 +58,9 @@ async def provider_report(
     except InvalidDateRange as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
     try:
-        served = await service.report(provider_id, rng, refresh=refresh)
+        served = await service.report(
+            provider_id, rng, refresh=refresh, ctx=ads_cast_context(request)
+        )
     except UnknownProvider:
         raise HTTPException(status_code=404, detail="No existe ese proveedor.") from None
     return served.to_json()

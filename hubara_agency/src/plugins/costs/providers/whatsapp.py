@@ -15,11 +15,13 @@ from src.plugins.costs.domain.money import to_micros
 from src.plugins.costs.domain.period import DateRange
 from src.plugins.costs.domain.report import CostLine, ProviderReport, Source
 from src.plugins.costs.providers.base import (
+    FetchContext,
     ProviderError,
     bogota_day,
     capped_end,
     request_json,
 )
+from src.plugins.costs.providers.campaigns import AdsCampaignsReader
 from src.sdk.connectorkit import graph_url
 
 _CATEGORY = {
@@ -85,16 +87,52 @@ class WhatsAppProvider:
     id = "whatsapp"
     label = "WhatsApp (Meta)"
 
-    def __init__(self, *, token: str | None, waba_id: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        token: str | None,
+        waba_id: str | None,
+        campaigns: AdsCampaignsReader | None = None,
+    ) -> None:
         self._token = token
         self._waba_id = waba_id
+        self._campaigns = campaigns
 
     @property
     def connected(self) -> bool:
         return bool(self._token and self._waba_id)
 
+    async def _campaigns_deduction(
+        self, rng: DateRange, ctx: FetchContext | None
+    ) -> tuple[list[CostLine], list[str]]:
+        """The WhatsApp campaigns, taken out: the Campaigns card counts them."""
+        if self._campaigns is None:
+            return [], []
+        try:
+            spend = await self._campaigns.spend(rng, ctx)
+        except ProviderError:
+            return [], [
+                "No se pudo leer el costo de las campañas de WhatsApp: si la tarjeta "
+                "Campañas sí las muestra, quedan contadas dos veces."
+            ]
+        if not spend.whatsapp_usd_micros:
+            return [], []
+        line = CostLine(
+            key="campaigns",
+            label="Menos: campañas de WhatsApp (van en la tarjeta Campañas)",
+            currency="USD",
+            daily={},
+            undated=-spend.whatsapp_usd_micros,
+            group="Descontado",
+        )
+        return [line], []
+
     async def fetch(
-        self, client: httpx.AsyncClient, rng: DateRange, now: datetime
+        self,
+        client: httpx.AsyncClient,
+        rng: DateRange,
+        now: datetime,
+        ctx: FetchContext | None = None,
     ) -> ProviderReport:
         if not self.connected:
             return ProviderReport.not_connected(self.id, rng, how_to_connect=_HOW_TO_CONNECT)
@@ -116,11 +154,13 @@ class WhatsAppProvider:
             )
         except ProviderError as exc:
             return ProviderReport.failed(self.id, rng, str(exc))
+        deduction, warnings = await self._campaigns_deduction(rng, ctx)
         return ProviderReport.ok(
             self.id,
             rng,
             Source.METERED,
-            parse_pricing_analytics(payload),
+            parse_pricing_analytics(payload) + deduction,
+            warnings=warnings,
             notes=[
                 "Cifra de Meta para la cuenta de WhatsApp Business, sin impuestos.",
                 "Meta la llama aproximada: la factura puede variar un poco.",

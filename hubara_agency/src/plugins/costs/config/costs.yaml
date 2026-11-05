@@ -20,6 +20,9 @@ fx:
 providers:
   # DeepSeek, Jev and Gemini need no settings: they are summed from the costs each
   # conversation records in the vault. WhatsApp and Temporal ask their provider.
+  campaigns:
+    # Currency of the Meta ad account (Ads reports `spend` in it, no FX applied).
+    meta_ads_currency: COP
   temporal:
     # Temporal Cloud list price (temporal.io/pricing, Developer plan). Checked
     # against a real monthly invoice: usage × these prices + plan fee matched to the cent.

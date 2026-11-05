@@ -40,8 +40,9 @@ class FakeProvider:
     def connected(self) -> bool:
         return True
 
-    async def fetch(self, client, rng, now):
+    async def fetch(self, client, rng, now, ctx=None):
         self.calls += 1
+        self.ctx = ctx
         await asyncio.sleep(self.delay)
         if self.boom:
             raise self.boom
@@ -141,3 +142,13 @@ def test_catalog_lists_providers_and_whether_they_are_connected() -> None:
     assert _service(FakeProvider()).catalog() == [
         {"id": "fake", "label": "Fake", "connected": True}
     ]
+
+
+def test_the_request_context_reaches_the_card() -> None:
+    from src.plugins.costs.providers.base import FetchContext
+
+    provider = FakeProvider()
+    ctx = FetchContext(cast_get=None)
+    asyncio.run(_service(provider).report("fake", PAST, ctx=ctx))
+
+    assert provider.ctx is ctx

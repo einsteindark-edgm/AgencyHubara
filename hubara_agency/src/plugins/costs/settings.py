@@ -15,6 +15,7 @@ from pathlib import Path
 import yaml
 
 from src.plugins.costs.providers.base import CostProvider
+from src.plugins.costs.providers.campaigns import AdsCampaignsReader, CampaignsProvider
 from src.plugins.costs.providers.conversations import (
     ConversationCostsReader,
     conversation_providers,
@@ -43,6 +44,7 @@ class CostsSettings:
     fx_fallback_cop_per_usd: Decimal
     fx_per_usd: dict[str, Decimal]
     vault_dir: Path
+    meta_ads_currency: str
     whatsapp_token: str | None
     whatsapp_waba_id: str | None
     temporal_api_key: str | None
@@ -64,6 +66,11 @@ class CostsSettings:
                 for cur, rate in (fx.get("per_usd") or {}).items()
             },
             vault_dir=Path(env.get("WORKSPACE_VAULT_DIR") or WORKSPACE_VAULT_DIR),
+            meta_ads_currency=str(
+                ((config.get("providers") or {}).get("campaigns") or {}).get(
+                    "meta_ads_currency", "COP"
+                )
+            ),
             whatsapp_token=_secret(env, "WHATSAPP_ACCESS_TOKEN"),
             whatsapp_waba_id=_secret(env, "WHATSAPP_BUSINESS_ACCOUNT_ID"),
             temporal_api_key=_secret(env, "TEMPORAL_API_KEY"),
@@ -79,10 +86,13 @@ class CostsSettings:
 
 def build_providers(s: CostsSettings) -> list[CostProvider]:
     """The cards of the tab, in the order the operator reads them."""
-    reader = ConversationCostsReader(s.vault_dir)
+    campaigns = AdsCampaignsReader()
     return [
-        *conversation_providers(reader),
-        WhatsAppProvider(token=s.whatsapp_token, waba_id=s.whatsapp_waba_id),
+        *conversation_providers(ConversationCostsReader(s.vault_dir)),
+        WhatsAppProvider(
+            token=s.whatsapp_token, waba_id=s.whatsapp_waba_id, campaigns=campaigns
+        ),
+        CampaignsProvider(campaigns, meta_currency=s.meta_ads_currency),
         TemporalProvider(
             api_key=s.temporal_api_key,
             namespace=s.temporal_namespace,

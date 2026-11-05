@@ -30,8 +30,9 @@ class _Provider:
     def __init__(self) -> None:
         self.ranges = []
 
-    async def fetch(self, client, rng, now):
+    async def fetch(self, client, rng, now, ctx=None):
         self.ranges.append(rng)
+        self.ctx = ctx
         line = CostLine(key="k", label="Hubara Ventas", currency="USD",
                         daily={rng.start: 7_888_983})
         return ProviderReport.ok(self.id, rng, Source.METERED, [line])
@@ -94,3 +95,9 @@ def test_unknown_provider_is_404(client) -> None:
 
 def test_router_is_not_public() -> None:
     assert getattr(costs_api, "PUBLIC_ROUTER", False) is False
+
+
+def test_the_card_gets_a_cast_to_the_ads_section(client, provider) -> None:
+    client.get("/api/costs/providers/deepseek")
+
+    assert provider.ctx is not None and provider.ctx.cast_get is not None
