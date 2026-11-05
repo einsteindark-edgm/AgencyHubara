@@ -114,11 +114,13 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def bot_of(vault_dir: Path, session_id: str, episode_id: str, cache: dict[str, list[dict[str, Any]]]) -> str:
     """`nuevo` o `actual`, por las trazas de los turnos del cliente del episodio
-    (`cache`: las trazas ya leídas, por sesión)."""
+    (`cache`: los resúmenes ya leídos, por sesión). Del resumen de las trazas,
+    no de las trazas completas (las tools de cada turno): el informe de bandas
+    recorre 35 días de conversaciones (memoria de la caja, 2026-11-05)."""
     from src.plugins.chats.shared import turn_traces
 
     if session_id not in cache:
-        cache[session_id] = turn_traces.read_traces(vault_dir, session_id)
+        cache[session_id] = turn_traces.read_summaries(vault_dir, session_id)
     bot = episode_bot(t for t in cache[session_id] if t.get("episode_id") == episode_id)
     return bot if bot in BOTS else "actual"  # un episodio mixto no es de Colossus: va con Botsito
 

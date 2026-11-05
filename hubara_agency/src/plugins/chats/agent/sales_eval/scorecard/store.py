@@ -130,6 +130,18 @@ def _day_entries(directory: Path, date: str) -> list[dict[str, Any]]:
     )
 
 
+def day_index(
+    directory: Path, date: str, name: str, project: jsonl_index.Projection, *, version: int
+) -> list[dict[str, Any]]:
+    """La proyección `project` de cada registro del día `date`, guardada en
+    `index/<name>/<date>.json` y puesta al día como el índice de la lista: un
+    lector que necesita otra vista de los registros (las bandas) arma la suya
+    sin parsear los registros completos de un día que no cambió."""
+    return jsonl_index.indexed_lines(
+        directory / f"{date}.jsonl", directory / "index" / name / f"{date}.json", project, version=version
+    )
+
+
 def read_rows(directory: Path, *, dates: Iterable[str]) -> list[dict[str, Any]]:
     """Las filas (`to_row`) de cada registro de los días `dates`, sin parsear
     los registros completos de un día ya indexado."""

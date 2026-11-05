@@ -50,8 +50,13 @@ todos` junta los dos para comparar.
 El informe nunca trae el número completo de una sesión (solo sus últimos 4
 dígitos) y la evidencia pasa por `redact_pii`.
 
-En producción, dentro del worker `sales_eval` (solo lee; `--alert` abre o
-comenta las alertas como el barrido diario):
+Los 35 días se leen del índice de cada día (`_evals/scorecards/index/bands/`)
+y el bot de cada episodio del resumen de sus trazas, no de los registros
+completos: un día que no cambió no se vuelve a parsear (memoria de la caja de
+app, 2026-11-05).
+
+En producción, dentro del worker `sales_eval` (solo lee, y deja al día esos
+índices; `--alert` abre o comenta las alertas como el barrido diario):
 
     python -m src.plugins.chats.agent.sales_eval.bands [--json] [--alert] [--hasta AAAA-MM-DD] [--bot nuevo|actual|todos]
 
@@ -124,6 +129,54 @@ def _evidence(text: str) -> str:
     return clean if len(clean) <= 200 else clean[:199] + "…"
 
 
+# ── El índice de cada día (memoria de la caja de app, 2026-11-05) ──────────
+# El barrido lee 35 días: con los registros completos (todos los checks de
+# cada turno) el worker `sales_eval` subía ~130 MB y no los devolvía. Cada día
+# deja al lado lo que las bandas cuentan de cada registro; un día que no cambió
+# no se vuelve a parsear (`store.day_index`).
+
+_TALLY_INDEX = "bands"
+#: Subirla si cambia lo que `_tally` guarda de un registro: los índices se rearman.
+_TALLY_VERSION = 1
+
+
+def _tally(record: dict[str, Any], _at: int, _length: int) -> dict[str, Any]:
+    """De un registro, lo que cuentan las bandas: por regla, cuántos turnos
+    tienen fila y la evidencia de la primera falla de cada turno fallado (ya
+    pasada por `_evidence`: el índice nunca guarda un dato personal entero).
+    Guarda todas las reglas, no solo las del registro de hoy: una regla nueva
+    no obliga a rearmar el índice."""
+    seen: dict[str, set[int]] = {}
+    fails: dict[str, dict[str, str]] = {}
+    for row in record.get("results") or []:
+        if not isinstance(row, dict) or not isinstance(row.get("turn"), int):
+            continue
+        rule_id, turn = str(row.get("check_id")), row["turn"]
+        seen.setdefault(rule_id, set()).add(turn)
+        if row.get("verdict") == "falla":
+            fails.setdefault(rule_id, {}).setdefault(str(turn), _evidence(str(row.get("evidence") or "")))
+    return {
+        "session_id": record.get("session_id"),
+        "episode_id": record.get("episode_id"),
+        "ts": record.get("ts"),
+        "day": str(record.get("episode_date") or record.get("date") or "")[:10],
+        "mode": record.get("mode"),
+        "registry_version": record.get("registry_version"),
+        "turns": len(record.get("by_turn") or []),
+        "rules": {rule_id: {"seen": len(turns), "fails": fails.get(rule_id, {})} for rule_id, turns in seen.items()},
+    }
+
+
+def _tallies(vault_dir: Path, dates: Iterable[str]) -> list[dict[str, Any]]:
+    """La última calificación de cada episodio de los días `dates`, del índice."""
+    directory = store.scorecards_dir(vault_dir)
+    return store.latest_by_unit(
+        entry
+        for day in sorted(set(dates))
+        for entry in store.day_index(directory, day, _TALLY_INDEX, _tally, version=_TALLY_VERSION)
+    )
+
+
 def _laney_factor(daily: Iterable[tuple[int, int]], p: float) -> float:
     """Dispersión entre días de la base (Laney): rango móvil medio de las
     tasas diarias estandarizadas / 1,128, nunca menor que 1."""
@@ -189,7 +242,8 @@ def _rule_row(rule_id: str, tally: _Tally, recent: list[str], base: list[str]) -
         "dispersion": round(factor, 2),
         "desvio": round(deviation, 2),
         "ejemplos": [
-            {"sesion": _session_tail(sid), "episodio": ep, "turno": turn, "fecha": day, "evidencia": _evidence(ev)}
+            # La evidencia ya viene recortada y sin datos personales (`_tally`).
+            {"sesion": _session_tail(sid), "episodio": ep, "turno": turn, "fecha": day, "evidencia": ev}
             for day, sid, ep, turn, ev in examples
         ],
     }
@@ -207,13 +261,11 @@ def build_report(
     end = end or now.astimezone(UTC).date()
     recent, base = _windows(end)
     recent_set, window = set(recent), set(recent) | set(base)
-    records = store.latest_by_unit(store.read_scorecards(store.scorecards_dir(vault_dir), dates=window))
-
     tallies: dict[str, _Tally] = {rule_id: _Tally() for rule_id in SPECS_BY_ID}
     traces: dict[str, list[dict[str, Any]]] = {}
     kept = old = other_bot = turns_recent = turns_base = 0
-    for rec in records:
-        day = str(rec.get("episode_date") or rec.get("date") or "")[:10]
+    for rec in _tallies(vault_dir, window):
+        day = str(rec.get("day") or "")
         if rec.get("mode") != "turn" or day not in window:
             continue
         sid, ep = str(rec.get("session_id") or ""), str(rec.get("episode_id") or "")
@@ -224,24 +276,17 @@ def build_report(
             old += 1
             continue
         kept += 1
-        n_turns = len(rec.get("by_turn") or [])
+        n_turns = int(rec.get("turns") or 0)
         turns_recent += n_turns if day in recent_set else 0
         turns_base += 0 if day in recent_set else n_turns
-        seen: dict[str, set[int]] = {}
-        failed: dict[str, dict[int, str]] = {}
-        for row in rec.get("results") or []:
-            rule_id, turn = str(row.get("check_id")), row.get("turn")
-            if rule_id not in tallies or not isinstance(turn, int):
+        for rule_id, counted in (rec.get("rules") or {}).items():
+            if rule_id not in tallies:
                 continue
-            seen.setdefault(rule_id, set()).add(turn)
-            if row.get("verdict") == "falla":
-                failed.setdefault(rule_id, {}).setdefault(turn, str(row.get("evidence") or ""))
-        for rule_id, turns in seen.items():
-            tallies[rule_id].turns[day] += len(turns)
-        for rule_id, by_turn in failed.items():
-            tallies[rule_id].fails[day] += len(by_turn)
+            failed = counted.get("fails") or {}
+            tallies[rule_id].turns[day] += int(counted.get("seen") or 0)
+            tallies[rule_id].fails[day] += len(failed)
             if day in recent_set:
-                tallies[rule_id].examples.extend((day, sid, ep, t, ev) for t, ev in by_turn.items())
+                tallies[rule_id].examples.extend((day, sid, ep, int(t), ev) for t, ev in failed.items())
 
     rows = [_rule_row(spec.id, tallies[spec.id], recent, base) for spec in CHECKS]
     rows.sort(key=lambda r: (_BAND_RANK[r["banda"]], -r["desvio"], r["regla"]))
