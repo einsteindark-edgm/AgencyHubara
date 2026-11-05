@@ -1,0 +1,32 @@
+# Costs tab — knobs (git is the source of truth). Secrets never go here: they
+# come from the environment (SSM /hubara/<tenant>/*, declared in Terraform).
+
+# Hard limit per provider call; past it the card says the provider did not answer.
+timeout_seconds: 25
+
+cache:
+  # Ranges that include today: short, so today's spend moves.
+  live_ttl_seconds: 600
+  # Ranges fully in the past: providers barely change them.
+  closed_ttl_seconds: 21600
+
+fx:
+  # Only used when the official TRM (datos.gov.co) cannot be read.
+  cop_per_usd_fallback: "3200"
+  # Other currencies, units per 1 USD. DeepSeek bills part of the account in CNY.
+  per_usd:
+    CNY: "7.10"
+
+providers:
+  # DeepSeek, Jev and Gemini need no settings: they are summed from the costs each
+  # conversation records in the vault. WhatsApp and Temporal ask their provider.
+  campaigns:
+    # Currency of the Meta ad account (Ads reports `spend` in it, no FX applied).
+    meta_ads_currency: COP
+  temporal:
+    # Temporal Cloud list price (temporal.io/pricing, Developer plan). Checked
+    # against a real monthly invoice: usage × these prices + plan fee matched to the cent.
+    usd_per_million_actions: "50"
+    usd_per_active_gbh: "0.042"
+    usd_per_retained_gbh: "0.00105"
+    plan_fee_ratio: "0.10"
