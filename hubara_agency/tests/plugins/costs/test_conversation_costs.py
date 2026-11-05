@@ -79,7 +79,7 @@ def test_broken_files_and_foreign_folders_are_skipped(tmp_path) -> None:
     bad = tmp_path / "wa_573000000005"
     bad.mkdir()
     (bad / "metadata.json").write_text("{not json", encoding="utf-8")
-    _session(tmp_path, "wa_573000000006", [
+    _session(tmp_path, "wa_573000000099", [
         _episode(NOV2_10AM, llm_usage={"cost_usd": "oops"}, jev_usage={"calls": -1, "cost_usd_micros": None}),
         "not an episode",
     ])
