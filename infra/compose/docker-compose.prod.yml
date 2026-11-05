@@ -55,7 +55,12 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
-    env_file: .env
+    # Solo sus llaves y la huella de su config, NO el `.env` del stack
+    # (memoria de la caja, 2026-11-05): con el `.env` veía todas las llaves de
+    # producción y `HUBARA_IMAGE`, y cada deploy lo recreaba (~990 MB al
+    # arrancar). Lo arma render-env-from-ssm.sh (c).
+    # Guarda: hubara_agency/tests/infra/test_prod_litellm_env.py.
+    env_file: litellm.env
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
       interval: 10s
