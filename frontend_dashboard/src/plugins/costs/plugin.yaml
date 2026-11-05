@@ -5,17 +5,17 @@ version: 0.1.0
 archetype: full_stack  # P-29: pestaña (entities/features) + api que pregunta a cada proveedor
 display_name: Costos
 description: |
-  Cuánto cuesta el sistema productivo en un rango de fechas, con la cifra de
-  cada proveedor: DeepSeek por llave (página Usage de la plataforma), OpenRouter
-  por llave (Jev, analytics con llave de administración), Gemini/Google Cloud
-  (exportación de facturación a BigQuery), WhatsApp (pricing_analytics de Meta)
-  y Temporal Cloud (uso diario × tarifa publicada). Un endpoint por proveedor,
-  con tiempo máximo y caché, para que ninguna consulta cuelgue la pestaña.
+  Cuánto cuesta el sistema productivo en un rango de fechas. DeepSeek (el bot),
+  Jev (OpenRouter) y Gemini (fotos y audios) salen de los costos que cada
+  conversación ya guarda en el vault; WhatsApp, del pricing_analytics de Meta
+  (incluye campañas y envíos fuera de una conversación); Temporal Cloud, de su
+  uso diario × la tarifa publicada. Un endpoint por proveedor, con tiempo
+  máximo y caché, para que ninguna consulta cuelgue la pestaña.
 
-# Isla consciente (L-18): no lee ni escribe datos de otros plugins (ni sesiones,
-# ni vault); solo habla con las APIs de los proveedores. Si algún día concilia
-# contra los costos por conversación, se declara `depends_on: [chats]` + un cast.
-depends_on: []
+# Lee los costos que el ingest y los workers de `chats` escriben en cada
+# episodio (`llm_usage`, `jev_usage`, `vision_usage`, `audio_usage` de
+# `wa_*/metadata.json`): sin chats no hay conversaciones que sumar. Solo lee.
+depends_on: [chats]
 
 frontend:
   entry: ./frontend
@@ -31,14 +31,10 @@ api:
   tags: [Costs]
 
 wiring_intents:
-  # Ninguna es obligatoria: un proveedor sin su secreto sale «Sin conectar» con
-  # el cómo conectarlo (nunca como $0). Opcionales:
-  #   DEEPSEEK_PLATFORM_TOKEN          — sesión de platform.deepseek.com (consumo por llave)
-  #   DEEPSEEK_API_KEY                 — saldo de la cuenta (ya existe)
-  #   OPENROUTER_MANAGEMENT_KEY        — analytics por fechas de OpenRouter
-  #   OPENROUTER_API_KEY               — totales sin fechas de la llave de Jev (ya existe)
-  #   GCP_BILLING_SERVICE_ACCOUNT_JSON — lector de la exportación de facturación en BigQuery
-  #   WHATSAPP_ACCESS_TOKEN, WHATSAPP_BUSINESS_ACCOUNT_ID — pricing_analytics del WABA (ya existen)
-  #   TEMPORAL_API_KEY, TEMPORAL_NAMESPACE — uso de Temporal Cloud (ya existen)
-  # Perillas no secretas (llaves productivas, tarifas de Temporal, caché): src/plugins/costs/config/costs.yaml.
+  # Ninguna es obligatoria: una tarjeta sin su secreto sale «Sin conectar» con
+  # el cómo conectarla (nunca $0). DeepSeek, Jev y Gemini no piden nada (leen el
+  # vault, WORKSPACE_VAULT_DIR). Opcionales, ya existentes en SSM:
+  #   WHATSAPP_ACCESS_TOKEN, WHATSAPP_BUSINESS_ACCOUNT_ID — pricing_analytics del WABA
+  #   TEMPORAL_API_KEY, TEMPORAL_NAMESPACE — uso de Temporal Cloud
+  # Perillas no secretas (tarifas de Temporal, caché, tasas): src/plugins/costs/config/costs.yaml.
   env_vars_required: []

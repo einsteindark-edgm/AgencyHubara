@@ -72,13 +72,10 @@ async def request_json(
     headers: dict[str, str] | None = None,
     params: dict[str, Any] | None = None,
     json: Any = None,
-    data: dict[str, str] | None = None,
 ) -> Any:
     """One HTTP call → parsed JSON, or :class:`ProviderError` with a clear cause."""
     try:
-        resp = await client.request(
-            method, url, headers=headers, params=params, json=json, data=data
-        )
+        resp = await client.request(method, url, headers=headers, params=params, json=json)
     except httpx.TimeoutException:
         raise ProviderError(f"{provider_label} no respondió a tiempo.") from None
     except httpx.HTTPError as exc:

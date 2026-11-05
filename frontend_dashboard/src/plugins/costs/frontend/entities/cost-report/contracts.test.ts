@@ -5,19 +5,25 @@ import {
   CATALOG_FIXTURE,
   DEEPSEEK_REPORT_FIXTURE,
   NOT_CONNECTED_FIXTURE,
+  WHATSAPP_REPORT_FIXTURE,
 } from "./fixtures";
 
 describe("cost-report contracts", () => {
   it("parses the catalog the backend sends", () => {
     const parsed = backendCatalogSchema.parse(CATALOG_FIXTURE);
-    expect(parsed.providers.map((p) => p.id)).toEqual(["deepseek", "openrouter", "whatsapp"]);
+    expect(parsed.providers.map((p) => p.id)).toEqual(["deepseek", "temporal", "whatsapp"]);
     expect(parsed.max_days).toBe(92);
   });
 
-  it("parses a provider report with lines in several currencies", () => {
+  it("parses a report summed from the costs recorded per conversation", () => {
     const parsed = backendProviderReportSchema.parse(DEEPSEEK_REPORT_FIXTURE);
-    expect(parsed.lines).toHaveLength(3);
-    expect(parsed.lines[1].currency).toBe("CNY");
+    expect(parsed.source).toBe("conversations");
+    expect(parsed.lines[0].unit).toBe("tokens");
+  });
+
+  it("parses lines in the provider's own currency", () => {
+    const parsed = backendProviderReportSchema.parse(WHATSAPP_REPORT_FIXTURE);
+    expect(parsed.lines[0].currency).toBe("COP");
   });
 
   it("keeps a missing total as null, never as zero", () => {

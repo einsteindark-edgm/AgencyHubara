@@ -39,7 +39,7 @@ export const backendCostLineSchema = z.object({
 export const backendProviderReportSchema = z.object({
   provider: z.string(),
   status: z.enum(["ok", "not_connected", "error"]).catch("error"),
-  source: z.enum(["billed", "metered", "computed"]).nullable().catch(null),
+  source: z.enum(["billed", "metered", "computed", "conversations"]).nullable().catch(null),
   start: z.string(),
   end: z.string(),
   production_usd_micros: nullableMicros,

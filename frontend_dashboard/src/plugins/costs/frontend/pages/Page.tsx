@@ -1,7 +1,7 @@
 /**
- * Sección Costos — cuánto cuesta el sistema productivo en un rango de fechas,
- * con la cifra de cada proveedor (DeepSeek por llave, OpenRouter, Gemini,
- * WhatsApp y Temporal Cloud).
+ * Sección Costos — cuánto cuesta el sistema productivo en un rango de fechas:
+ * DeepSeek, Jev y Gemini con lo que cada conversación registró; WhatsApp con
+ * la cifra de Meta y Temporal Cloud con su uso diario × su tarifa.
  *
  * Por defecto las últimas dos semanas (el rango lo manda el backend junto con
  * el catálogo). Cada tarjeta es su propia consulta: una lenta o caída no frena
@@ -43,7 +43,7 @@ export default function Page() {
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
           <h1 className="m-0 text-[13px] font-semibold">Costos</h1>
           <p className="m-0 text-xs text-fg-muted">
-            Cuánto cuesta el sistema productivo, con la cifra de cada proveedor.
+            Cuánto cuesta el sistema productivo en las fechas que elijas.
           </p>
         </div>
         {data && range ? (

@@ -6,16 +6,14 @@
 ## Purpose
 
 La pestaña **Costos** dice cuánto cuesta el sistema productivo en un rango de
-fechas, con la cifra **de cada proveedor** (no estimaciones por conversación):
-DeepSeek por llave, OpenRouter (Jev) por llave, Gemini/Google Cloud, WhatsApp
-(Meta) y Temporal Cloud. Solo lee: no escribe en el vault ni en otros plugins.
+fechas. Solo lee: no escribe en el vault ni en otros plugins.
 
-| Proveedor | Fuente | Credencial |
+| Tarjeta | Fuente | Credencial |
 |---|---|---|
-| DeepSeek | `platform.deepseek.com/api/v0/usage/by_api_key/{cost,amount}` (página Usage) + `/user/balance` | `DEEPSEEK_PLATFORM_TOKEN` (sesión web), `DEEPSEEK_API_KEY` |
-| OpenRouter | `POST /api/v1/analytics/query` (dimensión `api_key_id`) | `OPENROUTER_MANAGEMENT_KEY`; sin ella, `GET /api/v1/key` solo como nota |
-| Gemini | exportación de facturación de Cloud Billing a BigQuery (`cost` + `credits`) | `GCP_BILLING_SERVICE_ACCOUNT_JSON` |
-| WhatsApp | `pricing_analytics` DAILY del WABA (moneda del WABA, sin impuestos) | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_BUSINESS_ACCOUNT_ID` |
+| DeepSeek (el bot) | `episodes[].llm_usage.cost_usd` de cada conversación del vault | ninguna |
+| Jev (OpenRouter) | `episodes[].jev_usage` (lo que OpenRouter cobró por pregunta) | ninguna |
+| Gemini (fotos y audios) | `episodes[].vision_usage` + `audio_usage` | ninguna |
+| WhatsApp | `pricing_analytics` DAILY del WABA (incluye campañas y envíos fuera de una conversación) | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_BUSINESS_ACCOUNT_ID` |
 | Temporal Cloud | `GET /cloud/usage` × tarifa de `costs.yaml` + tarifa del plan | `TEMPORAL_API_KEY`, `TEMPORAL_NAMESPACE` |
 
 ## Requirements
@@ -51,16 +49,32 @@ afectar a las demás ni devolver 500.
 ### Requirement: Sin dato no es cero
 
 Un proveedor sin credencial (o con el placeholder de SSM) SHALL responder
-`status: "not_connected"` con `how_to_connect`, sin llamar a nadie. En ese caso
+`status: "not_connected"` con `how_to_connect`, sin llamar a nadie; las
+tarjetas de conversaciones, lo mismo si el entorno no tiene vault. En ese caso
 y en `error`, `production_usd_micros` SHALL ser `null`, y el total de la
 pestaña SHALL decir «Parcial» y nombrar lo que falta.
 
+### Requirement: Los costos de LLM salen de las conversaciones
+
+DeepSeek, Jev y Gemini SHALL sumarse de los costos que cada conversación de
+producción guarda en `wa_*/metadata.json`, por día de Bogotá en que empezó la
+conversación, sin llamar a la API de esos proveedores. La lectura SHALL ser una
+sesión a la vez (solo las sumas en memoria), SHALL saltar las sesiones cuyo
+`metadata.json` no se escribió desde el inicio del rango y SHALL compartirse
+entre las tres tarjetas. Un archivo ilegible SHALL saltarse sin tumbar la tarjeta.
+
+#### Scenario: Conversación que empezó antes del rango
+
+- GIVEN una conversación que empezó el 2026-10-30 con costo de LLM
+- WHEN se piden los costos del 2026-11-02 al 2026-11-03
+- THEN esa conversación no suma, aunque su archivo se haya escrito después
+
 ### Requirement: Solo lo productivo suma
 
-Cada línea SHALL declarar si es producción. Las llaves de DeepSeek y OpenRouter
-productivas y el namespace de Temporal productivo vienen de `costs.yaml` /
-`TEMPORAL_NAMESPACE`; lo demás (laboratorios, simulaciones locales) SHALL
-mostrarse aparte y no sumar al total productivo.
+Cada línea SHALL declarar si es producción. Las conversaciones del vault de
+producción lo son por construcción (los laboratorios y simulaciones locales no
+escriben ahí); en Temporal, solo el namespace `TEMPORAL_NAMESPACE`. Lo demás
+SHALL mostrarse aparte y no sumar al total productivo.
 
 ### Requirement: Dinero exacto y en dos monedas
 

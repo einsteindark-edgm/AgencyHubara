@@ -21,7 +21,7 @@ const json = (body: unknown, status = 200) =>
 
 function route(url: string) {
   if (url.includes("/api/costs/providers/deepseek")) return json(DEEPSEEK_REPORT_FIXTURE);
-  if (url.includes("/api/costs/providers/openrouter")) return json(NOT_CONNECTED_FIXTURE);
+  if (url.includes("/api/costs/providers/temporal")) return json(NOT_CONNECTED_FIXTURE);
   if (url.includes("/api/costs/providers/whatsapp")) return json(WHATSAPP_REPORT_FIXTURE);
   if (url.includes("/api/costs/providers")) return json(CATALOG_FIXTURE);
   return json({ detail: "no" }, 404);
@@ -49,7 +49,7 @@ describe("Costs page", () => {
 
     await waitFor(() => expect(screen.getByTestId("costs-total-usd")).toHaveTextContent("US$8,50"));
     expect(screen.getByLabelText("Desde")).toHaveValue("2026-10-22");
-    expect(screen.getByText(/Parcial/)).toHaveTextContent("OpenRouter (Jev): sin conectar");
+    expect(screen.getByText(/Parcial/)).toHaveTextContent("Temporal Cloud: sin conectar");
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls.some((u) => u.includes("/deepseek?start=2026-10-22&end=2026-11-04"))).toBe(true);
   });

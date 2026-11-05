@@ -6,7 +6,7 @@
  */
 
 export type CostStatus = "ok" | "not_connected" | "error";
-export type CostSource = "billed" | "metered" | "computed";
+export type CostSource = "billed" | "metered" | "computed" | "conversations";
 
 export interface CostProvider {
   id: string;
@@ -65,6 +65,7 @@ export const SOURCE_LABEL: Record<CostSource, string> = {
   billed: "Factura del proveedor",
   metered: "Medición del proveedor",
   computed: "Uso del proveedor × su tarifa",
+  conversations: "Registrado en cada conversación",
 };
 
 const MICROS = 1_000_000;

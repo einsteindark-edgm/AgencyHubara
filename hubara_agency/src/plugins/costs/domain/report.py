@@ -32,6 +32,8 @@ class Source(str, Enum):
     METERED = "metered"
     #: The provider's usage quantities × its published price (Temporal).
     COMPUTED = "computed"
+    #: What each conversation recorded when the call was made (DeepSeek, Jev, Gemini).
+    CONVERSATIONS = "conversations"
 
 
 @dataclass(frozen=True)

@@ -18,20 +18,8 @@ fx:
     CNY: "7.10"
 
 providers:
-  deepseek:
-    # Keys whose spend is the production system (bot + GraphAgents). The rest
-    # (labs, local simulations, the harness) are shown apart.
-    # Override per tenant with COSTS_DEEPSEEK_PRODUCTION_KEYS (comma separated).
-    production_keys: ["Hubara Ventas"]
-  openrouter:
-    # Empty = every key of the account is production (today only Jev uses it).
-    # Override with COSTS_OPENROUTER_PRODUCTION_KEYS.
-    production_keys: []
-  gemini:
-    # BigQuery dataset of the Cloud Billing "standard usage cost" export.
-    # The project defaults to the service account's project_id.
-    dataset: billing_export
-    project: null
+  # DeepSeek, Jev and Gemini need no settings: they are summed from the costs each
+  # conversation records in the vault. WhatsApp and Temporal ask their provider.
   temporal:
     # Temporal Cloud list price (temporal.io/pricing, Developer plan). Checked
     # against a real monthly invoice: usage × these prices + plan fee matched to the cent.

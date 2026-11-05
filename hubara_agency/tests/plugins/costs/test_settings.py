@@ -1,8 +1,8 @@
-"""Which providers are connected comes from the environment; the knobs from costs.yaml."""
+"""Which cards the tab has, where each reads from, and the knobs of costs.yaml."""
 from __future__ import annotations
 
-import json
 from decimal import Decimal
+from pathlib import Path
 
 from src.plugins.costs.settings import CostsSettings, build_providers, load_config
 
@@ -21,25 +21,26 @@ def test_the_tab_lists_the_five_providers_in_a_fixed_order() -> None:
     ]
 
 
-def test_ssm_placeholders_mean_not_connected() -> None:
+def test_llm_cards_need_no_credential_they_read_the_conversations() -> None:
+    providers = _by_id(CostsSettings.from_env({}, load_config()))
+
+    assert all(providers[p].connected for p in ("deepseek", "openrouter", "gemini"))
+
+
+def test_ssm_placeholders_leave_whatsapp_and_temporal_not_connected() -> None:
     env = {
-        "DEEPSEEK_PLATFORM_TOKEN": PLACEHOLDER,
-        "OPENROUTER_MANAGEMENT_KEY": "",
-        "GCP_BILLING_SERVICE_ACCOUNT_JSON": PLACEHOLDER,
         "WHATSAPP_ACCESS_TOKEN": PLACEHOLDER,
         "WHATSAPP_BUSINESS_ACCOUNT_ID": "123",
         "TEMPORAL_API_KEY": PLACEHOLDER,
     }
     providers = _by_id(CostsSettings.from_env(env, load_config()))
 
-    assert not any(p.connected for p in providers.values())
+    assert providers["whatsapp"].connected is False
+    assert providers["temporal"].connected is False
 
 
-def test_real_values_connect_each_provider() -> None:
+def test_real_values_connect_whatsapp_and_temporal() -> None:
     env = {
-        "DEEPSEEK_PLATFORM_TOKEN": "session",
-        "OPENROUTER_MANAGEMENT_KEY": "sk-or-mgmt",
-        "GCP_BILLING_SERVICE_ACCOUNT_JSON": json.dumps({"project_id": "p", "client_email": "e"}),
         "WHATSAPP_ACCESS_TOKEN": "t",
         "WHATSAPP_BUSINESS_ACCOUNT_ID": "123",
         "TEMPORAL_API_KEY": "k",
@@ -47,26 +48,18 @@ def test_real_values_connect_each_provider() -> None:
     }
     providers = _by_id(CostsSettings.from_env(env, load_config()))
 
-    assert all(p.connected for p in providers.values())
+    assert providers["whatsapp"].connected and providers["temporal"].connected
 
 
-def test_broken_service_account_json_is_not_connected() -> None:
-    settings = CostsSettings.from_env({"GCP_BILLING_SERVICE_ACCOUNT_JSON": "{not json"}, load_config())
+def test_conversations_are_read_from_the_vault_of_this_environment() -> None:
+    settings = CostsSettings.from_env({"WORKSPACE_VAULT_DIR": "/mnt/vault"}, load_config())
 
-    assert _by_id(settings)["gemini"].connected is False
+    assert settings.vault_dir == Path("/mnt/vault")
 
 
-def test_yaml_holds_the_production_keys_and_temporal_prices() -> None:
+def test_yaml_holds_temporal_prices_and_exchange_rates() -> None:
     settings = CostsSettings.from_env({}, load_config())
 
-    assert "Hubara Ventas" in settings.deepseek_production_keys
     assert settings.temporal_prices.usd_per_million_actions == Decimal("50")
     assert settings.temporal_prices.plan_fee_ratio == Decimal("0.10")
     assert settings.fx_per_usd["CNY"] > 0
-
-
-def test_env_can_override_the_production_keys_per_tenant() -> None:
-    env = {"COSTS_DEEPSEEK_PRODUCTION_KEYS": "Tienda Ventas, Tienda Jev"}
-    settings = CostsSettings.from_env(env, load_config())
-
-    assert settings.deepseek_production_keys == ("Tienda Ventas", "Tienda Jev")
