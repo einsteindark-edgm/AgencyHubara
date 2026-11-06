@@ -508,3 +508,10 @@ nunca sea un barrido del vault. Si varias conversaciones terminan en los mismos
 - WHEN el Taller lee `4567:ep_001`
 - THEN ve los mensajes con `[nombre]`, `[dirección]`, `[teléfono]` y `[correo]`, y la conversación como `···4567`
 - AND ve «6 cajas», «Medellín» y «$12.000» tal como estaban
+
+#### Scenario: Quien recibe solo aparece en el formulario de envío
+
+- GIVEN el formulario de envío llegó como lo manda WhatsApp (`receiver_name=…; address=…; phone=…; national_id=…; neighborhood=…`), con el nombre también en mayúsculas en las notas, y después el bot y la clienta lo repiten y ella escribe la dirección a mano («Carrer 7 #12_34»)
+- WHEN el Taller lee el episodio
+- THEN ni el nombre (en ningún mensaje ni en mayúsculas), ni la dirección, ni el documento, ni el barrio, ni el celular aparecen
+- AND `city=…` y el resto del texto quedan, y la hora de cada mensaje se lee como fecha ISO (una fecha no es un teléfono)
