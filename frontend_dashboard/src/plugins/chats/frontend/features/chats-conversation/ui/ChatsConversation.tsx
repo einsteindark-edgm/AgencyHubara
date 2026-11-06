@@ -19,7 +19,11 @@ interface Props {
 
 export function ChatsConversation({ chatId }: Props) {
   const { data: chats = [] } = useChatInbox();
-  const { data: messages = [] } = useChatMessages(chatId);
+  const {
+    data: messages = [],
+    isError: messagesFailed,
+    refetch: refetchMessages,
+  } = useChatMessages(chatId);
   // Misma query (cache compartido) que el composer — header y composer nunca
   // discrepan sobre quién maneja la conversación.
   const { data: session } = useSession(chatId);
@@ -75,10 +79,31 @@ export function ChatsConversation({ chatId }: Props) {
 
       {subTab === "Notas" && <ChatsNotes chatId={chatId} />}
       {subTab === "Archivos" && <ChatsFiles chatId={chatId} />}
-      {subTab === "Chat" && (
-        <ChatsMessageList messages={messages} chatId={chatId} key={chatId ?? ""} />
-      )}
+      {subTab === "Chat" &&
+        (messagesFailed ? (
+          <LoadError onRetry={() => void refetchMessages()} />
+        ) : (
+          <ChatsMessageList messages={messages} chatId={chatId} key={chatId ?? ""} />
+        ))}
     </main>
+  );
+}
+
+/** El detalle no se pudo leer: se dice, no se pinta un chat vacío (L-10). */
+function LoadError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="msgs"
+      style={{ alignItems: "center", justifyContent: "center", gap: 8 }}
+    >
+      <p style={{ fontSize: 13, color: "var(--fg-muted)" }}>
+        No se pudo cargar esta conversación.
+      </p>
+      <button type="button" className="tb-btn" onClick={onRetry}>
+        Reintentar
+      </button>
+    </div>
   );
 }
 

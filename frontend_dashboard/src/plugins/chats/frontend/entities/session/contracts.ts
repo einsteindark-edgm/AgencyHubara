@@ -5,7 +5,7 @@
  */
 
 import { z } from "zod";
-import { chatMessageSchema } from "../message/contracts";
+import { chatMessageSchema, type ChatMessageDto } from "../message/contracts";
 
 /** Origen REAL de la conversación (referral CTWA del ingest). `campaign_name`
  *  / `ad_name` los resuelve el backend vía Graph best-effort: pueden venir
@@ -95,6 +95,44 @@ export const statusHistoryEntrySchema = z.object({
   timestamp: z.number(),
 });
 
+/**
+ * El historial se valida mensaje por mensaje: uno que este panel no sabe leer
+ * (backend más nuevo, línea rota del JSONL) se pinta como nota de sistema en
+ * su lugar, con el texto que traía, y el resto de la conversación sigue
+ * visible. Caso 2026-11-04: un solo `sender` desconocido tumbaba el `parse`
+ * entero y el panel quedaba en blanco aunque el servidor mandaba todo (L-10).
+ */
+const sessionMessagesSchema = z.array(z.unknown()).transform((raw) =>
+  raw.map((item, index) => {
+    const parsed = chatMessageSchema.safeParse(item);
+    if (parsed.success) return parsed.data;
+    console.warn(
+      `[chats] mensaje ${index} del historial no cumple el contrato`,
+      parsed.error.issues,
+    );
+    return unreadableMessage(item);
+  }),
+);
+
+function unreadableMessage(item: unknown): ChatMessageDto {
+  const obj = typeof item === "object" && item !== null ? (item as Record<string, unknown>) : {};
+  const text = typeof obj.content === "string" ? obj.content.trim() : "";
+  const timestamp =
+    typeof obj.timestamp === "string" || typeof obj.timestamp === "number"
+      ? obj.timestamp
+      : undefined;
+  return {
+    // `ui_component_sent` sin `event` = nota de sistema visible en el panel
+    // (los `system_event` se esconden).
+    ui_type: "ui_component_sent",
+    role: typeof obj.role === "string" ? obj.role : "system",
+    content: text
+      ? `⚠️ Este mensaje no se pudo mostrar completo: «${text}»`
+      : "⚠️ Aquí hay un mensaje que no se pudo mostrar.",
+    timestamp,
+  };
+}
+
 export const sessionDetailsSchema = z.object({
   session_id: z.string(),
   phone_number: z.string(),
@@ -114,7 +152,7 @@ export const sessionDetailsSchema = z.object({
   order_ref: sessionOrderRefSchema.nullable().default(null),
   status_history: z.array(statusHistoryEntrySchema),
   origin: sessionOriginSchema.nullable().default(null),
-  messages: z.array(chatMessageSchema),
+  messages: sessionMessagesSchema,
 });
 
 export const sessionsListResponseSchema = z.object({

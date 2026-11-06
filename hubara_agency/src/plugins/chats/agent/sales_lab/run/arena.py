@@ -37,9 +37,10 @@ from typing import Any
 _CLASSIFIER_STEPS = ("perception", "verify")
 _BINS = 10
 #: Guardas que le dan al LLM una ronda más: la capa ② del V1, la segunda
-#: puerta del contrato de herramientas del V2 y la de lo prometido sin hacer
-#: (incidente del 2026-10-09) (`workflow_helpers`).
-_EXTRA_ROUND_GUARDS = ("turn_policy_extra_round", "contract_extra_round", "promised_action_round")
+#: puerta del contrato de herramientas del V2, la de lo prometido sin hacer
+#: (incidente del 2026-10-09) y la retención del egreso (puerta de
+#: afirmaciones, 2026-11-03) (`workflow_helpers`).
+_EXTRA_ROUND_GUARDS = ("turn_policy_extra_round", "contract_extra_round", "promised_action_round", "egress_retain_round")
 #: Proveedores con los que la capacidad le pregunta a Jev.
 _JEV_PROVIDERS = frozenset({"jev", "sombra"})
 #: Cuando decide la regla sin que Jev haya fallado: Jev dudó, o no había nada

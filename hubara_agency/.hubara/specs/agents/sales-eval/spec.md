@@ -285,6 +285,27 @@ contrato `evals@v1` (`/api/chats/evals/production/*`, cast
 `/api/agents/evals/production/*`); un episodio sin calificar en modo turno
 SHALL calificarse al vuelo con el código.
 
+### Requirement: Calidad LLM abre sin releer el historial completo
+
+Desde el 2026-11-03 (la pestaña daba 504: cuatro listas a la vez sobre 56
+días, cada una parseando todos los scorecards con sus checks por turno y
+todas las trazas con sus tools, y el cast corta a los 15 s), la lista, las
+gráficas, el filtro por bot, la alerta y la cola de Calibración SHALL leer el
+índice compacto de cada día de scorecards (`_evals/scorecards/index/`) y el
+resumen de las trazas de cada sesión (`evals/turn_traces.summary.json`),
+nunca los registros completos. Ese índice SHALL ponerse al día leyendo solo
+lo que el archivo ganó; un archivo que no cambió NO SHALL volver a leerse, y
+uno reescrito SHALL rearmarse. Abrir una conversación SHALL leer del día solo
+los registros de esa conversación. El Resumen NO SHALL pedir la lista de
+conversaciones (es de la pestaña Conversaciones). El índice es derivado: si
+falta o no se puede escribir, la respuesta SHALL ser la misma.
+
+#### Scenario: La pestaña con 56 días de producción
+
+- GIVEN 56 días de scorecards en modo turno ya indexados y las trazas de cada conversación resumidas
+- WHEN el operador abre Calidad LLM y el dashboard pide a la vez la alerta, cómo le fue a cada bot, dónde terminan y la semana a semana
+- THEN cada respuesta sale del índice en menos de un segundo, sin parsear los registros completos ni las trazas
+
 ### Requirement: Calidad LLM muestra el motor de decisiones
 
 La pestaña «Motor de decisiones» de Calidad LLM SHALL mostrar la versión del
@@ -423,12 +444,74 @@ que se saltó las revisiones de `send_reply`, afirmación sin consultar que Jev
 leyó en sombra), sin textos. Escribirla NUNCA SHALL afectar el turno. El
 informe (`python -m src.plugins.chats.agent.sales_eval.huecos --dias N`) SHALL
 juntar el testigo con los scorecards (v8 o posterior) de la ventana y decir, por propuesta,
-cuántos casos hubo por bot y si vale la pena arreglarla: una regla crítica con
+cuántos casos hubo y si vale la pena arreglarla: una regla crítica con
 un caso; una mayor con 2 casos por cada 100 turnos o 3 conversaciones; una
 menor con 5 por cada 100 (con menos de 50 turnos, a lo sumo «quizás»). El
 informe NO SHALL llevar textos ni números completos de clientes.
+
+### Requirement: La evaluación del ciclo mira solo el bot en producción
+
+El informe de huecos (`sales_eval/huecos.py`) y las bandas por regla
+(`sales_eval/bands.py`, también en el barrido diario y sus alertas `[ALR]`)
+SHALL contar por defecto solo los episodios del bot en producción
+(`huecos.PRODUCTION_BOT = "nuevo"`: Colossus, el workflow v2 con Jev). Botsito
+(v1, «actual») está retirado: sus episodios NO SHALL mover un veredicto, un
+motivo, los ejemplos, los casos por regla o por hueco del testigo, el control
+del paso 2, la muestra, ni ninguna de las dos ventanas de las bandas (la
+reciente Y la base). El bot de cada episodio lo dicen las trazas de los turnos
+del cliente (requirement «El bot Jev es el workflow nuevo»); un episodio mixto
+NO SHALL contar como Colossus. Los dos informes SHALL decir qué bot cuentan
+(`"bot": "nuevo" | "actual" | "todos"`) y cuántos episodios dejaron fuera por
+ser de otro bot (`muestra.excluidos_otro_bot`); `por_bot` SHALL traer solo los
+bots contados. `--bot actual` cuenta solo Botsito y `--bot todos` SHALL
+reproducir los números de los dos bots juntos, para comparar.
+
+#### Scenario: Una falla que solo tuvo Botsito no vale la pena arreglarla
+
+- GIVEN en la ventana Colossus no falló TAG-02 y Botsito lo falló una vez
+- WHEN se corre el informe de huecos sin `--bot`
+- THEN la propuesta `motivo_verificacion_pago` queda «sin casos todavía», con TAG-02 en 0 y sin ejemplos
+- AND con `--bot todos` queda «sí», como antes
+
+#### Scenario: Botsito no infla la base de las bandas
+
+- GIVEN Colossus sube una regla de 1 a 6 fallas por cada 100 turnos y Botsito fallaba esa regla mucho más en la base
+- WHEN el barrido diario calcula las bandas
+- THEN la base solo tiene los turnos y fallas de Colossus y la regla queda en `abrir`
+- AND una subida que solo tuvo Botsito en la semana no abre alerta
 
 ## Out of scope
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).
 - El scorecard del agente de remarketing (HU-SC-7).
+
+### Requirement: El Taller lee el caso real con los datos tapados
+
+Para arreglar una tarjeta del Ciclo Colossus, el Taller SHALL poder leer las
+conversaciones que la tarjeta cita como las muestra Calidad LLM (`···4567
+ep_003 t4`) con `python -m src.plugins.chats.agent.sales_eval.case
+4567:ep_003:t4`: los mensajes del episodio (cliente, bot, equipo) y, del turno
+pedido (o de todos los del episodio), sus pasos y las decisiones de Jev. Los
+datos personales NO SHALL salir de la caja: el nombre del perfil de WhatsApp y
+los de los borradores, teléfonos, direcciones, correos y campos de formularios
+salen tapados con el mismo anonimizador que protege lo que va a Jev, y la
+conversación solo por sus últimos 4 dígitos; ni el id completo ni los `wamid`
+SHALL aparecer. Lo que reproduce el caso (productos, precios, cantidades,
+ciudades) SHALL quedar. Sin episodio, solo SHALL listar los episodios, sin
+textos. Más de `MAX_REFS` (5) casos por llamada SHALL rechazarse, para que
+nunca sea un barrido del vault. Si varias conversaciones terminan en los mismos
+4 dígitos, el caso queda `ambiguous` con hasta 3.
+
+#### Scenario: La tarjeta cita un caso con el nombre de la clienta
+
+- GIVEN el bot saludó «¡Hola Martha!» y la clienta escribió quién recibe, su dirección, su celular y su correo
+- WHEN el Taller lee `4567:ep_001`
+- THEN ve los mensajes con `[nombre]`, `[dirección]`, `[teléfono]` y `[correo]`, y la conversación como `···4567`
+- AND ve «6 cajas», «Medellín» y «$12.000» tal como estaban
+
+#### Scenario: Quien recibe solo aparece en el formulario de envío
+
+- GIVEN el formulario de envío llegó como lo manda WhatsApp (`receiver_name=…; address=…; phone=…; national_id=…; neighborhood=…`), con el nombre también en mayúsculas en las notas, y después el bot y la clienta lo repiten y ella escribe la dirección a mano («Carrer 7 #12_34»)
+- WHEN el Taller lee el episodio
+- THEN ni el nombre (en ningún mensaje ni en mayúsculas), ni la dirección, ni el documento, ni el barrio, ni el celular aparecen
+- AND `city=…` y el resto del texto quedan, y la hora de cada mensaje se lee como fecha ISO (una fecha no es un teléfono)

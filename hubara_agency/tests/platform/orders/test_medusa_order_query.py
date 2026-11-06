@@ -191,6 +191,17 @@ async def test_list_returns_summaries_with_correct_shape(adapter):
     assert o.created_at_ms > 0
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_summary_carries_the_neighborhood(adapter):
+    """Ads cuenta las compras por ciudad y zona (2026-10-23): el barrio que
+    el formulario guarda en `address_2` viaja en el resumen, como la ciudad."""
+    await _list_single(_sample_order())
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].city == "Bogotá"
+    assert result.orders[0].neighborhood == "Chapinero"
+
+
 def _with_scheduled(order: dict, due_iso: str) -> dict:
     order["metadata"]["hubara_scheduled_delivery_iso"] = due_iso
     return order

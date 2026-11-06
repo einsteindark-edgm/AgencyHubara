@@ -9,6 +9,7 @@ import com.hubara.operator.core.network.dto.HumanDto
 import com.hubara.operator.core.network.dto.HumanMessageRequest
 import com.hubara.operator.core.network.dto.HumanMessageResponseDto
 import com.hubara.operator.core.network.dto.InterveneRequest
+import com.hubara.operator.core.network.dto.MediaUploadDto
 import com.hubara.operator.core.network.dto.OrderCommandResultDto
 import com.hubara.operator.core.network.dto.OrderDetailDto
 import com.hubara.operator.core.network.dto.OrderListDto
@@ -21,7 +22,9 @@ import com.hubara.operator.core.network.dto.StageRequest
 import com.hubara.operator.core.network.dto.SuggestionsDto
 import com.hubara.operator.core.network.dto.ToolRequest
 import com.hubara.operator.core.network.dto.ToolResponseDto
+import java.io.IOException
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.Response
@@ -33,6 +36,14 @@ class FakeOperatorApi : OperatorApi {
     var suggestionsResponse: (String) -> SuggestionsDto = { SuggestionsDto(sessionId = it) }
     var firesResponse = FiresDto()
     var sendMessageCode = 200
+    var sendMessageBody = "{}"
+    var uploadCode = 200
+    var uploadBody = "{}"
+    var uploadError: IOException? = null
+    val uploads = mutableListOf<Upload>()
+
+    /** Una foto que llegó al backend: la cabecera del campo, su tipo y los bytes. */
+    class Upload(val session: String, val disposition: String?, val mime: String?, val bytes: ByteArray)
     var runToolCode = 200
     var runToolBody = """{"error":"window_closed"}"""
     val calls = mutableListOf<String>()
@@ -55,7 +66,17 @@ class FakeOperatorApi : OperatorApi {
         calls += "send:$id"
         sentMessages += body
         return if (sendMessageCode in 200..299) Response.success(HumanMessageResponseDto(true, body.text.orEmpty()))
-        else Response.error(sendMessageCode, "{}".toResponseBody(JSON))
+        else Response.error(sendMessageCode, sendMessageBody.toResponseBody(JSON))
+    }
+
+    override suspend fun uploadMedia(id: String, file: MultipartBody.Part): Response<MediaUploadDto> {
+        calls += "upload:$id"
+        uploadError?.let { throw it }
+        val bytes = okio.Buffer().also { file.body.writeTo(it) }.readByteArray()
+        uploads += Upload(id, file.headers?.get("Content-Disposition"), file.body.contentType()?.toString(), bytes)
+        val n = uploads.size
+        return if (uploadCode in 200..299) Response.success(MediaUploadDto(true, "media-$n", "/api/dashboard/media/$id/out-$n.jpg"))
+        else Response.error(uploadCode, uploadBody.toResponseBody(JSON))
     }
 
     var templatesResponse = com.hubara.operator.core.network.dto.TemplatesDto()
@@ -104,4 +125,12 @@ class FakeScheduler : com.hubara.operator.core.data.outbox.OutboxScheduler {
     val cancelled = mutableListOf<String>()
     override fun enqueue(id: String, delayMs: Long) { enqueued += id to delayMs }
     override fun cancel(id: String) { cancelled += id }
+}
+
+/** Prepara las fotos sin decodificar nada: cada `source` conocido da su archivo; uno desconocido no se puede leer. */
+class FakePhotoPreparer(private val files: Map<String, java.io.File> = emptyMap()) :
+    com.hubara.operator.core.data.outbox.PhotoPreparer {
+    var cleared = 0
+    override suspend fun prepare(source: String): java.io.File? = files[source]
+    override suspend fun clear() { cleared++ }
 }

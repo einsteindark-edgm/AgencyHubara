@@ -8,6 +8,7 @@ import com.hubara.operator.core.network.dto.HumanDto
 import com.hubara.operator.core.network.dto.HumanMessageRequest
 import com.hubara.operator.core.network.dto.HumanMessageResponseDto
 import com.hubara.operator.core.network.dto.InterveneRequest
+import com.hubara.operator.core.network.dto.MediaUploadDto
 import com.hubara.operator.core.network.dto.OrderCommandResultDto
 import com.hubara.operator.core.network.dto.OrderDetailDto
 import com.hubara.operator.core.network.dto.OrderListDto
@@ -20,13 +21,16 @@ import com.hubara.operator.core.network.dto.StageRequest
 import com.hubara.operator.core.network.dto.SuggestionsDto
 import com.hubara.operator.core.network.dto.ToolRequest
 import com.hubara.operator.core.network.dto.ToolResponseDto
+import okhttp3.MultipartBody
 import okhttp3.ResponseBody
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
@@ -46,6 +50,11 @@ interface OperatorApi {
 
     @POST("api/dashboard/sessions/{id}/messages")
     suspend fun sendMessage(@Path("id") id: String, @Body body: HumanMessageRequest): Response<HumanMessageResponseDto>
+
+    /** Primera mitad de una foto del operador: se sube una sola vez (con [photoPart]); la manda [sendMessage]. */
+    @Multipart
+    @POST("api/dashboard/sessions/{id}/media")
+    suspend fun uploadMedia(@Path("id") id: String, @Part file: MultipartBody.Part): Response<MediaUploadDto>
 
     @GET("api/dashboard/whatsapp-templates")
     suspend fun templates(): com.hubara.operator.core.network.dto.TemplatesDto

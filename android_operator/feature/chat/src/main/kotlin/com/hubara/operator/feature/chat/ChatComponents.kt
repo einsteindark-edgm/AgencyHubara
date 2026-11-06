@@ -24,6 +24,7 @@ import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -71,6 +72,7 @@ import com.hubara.operator.core.ui.clockLabel
 import com.hubara.operator.core.ui.writtenLabel
 import java.time.ZoneId
 import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.delay
 import androidx.compose.material3.ButtonDefaults
 
@@ -412,36 +414,84 @@ fun stageLabel(stage: String?): String = when (stage) {
     else -> "sin datos"
 }
 
-/** El campo para escribir: una píldora tonal y el botón redondo de enviar, que solo se enciende con texto. */
+/**
+ * El campo para escribir: una píldora tonal y el botón redondo de enviar, que se enciende con texto o con fotos. Con
+ * [onAttach] (el humano al mando y la ventana abierta) va el botón de fotos a la izquierda, y las elegidas se ven
+ * arriba, cada una con su «Quitar»; lo escrito sale como pie de la primera.
+ */
 @Composable
-fun Composer(state: TextFieldState, enabled: Boolean, onSend: () -> Unit, modifier: Modifier = Modifier) {
+fun Composer(
+    state: TextFieldState,
+    enabled: Boolean,
+    onSend: () -> Unit,
+    modifier: Modifier = Modifier,
+    attachments: ImmutableList<String> = persistentListOf(),
+    onAttach: (() -> Unit)? = null,
+    onRemoveAttachment: (String) -> Unit = {},
+) {
     val hasText by remember(state) { derivedStateOf { state.text.isNotBlank() } }
-    Row(
-        modifier.fillMaxWidth().padding(start = Spacing.md, end = Spacing.sm, top = Spacing.xs, bottom = Spacing.sm),
-        verticalAlignment = Alignment.Bottom,
+    Column(modifier.fillMaxWidth()) {
+        if (attachments.isNotEmpty()) AttachmentStrip(attachments, onRemoveAttachment)
+        Row(
+            Modifier.fillMaxWidth().padding(start = if (onAttach != null) Spacing.xs else Spacing.md, end = Spacing.sm, top = Spacing.xs, bottom = Spacing.sm),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(if (onAttach != null) Spacing.xs else Spacing.sm),
+        ) {
+            if (onAttach != null) {
+                IconButton(
+                    onClick = onAttach,
+                    enabled = enabled && attachments.size < OutboxRepository.MAX_PHOTOS,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                ) { Icon(OperatorIcons.Image, contentDescription = "Adjuntar fotos") }
+            }
+            TextField(
+                state = state,
+                enabled = enabled,
+                placeholder = { Text(if (attachments.isEmpty()) "Escribe un mensaje…" else "Añade un pie de foto…") },
+                lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5),
+                shape = RoundedCornerShape(28.dp),
+                colors = TextFieldDefaults.colors(
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            FilledIconButton(
+                onClick = onSend,
+                enabled = enabled && (hasText || attachments.isNotEmpty()),
+                modifier = Modifier.padding(bottom = 4.dp).size(48.dp),
+                colors = IconButtonDefaults.filledIconButtonColors(),
+            ) { Icon(OperatorIcons.Send, contentDescription = "Enviar") }
+        }
+    }
+}
+
+/** Las fotos elegidas, antes de enviarlas: una fila de miniaturas con su «Quitar». */
+@Composable
+private fun AttachmentStrip(attachments: ImmutableList<String>, onRemove: (String) -> Unit) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(top = Spacing.xs),
+        contentPadding = PaddingValues(horizontal = Spacing.md),
         horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
     ) {
-        TextField(
-            state = state,
-            enabled = enabled,
-            placeholder = { Text("Escribe un mensaje…") },
-            lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5),
-            shape = RoundedCornerShape(28.dp),
-            colors = TextFieldDefaults.colors(
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                disabledIndicatorColor = Color.Transparent,
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ),
-            modifier = Modifier.weight(1f),
-        )
-        FilledIconButton(
-            onClick = onSend,
-            enabled = enabled && hasText,
-            modifier = Modifier.padding(bottom = 4.dp).size(48.dp),
-            colors = IconButtonDefaults.filledIconButtonColors(),
-        ) { Icon(OperatorIcons.Send, contentDescription = "Enviar") }
+        items(attachments, key = { it }) { source ->
+            Box(Modifier.size(76.dp).animateItem()) {
+                AsyncImage(
+                    model = source,
+                    contentDescription = "Foto para enviar",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.matchParentSize().clip(MaterialTheme.shapes.large)
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                )
+                FilledTonalIconButton(
+                    onClick = { onRemove(source) },
+                    modifier = Modifier.align(Alignment.TopEnd).padding(Spacing.xxs).size(28.dp),
+                ) { Icon(OperatorIcons.Close, contentDescription = "Quitar foto", modifier = Modifier.size(16.dp)) }
+            }
+        }
     }
 }
 

@@ -364,10 +364,17 @@
           "$ref": "#/$defs/BuiltinRef"
         },
         {
+          "items": {
+            "$ref": "#/$defs/BuiltinRef"
+          },
+          "type": "array"
+        },
+        {
           "type": "null"
         }
       ],
-      "default": null
+      "default": null,
+      "title": "View"
     },
     "rule": {
       "$ref": "#/$defs/BuiltinRef"

@@ -184,19 +184,17 @@ jobs:
             mkdir -p /opt/hubara/plugins
             find /opt/hubara/plugins -mindepth 1 -delete
             cp -r /tmp/hubara-deploy/frontend_dashboard/src/plugins/. /opt/hubara/plugins/
-            # litellm: recrear SIEMPRE desde cero — su config es un bind-mount
-            # y `up -d` no recrea el container cuando solo cambió el CONTENIDO
-            # del archivo (imagen/definición idénticas) → seguiría sirviendo
-            # el config viejo en memoria. Caso: alias gemini-multimodal.
-            # `rm -sf` + `up -d` en vez de `--force-recreate`: compose remueve
-            # por labels TODOS los containers del servicio, incluidos los
-            # renombrados '<id>_<nombre>' que deja un recreate interrumpido y
-            # que chocan el name allocation del siguiente (outage 2026-08-31,
-            # deploys concurrentes). Sin nombres hardcodeados acá (gate de
-            # forge). El resto del stack espera su healthcheck
-            # (depends_on: service_healthy), así que el orden es seguro.
-            docker compose rm -sf litellm
-            docker compose up -d litellm
+            # litellm: NO se recrea en cada deploy (memoria de la caja,
+            # 2026-11-05). Arranca en ~990 MB y con los días baja a ~200 (lo
+            # que no usa va a swap): recrearlo siempre dejaba la caja sin margen
+            # tras cada deploy. Compose lo recrea solo cuando cambia su imagen o
+            # `litellm.env` (sus llaves y la huella de su config, que arma
+            # render-env-from-ssm.sh): así un config nuevo igual se carga aunque
+            # el bind-mount no cambie de definición (caso: alias
+            # gemini-multimodal). Los deploys no se pisan (`concurrency` arriba),
+            # que era lo que dejaba containers renombrados (outage 2026-08-31).
+            # El resto del stack espera su healthcheck (depends_on:
+            # service_healthy). Guarda: tests/infra/test_prod_litellm_env.py.
             docker compose up -d --remove-orphans
             # Y DESPUÉS del up: ya recreados los containers, la imagen del SHA
             # anterior quedó sin uso → se va acá. Sin `-a` quedaría para siempre.

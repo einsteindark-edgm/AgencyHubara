@@ -481,6 +481,7 @@ class MedusaOrderQuery:
             store_shipping_cost_cop=(
                 read_real_shipping_cost(metadata) if read_free_shipping(metadata) is not None else None
             ),
+            neighborhood=shipping_addr.get("address_2"),
         )
 
     def _build_detail(

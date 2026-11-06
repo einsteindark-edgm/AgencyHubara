@@ -135,6 +135,10 @@ services:
       # cart ref se ignora y el bot vende con el texto del mensaje).
       - MEDUSA_BASE_URL=${MEDUSA_BASE_URL}
       - MEDUSA_PUBLISHABLE_API_KEY=${MEDUSA_PUBLISHABLE_API_KEY}
+      # Pestaña Costos (plugin `costs`): la tarjeta de WhatsApp lee el
+      # pricing_analytics del WABA. Temporal Cloud NO se pasa acá a propósito:
+      # TEMPORAL_API_KEY/NAMESPACE cambiarían a qué Temporal habla este API local.
+      - WHATSAPP_BUSINESS_ACCOUNT_ID=${WHATSAPP_BUSINESS_ACCOUNT_ID:-}
     volumes:
       - hubara-vault-local:/app/hubara_vault
       # SSoT post-PR11: manifests viven en frontend_dashboard/. El loader

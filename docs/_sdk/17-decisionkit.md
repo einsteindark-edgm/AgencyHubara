@@ -99,8 +99,10 @@ src/plugins/chats/shared/decisions/bundles/
    builtin arma las opciones: etiqueta para Jev, valor para la tabla; las
    fijas de `criteria`, como `ambiguo`/`ninguno`, van al final), `when:` en
    una pregunta (se hace solo si la condición sobre `inp`/`consts` se
-   cumple), `view:` en la capacidad (campos derivados de la entrada) y
-   `control:` (una variante comparte el interruptor de otra capacidad).
+   cumple), `view:` en la capacidad (campos derivados de la entrada; una
+   lista `view: [ … ]` pide varias vistas, un hecho por builtin, y dos
+   vistas no dan el mismo campo: DB004) y `control:` (una variante comparte
+   el interruptor de otra capacidad).
 8. **Ítem por ítem** (oraciones, párrafos, términos, datos): `items:` (un
    builtin arma la lista con los campos que declara el catálogo) y `each:`
    (la pregunta de cada ítem: `id` y `text` son plantillas con `{n}`,

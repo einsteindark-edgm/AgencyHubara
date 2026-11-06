@@ -172,6 +172,12 @@ y moneda de un pedido se leen de `OrderFacts`**. El vault guarda el *vínculo*
   (los ya enviados Meta no los retracta). Limitación conocida: con Medusa
   caído, un id `unresolved` usa la copia congelada del vault, que no conoce
   la marca.
+- *Dónde se entrega (2026-10-23):* `OrderFacts.city` y `.neighborhood` son la
+  ciudad y el barrio de la dirección de envío (`OrderSummaryDTO.neighborhood` =
+  `shipping_address.address_2`, donde el formulario guarda el barrio). Ads los
+  muestra en cada conversación y cuenta con ellos «Dónde compran»
+  (`GET /api/ads/purchase-places`: compras por ciudad y barrio, de una campaña
+  o de todas, por fecha del pedido).
 - *Fake oficial:* `InMemoryOrderFacts` (`available=False` simula Medusa
   caído). La contract suite corre contra ambos.
 - *Los pedidos de una persona (2026-10-09):* `get_customer_orders_port()

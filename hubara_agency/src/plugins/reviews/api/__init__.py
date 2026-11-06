@@ -6,6 +6,7 @@
   POST /reviews/{id}/approve     publicar en la tienda (Medusa) → 502 si falla
   POST /reviews/{id}/hide        ocultar
   POST /reviews/{id}/reply       respuesta pública del equipo
+  POST /reviews/{id}/consent     el cliente autorizó publicarla por el chat
   GET  /photos/{archivo}         la foto que subió el cliente (para moderarla)
 
 La lógica vive en `domain/` (puro) y `agent/publishing.py`; acá solo HTTP. Las
@@ -19,12 +20,13 @@ import os
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.plugins.reviews.agent.publishing import (
     StorefrontRebuild,
+    grant_consent,
     hide_review,
     publish_review,
     reply_review,
@@ -37,6 +39,7 @@ from src.sdk.connectorkit import (
     get_coupon_grants_store,
     get_product_reviews_port,
 )
+from src.sdk.castkit import current_actor
 from src.sdk.mediakit import is_safe_segment
 from src.sdk.runtime import WORKSPACE_VAULT_DIR
 
@@ -130,6 +133,11 @@ def _review_json(record: ReviewRecord) -> dict[str, Any]:
         "coupon": record.coupon or None,
         "reply": record.reply,
         "team_alerted": record.team_alerted,
+        "consent_granted": (
+            {"by": record.consent_granted.get("by"), "at_ms": record.consent_granted.get("at_ms")}
+            if record.consent_granted
+            else None
+        ),
         "published": (
             {"at_ms": record.published.get("at_ms"), "error": record.published.get("error")}
             if record.published
@@ -231,6 +239,26 @@ async def reply(review_id: str, body: ReplyBody) -> dict[str, Any]:
         )
     except ProductReviewsUnavailableError as exc:
         raise HTTPException(status_code=502, detail=f"No se pudo actualizar la tienda: {exc}") from exc
+    _schedule_pending_rebuild(rb)
+    return {"review": _review_json(record)}
+
+
+@router.post("/reviews/{review_id}/consent")
+async def consent(review_id: str, request: Request) -> dict[str, Any]:
+    """El cliente autorizó publicarla por el chat: lo registra quien tiene la
+    sesión (verificada, nunca el cuerpo del request) y, si ya estaba publicada,
+    vuelve a salir con su comentario y su nombre."""
+    st = store()
+    _found(st.get_review(review_id))
+    rb = rebuild()
+    try:
+        record = await grant_consent(
+            st, product_reviews(), review_id, by=current_actor(request), now_ms=now_ms(), rebuild=rb
+        )
+    except ProductReviewsUnavailableError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"El permiso quedó guardado, pero no se pudo actualizar la tienda: {exc}"
+        ) from exc
     _schedule_pending_rebuild(rb)
     return {"review": _review_json(record)}
 

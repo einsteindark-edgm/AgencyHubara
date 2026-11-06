@@ -221,8 +221,14 @@ def test_the_approved_farewell_is_the_one_v1_sends() -> None:
 
 
 def test_the_egress_capabilities_are_the_ones_of_the_design() -> None:
-    """Las cuatro del F4 y el preámbulo del modelo (familia C del inventario)."""
-    assert set(egress.EGRESS_CAPABILITIES) == {"preambulo", "destinatario", "rescate", "portavelas", "saludo"}
+    """Las cuatro del F4 y el preámbulo del modelo (familia C del inventario),
+    las dos que el paquete trae desde ventas-8 (despedida y bienvenida repetida;
+    con un paquete anterior no corren: test_decisions_ventas_8.py) y la puerta
+    de afirmaciones (2026-11-03; también desde ventas-8)."""
+    assert set(egress.EGRESS_CAPABILITIES) == {
+        "preambulo", "destinatario", "rescate", "portavelas", "saludo", "despedida", "saludo_repetido",
+        "afirmacion_previa",
+    }
 
 
 async def test_the_output_travels_as_json() -> None:

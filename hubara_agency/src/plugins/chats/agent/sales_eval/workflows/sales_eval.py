@@ -21,6 +21,9 @@ from temporalio.common import RetryPolicy
 
 with workflow.unsafe.imports_passed_through():
     from src.platform.temporal.retry_policies import _CONV_OPTIONS, _TOOL_OPTIONS
+    from src.plugins.chats.agent.sales_eval.activities.bands_activities import (
+        compute_scorecard_bands_activity,
+    )
     from src.plugins.chats.agent.sales_eval.activities.eval_activities import (
         evaluate_sales_conversation_activity,
         score_episode_scorecard_activity,
@@ -28,12 +31,17 @@ with workflow.unsafe.imports_passed_through():
         select_scorecard_units_activity,
     )
     from src.plugins.chats.agent.sales_eval.evals.contracts import (
+        BandsInput,
+        BandsSummary,
         ConversationEvalResult,
         EvalRunSummary,
         EvalWindowInput,
         ScorecardSummary,
     )
     from src.plugins.chats.agent.sales_eval.evals.reconstruct import parse_eval_unit_id
+
+#: Las bandas por regla del scorecard (Ciclo Colossus F4): comando nuevo.
+BANDS_PATCH = "scorecard-bands-v1"
 
 
 @workflow.defn(name="SalesEvalWorkflow")
@@ -70,12 +78,32 @@ class SalesEvalWorkflow:
             scored += 1 if summary.stored else 0
         return scored
 
+    async def _bands(self) -> int:
+        """Ciclo Colossus F4: bandas por regla del scorecard (7 días contra
+        los 28 anteriores) con alertas `[ALR]` para las reglas en `abrir`. Una
+        vez al día; nunca bloquea la eval legada."""
+        try:
+            summary: BandsSummary = await workflow.execute_activity(
+                compute_scorecard_bands_activity,
+                BandsInput(alert=True),
+                start_to_close_timeout=timedelta(minutes=10),
+                heartbeat_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+        except Exception as exc:  # noqa: BLE001
+            workflow.logger.warning(f"bandas por regla fallaron (non-blocking): {exc!r}")
+            return 0
+        return summary.to_open
+
     @workflow.run
     async def run(self, window: EvalWindowInput) -> EvalRunSummary:
         # patched(): runs en vuelo del schedule replayean sin la rama (R-DET).
         scorecards = (
             await self._score_scorecards(window) if workflow.patched("daily-scorecard-v1") else 0
         )
+        # Después de calificar el día y antes de la eval legada (que puede
+        # tardar): las bandas ven los episodios de hoy.
+        bands_to_open = await self._bands() if workflow.patched(BANDS_PATCH) else 0
         sessions: list[str] = await workflow.execute_activity(
             select_conversations_to_eval_activity,
             window,
@@ -116,6 +144,7 @@ class SalesEvalWorkflow:
             skipped=skipped,
             errors=errors,
             scorecards=scorecards,
+            bands_to_open=bands_to_open,
         )
         workflow.logger.info(
             "SalesEvalWorkflow: %d evaluadas, %d pasaron, %d candidatas a golden",

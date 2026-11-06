@@ -19,7 +19,9 @@ jobs:
     # robotocore como service container (drop-in AWS en :4566).
     services:
       robotocore:
-        image: jackdanger/robotocore:latest
+        # Fijada por digest: `:latest` (sha256:4d561bfa…, 2026-11) rompe el egress por
+        # defecto del security group y la EC2 no nace. Subirla = probarla antes en un PR.
+        image: jackdanger/robotocore@sha256:82f3a46fcf1f2debe7625b26c15651ec8285b9210c47a6bc1122f326e5ba857d
         ports: ["4566:4566"]
         options: >-
           --health-cmd "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:4566/_robotocore/health')\""

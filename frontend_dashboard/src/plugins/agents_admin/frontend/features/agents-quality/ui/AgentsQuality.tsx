@@ -82,7 +82,10 @@ export function AgentsQuality() {
   const { data: list } = useScorecards(WINDOW_DAYS, null);
   const failingCount = (list?.scorecards ?? []).filter((s) => s.verdict === "FALLA").length;
   // Si la API todavía no filtra Conversaciones, ignora `?bot=` y devuelve todas: se avisa.
-  const { data: conversations } = useQualityConversations(WINDOW_DAYS, conversationsBot);
+  // Solo con la pestaña abierta: el Resumen no muestra la lista (misma query que la de Conversaciones).
+  const { data: conversations } = useQualityConversations(WINDOW_DAYS, conversationsBot, {
+    enabled: tab === "conversaciones",
+  });
   const serverIgnoredBot = conversationsBot !== null && conversations !== undefined && conversations.bot !== conversationsBot;
 
   const chooseConversationsBot = (value: QualityBot | null) => {

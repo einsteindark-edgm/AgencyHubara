@@ -57,9 +57,12 @@ services:
     command: ["--config", "/app/config.yaml", "--port", "4000"]
     volumes:
       - ./litellm_config.yaml:/app/config.yaml:ro
-    # Imagen de terceros: SOLO las llaves de los modelos que nombra su config
-    # (revisión de seguridad 2026-10-26; antes cargaba el .env entero).
-    env_file: [secrets/litellm.env]
+    # Solo sus llaves y la huella de su config, NO el `.env` del stack
+    # (memoria de la caja, 2026-11-05): con el `.env` veía todas las llaves de
+    # producción y `HUBARA_IMAGE`, y cada deploy lo recreaba (~990 MB al
+    # arrancar). Lo arma render-env-from-ssm.sh (c).
+    # Guarda: hubara_agency/tests/infra/test_prod_litellm_env.py.
+    env_file: litellm.env
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4000/health/liveliness', timeout=2)"]
       interval: 10s
@@ -74,14 +77,20 @@ services:
     # Sin `ports:` público — Caddy lo fronta. Expuesto solo en la red del compose.
     expose:
       - "8000"
+    # La línea de acceso por request (plantilla de la ruta + memoria, sin datos
+    # personales) va a una carpeta del host: sobrevive al recrear el contenedor
+    # y el agente de CloudWatch la guarda 14 días (memoria de la caja,
+    # 2026-11-05). Guarda: hubara_agency/tests/infra/test_api_access_log_shipping.py.
     # Credenciales TEMPORALES de AWS (hop limit 1: no llega a las de la caja). El timer
     # app-aws-creds del host las deja en /opt/hubara/aws; botocore las pide a
     # credential_process.py. Guarda: tests/infra/test_container_aws_credentials.py.
     environment:
+      HUBARA_ACCESS_LOG_FILE: /app/access_log/api.log
       AWS_CONFIG_FILE: /app/hubara_agency/deploy/aws/config
     volumes:
       - /mnt/hubara-vault:/app/hubara_vault
       - ./plugins:/app/frontend_dashboard/src/plugins:ro
+      - /var/log/hubara-api:/app/access_log
       - /opt/hubara/aws:/run/app-aws:ro
 
   worker-catalog-sync:

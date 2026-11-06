@@ -185,7 +185,11 @@ def _bot_tools(deps: OperatorToolsDeps) -> dict[str, Callable[[], Any]]:
         "present_products": lambda: PresentProductsTool(ws, deps.catalog),
         "present_product_detail": lambda: PresentProductDetailTool(ws, deps.catalog, photo_colors=deps.photo_colors),
         "present_product_gallery": lambda: PresentProductGalleryTool(ws, deps.catalog, photo_colors=deps.photo_colors),
-        "request_shipping_details": lambda: RequestShippingDetailsTool(ws, catalog=deps.catalog),
+        # Un formulario por episodio (ENV-01) es la guarda del bot: el
+        # operador lo puede volver a mandar (el cliente lo perdió, el pedido cambió).
+        "request_shipping_details": lambda: RequestShippingDetailsTool(
+            ws, catalog=deps.catalog, once_per_episode=False
+        ),
         "send_shipping_rates": lambda: SendShippingRatesTool(ws),
         "present_order_confirmation": lambda: PresentOrderConfirmationTool(
             ws, deps.catalog, quotas=deps.quotas, sales=deps.sales

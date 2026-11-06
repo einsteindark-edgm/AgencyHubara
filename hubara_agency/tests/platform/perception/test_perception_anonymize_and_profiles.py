@@ -48,10 +48,46 @@ def test_anonymize_removes_contact_data(text: str, secret: str) -> None:
         ("mi nombre es Juan Carlos Gómez", "Juan Carlos Gómez"),
         ("va a nombre de Luisa Fernanda Ruiz", "Luisa Fernanda Ruiz"),
         ("lo recibe Andrés Mejía en la portería", "Andrés Mejía"),
+        # Seen in production (2026-11-06): names in capitals, "Carrer" for
+        # "Carrera" and "_" between the numbers.
+        ("Dejar en portería. A nombre de ANDRÉS MEJÍA", "ANDRÉS"),
+        ("me llamo CAROLINA PÉREZ", "PÉREZ"),
+        ("Carrer 7 #12_34.  Así", "12_34"),
+        ("es la cra 7# 12_34", "12_34"),
     ],
 )
 def test_anonymize_removes_addresses_and_names_the_way_customers_write_them(text: str, secret: str) -> None:
     assert secret not in anonymize_text(text)
+
+
+def test_anonymize_blanks_the_shipping_form_as_whatsapp_sends_it() -> None:
+    """The WhatsApp Flow answers with its own English keys (`receiver_name`,
+    `address`, `phone`…), not the Spanish ones of the order draft: their
+    values are just as personal. What the classifier needs stays."""
+    text = (
+        "[datos de envío recibidos] address=Cra 7#12_34 torre 2 apto 501; city=Bogotá; "
+        "items_summary=2× Caja de Velas de deseos; national_id=1020304050; neighborhood=Chapinero Alto; "
+        "order_total_cop=89900; payment_method=transferencia; phone=3001234567; receiver_name=Carolina Pérez"
+    )
+
+    out = anonymize_text(text)
+
+    for secret in ("Cra 7", "12_34", "torre 2", "1020304050", "Chapinero", "3001234567", "Carolina", "Pérez"):
+        assert secret not in out, secret
+    for kept in ("city=Bogotá", "items_summary=2× Caja de Velas de deseos", "order_total_cop=89900", "payment_method=transferencia"):
+        assert kept in out, kept
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["2026-11-05T12:44:30.123456+00:00", "salió el 2026-11-05 a las 12:44", "2026-11-05T12:44:30Z"],
+)
+def test_anonymize_keeps_dates_and_times(text: str) -> None:
+    assert anonymize_text(text) == text
+
+
+def test_a_phone_next_to_a_date_is_still_masked() -> None:
+    assert "3001234567" not in anonymize_text("2026-11-05 3001234567")
 
 
 def test_anonymize_blanks_the_personal_fields_of_the_shipping_form() -> None:

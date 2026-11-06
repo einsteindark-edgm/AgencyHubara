@@ -7,11 +7,17 @@
 #   OTEL_ENDPOINT      — http://<ip-privada-signoz>:4317  (output de ../terraform/compute)
 #
 # Combina: (a) SSM  +  (b) config operacional no-secreta (este script), y (c) los
-# reparte: .env compartido + secrets/<servicio>.env + .env.host.
+# reparte: .env compartido + secrets/<servicio>.env + .env.host + `litellm.env`
+# (el entorno SOLO del proxy LiteLLM).
+#
+# HUBARA_DIR (default /opt/hubara) solo lo cambian los tests
+# (hubara_agency/tests/infra/test_prod_litellm_env.py).
 set -euo pipefail
 
-BOX_ENV=/opt/hubara/box.env
-OUT=/opt/hubara/.env
+HUBARA_DIR="${HUBARA_DIR:-/opt/hubara}"
+BOX_ENV="$HUBARA_DIR/box.env"
+OUT="$HUBARA_DIR/.env"
+LITELLM_CONFIG="$HUBARA_DIR/litellm_config.yaml"
 [ -f "$BOX_ENV" ] || { echo "FALTA $BOX_ENV (lo escribe cloud-init)"; exit 1; }
 # shellcheck disable=SC1090
 source "$BOX_ENV"   # AWS_REGION, TENANT, CADDY_DOMAIN, ENABLED_PLUGINS, IMAGE_REPO
@@ -73,11 +79,18 @@ EOF
 # (c) Reparto (revisión de seguridad 2026-10-26): `.env` con la config no secreta,
 #     `secrets/<servicio>.env` con los SecureString de cada uno según
 #     service-secrets.json, y `.env.host` con lo que solo usa la caja (GHCR).
-#     PREFLIGHT fail-closed (SEC-01/SEC-02), ahora dentro del reparto: sin los params
+#     Y `litellm.env` (memoria de la caja de app, 2026-11-05): solo las llaves que
+#     nombra su config (`os.environ/X`) y la huella del config. Con el `.env` entero
+#     el proxy veía todas las llaves de producción y `HUBARA_IMAGE`, que cambia en
+#     cada deploy: compose lo recreaba siempre, y LiteLLM arranca en ~990 MB (con
+#     los días baja a ~200; lo demás va a swap). Así se recrea solo si cambia su
+#     config, una de sus llaves o su imagen.
+#     PREFLIGHT fail-closed (SEC-01/SEC-02), dentro del reparto: sin los params
 #     de auth (o con el relleno de Terraform) no escribe nada y sale con error →
 #     `docker compose up` no corre y el contenedor viejo sigue vivo.
 python3 "$HERE/split-env-by-service.py" \
   --params "$work/params.json" \
   --map "$HERE/service-secrets.json" \
   --static "$work/static.env" \
-  --out-dir "$(dirname "$OUT")"
+  --litellm-config "$LITELLM_CONFIG" \
+  --out-dir "$HUBARA_DIR"

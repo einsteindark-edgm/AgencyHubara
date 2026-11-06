@@ -14,7 +14,9 @@ mano:
    secreto (p. ej. `LLM_API_KEY_ENV` → `DEEPSEEK_API_KEY`) y se buscan esos símbolos.
 
 Es una cota por arriba: si un módulo del cierre nombra el secreto, el servicio lo
-recibe aunque esa rama no corra. LiteLLM recibe las llaves que nombra su config.
+recibe aunque esa rama no corra. LiteLLM no es un servicio del mapa: el reparto le
+arma `litellm.env` con las llaves que nombra su config (y la huella del config);
+`_litellm` las anota para que tengan dueño.
 
   cd hubara_agency && uv run python scripts/service_secrets.py --write   # regenerar
   cd hubara_agency && uv run python scripts/service_secrets.py --check   # comparar
@@ -173,7 +175,7 @@ def compute_map() -> dict[str, list[str]]:
     result: dict[str, list[str]] = {}
     for service, roots in sorted(service_roots().items()):
         result[service] = sorted(_secrets_read_by(_closure(roots), searchable, symbols))
-    result["litellm"] = litellm_secrets(searchable)
+    result["_litellm"] = litellm_secrets(searchable)
     used = {k for keys in result.values() for k in keys}
     result["_host"] = sorted(HOST_ONLY)
     result["_none"] = sorted(secrets - used - set(HOST_ONLY))

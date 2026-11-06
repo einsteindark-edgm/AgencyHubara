@@ -7,9 +7,13 @@ falló, turno por turno: `_evals/scorecards/`) y el testigo de huecos
 cuenta: sin textos y con los números de los clientes tapados (`···1234`).
 El análisis y el plan: `docs/calidad-llm/cobertura-motor.html`.
 
+Por defecto solo cuenta el bot en producción (`PRODUCTION_BOT`, Colossus):
+lo que decide (veredicto, casos, ejemplos, control y muestra) nunca lo mueve
+un bot que ya no atiende. `--bot todos` junta los dos para comparar.
+
 En producción, dentro del worker `sales_eval`:
 
-    python -m src.plugins.chats.agent.sales_eval.huecos --dias 3 [--json]
+    python -m src.plugins.chats.agent.sales_eval.huecos --dias 3 [--bot nuevo|actual|todos] [--json]
 """
 from __future__ import annotations
 
@@ -39,6 +43,13 @@ WORTH_PER_100 = {"mayor": 2.0, "menor": 5.0}
 WORTH_CONVERSATIONS = 3
 
 BOTS = ("nuevo", "actual")
+#: El bot que atiende producción. Colossus = el workflow v2 con Jev («nuevo»);
+#: Botsito = el v1 («actual»), retirado, que sigue en las ventanas largas.
+PRODUCTION_BOT = "nuevo"
+#: `--bot todos`: los dos bots juntos (para comparar con lo de antes).
+ALL_BOTS = "todos"
+BOT_CHOICES = (*BOTS, ALL_BOTS)
+BOT_LABELS = {"nuevo": "Colossus (bot nuevo)", "actual": "Botsito (bot actual)"}
 _LEVEL_RANK = {"critico": 0, "mayor": 1, "menor": 2}
 
 
@@ -101,13 +112,31 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def _bot_of(vault_dir: Path, session_id: str, episode_id: str, cache: dict[str, list[dict[str, Any]]]) -> str:
+def bot_of(vault_dir: Path, session_id: str, episode_id: str, cache: dict[str, list[dict[str, Any]]]) -> str:
+    """`nuevo` o `actual`, por las trazas de los turnos del cliente del episodio
+    (`cache`: los resúmenes ya leídos, por sesión). Del resumen de las trazas,
+    no de las trazas completas (las tools de cada turno): el informe de bandas
+    recorre 35 días de conversaciones (memoria de la caja, 2026-11-05)."""
     from src.plugins.chats.shared import turn_traces
 
     if session_id not in cache:
-        cache[session_id] = turn_traces.read_traces(vault_dir, session_id)
+        cache[session_id] = turn_traces.read_summaries(vault_dir, session_id)
     bot = episode_bot(t for t in cache[session_id] if t.get("episode_id") == episode_id)
-    return bot if bot in BOTS else "actual"  # un episodio mixto se cuenta con el bot de hoy
+    return bot if bot in BOTS else "actual"  # un episodio mixto no es de Colossus: va con Botsito
+
+
+def counted_bots(bot: str | None) -> tuple[str, ...]:
+    """Los bots que cuenta un informe: uno, o los dos con `None` (`--bot todos`)."""
+    if bot is None:
+        return BOTS
+    if bot not in BOTS:
+        raise ValueError(f"bot desconocido: {bot!r} (opciones: {', '.join(BOT_CHOICES)})")
+    return (bot,)
+
+
+def bot_arg(value: str) -> str | None:
+    """El valor de `--bot` para `build_report`: `todos` → `None`."""
+    return None if value == ALL_BOTS else value
 
 
 def _masked(key: Key) -> str:
@@ -139,48 +168,67 @@ def _verdict(level: str, cases: int, conversations: int, turns: int) -> tuple[st
 
 
 def build_report(
-    vault_dir: Path, *, days: int = 3, now: datetime | None = None, since: date | None = None
+    vault_dir: Path,
+    *,
+    days: int = 3,
+    now: datetime | None = None,
+    since: date | None = None,
+    bot: str | None = PRODUCTION_BOT,
 ) -> dict[str, Any]:
-    """El informe de la ventana: cada propuesta con sus casos por bot y su veredicto."""
+    """El informe de la ventana: cada propuesta con sus casos y su veredicto.
+
+    Solo cuentan los episodios (y las líneas del testigo) de `bot`; con
+    `bot=None`, los de los dos bots juntos."""
+    bots = counted_bots(bot)
     now = now or datetime.now(UTC)
     dates = _window(days, now, since)
     records = store.latest_by_unit(store.read_scorecards(store.scorecards_dir(vault_dir), dates=dates))
-    turn_records = [r for r in records if r.get("mode") == "turn"]
-    kept = [r for r in turn_records if int(r.get("registry_version") or 0) >= MIN_REGISTRY_VERSION]
-
     traces: dict[str, list[dict[str, Any]]] = {}
-    turns = dict.fromkeys(BOTS, 0)
+    turn_records: list[tuple[str, dict[str, Any]]] = []
+    other_bot = 0
+    for rec in records:
+        if rec.get("mode") != "turn":
+            continue
+        rec_bot = bot_of(vault_dir, str(rec.get("session_id") or ""), str(rec.get("episode_id") or ""), traces)
+        if rec_bot in bots:
+            turn_records.append((rec_bot, rec))
+        else:
+            other_bot += 1
+    kept = [(b, r) for b, r in turn_records if int(r.get("registry_version") or 0) >= MIN_REGISTRY_VERSION]
+
+    turns = dict.fromkeys(bots, 0)
     failing: dict[str, dict[str, set[Key]]] = {}  # check → bot → turnos
-    for rec in kept:
+    for rec_bot, rec in kept:
         sid, ep = str(rec.get("session_id") or ""), str(rec.get("episode_id") or "")
-        bot = _bot_of(vault_dir, sid, ep, traces)
-        turns[bot] += len(rec.get("by_turn") or [])
+        turns[rec_bot] += len(rec.get("by_turn") or [])
         for row in rec.get("results") or []:
             if row.get("verdict") == "falla" and isinstance(row.get("turn"), int):
-                failing.setdefault(str(row.get("check_id")), {}).setdefault(bot, set()).add((sid, ep, row["turn"]))
+                failing.setdefault(str(row.get("check_id")), {}).setdefault(rec_bot, set()).add((sid, ep, row["turn"]))
 
-    witness_turns = dict.fromkeys(BOTS, 0)
+    witness_turns = dict.fromkeys(bots, 0)
     witnessed: dict[str, dict[str, set[Key]]] = {}  # hueco → bot → turnos
     for day in dates:
         for line in _read_jsonl(Path(vault_dir) / "_huecos" / f"{day}.jsonl"):
-            bot = _BOT_OF_WORKFLOW.get(str(line.get("workflow")), "actual")
-            witness_turns[bot] += 1
+            line_bot = _BOT_OF_WORKFLOW.get(str(line.get("workflow")), "actual")
+            if line_bot not in bots:
+                continue
+            witness_turns[line_bot] += 1
             key = (str(line.get("session") or ""), str(line.get("episode") or ""), int(line.get("turn") or 0))
             for hole in line.get("huecos") or []:
-                witnessed.setdefault(str(hole), {}).setdefault(bot, set()).add(key)
+                witnessed.setdefault(str(hole), {}).setdefault(line_bot, set()).add(key)
 
     proposals: list[dict[str, Any]] = []
     for p in PROPOSALS:
         denominator = turns if p.checks else witness_turns
         por_bot: dict[str, dict[str, int]] = {}
         all_keys: set[Key] = set()
-        for bot in BOTS:
+        for b in bots:
             keys = set().union(
-                *(failing.get(c, {}).get(bot, set()) for c in p.checks),
-                *(witnessed.get(w, {}).get(bot, set()) for w in p.witness),
+                *(failing.get(c, {}).get(b, set()) for c in p.checks),
+                *(witnessed.get(w, {}).get(b, set()) for w in p.witness),
             )
             all_keys |= keys
-            por_bot[bot] = {"casos": len(keys), "conversaciones": len({k[0] for k in keys}), "turnos": denominator[bot]}
+            por_bot[b] = {"casos": len(keys), "conversaciones": len({k[0] for k in keys}), "turnos": denominator[b]}
         level = _level(p)
         verdict, why = _verdict(
             level, len(all_keys), len({k[0] for k in all_keys}), sum(denominator.values())
@@ -203,17 +251,19 @@ def build_report(
             "regla": c,
             "nombre": SPECS_BY_ID[c].name if c in SPECS_BY_ID else c,
             "casos": sum(len(v) for v in failing.get(c, {}).values()),
-            "por_bot": {bot: len(failing.get(c, {}).get(bot, set())) for bot in BOTS},
+            "por_bot": {b: len(failing.get(c, {}).get(b, set())) for b in bots},
             "ejemplos": [_masked(k) for k in sorted(set().union(*failing.get(c, {}).values()))[:3]],
         }
         for c in CONTROL
     ]
     return {
         "generado": now.isoformat(timespec="seconds"),
+        "bot": bot or ALL_BOTS,
         "ventana": {"dias": len(dates), "desde": min(dates) if dates else None, "hasta": max(dates) if dates else None},
         "muestra": {
             "episodios": len(kept),
             "excluidos_version_vieja": len(turn_records) - len(kept),
+            "excluidos_otro_bot": other_bot,
             "turnos": turns,
             "turnos_testigo": witness_turns,
         },
@@ -222,26 +272,36 @@ def build_report(
     }
 
 
+def bot_title(bot: str) -> str:
+    """Qué bot cuenta un informe (`bot` del informe), para el encabezado."""
+    return BOT_LABELS.get(bot, "Colossus y Botsito juntos")
+
+
 def render(report: dict[str, Any]) -> str:
     """El informe en Markdown, en español llano."""
     w, m = report["ventana"], report["muestra"]
+    bots = list(m["turnos"])
+
+    def per_bot(counts: dict[str, int]) -> str:
+        return ", ".join(f"{BOT_LABELS[b]} {counts[b]}" for b in bots)
+
     lines = [
-        f"# Huecos del bot · {w['desde']} a {w['hasta']}",
+        f"# Huecos · {bot_title(report['bot'])} · {w['desde']} a {w['hasta']}",
         "",
-        f"Episodios calificados: {m['episodios']} (excluidos por calificación vieja: {m['excluidos_version_vieja']}). "
-        f"Turnos: bot nuevo {m['turnos']['nuevo']}, bot actual {m['turnos']['actual']}. "
-        f"Turnos en el testigo: nuevo {m['turnos_testigo']['nuevo']}, actual {m['turnos_testigo']['actual']}.",
+        f"Episodios calificados: {m['episodios']} (excluidos por calificación vieja: {m['excluidos_version_vieja']}; "
+        f"de otro bot: {m['excluidos_otro_bot']}). Turnos: {per_bot(m['turnos'])}. "
+        f"Turnos en el testigo: {per_bot(m['turnos_testigo'])}.",
         "",
-        "| ¿Vale la pena? | Propuesta | Paso | Nivel | Bot nuevo | Bot actual | Por qué | Ejemplos |",
-        "|---|---|---|---|---|---|---|---|",
+        "| ¿Vale la pena? | Propuesta | Paso | Nivel | " + " | ".join(BOT_LABELS[b] for b in bots)
+        + " | Por qué | Ejemplos |",
+        "|---|---|---|---|" + "---|" * len(bots) + "---|---|",
     ]
     order = {"sí": 0, "quizás": 1, "no por ahora": 2, "sin casos todavía": 3}
     for p in sorted(report["propuestas"], key=lambda x: (order.get(x["veredicto"], 9), _LEVEL_RANK.get(x["nivel"], 9))):
-        nuevo, actual = p["por_bot"]["nuevo"], p["por_bot"]["actual"]
+        cells = " | ".join(f"{p['por_bot'][b]['casos']} en {p['por_bot'][b]['conversaciones']} conv." for b in bots)
         lines.append(
             f"| **{p['veredicto']}** | {p['nombre']} | {p['paso']} | {p['nivel']} "
-            f"| {nuevo['casos']} en {nuevo['conversaciones']} conv. | {actual['casos']} en {actual['conversaciones']} conv. "
-            f"| {p['motivo']} | {', '.join(p['ejemplos']) or '—'} |"
+            f"| {cells} | {p['motivo']} | {', '.join(p['ejemplos']) or '—'} |"
         )
     lines += ["", "## Lo que arregló el paso 2 (debería quedar en cero)", ""]
     for c in report["control"]:
@@ -255,9 +315,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Informe de huecos del bot (cuántas veces pasa cada cosa).")
     parser.add_argument("--dias", type=int, default=3, help="días hacia atrás (incluye hoy, UTC)")
     parser.add_argument("--desde", type=date.fromisoformat, default=None, help="no contar antes de esta fecha")
+    parser.add_argument(
+        "--bot", choices=BOT_CHOICES, default=PRODUCTION_BOT,
+        help="qué bot contar: nuevo (Colossus, el de producción; default), actual (Botsito) o todos",
+    )
     parser.add_argument("--json", action="store_true", help="el informe como JSON")
     args = parser.parse_args(list(argv) if argv is not None else None)
-    report = build_report(Path(get_vault_dir()), days=args.dias, since=args.desde)
+    report = build_report(Path(get_vault_dir()), days=args.dias, since=args.desde, bot=bot_arg(args.bot))
     print(json.dumps(report, ensure_ascii=False, indent=2) if args.json else render(report))
     return 0
 

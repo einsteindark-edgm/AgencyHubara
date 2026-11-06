@@ -32,8 +32,26 @@ describe("chatMessageSchema · sender", () => {
     expect(chatMessageSchema.parse({ ...base, turn_key: "run:x/t:2" }).turn_key).toBe("run:x/t:2");
   });
 
-  it("rejects an unknown sender", () => {
-    expect(() => chatMessageSchema.parse({ ui_type: "agent_message", role: "assistant", content: "x", sender: "robot" })).toThrow();
+  it("acepta los avisos automáticos (sender = reviews | aviso): el vocabulario lo pone el backend", () => {
+    // Caso 2026-11-04: la invitación a calificar (#428) llega con
+    // `sender: "reviews"` y el enum cerrado tumbaba la conversación entera.
+    const notice = {
+      ui_type: "agent_message",
+      role: "assistant",
+      kind: "notice",
+      content: "¡Tu pedido #900 ya llegó! 🕯️\n[Calificar mi pedido]",
+      timestamp: "2026-10-29T18:37:13+00:00",
+    };
+
+    expect(chatMessageSchema.parse({ ...notice, sender: "reviews" }).sender).toBe("reviews");
+    expect(chatMessageSchema.parse({ ...notice, sender: "aviso" }).sender).toBe("aviso");
+  });
+
+  it("un sender que no es texto no tumba la sesión: el turno queda como del bot (L-10)", () => {
+    const base = { ui_type: "agent_message", role: "assistant", content: "x" };
+
+    expect(chatMessageSchema.parse({ ...base, sender: 7 }).sender).toBeUndefined();
+    expect(chatMessageSchema.parse({ ...base, sender: null }).sender).toBeUndefined();
   });
 
 });

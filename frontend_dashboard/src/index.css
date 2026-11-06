@@ -250,6 +250,12 @@ h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 .seg button svg { width: 14px; height: 14px; flex-shrink: 0; opacity: .85; }
 .seg button.on svg { opacity: 1; }
 .seg button:hover:not(.on) { color: var(--fg); }
+/* Las secciones del toolbar crecen con cada plugin: cuando no caben, la tira
+   se desplaza sola en vez de empujar la ventana (a 1024 px, 12 secciones
+   corrían toda la app 30 px a la izquierda). */
+.toolbar .seg { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.toolbar .seg::-webkit-scrollbar { display: none; }
+.toolbar .seg button { flex-shrink: 0; }
 
 /* Body wrapper */
 .body { flex: 1; min-height: 0; display: flex; }

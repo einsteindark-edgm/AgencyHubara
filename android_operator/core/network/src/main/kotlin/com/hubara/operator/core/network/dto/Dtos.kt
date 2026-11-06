@@ -98,6 +98,15 @@ data class HumanMessageRequest(
 @Serializable
 data class HumanMessageResponseDto(val ok: Boolean, val content: String = "")
 
+/** `POST /api/dashboard/sessions/{id}/media`: la foto ya está en WhatsApp; el envío (y cada reintento) la nombra por
+ *  `attachment_id`, sin volver a subir los bytes. */
+@Serializable
+data class MediaUploadDto(
+    val ok: Boolean = true,
+    @SerialName("attachment_id") val attachmentId: String,
+    @SerialName("media_ref") val mediaRef: String = "",
+)
+
 @Serializable
 data class SseTicketDto(val ticket: String)
 

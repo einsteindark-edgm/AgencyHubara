@@ -101,6 +101,10 @@ interface OutboxDao {
     @Query("DELETE FROM outbox WHERE clientActionId = :id")
     suspend fun delete(id: String)
 
+    /** Lo propio de cada envío (args de la tool, archivo y subida de una foto). */
+    @Query("UPDATE outbox SET argsJson = :argsJson WHERE clientActionId = :id")
+    suspend fun setArgs(id: String, argsJson: String?)
+
     /** Toma el envío para mandarlo. 0 = ya no está disponible (se deshizo o lo tomó otro intento). */
     @Query("UPDATE outbox SET state = 'sending' WHERE clientActionId = :id AND state IN ('pending_undo', 'queued')")
     suspend fun claim(id: String): Int

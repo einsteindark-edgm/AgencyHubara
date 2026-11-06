@@ -266,3 +266,31 @@ async def reply_review(
         await _push(store, port, record, "approved", tuple(record.published.get("photo_urls") or ()))
         await _rebuild_best_effort(rebuild, now_ms)
     return record
+
+
+async def grant_consent(
+    store: ReviewsStore, port: Any, review_id: str, *, by: str, now_ms: int, rebuild: Rebuild
+) -> ReviewRecord:
+    """El cliente calificó sin marcar «autorizo publicar» y luego lo autorizó
+    por el chat (2026-11-03): queda registrado quién del equipo lo anotó y
+    cuándo, y si la reseña ya estaba publicada (solo estrellas) vuelve a salir
+    con su comentario, su nombre y su ciudad. Una pendiente sale con el texto
+    cuando el equipo la publique. El permiso que dio en el formulario no se
+    pisa."""
+    record = _get(store, review_id)
+    if record.publish_consent:
+        return record
+    record = store.update_review(
+        review_id,
+        publish_consent=True,
+        consent_granted={"by": by, "at_ms": now_ms, "via": "chat"},
+    ) or record
+    if record.status == "approved" and record.published:
+        photo_urls = await _photo_urls(store, port, record)
+        ids = await _push(store, port, record, "approved", photo_urls)
+        record = store.update_review(
+            review_id,
+            published={**record.published, "at_ms": now_ms, "ids": ids, "photo_urls": list(photo_urls), "error": None},
+        ) or record
+        await _rebuild_best_effort(rebuild, now_ms)
+    return record

@@ -11,6 +11,8 @@ Ahora:
 - `secrets/<servicio>.env` lleva los `SecureString` que ese servicio usa, según
   `infra/compose/service-secrets.json`.
 - `.env.host` lleva lo que solo usa la caja (el token de GHCR del deploy).
+- `litellm.env` lleva solo las llaves que nombra la config de LiteLLM y la huella
+  de esa config (guarda propia: `test_prod_litellm_env.py`).
 
 El mapa lo genera `scripts/service_secrets.py` con el grafo de imports de cada
 servicio, así que una guarda lo compara con el código: si un servicio empieza a
@@ -72,13 +74,15 @@ def test_the_map_matches_what_the_code_of_each_service_reads() -> None:
     assert _map() == computed, f"el mapa quedó viejo frente al código; regeneralo: {_REGENERATE}"
 
 
-def test_every_container_of_the_compose_is_in_the_map() -> None:
-    expected = set(_app_services()) | {"litellm"}
-    assert expected <= set(_map()), f"servicios sin entrada en el mapa: {sorted(expected - set(_map()))}"
+def test_every_app_container_of_the_compose_is_in_the_map() -> None:
+    services = {s for s in _map() if not s.startswith("_")}
+    assert services == set(_app_services()), f"servicios del mapa != compose: {sorted(services ^ set(_app_services()))}"
 
 
-def test_litellm_only_gets_the_model_keys() -> None:
-    assert _map()["litellm"] == ["DEEPSEEK_API_KEY", "GEMINI_API_KEY"]
+def test_the_map_notes_the_model_keys_as_litellm_s() -> None:
+    # LiteLLM no es un servicio del mapa: su `litellm.env` sale de su config. La
+    # entrada `_litellm` hace que esas llaves tengan dueño (no van a `_none`).
+    assert _map()["_litellm"] == ["DEEPSEEK_API_KEY", "GEMINI_API_KEY"]
 
 
 def test_the_registry_token_never_reaches_a_container() -> None:
@@ -102,10 +106,6 @@ def test_each_app_container_loads_the_shared_config_and_only_its_secrets(name: s
     assert _services()[name].get("env_file") == [".env", f"secrets/{name}.env"]
 
 
-def test_litellm_does_not_load_the_app_config() -> None:
-    assert _services()["litellm"].get("env_file") == ["secrets/litellm.env"]
-
-
 def test_caddy_gets_no_environment_file() -> None:
     assert "env_file" not in _services()["caddy"]
 
@@ -121,6 +121,7 @@ def _params() -> list[dict]:
         {"Name": "/hubara/hubara/WHATSAPP_APP_SECRET", "Type": "SecureString", "Value": "app-secret"},
         {"Name": "/hubara/hubara/HUBARA_SERVICE_TOKEN", "Type": "SecureString", "Value": "svc-token"},
         {"Name": "/hubara/hubara/DEEPSEEK_API_KEY", "Type": "SecureString", "Value": "sk-deepseek"},
+        {"Name": "/hubara/hubara/GEMINI_API_KEY", "Type": "SecureString", "Value": "sk-gemini"},
         {"Name": "/hubara/hubara/GHCR_PULL_TOKEN", "Type": "SecureString", "Value": "ghp_x"},
         {"Name": "/hubara/hubara/meta/oauth", "Type": "SecureString", "Value": '{"token": "t"}'},
         {"Name": "/hubara/hubara/NUEVO_SECRETO", "Type": "SecureString", "Value": "nuevo"},
@@ -129,21 +130,28 @@ def _params() -> list[dict]:
 
 
 _FAKE_MAP = {
-    "litellm": ["DEEPSEEK_API_KEY"],
     "api": ["DEEPSEEK_API_KEY", "HUBARA_SERVICE_TOKEN", "WHATSAPP_APP_SECRET"],
     "worker-chats-sales": ["DEEPSEEK_API_KEY"],
+    "_litellm": ["DEEPSEEK_API_KEY", "GEMINI_API_KEY"],
     "_host": ["GHCR_PULL_TOKEN"],
     "_none": ["oauth"],
 }
+_FAKE_LITELLM_CONFIG = (
+    'model_list:\n'
+    '  - litellm_params: {model: deepseek/x, api_key: "os.environ/DEEPSEEK_API_KEY"}\n'
+    '  - litellm_params: {model: gemini/x, api_key: "os.environ/GEMINI_API_KEY"}\n'
+)
 
 
 def _split(tmp_path: Path, params: list[dict]) -> subprocess.CompletedProcess:
     (tmp_path / "params.json").write_text(json.dumps({"Parameters": params}))
     (tmp_path / "map.json").write_text(json.dumps(_FAKE_MAP))
     (tmp_path / "static.env").write_text("HUBARA_ENV=production\nCOGNITO_APP_CLIENT_ID=gana-el-fijo\n")
+    (tmp_path / "litellm_config.yaml").write_text(_FAKE_LITELLM_CONFIG)
     return subprocess.run(
         [sys.executable, str(_SPLIT), "--params", str(tmp_path / "params.json"), "--map", str(tmp_path / "map.json"),
-         "--static", str(tmp_path / "static.env"), "--out-dir", str(tmp_path / "out")],
+         "--static", str(tmp_path / "static.env"), "--litellm-config", str(tmp_path / "litellm_config.yaml"),
+         "--out-dir", str(tmp_path / "out")],
         capture_output=True, text=True,
     )
 
@@ -166,12 +174,28 @@ def test_each_service_gets_only_its_secrets_and_the_host_keeps_the_registry_toke
     _split(tmp_path, _params())
     out = tmp_path / "out"
 
-    assert _lines(out / "secrets" / "litellm.env") == ["DEEPSEEK_API_KEY=sk-deepseek"]
+    assert [line for line in _lines(out / "litellm.env") if not line.startswith("LITELLM_CONFIG_SHA256=")] == [
+        "DEEPSEEK_API_KEY=sk-deepseek", "GEMINI_API_KEY=sk-gemini"]
+    assert not (out / "secrets" / "litellm.env").exists(), "LiteLLM no tiene archivo en secrets/: usa litellm.env"
     api = _lines(out / "secrets" / "api.env")
     assert "WHATSAPP_APP_SECRET=app-secret" in api and "HUBARA_SERVICE_TOKEN=svc-token" in api
     assert not [line for line in api if line.startswith(("GHCR_PULL_TOKEN=", "oauth="))]
     assert _lines(out / ".env.host") == ["GHCR_PULL_TOKEN=ghp_x"]
     assert stat_mode(out / "secrets" / "api.env") == 0o600 and stat_mode(out / ".env.host") == 0o600
+    assert stat_mode(out / "litellm.env") == 0o600
+
+
+def test_a_key_only_litellm_uses_reaches_no_app_container(tmp_path: Path) -> None:
+    # GEMINI_API_KEY solo la nombra la config de LiteLLM: ningún servicio de la app
+    # la recibe, y no es un secreto sin dueño (no avisa).
+    result = _split(tmp_path, _params())
+    out = tmp_path / "out"
+
+    assert result.returncode == 0, result.stderr
+    assert "GEMINI_API_KEY=sk-gemini" in _lines(out / "litellm.env")
+    for f in (out / "secrets").glob("*.env"):
+        assert "GEMINI_API_KEY" not in f.read_text(), f.name
+    assert "GEMINI_API_KEY" not in result.stderr
 
 
 def test_a_secret_without_owner_goes_to_the_app_services_but_never_to_litellm(tmp_path: Path) -> None:
@@ -179,7 +203,7 @@ def test_a_secret_without_owner_goes_to_the_app_services_but_never_to_litellm(tm
     out = tmp_path / "out" / "secrets"
 
     assert "NUEVO_SECRETO=nuevo" in _lines(out / "api.env") and "NUEVO_SECRETO=nuevo" in _lines(out / "worker-chats-sales.env")
-    assert "NUEVO_SECRETO" not in (out / "litellm.env").read_text()
+    assert "NUEVO_SECRETO" not in (tmp_path / "out" / "litellm.env").read_text()
     assert "NUEVO_SECRETO" in result.stderr, "un secreto sin dueño tiene que avisar en el log del deploy"
 
 
@@ -209,7 +233,7 @@ def test_when_the_secret_comes_last_it_wins_and_stays_out_of_the_shared_env(tmp_
     out = tmp_path / "out"
 
     assert "DEEPSEEK_API_KEY" not in (out / ".env").read_text()
-    assert _lines(out / "secrets" / "litellm.env") == ["DEEPSEEK_API_KEY=sk-deepseek"]
+    assert "DEEPSEEK_API_KEY=sk-deepseek" in _lines(out / "litellm.env")
 
 
 @pytest.mark.parametrize("missing", ["COGNITO_USER_POOL_ID", "WHATSAPP_APP_SECRET", "HUBARA_SERVICE_TOKEN"])
@@ -220,6 +244,7 @@ def test_the_deploy_still_aborts_without_the_auth_parameters(tmp_path: Path, mis
 
     assert result.returncode != 0 and missing in result.stderr
     assert not (tmp_path / "out" / ".env").exists(), "sin auth no se escribe nada: el contenedor viejo sigue sirviendo"
+    assert not (tmp_path / "out" / "litellm.env").exists()
 
 
 def test_a_terraform_placeholder_counts_as_missing(tmp_path: Path) -> None:

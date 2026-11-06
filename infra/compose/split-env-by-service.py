@@ -9,6 +9,10 @@ Salidas (en --out-dir, modo 0600):
 - `.env`                 config no secreta (parámetros String + el bloque fijo).
 - `secrets/<servicio>.env`  los SecureString de ese servicio según `service-secrets.json`.
 - `.env.host`            lo que solo usa la caja (`_host`: el token de GHCR del deploy).
+- `litellm.env`          el entorno SOLO del proxy LiteLLM (memoria de la caja de app,
+                         2026-11-05): las llaves que nombra su config (`os.environ/X`)
+                         con su valor de SSM y la huella del config. Compose lo recrea
+                         solo si cambia eso o su imagen, no con cada deploy.
 
 Reglas:
 - Cada variable conserva el valor que tenía en el `.env` de un solo archivo: gana la
@@ -16,17 +20,20 @@ Reglas:
   repetido (en prod: `/WATCHDOG_ENABLED` SecureString=true y
   `/scheduler/WATCHDOG_ENABLED` String=false, hoy gana false) no cambia de valor.
 - Un SecureString sin dueño en el mapa va a todos los servicios de la app (nunca a
-  LiteLLM) y avisa: no se rompe nada, pero el mapa quedó viejo.
+  LiteLLM) y avisa: no se rompe nada, pero el mapa quedó viejo. Lo que solo usa
+  LiteLLM (lo nombra su config o el mapa lo anota en `_litellm`) no va a ninguno.
 - Sin los parámetros de auth (o con el relleno de Terraform) no se escribe nada y
   sale con error: el deploy aborta y el contenedor viejo sigue vivo (SEC-01/SEC-02).
 
-Guarda: hubara_agency/tests/infra/test_service_secrets.py.
+Guardas: hubara_agency/tests/infra/test_service_secrets.py y test_prod_litellm_env.py.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 from collections import OrderedDict
@@ -34,6 +41,7 @@ from pathlib import Path
 
 PLACEHOLDER = "PLACEHOLDER_set_out_of_band"
 REQUIRED_AUTH = ("COGNITO_USER_POOL_ID", "COGNITO_APP_CLIENT_ID", "WHATSAPP_APP_SECRET", "HUBARA_SERVICE_TOKEN")
+_LITELLM_KEY = re.compile(r"os\.environ/([A-Za-z0-9_]+)")
 
 
 def _from_ssm(params: list[dict]) -> OrderedDict:
@@ -55,6 +63,29 @@ def _effective(ssm: OrderedDict, static_lines: list[str]) -> OrderedDict:
     return eff
 
 
+def _litellm_env(config: Path, ssm: OrderedDict) -> tuple[set[str], list[str]]:
+    """Las llaves que nombra la config de LiteLLM y su `litellm.env`.
+
+    Sin la huella, cambiar solo el contenido del config (un bind-mount) no recrea el
+    contenedor y LiteLLM seguiría con el config viejo en memoria (caso: alias
+    gemini-multimodal).
+    """
+    if not config.is_file():
+        print(f"AVISO: falta {config} (lo copia backend-deploy.yml)", file=sys.stderr)
+        return set(), []
+    raw = config.read_bytes()
+    keys = set(_LITELLM_KEY.findall(raw.decode("utf-8", "replace")))
+    lines = []
+    for key in sorted(keys):
+        value = ssm.get(key, ("", ""))[1]
+        if value:
+            lines.append(f"{key}={value}")
+        else:
+            print(f"AVISO: {key} lo nombra {config.name} pero no está en /hubara/<tenant>/", file=sys.stderr)
+    lines.append(f"LITELLM_CONFIG_SHA256={hashlib.sha256(raw).hexdigest()}")
+    return keys, lines
+
+
 def _write(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix="." + path.name + ".")
@@ -69,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--params", required=True, help="salida JSON de aws ssm get-parameters-by-path")
     ap.add_argument("--map", required=True, help="service-secrets.json")
     ap.add_argument("--static", required=True, help="bloque fijo (KEY=VALUE), va al final del .env")
+    ap.add_argument("--litellm-config", required=True, help="litellm_config.yaml que monta el proxy")
     ap.add_argument("--out-dir", required=True)
     args = ap.parse_args(argv)
 
@@ -92,9 +124,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     services = [s for s in owners_map if not s.startswith("_")]
-    app_services = [s for s in services if s != "litellm"]
     host_only = set(owners_map.get("_host", []))
     nowhere = set(owners_map.get("_none", []))
+    litellm_keys, litellm = _litellm_env(Path(args.litellm_config), ssm)
+    litellm_only = litellm_keys | set(owners_map.get("_litellm", []))
 
     shared = [f"{n}={v}" for n, (t, v) in eff.items() if t != "SecureString"] + static_lines
     per_service: dict[str, list[str]] = {s: [] for s in services}
@@ -107,8 +140,10 @@ def main(argv: list[str] | None = None) -> int:
             host.append(line)
             continue
         owners = [s for s in services if name in owners_map[s]]
+        if not owners and name in litellm_only:
+            continue  # solo la usa LiteLLM: va a litellm.env, a ningún servicio de la app
         if not owners:
-            owners = app_services
+            owners = services
             print(
                 f"AVISO: el secreto {name} no tiene dueño en service-secrets.json; va a todos los servicios "
                 "de la app. Regenerá el mapa: cd hubara_agency && uv run python scripts/service_secrets.py --write",
@@ -121,10 +156,11 @@ def main(argv: list[str] | None = None) -> int:
     for svc, lines in per_service.items():
         _write(out / "secrets" / f"{svc}.env", lines)
     _write(out / ".env.host", host)
+    _write(out / "litellm.env", litellm)
     _write(out / ".env", shared)
     print(
-        f"Escrito {out / '.env'} ({sum(1 for line in shared if '=' in line and not line.startswith('#'))} vars) "
-        f"y {len(per_service)} archivos de secretos por servicio",
+        f"Escrito {out / '.env'} ({sum(1 for line in shared if '=' in line and not line.startswith('#'))} vars), "
+        f"{len(per_service)} archivos de secretos por servicio y {out / 'litellm.env'} ({len(litellm)} vars)",
         file=sys.stderr,
     )
     return 0
