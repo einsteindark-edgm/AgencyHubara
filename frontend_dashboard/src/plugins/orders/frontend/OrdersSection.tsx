@@ -7,6 +7,7 @@
  * `MedusaOrderQuery`). Cuando Medusa no responde, `response.catalog_available`
  * es `false` y mostramos un estado vacío explícito.
  */
+import { useCallback, useState } from "react";
 import {
   OrdersFilters,
   filterLabel,
@@ -18,6 +19,7 @@ import {
 } from "@plugins/orders/frontend/features/orders-board";
 import { OrdersInspector } from "@plugins/orders/frontend/features/orders-inspector";
 import { VaultOrdersBanner } from "@plugins/orders/frontend/features/orders-vault-reconciliation";
+import { OrdersExportDialog } from "@plugins/orders/frontend/features/orders-export";
 
 import {
   countsInStats,
@@ -48,6 +50,9 @@ export function OrdersSection() {
   const filteredActiveCount = filteredActive.length;
   const filteredActiveTotal = filteredActive.reduce((a, b) => a + b.total, 0);
   const selected = orders.find((o) => o.id === selectedOrderId) ?? null;
+  const [exportOpen, setExportOpen] = useState(false);
+  const openExport = useCallback(() => setExportOpen(true), []);
+  const closeExport = useCallback(() => setExportOpen(false), []);
 
   // Banner cuando Medusa no responde — el operador necesita saberlo.
   const showBackendUnavailable = response && !response.catalog_available;
@@ -73,8 +78,19 @@ export function OrdersSection() {
           activeDays={f.activeDays}
           dateRangeLabel={f.dateRangeLabel}
           orders={f.scoped}
+          onExport={openExport}
         />
       )}
+      {/* Reporte de ventas (tarjeta del ciclo #18): arranca con el rango de la
+          vista y cuenta los mismos pedidos, sin los de prueba. */}
+      <OrdersExportDialog
+        open={exportOpen}
+        onClose={closeExport}
+        orders={orders}
+        initialRange={f.dateRange}
+        activeDays={f.activeDays}
+        today={f.today}
+      />
       <main className="ord-canvas">
         {/* KPIs = búsqueda + rango + modalidad, sin la vista (resumen del
             período, no de la columna que se mira). */}
@@ -85,6 +101,7 @@ export function OrdersSection() {
           filteredCount={filteredActiveCount}
           filteredTotal={filteredActiveTotal}
           title={filterLabel(f.view)}
+          onExport={openExport}
         />
         {showBackendUnavailable && (
           <div style={{ padding: "0 16px 8px" }}>

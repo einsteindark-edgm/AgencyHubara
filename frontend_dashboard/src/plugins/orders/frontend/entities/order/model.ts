@@ -10,6 +10,7 @@
  * (auditoría 2026-06-10, F0.5).
  */
 
+import { isInDateRange, type DateRange } from "@/shared/lib";
 import type {
   OrderDetail,
   OrderItemDetail,
@@ -137,23 +138,62 @@ export interface SalesReport {
   cancelled: SalesTotals;
 }
 
-export function salesReport(
-  _orders: Order[],
-  _range: { from: string | null; to: string | null },
-): SalesReport {
+function breakdown(orders: Order[], keyOf: (o: Order) => string): SalesBreakdown[] {
+  const rows = new Map<string, SalesBreakdown>();
+  for (const o of orders) {
+    const key = keyOf(o) || "—";
+    const row = rows.get(key) ?? { key, orders: 0, sales: 0 };
+    row.orders += 1;
+    row.sales += o.total;
+    rows.set(key, row);
+  }
+  return [...rows.values()];
+}
+
+/** Orden de las etapas en el desglose: el mismo de las columnas del tablero. */
+const STATUS_ORDER: OrderStatus[] = ["new", "preparing", "ready", "shipping", "delivered", "delayed", "cancelled"];
+
+/**
+ * Reporte de ventas de un rango (tarjeta del ciclo #18). Con las mismas reglas
+ * que la vista Orders, así que cuadra con ella por construcción:
+ *   - cada pedido cae en su día (`orderDayIso`: entrega, o creación);
+ *   - los de prueba no cuentan (`countsInStats`);
+ *   - los cancelados no son ventas: van en `cancelled`;
+ *   - `collected` es la cuenta del KPI «Ingresos» (`isCollectedRevenue`).
+ * `sales` es el total vigente del pedido (con envío); `shipping` es la parte
+ * de envío incluida.
+ */
+export function salesReport(orders: Order[], range: DateRange): SalesReport {
+  // El mismo corte de días que el calendario de la vista.
+  const inPeriod = orders.filter((o) => countsInStats(o) && isInDateRange(orderDayIso(o), range));
+  const sold = inPeriod.filter((o) => o.status !== "cancelled");
+  const cancelled = inPeriod.filter((o) => o.status === "cancelled");
+  const sum = (list: Order[], value: (o: Order) => number) => list.reduce((a, o) => a + value(o), 0);
+  const totals = (list: Order[]): SalesTotals => ({ orders: list.length, sales: sum(list, (o) => o.total) });
+
+  const sales = sum(sold, (o) => o.total);
+  const collected = sum(sold.filter(isCollectedRevenue), (o) => o.total);
+  const byStatus = breakdown(sold, (o) => o.status).sort(
+    (a, b) => STATUS_ORDER.indexOf(a.key as OrderStatus) - STATUS_ORDER.indexOf(b.key as OrderStatus),
+  );
+  const bySales = (a: SalesBreakdown, b: SalesBreakdown) => b.sales - a.sales || a.key.localeCompare(b.key);
+
   return {
-    orders: 0,
-    sales: 0,
-    averageTicket: 0,
-    shipping: 0,
-    collected: 0,
-    toCollect: 0,
-    byPayType: { cod: { orders: 0, sales: 0 }, confirmed: { orders: 0, sales: 0 } },
-    byStatus: [],
-    byDay: [],
-    byChannel: [],
-    byCity: [],
-    cancelled: { orders: 0, sales: 0 },
+    orders: sold.length,
+    sales,
+    averageTicket: sold.length ? Math.round(sales / sold.length) : 0,
+    shipping: sum(sold, (o) => o.shipping ?? 0),
+    collected,
+    toCollect: sales - collected,
+    byPayType: {
+      cod: totals(sold.filter((o) => o.payType === "cod")),
+      confirmed: totals(sold.filter((o) => o.payType === "confirmed")),
+    },
+    byStatus,
+    byDay: breakdown(sold, orderDayIso).sort((a, b) => a.key.localeCompare(b.key)),
+    byChannel: breakdown(sold, (o) => o.channel).sort(bySales),
+    byCity: breakdown(sold, (o) => o.city).sort(bySales),
+    cancelled: totals(cancelled),
   };
 }
 
