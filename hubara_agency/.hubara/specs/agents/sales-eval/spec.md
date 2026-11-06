@@ -484,3 +484,27 @@ reproducir los números de los dos bots juntos, para comparar.
 
 - La eval legada por métricas DeepEval (convive durante la transición, plan §3.7).
 - El scorecard del agente de remarketing (HU-SC-7).
+
+### Requirement: El Taller lee el caso real con los datos tapados
+
+Para arreglar una tarjeta del Ciclo Colossus, el Taller SHALL poder leer las
+conversaciones que la tarjeta cita como las muestra Calidad LLM (`···4567
+ep_003 t4`) con `python -m src.plugins.chats.agent.sales_eval.case
+4567:ep_003:t4`: los mensajes del episodio (cliente, bot, equipo) y, del turno
+pedido (o de todos los del episodio), sus pasos y las decisiones de Jev. Los
+datos personales NO SHALL salir de la caja: el nombre del perfil de WhatsApp y
+los de los borradores, teléfonos, direcciones, correos y campos de formularios
+salen tapados con el mismo anonimizador que protege lo que va a Jev, y la
+conversación solo por sus últimos 4 dígitos; ni el id completo ni los `wamid`
+SHALL aparecer. Lo que reproduce el caso (productos, precios, cantidades,
+ciudades) SHALL quedar. Sin episodio, solo SHALL listar los episodios, sin
+textos. Más de `MAX_REFS` (5) casos por llamada SHALL rechazarse, para que
+nunca sea un barrido del vault. Si varias conversaciones terminan en los mismos
+4 dígitos, el caso queda `ambiguous` con hasta 3.
+
+#### Scenario: La tarjeta cita un caso con el nombre de la clienta
+
+- GIVEN el bot saludó «¡Hola Martha!» y la clienta escribió quién recibe, su dirección, su celular y su correo
+- WHEN el Taller lee `4567:ep_001`
+- THEN ve los mensajes con `[nombre]`, `[dirección]`, `[teléfono]` y `[correo]`, y la conversación como `···4567`
+- AND ve «6 cajas», «Medellín» y «$12.000» tal como estaban
