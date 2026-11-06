@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
+from typing import Any
 from pathlib import Path
 
 from temporalio import activity
@@ -58,20 +59,25 @@ def _llm_down_for(
     return llm_chat
 
 
-def _reply_window(*, route: str = "ventas", closes_in: timedelta | None = timedelta(hours=20)):
+def _reply_window(
+    *, route: str = "ventas", closes_in: timedelta | None = timedelta(hours=20), before_turn: str | None = None
+):
     """`read_reply_window` falso: el chat es de `route` y la ventana cierra
     `closes_in` después de la primera lectura (None = no se sabe). Devuelve el
     JSON de `ReplyWindow` como dict, igual que el falso del laboratorio: el
-    workflow lo recibe convertido al contrato."""
-    box: dict[str, datetime | None] = {}
+    workflow lo recibe convertido al contrato. `before_turn`: la ruta de la
+    primera lectura (la del V2 antes del turno, tarjeta del ciclo #15), para
+    una persona que toma el chat mientras el turno espera al modelo."""
+    box: dict[str, Any] = {"reads": 0}
 
     @activity.defn(name="read_reply_window")
     async def read_reply_window(session_id: str) -> dict:
         if "closes_at" not in box:
             box["closes_at"] = activity.info().scheduled_time + closes_in if closes_in is not None else None
         closes_at = box["closes_at"]
+        box["reads"] += 1
         return {
-            "route": route,
+            "route": before_turn if before_turn is not None and box["reads"] == 1 else route,
             "window_expires_at_ms": int(closes_at.timestamp() * 1000) if closes_at is not None else None,
         }
 
@@ -138,7 +144,7 @@ async def test_once_a_person_took_the_chat_the_turn_sends_nothing_not_even_the_g
         HubaraSalesSessionWorkflowV2,
         tmp_path,
         responses=[],
-        replace=[_llm_down_for(10), greeting_egress, _reply_window(route="humano")],
+        replace=[_llm_down_for(10), greeting_egress, _reply_window(route="humano", before_turn="ventas")],
         prior_history=None,
     )
 
@@ -158,7 +164,7 @@ async def test_a_turn_that_gave_up_neither_flushes_components_nor_asks_for_a_com
         HubaraSalesSessionWorkflowV2,
         tmp_path,
         responses=[],
-        replace=[_llm_down_for(10), _reply_window(route="humano")],
+        replace=[_llm_down_for(10), _reply_window(route="humano", before_turn="ventas")],
         extra=[*classifier.activities()],
         meta={"perception_mode": "on", "perception_profile": "jev-v1"},
     )
@@ -202,7 +208,7 @@ async def test_a_session_that_waited_out_an_outage_replays_its_own_history(tmp_p
     acts = [
         a
         for a in _make_fake_activities(tracker, workspace_path=str(workspace), prior_history=_RETURNING)
-        if a.__temporal_activity_definition.name != "llm_chat"
+        if a.__temporal_activity_definition.name not in {"llm_chat", "read_reply_window"}
     ]
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
