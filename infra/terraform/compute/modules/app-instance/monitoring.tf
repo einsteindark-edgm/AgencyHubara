@@ -55,10 +55,34 @@ locals {
     catalog-sync           = "catalog\\.workers\\.sync$"
   }
 
+  # La línea de acceso de la API (src/platform/access_log.py): plantilla de la
+  # ruta, estado, duración y memoria del proceso, sin datos personales. La API
+  # la escribe en /app/access_log/api.log, montada desde esta carpeta del host
+  # (compose de prod). Los logs de docker se borran al recrear el contenedor:
+  # los picos del 26-oct y 3-nov no se pudieron atribuir (memoria de la caja,
+  # 2026-11-05). Guarda: hubara_agency/tests/infra/test_api_access_log_shipping.py.
+  api_access_log_file = "/var/log/hubara-api/api.log"
+  # El nombre va en un local y no como `aws_cloudwatch_log_group.api_access[0].name`:
+  # con `use_local` el grupo tiene count 0 y este local se evalúa igual.
+  api_access_log_group = "/agencyhubara/${var.tenant}/api-access"
+
   cw_agent_config = jsonencode({
     agent = {
       metrics_collection_interval = 60
       run_as_user                 = "root" # procstat lee /proc de procesos de contenedores (root)
+    }
+    logs = {
+      logs_collected = {
+        files = {
+          collect_list = [
+            {
+              file_path       = local.api_access_log_file
+              log_group_name  = local.api_access_log_group
+              log_stream_name = "{instance_id}"
+            },
+          ]
+        }
+      }
     }
     metrics = {
       namespace         = local.cw_namespace
@@ -83,8 +107,17 @@ locals {
   })
 }
 
-# El agente necesita PutMetricData + leer su config de SSM (params
-# `AmazonCloudWatch-*`, cubiertos por esta managed policy).
+# La línea de acceso de la API, 14 días (≈1–2 MB/día: centavos al mes). Lo crea
+# Terraform para que la retención sea la de acá y no "para siempre".
+resource "aws_cloudwatch_log_group" "api_access" {
+  count             = var.use_local ? 0 : 1
+  name              = local.api_access_log_group
+  retention_in_days = 14
+  tags              = { Tenant = var.tenant }
+}
+
+# El agente necesita PutMetricData, escribir en CloudWatch Logs y leer su
+# config de SSM (params `AmazonCloudWatch-*`): todo en esta managed policy.
 resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
   count      = var.use_local ? 0 : 1
   role       = aws_iam_role.app.name

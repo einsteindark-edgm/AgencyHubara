@@ -7,10 +7,17 @@
 #   OTEL_ENDPOINT      — http://<ip-privada-signoz>:4317  (output de ../terraform/compute)
 #
 # Combina: (a) secretos de SSM  +  (b) config operacional no-secreta (este script).
+# Escribe además (c) `litellm.env`, el entorno SOLO del proxy LiteLLM.
+#
+# HUBARA_DIR (default /opt/hubara) solo lo cambian los tests
+# (hubara_agency/tests/infra/test_prod_litellm_env.py).
 set -euo pipefail
 
-BOX_ENV=/opt/hubara/box.env
-OUT=/opt/hubara/.env
+HUBARA_DIR="${HUBARA_DIR:-/opt/hubara}"
+BOX_ENV="$HUBARA_DIR/box.env"
+OUT="$HUBARA_DIR/.env"
+LITELLM_CONFIG="$HUBARA_DIR/litellm_config.yaml"
+LITELLM_ENV="$HUBARA_DIR/litellm.env"
 [ -f "$BOX_ENV" ] || { echo "FALTA $BOX_ENV (lo escribe cloud-init)"; exit 1; }
 # shellcheck disable=SC1090
 source "$BOX_ENV"   # AWS_REGION, TENANT, CADDY_DOMAIN, ENABLED_PLUGINS, IMAGE_REPO
@@ -91,5 +98,31 @@ OTEL_SEMCONV_STABILITY_OPT_IN=gen_ai_latest_experimental
 OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_ENDPOINT}
 EOF
 
+# (c) El entorno de LiteLLM (memoria de la caja de app, 2026-11-05): solo las
+#     llaves que nombra su config (`os.environ/X`) y la huella del config.
+#     Con el `.env` entero el proxy veía todas las llaves de producción y
+#     `HUBARA_IMAGE`, que cambia en cada deploy: compose lo recreaba siempre, y
+#     LiteLLM arranca en ~990 MB (con los días baja a ~200; lo demás va a swap).
+#     Así se recrea solo si cambia su config, una de sus llaves o su imagen. La
+#     huella hace falta porque el config es un bind-mount: sin ella, cambiar
+#     solo el contenido del archivo no recrea el contenedor y seguiría con el
+#     config viejo en memoria (caso: alias gemini-multimodal).
+_sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
+ltmp="$(mktemp)"
+if [ -f "$LITELLM_CONFIG" ]; then
+  for _k in $(grep -o 'os\.environ/[A-Za-z0-9_]*' "$LITELLM_CONFIG" | cut -d/ -f2 | sort -u); do
+    _v="$(_ssm_val "$_k")"
+    if [ -n "$_v" ]; then
+      echo "$_k=$_v" >> "$ltmp"
+    else
+      echo "AVISO: $_k lo nombra litellm_config.yaml pero no está en /hubara/${TENANT}/" >&2
+    fi
+  done
+  echo "LITELLM_CONFIG_SHA256=$(_sha256 "$LITELLM_CONFIG")" >> "$ltmp"
+else
+  echo "AVISO: falta $LITELLM_CONFIG (lo copia backend-deploy.yml)" >&2
+fi
+
 mv "$tmp" "$OUT"
-echo "Escrito $OUT ($(grep -c = "$OUT") vars)"
+mv "$ltmp" "$LITELLM_ENV"
+echo "Escrito $OUT ($(grep -c = "$OUT") vars) y $LITELLM_ENV ($(grep -c = "$LITELLM_ENV") vars)"

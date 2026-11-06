@@ -94,6 +94,12 @@ def _rule(report: dict, rule_id: str) -> dict:
     return next(r for r in report["reglas"] if r["regla"] == rule_id)
 
 
+def _is_read_index(path: Path) -> bool:
+    """Lo que un lector deja al lado para no volver a parsear: el índice de
+    cada día de scorecards y el resumen de las trazas de una conversación."""
+    return path.parts[:3] == ("_evals", "scorecards", "index") or path.name == "turn_traces.summary.json"
+
+
 def test_a_rule_far_above_its_baseline_opens_with_its_numbers(tmp_path: Path) -> None:
     _history(tmp_path, base_fails={MAYOR: 1}, recent_fails={MAYOR: 6})
 
@@ -268,7 +274,12 @@ def test_the_cli_only_reads_unless_asked_to_alert(tmp_path: Path, monkeypatch, c
     printed = json.loads(capsys.readouterr().out)
     assert _rule(printed, MAYOR)["banda"] == "abrir"
     assert created == []
-    assert sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*")) == before  # no escribe nada
+    # No escribe nada salvo los índices de lectura (2026-11-05): el de cada día
+    # de scorecards y el resumen de las trazas de cada conversación.
+    after = sorted(p.relative_to(tmp_path) for p in tmp_path.rglob("*"))
+    new = [p for p in after if p not in before]
+    assert [p for p in new if not (_is_read_index(p))] == []
+    assert any(p.parts[:4] == ("_evals", "scorecards", "index", "bands") for p in new)
 
     assert bands.main(["--json", "--alert", "--hasta", END.isoformat()]) == 0
     printed = json.loads(capsys.readouterr().out)
