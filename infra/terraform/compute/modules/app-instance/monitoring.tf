@@ -62,6 +62,9 @@ locals {
   # los picos del 26-oct y 3-nov no se pudieron atribuir (memoria de la caja,
   # 2026-11-05). Guarda: hubara_agency/tests/infra/test_api_access_log_shipping.py.
   api_access_log_file = "/var/log/hubara-api/api.log"
+  # El nombre va en un local y no como `aws_cloudwatch_log_group.api_access[0].name`:
+  # con `use_local` el grupo tiene count 0 y este local se evalúa igual.
+  api_access_log_group = "/agencyhubara/${var.tenant}/api-access"
 
   cw_agent_config = jsonencode({
     agent = {
@@ -74,7 +77,7 @@ locals {
           collect_list = [
             {
               file_path       = local.api_access_log_file
-              log_group_name  = aws_cloudwatch_log_group.api_access[0].name
+              log_group_name  = local.api_access_log_group
               log_stream_name = "{instance_id}"
             },
           ]
@@ -108,7 +111,7 @@ locals {
 # Terraform para que la retención sea la de acá y no "para siempre".
 resource "aws_cloudwatch_log_group" "api_access" {
   count             = var.use_local ? 0 : 1
-  name              = "/agencyhubara/${var.tenant}/api-access"
+  name              = local.api_access_log_group
   retention_in_days = 14
   tags              = { Tenant = var.tenant }
 }

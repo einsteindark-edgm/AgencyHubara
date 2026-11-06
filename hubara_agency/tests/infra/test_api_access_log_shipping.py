@@ -59,4 +59,11 @@ def test_the_log_group_is_created_by_terraform_and_kept_14_days() -> None:
 
     assert group, "falta el grupo de logs de la línea de acceso"
     assert re.search(r"retention_in_days\s*=\s*14\b", group.group(1))
-    assert re.search(r"log_group_name\s*=\s*aws_cloudwatch_log_group\.api_access\[0\]\.name", text)
+    # El agente escribe en el grupo que crea Terraform: los dos toman el nombre
+    # del mismo `local`. NO `aws_cloudwatch_log_group.api_access[0].name`: con
+    # `use_local` (robotocore) el grupo tiene count 0 y los locals se evalúan
+    # igual → "Invalid index" en el plan (CI robotocore-test, 2026-11-06).
+    name = re.search(r"\bname\s*=\s*local\.(\w+)", group.group(1))
+    assert name, "el nombre del grupo sale de un local"
+    assert re.search(rf"\blog_group_name\s*=\s*local\.{name.group(1)}\b", text)
+    assert "aws_cloudwatch_log_group.api_access[0]" not in text
