@@ -1,0 +1,74 @@
+{
+  "type": "object",
+  "properties": {
+    "campaign_id": {
+      "type": "string"
+    },
+    "days": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "series": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "d": {
+            "type": "string"
+          },
+          "ganado": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "cotizado": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "calificado": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "activo": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "nuevo": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "no_reply": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "perdido": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "d",
+          "ganado",
+          "cotizado",
+          "calificado",
+          "activo",
+          "nuevo",
+          "no_reply",
+          "perdido"
+        ]
+      }
+    }
+  },
+  "required": [
+    "campaign_id",
+    "days",
+    "series"
+  ]
+}

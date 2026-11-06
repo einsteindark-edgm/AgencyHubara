@@ -1,0 +1,28 @@
+# Hubara Agent Gateway en local (Docker), apuntando al backend REAL.
+#
+#   cp .env.example .env   # completar ids de Cognito y el secreto M2M (nunca commitear .env)
+#   docker compose up -d --build
+#   curl -s localhost:8765/healthz
+#
+# Servicio independiente: NO forma parte del compose generado de hubara_agency
+# (render-compose.py) ni del de prod. Publicarlo en prod = ADR aparte (Caddy por path).
+services:
+  agent-gateway:
+    build: .
+    image: hubara-agent-gateway:local
+    container_name: hubara-agent-gateway
+    env_file: .env
+    environment:
+      GATEWAY_BIND: 0.0.0.0
+      GATEWAY_PORT: "8765"
+    ports:
+      # Solo loopback: el plugin corre en la misma máquina.
+      - "127.0.0.1:8765:8765"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 128
+    restart: unless-stopped
