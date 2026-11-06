@@ -14,6 +14,11 @@ workflow se apaga: los mensajes los ve el equipo en el dashboard (los guarda
 el ingest, no el turno). Si la lectura falla, el turno sigue como antes: una
 falla técnica no le quita el chat al bot.
 
+Un traspaso de remarketing que llega con la ruta en humano ya se consumió de
+la metadata cuando el turno se salta: si después alguien pulsa «Devolver al
+bot», Ventas arranca sin ese resumen (los mensajes del cliente sí quedan en
+el chat).
+
 Comando nuevo: el gate vive acá (el archivo del V2 no llama `workflow.patched`,
 test AST). Una history sin el marcador re-juega igual; un run vivo al
 desplegar sigue sin esto hasta que termine (`patched` se memoiza por run).
