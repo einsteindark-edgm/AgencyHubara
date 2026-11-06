@@ -189,8 +189,50 @@ resource "aws_iam_role" "app_containers" {
   max_session_duration = 3600
 }
 
+# Despertar y despachar a GraphAgents desde un contenedor, SOLO a esa caja
+# (revisión 2026-11-06). El `wake_graphagents` del rol de la caja da
+# ssm:SendCommand sobre `*`: desde un contenedor eso alcanzaría la propia caja de
+# app (AWS-RunShellScript corre como root) y el hop limit no serviría de nada.
+# SendCommand se autoriza contra la INSTANCIA (tag Role=graphagents) y contra el
+# DOCUMENTO (solo AWS-RunShellScript, el único que usa Boto3Launcher), como en el
+# módulo del laboratorio.
+data "aws_iam_policy_document" "containers_wake_graphagents" {
+  statement {
+    sid       = "StartGraphAgentsBox"
+    actions   = ["ec2:StartInstances"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:ResourceTag/Role"
+      values   = ["graphagents"]
+    }
+  }
+  statement {
+    sid       = "SendCommandToGraphAgentsBoxOnly"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ec2:*:*:instance/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ssm:resourceTag/Role"
+      values   = ["graphagents"]
+    }
+  }
+  statement {
+    sid       = "SendCommandShellDocumentOnly"
+    actions   = ["ssm:SendCommand"]
+    resources = ["arn:aws:ssm:*::document/AWS-RunShellScript"]
+  }
+  # Solo lectura y sin resource-scope en AWS: la IP y el estado de la caja por tag,
+  # el agente SSM Online tras el arranque y el resultado del comando.
+  statement {
+    sid       = "ReadDispatchState"
+    actions   = ["ec2:DescribeInstances", "ssm:GetCommandInvocation", "ssm:DescribeInstanceInformation"]
+    resources = ["*"]
+  }
+}
+
 data "aws_iam_policy_document" "containers" {
-  source_policy_documents = [data.aws_iam_policy_document.wake_graphagents.json]
+  source_policy_documents = [data.aws_iam_policy_document.containers_wake_graphagents.json]
   statement {
     sid       = "ReadWriteMetaToken"
     actions   = ["ssm:GetParameter", "ssm:PutParameter", "ssm:DeleteParameter"]
@@ -352,3 +394,4 @@ output "public_ip" { value = aws_eip.app.public_ip }
 output "domain" { value = var.domain }
 # Lo usa el módulo lab-instance para darle a la app el permiso de lanzar corridas.
 output "role_name" { value = aws_iam_role.app.name }
+output "containers_role_name" { value = aws_iam_role.app_containers.name }

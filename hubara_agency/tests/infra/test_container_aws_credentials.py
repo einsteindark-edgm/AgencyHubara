@@ -36,9 +36,14 @@ _COMPOSE = _REPO / "infra" / "compose" / "docker-compose.prod.yml"
 _REFRESH = _REPO / "infra" / "compose" / "refresh-container-aws-creds.sh"
 _HELPER = _REPO / "hubara_agency" / "deploy" / "aws" / "credential_process.py"
 _AWS_CONFIG = _REPO / "hubara_agency" / "deploy" / "aws" / "config"
+_COMPUTE_MAIN = _REPO / "infra" / "terraform" / "compute" / "main.tf"
+_COMPUTE_TFVARS = _REPO / "infra" / "terraform" / "compute" / "tenants.auto.tfvars"
 
 #: Los únicos contenedores que llaman a AWS (boto3) en producción.
 _AWS_SERVICES = {"api", "worker-order-sentinel-cycle", "worker-reengagement-cycle"}
+#: Los que llaman al laboratorio cuando está encendido: la API lee las corridas y
+#: sales_eval las lanza (S3, EC2 y SSM sobre la caja del laboratorio).
+_LAB_SERVICES = {"api", "worker-chats-sales_eval"}
 
 
 def _block(text: str, header: str) -> str:
@@ -111,7 +116,40 @@ def test_the_containers_role_only_reaches_the_meta_token_and_the_graphagents_box
     assert actions <= allowed, f"permisos de más para los contenedores: {sorted(actions - allowed)}"
     meta = next(s for s in _statements(doc) if "ssm:PutParameter" in s)
     assert "/hubara/${var.tenant}/meta/*" in meta and "/hubara/${var.tenant}/*" not in meta
-    assert "data.aws_iam_policy_document.wake_graphagents.json" in doc, "despertar a GraphAgents usa la misma política que hoy"
+    assert "data.aws_iam_policy_document.containers_wake_graphagents.json" in doc
+    assert "data.aws_iam_policy_document.wake_graphagents.json" not in doc, (
+        "el `wake_graphagents` de la caja da ssm:SendCommand sobre `*`: desde un contenedor alcanzaría la propia caja"
+    )
+
+
+def test_the_containers_can_only_send_commands_to_the_graphagents_box() -> None:
+    # Quien puede mandarle comandos al agente SSM de una instancia es root en ella. Con
+    # SendCommand sobre `*`, un contenedor con este rol correría AWS-RunShellScript en la
+    # propia caja de app y el hop limit no serviría de nada (revisión 2026-11-06).
+    tf = _APP_TF.read_text(encoding="utf-8")
+    wake = _statements(_block(tf, 'data "aws_iam_policy_document" "containers_wake_graphagents"'))
+    send = [s for s in wake if '"ssm:SendCommand"' in s]
+    on_instances = [s for s in send if '"arn:aws:ec2:*:*:instance/*"' in s]
+    on_document = [s for s in send if '"arn:aws:ssm:*::document/AWS-RunShellScript"' in s]
+
+    assert len(send) == 2 and len(on_instances) == 1 and len(on_document) == 1, send
+    for stmt in send:
+        assert re.findall(r'"([a-z0-9]+:[A-Za-z]+)"', stmt.split("resources")[0]) == ["ssm:SendCommand"], stmt
+        assert '"*"' not in stmt, stmt
+    assert re.search(r'variable\s*=\s*"ssm:resourceTag/Role"', on_instances[0]) and '"graphagents"' in on_instances[0]
+    start = next(s for s in wake if '"ec2:StartInstances"' in s)
+    assert re.search(r'variable\s*=\s*"ec2:ResourceTag/Role"', start) and '"graphagents"' in start
+
+
+def test_the_lab_permissions_also_reach_the_containers_role() -> None:
+    # Con hop limit 1 la API y sales_eval llaman al laboratorio con el rol de los
+    # contenedores: `launch-lab` tiene que llegar también a ese rol.
+    lab = _block(_COMPUTE_MAIN.read_text(encoding="utf-8"), 'module "lab"')
+    assert "m.containers_role_name" in lab
+    assert re.search(
+        r'output "containers_role_name"\s*\{\s*value\s*=\s*aws_iam_role\.app_containers\.name',
+        _APP_TF.read_text(encoding="utf-8"),
+    )
 
 
 # ── El timer del host ────────────────────────────────────────────────────────
@@ -206,6 +244,22 @@ def test_only_the_aws_containers_see_the_temporary_credentials(name: str) -> Non
     env = svc.get("environment") or {}
     assert env.get("AWS_CONFIG_FILE") == "/app/hubara_agency/deploy/aws/config"
     assert "/opt/hubara/aws:/run/app-aws:ro" in svc.get("volumes", [])
+
+
+def _lab_enabled() -> bool:
+    lab = _block(_COMPUTE_TFVARS.read_text(encoding="utf-8"), "lab = {")
+    found = re.search(r"enabled\s*=\s*(true|false)", lab)
+    assert found, "compute/tenants.auto.tfvars: `lab` sin `enabled`"
+    return found.group(1) == "true"
+
+
+def test_turning_the_lab_on_needs_the_temporary_credentials_where_it_runs() -> None:
+    # Hoy el laboratorio está apagado y sales_eval no llama a AWS: no recibe
+    # credenciales. El PR que lo encienda tiene que montárselas (y agregarlo a
+    # _AWS_SERVICES) o sales_eval no podrá lanzar corridas.
+    needs = _LAB_SERVICES if _lab_enabled() else set()
+    missing = sorted(needs - _AWS_SERVICES)
+    assert not missing, f"con el laboratorio encendido {missing} llaman a AWS: montales las credenciales temporales"
 
 
 def test_no_other_container_mounts_the_credentials() -> None:
