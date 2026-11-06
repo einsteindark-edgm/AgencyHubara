@@ -108,6 +108,55 @@ export function isCollectedRevenue(
   return o.status === "delivered" && o.payStatus === "paid" && countsInStats(o);
 }
 
+/** Una fila de un desglose del reporte de ventas: la clave (día, etapa, canal,
+ *  ciudad) con cuántos pedidos y cuánto suman. */
+export interface SalesBreakdown {
+  key: string;
+  orders: number;
+  sales: number;
+}
+
+export interface SalesTotals {
+  orders: number;
+  sales: number;
+}
+
+/** Reporte de ventas de un rango (tarjeta del ciclo #18). */
+export interface SalesReport {
+  orders: number;
+  sales: number;
+  averageTicket: number;
+  shipping: number;
+  collected: number;
+  toCollect: number;
+  byPayType: Record<PayType, SalesTotals>;
+  byStatus: SalesBreakdown[];
+  byDay: SalesBreakdown[];
+  byChannel: SalesBreakdown[];
+  byCity: SalesBreakdown[];
+  cancelled: SalesTotals;
+}
+
+export function salesReport(
+  _orders: Order[],
+  _range: { from: string | null; to: string | null },
+): SalesReport {
+  return {
+    orders: 0,
+    sales: 0,
+    averageTicket: 0,
+    shipping: 0,
+    collected: 0,
+    toCollect: 0,
+    byPayType: { cod: { orders: 0, sales: 0 }, confirmed: { orders: 0, sales: 0 } },
+    byStatus: [],
+    byDay: [],
+    byChannel: [],
+    byCity: [],
+    cancelled: { orders: 0, sales: 0 },
+  };
+}
+
 export interface OrderStatusMeta {
   label: string;
   color: string;
