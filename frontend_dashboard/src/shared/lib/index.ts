@@ -34,3 +34,6 @@ export {
   type SparkGeometry,
   type SparkPoint,
 } from "./sparkline";
+
+// CSV para Excel en español + descarga (reporte de ventas de Órdenes).
+export { toCsv, downloadText, type CsvCell } from "./csv";
