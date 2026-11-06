@@ -83,8 +83,7 @@ async def _run_outage(tmp_path: Path, *, down_for: int = 0, llm=None, window=Non
         HubaraSalesSessionWorkflowV2,
         tmp_path,
         responses=[],
-        replace=[llm or _llm_down_for(down_for)],
-        extra=[window or _reply_window()],
+        replace=[llm or _llm_down_for(down_for), window or _reply_window()],
         **kwargs,
     )
 
@@ -139,8 +138,7 @@ async def test_once_a_person_took_the_chat_the_turn_sends_nothing_not_even_the_g
         HubaraSalesSessionWorkflowV2,
         tmp_path,
         responses=[],
-        replace=[_llm_down_for(10), greeting_egress],
-        extra=[_reply_window(route="humano")],
+        replace=[_llm_down_for(10), greeting_egress, _reply_window(route="humano")],
         prior_history=None,
     )
 
@@ -160,8 +158,8 @@ async def test_a_turn_that_gave_up_neither_flushes_components_nor_asks_for_a_com
         HubaraSalesSessionWorkflowV2,
         tmp_path,
         responses=[],
-        replace=[_llm_down_for(10)],
-        extra=[_reply_window(route="humano"), *classifier.activities()],
+        replace=[_llm_down_for(10), _reply_window(route="humano")],
+        extra=[*classifier.activities()],
         meta={"perception_mode": "on", "perception_profile": "jev-v1"},
     )
 
