@@ -5,8 +5,8 @@ card cites its cases the way Calidad LLM shows them: `···4567 ep_003 t4`.
 This reads those cases from the vault so the workshop sees what the customer
 said and what the bot did, step by step, instead of guessing from the code.
 
-Personal data never leaves the box: names (the WhatsApp profile and the
-order draft), phones, addresses, emails and form fields come out masked with
+Personal data never leaves the box: names (the WhatsApp profile, the order
+draft and the shipping form), phones, addresses, emails and form fields come out masked with
 the same anonymizer that guards what goes to Jev, and the conversation is
 shown only by its last 4 digits. What reproduces the case stays: products,
 prices, quantities and cities. It reads a few cases per call (`MAX_REFS`),
@@ -44,6 +44,13 @@ MAX_TEXT = 2_000
 #: Fields that only identify the customer or the message, never the case.
 _DROP_KEYS = frozenset({"wamid", "message_id", "session_id", "turn_key", "wa_id", "from", "to", "phone", "bsuid", "user_id"})
 _NAME_TOKEN_RE = re.compile(r"[^\W\d_]{3,}")
+# Who receives, as the shipping form says it (`receiver_name=…`, `nombre_recibe=…`):
+# the conversation may name them again elsewhere, in any case.
+_FORM_NAME_RE = re.compile(
+    r"\b(?:(?:receiver|recipient|customer|contact|full|first|last)_name|name|\w{0,20}nombre\w{0,20}|\w{0,20}recibe\w{0,20})"
+    r"=(?P<value>[^;\n]+)",
+    re.IGNORECASE,
+)
 _EP_RE = re.compile(r"ep_\d+")
 _TURN_RE = re.compile(r"t(\d+)")
 
@@ -103,6 +110,18 @@ def _terms(metadata: Mapping[str, Any]) -> list[str]:
         slots = draft.get("slots") if isinstance(draft, dict) else None
         if isinstance(slots, Mapping):
             terms.update(redact_terms_from_slots(slots))
+    return sorted(terms)
+
+
+def _form_terms(messages: Iterable[Mapping[str, Any]]) -> list[str]:
+    """The names this conversation's shipping forms carry, and their words."""
+    terms: set[str] = set()
+    for message in messages:
+        for match in _FORM_NAME_RE.finditer(str(message.get("text") or "")):
+            value = match.group("value").strip()
+            if value:
+                terms.add(value)
+                terms.update(_NAME_TOKEN_RE.findall(value))
     return sorted(terms)
 
 
@@ -183,7 +202,7 @@ def _conversation(vault_dir: Path, session_id: str, last4: str, episode: str | N
         "messages": _messages(thread_slice),
         "turns": _turns(session_id, traces, read_decisions(vault_dir, session_id), episode, turn),
     }
-    return _clean(conv, _terms(metadata), session_id, masked)
+    return _clean(conv, sorted({*_terms(metadata), *_form_terms(conv["messages"])}), session_id, masked)
 
 
 def _read_case(vault_dir: Path, ref: str) -> dict[str, Any]:

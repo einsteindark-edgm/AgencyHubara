@@ -87,6 +87,40 @@ def test_a_card_case_brings_back_its_conversation_with_personal_data_masked(tmp_
         assert kept in text, kept
 
 
+def test_the_shipping_form_and_what_follows_it_come_out_masked(tmp_path: Path) -> None:
+    """The receiver is known only from the form, as WhatsApp sends it, and
+    the conversation keeps naming them afterwards."""
+    sid = "wa_573009876543"
+    sdir = tmp_path / sid
+    (sdir / "sessions").mkdir(parents=True)
+    (sdir / "metadata.json").write_text(json.dumps({
+        "profile": {"name": "Caro"},
+        "episodes": [{"episode_id": "ep_001", "started_at_ms": _ms("15:00:00")}],
+    }), encoding="utf-8")
+    form = (
+        "[datos de envío recibidos] address=Cra 7#12_34; city=Guasca; national_id=1020304050; "
+        "neighborhood=El Centro; phone=3001112233; receiver_name=Rosa Elena Díaz; "
+        "delivery_notes=Dejar en portería. A nombre de ROSA ELENA DÍAZ"
+    )
+    events = [
+        {"role": "user", "content": form, "timestamp": _iso("15:00:00")},
+        {"role": "assistant", "content": "Listo Rosa, el envío a Guasca está incluido", "timestamp": _iso("15:00:05"), "sender": "bot"},
+        {"role": "user", "content": "Carrer 7 #12_34.  Así", "timestamp": _iso("15:01:00")},
+    ]
+    (sdir / "sessions" / f"{sid}.jsonl").write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in events) + "\n", encoding="utf-8")
+    turn_traces.append_trace(tmp_path, sid, {"episode_id": "ep_001", "turn": 1, "trigger": "customer", "turn_started_ms": _ms("15:00:01"), "workflow": "v2"})
+
+    [conv] = case.read_cases(tmp_path, ["6543:ep_001"])["cases"][0]["conversations"]
+
+    text = _dump(conv)
+    for secret in ("Rosa", "ROSA", "Elena", "Díaz", "DÍAZ", "12_34", "1020304050", "3001112233", "El Centro"):
+        assert secret not in text, secret
+    for kept in ("city=Guasca", "el envío a Guasca está incluido", "Dejar en portería"):
+        assert kept in text, kept
+    # When it happened stays readable: a date is not a phone.
+    assert [m["at"] for m in conv["messages"]] == [_iso("15:00:00"), _iso("15:00:05"), _iso("15:01:00")]
+
+
 def test_a_turn_narrows_the_steps_but_keeps_the_whole_episode_as_context(tmp_path: Path) -> None:
     _seed(tmp_path)
 
