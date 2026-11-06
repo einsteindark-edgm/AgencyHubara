@@ -19,7 +19,7 @@ from src.plugins.chats.agent.sales_eval import case
 from src.plugins.chats.shared import turn_traces
 
 SID = "wa_573001234567"
-TWIN = "wa_573119994567"  # same last 4 digits
+TWIN = "wa_twin_user_4567"  # same last 4 digits, not a phone
 NAME = "Martha Gómez"
 
 
@@ -114,7 +114,7 @@ def test_two_conversations_with_the_same_last_digits_are_both_shown_as_ambiguous
     [found] = case.read_cases(tmp_path, ["4567:ep_001:t1"])["cases"]
 
     assert found["status"] == "ambiguous" and len(found["conversations"]) == 2
-    assert "573119994567" not in _dump(found)
+    assert "twin_user" not in _dump(found)
 
 
 def test_an_unknown_case_says_so(tmp_path: Path) -> None:
