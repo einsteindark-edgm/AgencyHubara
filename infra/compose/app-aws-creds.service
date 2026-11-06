@@ -1,0 +1,10 @@
+# Renueva las credenciales temporales de AWS de los contenedores que las usan.
+# Lo instala backend-deploy.yml; lo dispara app-aws-creds.timer.
+[Unit]
+Description=Credenciales temporales de AWS para los contenedores de la app
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/hubara/refresh-container-aws-creds.sh
