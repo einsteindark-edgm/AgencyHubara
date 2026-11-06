@@ -7,18 +7,22 @@
  * sobre los mismos pedidos que pinta Orders, sin pedidos de prueba, así que
  * cuadran con ella. «Descargar CSV» baja el resumen y una fila por pedido.
  *
- * Límite: Orders carga los pedidos más recientes (el listado tiene tope). Si el
- * rango empieza antes del pedido más viejo cargado, el reporte lo avisa: puede
- * faltar historia.
+ * Límite: Orders carga los pedidos más recientes (el listado tiene tope). Si se
+ * cargó el tope y el rango no tiene inicio, o empieza antes del pedido más
+ * viejo cargado, el reporte avisa que puede faltar historia.
+ *
+ * Alcance: todas las modalidades, sin la búsqueda ni la vista del tablero (el
+ * reporte es del periodo, como el KPI «Ingresos»). El diálogo lo dice.
  */
 import { useId, useState } from "react";
 import {
   NO_DATE_RANGE,
   describeDateRange,
   downloadText,
+  fmtMoney,
+  formatIsoDateEs,
   type DateRange,
 } from "@/shared/lib";
-import { fmtMoney } from "@/shared/lib/format";
 import { DateRangeFilter, MacButton, Modal } from "@/shared/ui";
 import {
   ORDER_STATUS_META,
@@ -35,6 +39,9 @@ interface Props {
   onClose: () => void;
   /** Todos los pedidos que cargó Orders (el reporte saca los de prueba). */
   orders: Order[];
+  /** Tope del listado de Orders (`limit` de la respuesta); con ese número de
+   *  pedidos cargados puede faltar historia. */
+  listLimit?: number;
   /** Rango activo de la vista al abrir. */
   initialRange: DateRange;
   activeDays: Set<string>;
@@ -67,6 +74,17 @@ function Breakdown({
         <p className="m-0 text-xs text-fg-muted">Sin pedidos.</p>
       ) : (
         <table className="w-full text-[12px]">
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wider text-fg-faint">
+              <th scope="col" className="py-1 pr-2 text-left font-semibold">
+                <span className="sr-only">Detalle</span>
+              </th>
+              <th scope="col" aria-label="Pedidos" className="py-1 pr-2 text-right font-semibold">
+                Cant.
+              </th>
+              <th scope="col" className="py-1 text-right font-semibold">Ventas</th>
+            </tr>
+          </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.key} className="border-b border-line last:border-b-0">
@@ -82,14 +100,12 @@ function Breakdown({
   );
 }
 
-export function OrdersExportDialog({ open, onClose, orders, initialRange, activeDays, today }: Props) {
+export function OrdersExportDialog({ open, ...props }: Props) {
   if (!open) return null;
-  return (
-    <ExportBody onClose={onClose} orders={orders} initialRange={initialRange} activeDays={activeDays} today={today} />
-  );
+  return <ExportBody {...props} />;
 }
 
-function ExportBody({ onClose, orders, initialRange, activeDays, today }: Omit<Props, "open">) {
+function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, today }: Omit<Props, "open">) {
   const titleId = useId();
   const [range, setRange] = useState<DateRange>(initialRange);
   const report = salesReport(orders, range);
@@ -97,7 +113,8 @@ function ExportBody({ onClose, orders, initialRange, activeDays, today }: Omit<P
 
   const loadedDays = orders.map(orderDayIso).filter(Boolean).sort();
   const oldestLoaded = loadedDays[0];
-  const mayMissHistory = !!range.from && !!oldestLoaded && range.from < oldestLoaded;
+  const atLimit = listLimit !== undefined && orders.length >= listLimit;
+  const mayMissHistory = atLimit && (!range.from || (!!oldestLoaded && range.from < oldestLoaded));
 
   const download = () => {
     const name = range.from ? `ventas_${range.from}_${range.to ?? range.from}.csv` : "ventas_todas.csv";
@@ -111,7 +128,9 @@ function ExportBody({ onClose, orders, initialRange, activeDays, today }: Omit<P
           <h2 id={titleId} className="m-0 text-[15px] font-semibold">
             Reporte de ventas
           </h2>
-          <p className="m-0 mt-0.5 text-xs text-fg-muted">{rangeLabel} · sin pedidos de prueba</p>
+          <p className="m-0 mt-0.5 text-xs text-fg-muted">
+            {rangeLabel} · todas las modalidades, sin la búsqueda ni la vista del tablero · sin pedidos de prueba
+          </p>
         </div>
         <button
           type="button"
@@ -134,8 +153,13 @@ function ExportBody({ onClose, orders, initialRange, activeDays, today }: Omit<P
         />
 
         {mayMissHistory ? (
-          <p role="note" className="m-0 rounded-lg border border-line px-3 py-2 text-xs text-fg-muted">
-            Orders carga los pedidos más recientes: el más viejo cargado es del {oldestLoaded}. Antes de esa
+          <p
+            role="note"
+            aria-label="Puede faltar historia"
+            className="m-0 rounded-lg border border-line px-3 py-2 text-xs text-fg-muted"
+          >
+            Orders carga los {listLimit} pedidos más recientes
+            {oldestLoaded ? `: el más viejo cargado es del ${formatIsoDateEs(oldestLoaded)}` : ""}. Antes de esa
             fecha puede faltar historia.
           </p>
         ) : null}
@@ -146,11 +170,20 @@ function ExportBody({ onClose, orders, initialRange, activeDays, today }: Omit<P
           <Metric label="Ticket promedio" value={report.averageTicket} />
           <Metric label="Cobrado" value={report.collected} />
           <Metric label="Por cobrar" value={report.toCollect} />
+          <Metric label="Pagado sin entregar" value={report.paidNotDelivered} />
           <Metric label="Envío incluido" value={report.shipping} />
+          <Metric label="Envío estimado" value={report.shippingEstimated} />
+          <Metric label="Envío real" value={report.shippingReal} />
+          <Metric label="Envío que paga la tienda" value={report.storeShippingCost} />
           <Metric label="Contra entrega" value={report.byPayType.cod.sales} />
           <Metric label="Pago confirmado" value={report.byPayType.confirmed.sales} />
+          <Metric label="Reembolsos" value={report.refunded.sales} />
           <Metric label="Cancelados" value={report.cancelled.sales} />
         </div>
+        <p className="m-0 text-xs text-fg-muted">
+          «Cobrado» es lo entregado y pagado, la misma cuenta del KPI «Ingresos». «Por cobrar» es el resto e
+          incluye lo pagado que falta entregar.
+        </p>
 
         <div className="grid gap-4 min-[560px]:grid-cols-2">
           <Breakdown
@@ -158,14 +191,16 @@ function ExportBody({ onClose, orders, initialRange, activeDays, today }: Omit<P
             rows={report.byStatus}
             label={(k) => ORDER_STATUS_META[k as OrderStatus]?.label ?? k}
           />
-          <Breakdown title="Por día" rows={report.byDay} />
+          <Breakdown title="Por día" rows={report.byDay} label={formatIsoDateEs} />
           <Breakdown title="Por canal" rows={report.byChannel} />
           <Breakdown title="Por ciudad" rows={report.byCity} />
         </div>
       </div>
 
       <div className="flex justify-end gap-2 border-t border-line px-4 py-3">
-        <MacButton sm onClick={onClose}>
+        {/* El foco entra al diálogo (el Modal no lo mueve solo). */}
+        {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
+        <MacButton sm onClick={onClose} autoFocus>
           Cerrar
         </MacButton>
         <MacButton sm primary onClick={download} disabled={report.orders === 0 && report.cancelled.orders === 0}>

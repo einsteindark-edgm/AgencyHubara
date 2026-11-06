@@ -4,15 +4,21 @@
  * Excel en español usa `;` como separador (la coma es el decimal) y solo
  * reconoce UTF-8 con BOM: sin él, las tildes y la «ñ» salen rotas. Filas
  * separadas con CRLF; un campo con separador, comillas o salto de línea va
- * entre comillas, con las comillas dobladas.
+ * entre comillas, con las comillas dobladas. Un texto que empieza como
+ * fórmula (=, +, -, @, tabulador, retorno) lleva un apóstrofo delante.
  */
 
 export type CsvCell = string | number;
 
 const BOM = String.fromCharCode(0xfeff);
 
+/** Lo que Excel lee como fórmula al empezar una celda. */
+const FORMULA_START = /^[=+\-@\t\r]/;
+
 function cell(value: CsvCell, sep: string): string {
-  const text = String(value);
+  // Un texto que empieza como fórmula se neutraliza con un apóstrofo (un
+  // nombre de cliente lo escribe un tercero); los números quedan como números.
+  const text = typeof value === "string" && FORMULA_START.test(value) ? `'${value}` : String(value);
   return text.includes(sep) || /["\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

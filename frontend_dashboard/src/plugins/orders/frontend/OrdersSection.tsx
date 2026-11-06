@@ -87,6 +87,7 @@ export function OrdersSection() {
         open={exportOpen}
         onClose={closeExport}
         orders={orders}
+        listLimit={response?.limit}
         initialRange={f.dateRange}
         activeDays={f.activeDays}
         today={f.today}

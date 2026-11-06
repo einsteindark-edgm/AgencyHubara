@@ -130,6 +130,16 @@ export interface SalesReport {
   shipping: number;
   collected: number;
   toCollect: number;
+  /** Pagado (prepago) pero todavía no entregado: está dentro de `toCollect`
+   *  porque «Cobrado» es la cuenta del KPI «Ingresos» (entregado y pagado). */
+  paidNotDelivered: number;
+  refunded: SalesTotals;
+  /** Envío estimado al vender (tarifa mínima) y el real que fijó el operador
+   *  al despachar; `storeShippingCost` = lo que paga la tienda en los
+   *  pedidos con envío gratis. */
+  shippingEstimated: number;
+  shippingReal: number;
+  storeShippingCost: number;
   byPayType: Record<PayType, SalesTotals>;
   byStatus: SalesBreakdown[];
   byDay: SalesBreakdown[];
@@ -173,9 +183,12 @@ export function salesReport(orders: Order[], range: DateRange): SalesReport {
 
   const sales = sum(sold, (o) => o.total);
   const collected = sum(sold.filter(isCollectedRevenue), (o) => o.total);
-  const byStatus = breakdown(sold, (o) => o.status).sort(
-    (a, b) => STATUS_ORDER.indexOf(a.key as OrderStatus) - STATUS_ORDER.indexOf(b.key as OrderStatus),
-  );
+  // Un estado que no esté en la lista va al final (no primero, con -1).
+  const rank = (key: string) => {
+    const i = STATUS_ORDER.indexOf(key as OrderStatus);
+    return i === -1 ? STATUS_ORDER.length : i;
+  };
+  const byStatus = breakdown(sold, (o) => o.status).sort((a, b) => rank(a.key) - rank(b.key));
   const bySales = (a: SalesBreakdown, b: SalesBreakdown) => b.sales - a.sales || a.key.localeCompare(b.key);
 
   return {
@@ -185,6 +198,14 @@ export function salesReport(orders: Order[], range: DateRange): SalesReport {
     shipping: sum(sold, (o) => o.shipping ?? 0),
     collected,
     toCollect: sales - collected,
+    paidNotDelivered: sum(
+      sold.filter((o) => o.payStatus === "paid" && o.status !== "delivered"),
+      (o) => o.total,
+    ),
+    refunded: totals(sold.filter((o) => o.payStatus === "refund")),
+    shippingEstimated: sum(sold.filter((o) => !o.shippingConfirmed), (o) => o.shipping ?? 0),
+    shippingReal: sum(sold.filter((o) => o.shippingConfirmed), (o) => o.shipping ?? 0),
+    storeShippingCost: sum(sold.filter((o) => o.freeShipping), (o) => o.storeShippingCost ?? 0),
     byPayType: {
       cod: totals(sold.filter((o) => o.payType === "cod")),
       confirmed: totals(sold.filter((o) => o.payType === "confirmed")),
