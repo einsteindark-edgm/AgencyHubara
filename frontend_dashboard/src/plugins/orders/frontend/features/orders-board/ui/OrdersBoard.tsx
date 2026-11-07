@@ -446,6 +446,7 @@ export function OrdersHeader({
   title,
   range,
   rangeLabel,
+  onExport,
 }: {
   /** Órdenes del período (búsqueda + rango + modalidad), NO acotadas por la
    *  vista: los KPIs resumen el período, no la columna que se está mirando. */
@@ -456,6 +457,8 @@ export function OrdersHeader({
   /** Rango del calendario. Sin rango, "Ingresos" es el mes en curso. */
   range: DateRange;
   rangeLabel: string;
+  /** Abre el reporte de ventas (tarjeta del ciclo #18). */
+  onExport?: () => void;
 }) {
   // Día COLOMBIANO. Con el corte UTC (frontera a las 19:00 locales) el KPI
   // "Para hoy" saltaba a las 7 de la tarde, y "Ingresos mes" —que deriva de
@@ -521,7 +524,7 @@ export function OrdersHeader({
           </p>
         </div>
         <div className="ord-actions">
-          <MacButton ghost sm>
+          <MacButton ghost sm onClick={onExport}>
             <Icon.download /> Exportar
           </MacButton>
           <MacButton ghost sm>

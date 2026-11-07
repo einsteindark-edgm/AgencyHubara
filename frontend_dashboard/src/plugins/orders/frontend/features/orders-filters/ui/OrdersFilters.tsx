@@ -41,6 +41,8 @@ interface Props {
   activeDays: Set<string>;
   dateRangeLabel: string;
   orders: Order[];
+  /** Abre el reporte de ventas (tarjeta del ciclo #18). */
+  onExport?: () => void;
 }
 
 export function OrdersFilters({
@@ -56,6 +58,7 @@ export function OrdersFilters({
   activeDays,
   dateRangeLabel,
   orders,
+  onExport,
 }: Props) {
   // Día calendario COLOMBIANO (no UTC): `dueIso` es una fecha que el operador
   // eligió a mano, y el corte UTC caía a las 19:00 locales — a partir de las 7
@@ -185,7 +188,7 @@ export function OrdersFilters({
         {/* Footer: solo cuenta órdenes activas (no canceladas). Si querés ver
             las canceladas, mirá la columna "Cancelada" en el kanban. */}
         <span>{active.length} órdenes activas</span>
-        <button className="ico-btn" title="Exportar">
+        <button className="ico-btn" title="Exportar" onClick={onExport}>
           <Icon.download />
         </button>
       </div>
