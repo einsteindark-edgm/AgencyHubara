@@ -312,6 +312,48 @@ def test_cie07_shipping_mismatch_fails_on_that_turn() -> None:
         assert "shipping_mismatch" in r.evidence
 
 
+def test_cie07_summary_rejected_and_corrected_in_the_same_turn_passes() -> None:
+    """La guarda frenó el resumen con el envío equivocado antes de salir y el
+    bot lo rehízo bien en el mismo turno: el cliente nunca vio el monto malo."""
+    for error in ("shipping_mismatch", "price_mismatch", "price_drift"):
+        t = traj(T(1, tools=[
+            tool("verify_order_for_checkout"),
+            tool("present_order_confirmation", ok=False, error=error),
+            tool("present_order_confirmation"),
+        ]))
+        assert _run("CIE-07", t).verdict == "pasa", error
+
+
+def test_cie07_a_summary_rejected_after_the_one_that_went_out_still_fails() -> None:
+    t = traj(T(1, tools=[
+        tool("verify_order_for_checkout"),
+        tool("present_order_confirmation"),
+        tool("present_order_confirmation", ok=False, error="shipping_mismatch"),
+    ]))
+    r = _run("CIE-07", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+
+
+def test_cie07_a_rejection_corrected_only_in_a_later_turn_still_fails() -> None:
+    t = traj(
+        T(1, tools=[tool("verify_order_for_checkout"),
+                    tool("present_order_confirmation", ok=False, error="shipping_mismatch")]),
+        T(2, tools=[tool("present_order_confirmation")]),
+    )
+    r = _run("CIE-07", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+
+
+def test_cie07_register_mismatch_still_fails_with_a_good_summary_after() -> None:
+    t = traj(T(1, tools=[
+        tool("verify_order_for_checkout"),
+        tool("register_order", ok=False, error="amount_mismatch"),
+        tool("present_order_confirmation"),
+    ]))
+    r = _run("CIE-07", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+
+
 def test_cie07_without_verify_nor_register_is_not_applicable() -> None:
     assert _run("CIE-07", traj(T(1, sent=["Hola"]))).verdict == "no_aplica"
 
