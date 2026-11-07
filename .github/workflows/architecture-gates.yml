@@ -54,8 +54,12 @@ on:
 permissions:
   contents: read
 
+# Un push nuevo cancela la corrida del commit anterior. Una etiqueta corre en su
+# propio grupo: `gh pr create --label` dispara `opened` y `labeled` a la vez y,
+# en un solo grupo, una cancelaba a la otra; GitHub cuenta esa corrida cancelada
+# en el commit y el PR quedaba bloqueado aunque la otra pasara (#482, #484, #485).
 concurrency:
-  group: arch-gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: arch-gates-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ (github.event.action == 'labeled' || github.event.action == 'unlabeled') && github.run_id || 'code' }}
   cancel-in-progress: true
 
 env:
