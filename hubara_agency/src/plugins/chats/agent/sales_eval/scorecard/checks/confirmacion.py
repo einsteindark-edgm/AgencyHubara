@@ -52,13 +52,19 @@ def _product_chosen(traj: Trajectory, upto: int) -> bool:
 
 def _deferral_in_force(traj: Trajectory, upto: int) -> Turn | None:
     """El aplazamiento que sigue vigente en `upto`: la última señal del cliente
-    hasta ese turno fue un «después» (un sí o el botón posteriores lo anulan)."""
+    hasta ese turno fue un «después». Lo anulan un sí o el botón posteriores,
+    y también un turno posterior del cliente en el que el bot anotó un dato
+    del pedido (`set_order_slot`): el cliente que vuelve a comprar casi nunca
+    dice «sí», elige el producto o el color. Un sticker o un dato anotado en
+    un turno que no es del cliente no lo anulan."""
     last: Turn | None = None
     for t in traj.turns:
         if t.turn > upto:
             break
         if t.signal or t.confirm_button:
             last = t
+        elif last is not None and last.signal == "deferral" and t.is_customer and t.tool_ok("set_order_slot"):
+            last = None
     return last if last is not None and last.signal == "deferral" else None
 
 
