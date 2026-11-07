@@ -135,6 +135,9 @@ with workflow.unsafe.imports_passed_through():
     # Lo que el cliente le escribió a remarketing entra al turno del traspaso
     # (caso 2026-10-16); su gate vive en el helper.
     from src.plugins.chats.agent.sales.workflows.handoff_v2 import handoff_reply, reply_message
+    # Con la conversación en manos del equipo el turno no corre (tarjeta del
+    # ciclo #15); su gate vive en el helper.
+    from src.plugins.chats.agent.sales.workflows.human_route_v2 import team_owns_chat
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
@@ -617,6 +620,15 @@ class HubaraSalesSessionWorkflowV2:
             # ¿El turno trae un traspaso de remarketing? (el coalesce lo pasa a
             # `plugin_context`: se mira la ráfaga cruda).
             self._turn_has_handoff = any(p.is_handoff for p in raw_batch)
+
+            # La conversación es del equipo (tarjeta del ciclo #15): el turno no
+            # corre y la sesión se apaga. Los mensajes los ve el equipo.
+            if await team_owns_chat(session.session_id):
+                workflow.logger.info(
+                    f"Sesión {session.session_id} en ruta humano: el bot no responde "
+                    f"({len(raw_batch)} mensaje(s) para el equipo). Cerrando workflow."
+                )
+                return
 
             self._processing = True
             try:

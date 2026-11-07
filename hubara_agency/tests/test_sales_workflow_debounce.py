@@ -71,6 +71,7 @@ class Tracker:
         # Por envío: si el workflow dijo que el texto lo decidió el motor (V2).
         self.send_decided_by_engine: list[bool] = []
         self.typing_calls: list[str] = []
+        self.route_reads: int = 0
         self.persist_calls: list[tuple[str, str]] = []
         # Por persistencia: los wamids de las burbujas que salieron (doble
         # check de WhatsApp en el chat). None = el workflow no los pasó.
@@ -144,6 +145,7 @@ def _make_fake_activities(
     flush_results: list[dict] | None = None,
     handoff_reply: HandoffReply | None = None,
     handoff_reply_hook: object | None = None,
+    session_routes: list[str] | None = None,
 ):
     """Crea las activities fakes con `tracker` cerrado en closure.
 
@@ -204,6 +206,17 @@ def _make_fake_activities(
     @activity.defn(name="read_idle_timeout_seconds")
     async def fake_read_idle_timeout(session_id: str) -> int:
         return 60
+
+    # Quién tiene el chat antes de cada turno del V2 (tarjeta del ciclo #15):
+    # `session_routes` call-por-call; agotada → "ventas". Es el JSON de
+    # `ReplyWindow` (la misma lectura de la caída del LLM).
+    _route_state = {"queue": list(session_routes or [])}
+
+    @activity.defn(name="read_reply_window")
+    async def fake_read_reply_window(session_id: str) -> dict:
+        tracker.route_reads += 1
+        route = _route_state["queue"].pop(0) if _route_state["queue"] else "ventas"
+        return {"route": route, "window_expires_at_ms": None}
 
     # Traza v2: el flush devuelve lo que entregó (`[{kind, wamid, ok}]`). Las
     # histories viejas traen un int: el workflow acepta las dos formas.
@@ -420,6 +433,7 @@ def _make_fake_activities(
         fake_read_handoff_reply,
         fake_read_order_draft_note,
         fake_read_idle_timeout,
+        fake_read_reply_window,
         fake_flush_ui_intents,
         fake_flush_capi_outbox,
         fake_typing,
