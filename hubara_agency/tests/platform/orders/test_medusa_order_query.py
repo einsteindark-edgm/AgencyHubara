@@ -976,6 +976,31 @@ async def test_detail_item_exposes_the_coupon_and_list_price_of_a_discounted_lin
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_detail_item_exposes_its_id_and_a_negotiated_price(adapter):
+    """Pedido #169: el operador ajustó la línea al precio negociado. El
+    inspector necesita el id de la línea (para ajustarla) y el precio de lista
+    + el motivo (para explicar el precio)."""
+    it = await _detail_item(adapter, {
+        "id": "ordli_ond",
+        "title": "Caja de Velas de deseos onduladas",
+        "quantity": 10,
+        "unit_price": 18000,
+        "total": 180000,
+        "metadata": {
+            "handle": "velas-de-deseos-onduladas",
+            "list_unit_price_cop": 22500,
+            "price_adjusted_reason": "Precio por mayor negociado",
+            "price_adjusted_by": "edgm",
+        },
+    })
+    assert it.item_id == "ordli_ond"
+    assert (it.unit_price_cop, it.list_unit_price_cop) == (18000, 22500)
+    assert it.price_adjusted_reason == "Precio por mayor negociado"
+    assert it.coupon_code is None
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_detail_legacy_flag_with_wrong_sign_stays_fallback(adapter):
     """#20/#21/#30: el LLM pidió Capricornio y quedó el fallback Aries."""
     it = await _detail_item(adapter, {

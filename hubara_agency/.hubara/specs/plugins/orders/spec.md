@@ -450,6 +450,51 @@ reintento de reconciliación MUST conservar el cupo de cada unidad.
 - GIVEN la reconciliación abandonó un pedido con `abandon_reason: quota_changed`
 - THEN `/api/orders/vault-orders` expone `abandon_reason` y "Reintentar" responde ese motivo (no "max_attempts alcanzado"): el operador re-confirma el total nuevo con el cliente antes de registrarlo a mano
 
+### Requirement: Ajustar el precio al valor real de la venta
+
+Los precios al por mayor se negocian en cada venta (pedido #169, 2026-11-09:
+20 cajas quedaron a precio de lista y al entregarse inflaron las ventas). El
+sistema SHALL exponer `POST /api/orders/orders/{id}/adjust-prices` con
+`{prices: [{item_id, unit_price_cop}], reason}` («Ajustar precio…» en el panel
+de productos del inspector). El precio MUST quedar en la línea de Medusa
+(`unit_price`), nunca en un ajuste aparte: Órdenes, «Exportar», Ads, el cobro
+contra entrega y el `Purchase` a Meta leen el total de Medusa. La línea guarda
+`list_unit_price_cop` (el de antes del primer ajuste), `price_adjusted_reason`,
+`price_adjusted_by` (identidad verificada, nunca del body) y
+`price_adjusted_at_ms`; el historial del pedido, `event=price_adjusted` con el
+total antes y después.
+
+#### Scenario: Pedido sin cobrar
+
+- GIVEN un pedido real (o borrador) con 10 cajas a $22.500
+- WHEN el operador pone $18.000 con el motivo «precio por mayor negociado»
+- THEN Medusa edita la línea (orden real → `order-edits`; borrador → `draft-orders/{id}/edit`) y confirma
+- AND el total vigente baja en $45.000 en Órdenes, Exportar y Ads
+
+#### Scenario: Pedido ya cobrado (el #169)
+
+- GIVEN el cobro quedó registrado en Medusa por el precio de lista ($475.000)
+- WHEN el operador ajusta las líneas a un total de $380.000
+- THEN Medusa registra un reembolso de $95.000 con la nota «Ajuste de precio (no es devolución): …»
+- AND `hubara_price_adjustment_refunded_cop` acumula los $95.000 y el pedido sigue «Pagado» (un reembolso TOTAL sí es «Reembolso»)
+
+#### Scenario: Subir el precio de un pedido cobrado
+
+- GIVEN un pedido con un pago registrado
+- WHEN el operador sube el precio de una línea
+- THEN se rechaza (`validation_error`): primero se reversa el pago
+
+#### Scenario: Falla a mitad de la edición
+
+- GIVEN Medusa rechaza una de las líneas
+- THEN la edición se descarta (DELETE) y no se escribe nada en el pedido
+- AND si la edición se aplicó pero el reembolso falló, reintentar con los mismos precios solo reembolsa lo que falte
+
+#### Scenario: Sin motivo, sin cambios o cancelado
+
+- GIVEN el motivo vacío, precios iguales a los actuales o un pedido cancelado
+- THEN se rechaza sin tocar Medusa
+
 ## Out of scope (NO go en este spec)
 
 - Listado/historial completo de órdenes archivadas (>30 días entregadas) — fuera del kanban

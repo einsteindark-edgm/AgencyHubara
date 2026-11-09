@@ -80,6 +80,11 @@ META_KEY_SHIPPING_COST = "hubara_shipping_cost_cop"
 # campaña que no cobra el envío. Con ella, el envío real que el operador
 # escribe al despachar lo paga la tienda: nunca se le suma al cliente.
 META_KEY_FREE_SHIPPING = "hubara_free_shipping"
+# Lo que se reembolsó en Medusa (COP, acumulado) al ajustar el precio de un
+# pedido ya cobrado al valor real de la venta (pedido #169, 2026-11-09). No es
+# una devolución al cliente: corrige un cobro registrado por el precio de
+# lista. `resolve_pay_status` lo sigue mostrando como pagado.
+META_KEY_PRICE_ADJUSTMENT_REFUND = "hubara_price_adjustment_refunded_cop"
 
 
 class InvalidStageTransitionError(ValueError):

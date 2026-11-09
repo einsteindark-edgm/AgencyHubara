@@ -31,7 +31,7 @@ from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Body, File, HTTPException, Path, Query, UploadFile
+from fastapi import APIRouter, Body, File, HTTPException, Path, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
 from src.platform.config import WORKSPACE_VAULT_DIR
@@ -43,8 +43,10 @@ from src.platform.customer_scoring.composition import (
 from src.platform.medusa.client import MedusaAPIError
 from src.platform.medusa.composition import get_medusa_client
 from src.platform.orders.command_port import (
+    AdjustPricesCommand,
     CancelOrderCommand,
     ConfirmPaymentCommand,
+    LinePrice,
     ReversePaymentCommand,
     ScheduleDeliveryCommand,
     SetTestOrderCommand,
@@ -64,6 +66,7 @@ from src.platform.orders.reconciliation import (
 from src.platform.orders.state import STAGE_VALUES
 from src.platform.state import FilesystemMetadataStore
 from src.plugins.orders.vault_scanner import scan_vault_orders
+from src.sdk.castkit import current_actor
 from src.sdk.dashboardkit import get_dashboard_event_bus
 from src.sdk.identitykit import is_user_id_address
 from src.sdk.messagingkit import is_in_service_window
@@ -539,6 +542,45 @@ async def reverse_order_payment(
     cmd = ReversePaymentCommand(order_id=order_id, reason=reason, by=by)
     port = get_order_command_port()
     result = await port.reverse_payment(cmd)
+    if result.success:
+        _publish_orders_changed(order_id)
+    return _serialize_command_result(result)
+
+
+@router.post("/orders/{order_id}/adjust-prices")
+async def adjust_order_prices(
+    request: Request,
+    order_id: str = Path(..., min_length=1, max_length=200),
+    body: dict[str, Any] = Body(default_factory=dict),
+) -> dict[str, Any]:
+    """Poner el precio real de la venta en las líneas (precio negociado).
+
+    Pedido #169 (2026-11-09): una venta al por mayor quedó a precio de lista.
+    Body ``{"prices": [{"item_id", "unit_price_cop"}], "reason": "texto"}``.
+    Medusa queda con ese precio (todo Hubara lee su total); si el pedido ya
+    tenía el cobro registrado por más, se reembolsa la diferencia en Medusa.
+    Quién lo hizo sale de la identidad verificada (`current_actor`), nunca
+    del body. 422 si ``prices`` no es una lista de líneas con ``item_id``;
+    los precios y el motivo los valida el command (``validation_error``).
+    """
+    raw_prices = body.get("prices")
+    if not isinstance(raw_prices, list) or not raw_prices:
+        raise HTTPException(status_code=422, detail="prices debe ser una lista de líneas")
+    prices: list[LinePrice] = []
+    for raw in raw_prices:
+        item_id = raw.get("item_id") if isinstance(raw, dict) else None
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise HTTPException(status_code=422, detail="cada línea necesita item_id")
+        prices.append(LinePrice(item_id=item_id, unit_price_cop=raw.get("unit_price_cop")))
+    reason = body.get("reason") if isinstance(body.get("reason"), str) else ""
+    cmd = AdjustPricesCommand(
+        order_id=order_id,
+        prices=tuple(prices),
+        reason=reason,
+        by=current_actor(request),
+    )
+    port = get_order_command_port()
+    result = await port.adjust_prices(cmd)
     if result.success:
         _publish_orders_changed(order_id)
     return _serialize_command_result(result)
