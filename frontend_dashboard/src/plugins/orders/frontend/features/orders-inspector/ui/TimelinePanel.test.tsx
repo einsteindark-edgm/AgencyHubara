@@ -36,3 +36,23 @@ describe("paso de pago del timeline", () => {
     expect(screen.queryByText("Pago reversado")).toBeNull();
   });
 });
+
+describe("ajuste de precio en el timeline (pedido #169)", () => {
+  it("muestra el ajuste con quién, por qué y el total antes → después", () => {
+    const adjusted = {
+      type: "price_adjusted",
+      label: "Precio ajustado",
+      timestamp_ms: 4000,
+      detail: "por edgm · Precio por mayor · $475.000 → $380.000",
+    };
+    render(
+      <TimelinePanel
+        detail={detailWith([confirmed, adjusted])}
+        order={{ id: "#169", status: "delivered" } as Order}
+        missing={new Set()}
+      />,
+    );
+    expect(screen.getByText("Precio ajustado")).toBeInTheDocument();
+    expect(screen.getByText(/por edgm · Precio por mayor · \$475\.000 → \$380\.000/)).toBeInTheDocument();
+  });
+});

@@ -32,6 +32,7 @@ export {
   useTransitionOrderStage,
   useConfirmOrderPayment,
   useReverseOrderPayment,
+  useAdjustOrderPrices,
   useCancelOrder,
   useSetTestOrder,
   useCustomerScore,
