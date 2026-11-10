@@ -269,3 +269,12 @@ def test_facts_carry_the_scheduled_delivery_day() -> None:
 
     assert _facts(scheduled).due_iso == "2026-09-19"
     assert _facts(_summary("order_92", 50_000)).due_iso is None
+
+
+def test_facts_carry_the_city_and_neighborhood() -> None:
+    """Ads agrupa las compras por ciudad y zona con los datos de Orders, no
+    con lo que se dijo en el chat (gotcha 13)."""
+    shipped = replace(_summary("order_93", 50_000), city="Medellín", neighborhood="Laureles")
+
+    assert (_facts(shipped).city, _facts(shipped).neighborhood) == ("Medellín", "Laureles")
+    assert (_facts(_summary("order_94", 50_000)).city, _facts(_summary("order_94", 50_000)).neighborhood) == (None, None)

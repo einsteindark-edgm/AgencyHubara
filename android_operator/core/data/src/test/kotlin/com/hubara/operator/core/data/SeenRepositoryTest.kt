@@ -12,6 +12,7 @@ import com.hubara.operator.core.model.Route
 import com.hubara.operator.core.model.SeenCounts
 import com.hubara.operator.core.model.SessionId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -57,9 +58,21 @@ class SeenRepositoryTest {
         assertThat(counts.unseen(laura(inbound = 6))).isEqualTo(1)
     }
 
-    // 20 s y no 5: en los runners de GitHub, con todos los módulos probando en paralelo, Room + DataStore llegaron a
-    // tardar más de 5 s (falló así el 1-oct-2026 sin cambios en este código). Aquí tarda milisegundos.
-    private suspend fun awaitSeen(n: Int): SeenCounts = withContext(Dispatchers.Default) {
-        withTimeoutOrNull(20_000) { seen.counts.first { it.seen[laura.raw] == n } }
-    } ?: error("el chat abierto no quedó visto hasta $n (${seen.counts.first()})")
+    // Relee lo guardado cada 50 ms en vez de esperar el aviso de UNA suscripción larga: en los runners de GitHub (9-oct y
+    // 4-nov-2026, sin cambios en este código) la espera llegó a los 20 s con el chat YA visto hasta 3 — lo guardado
+    // estaba bien y esa suscripción nunca se enteró. En local no se reproduce (6000 carreras escritura/suscripción, la
+    // suite con la CPU saturada). 20 s y no 5: en CI Room + DataStore llegaron a tardar más de 5 s (1-oct-2026).
+    private suspend fun awaitSeen(n: Int): SeenCounts {
+        val t0 = System.nanoTime()
+        return withContext(Dispatchers.Default) {
+            withTimeoutOrNull(20_000) {
+                var now = seen.counts.first()
+                while (now.seen[laura.raw] != n) {
+                    delay(50)
+                    now = seen.counts.first()
+                }
+                now
+            }
+        } ?: error("el chat abierto no quedó visto hasta $n en ${(System.nanoTime() - t0) / 1_000_000} ms (${seen.counts.first()})")
+    }
 }

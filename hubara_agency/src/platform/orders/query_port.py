@@ -82,6 +82,11 @@ class OrderItemDTO:
     # El producto en Medusa (reseñas tras la entrega: la calificación del
     # pedido se publica en la ficha de cada producto).
     product_id: str | None = None
+    # La línea en Medusa (pedido #169): con ella el operador ajusta el precio
+    # al valor real de la venta. Ajustada → `list_unit_price_cop` es el precio
+    # de lista y `price_adjusted_reason` el motivo (p. ej. precio por mayor).
+    item_id: str | None = None
+    price_adjusted_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -168,6 +173,9 @@ class OrderSummaryDTO:
     # escribió, lo paga la tienda (`store_shipping_cost_cop`, fuera del total).
     free_shipping: bool = False
     store_shipping_cost_cop: int | None = None
+    # Barrio de entrega (`shipping_address.address_2`, donde lo guarda el
+    # formulario). Con `city`, es el "dónde compran" de Ads (2026-10-23).
+    neighborhood: str | None = None
 
 
 @dataclass(frozen=True)

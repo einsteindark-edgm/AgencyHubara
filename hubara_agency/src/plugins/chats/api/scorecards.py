@@ -154,16 +154,17 @@ BOT_PATTERN = "^(actual|nuevo)$"
 
 
 def episodes_of_bot(bot: str) -> Callable[[str, str], bool]:
-    """¿El episodio `(session_id, episode_id)` lo respondió `bot`? Las trazas
-    de cada sesión se leen UNA vez (la lista va a 56 días y el cast corta a
-    los 15 s); un episodio "mixto" no es de ninguno. Lo comparten la matriz,
-    las gráficas y la tendencia del eval por promedio (`api/evals.py`)."""
+    """¿El episodio `(session_id, episode_id)` lo respondió `bot`? Sale del
+    resumen de las trazas de cada sesión, leído UNA vez (la lista va a 56 días
+    y el cast corta a los 15 s; las trazas completas traen las tools de cada
+    turno); un episodio "mixto" no es de ninguno. Lo comparten la matriz, las
+    gráficas y la tendencia del eval por promedio (`api/evals.py`)."""
     vault = get_vault_dir()
     by_session: dict[str, list[dict[str, Any]]] = {}
 
     def answered_by(sid: str, ep: str) -> bool:
         if sid not in by_session:
-            by_session[sid] = turn_traces.read_traces(vault, sid) if _SESSION_ID_RE.fullmatch(sid) else []
+            by_session[sid] = turn_traces.read_summaries(vault, sid) if _SESSION_ID_RE.fullmatch(sid) else []
         return episode_bot(t for t in by_session[sid] if t.get("episode_id") == ep) == bot
 
     return answered_by
@@ -330,7 +331,8 @@ def label_queue(
     limit: int = Query(default=20, ge=1, le=200),
 ) -> dict[str, Any]:
     vault = get_vault_dir()
-    records = store.read_scorecards(store.scorecards_dir(vault), dates=_dates(days))
+    # Del índice de cada día, solo lo que dijo el juez (sin los checks de código).
+    records = store.read_judged(store.scorecards_dir(vault), dates=_dates(days))
     items = calibration.label_queue(records, store.read_labels(store.labels_path(vault)), limit=limit)
     return {"items": items}
 

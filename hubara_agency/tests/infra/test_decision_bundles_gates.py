@@ -65,7 +65,9 @@ def test_the_golden_eval_can_run_the_bundle_the_store_runs_and_says_which() -> N
     golden = (_WORKFLOWS / "golden-eval.yml").read_text(encoding="utf-8")
 
     assert re.search(r"^\s{6}bundle:\s*$", golden, re.M), "golden-eval.yml no tiene la entrada `bundle`"
-    assert re.search(r"SALES_DECISIONS_BUNDLE:\s*\$\{\{\s*inputs\.bundle\s*\}\}", golden), (
-        "la entrada `bundle` no llega como SALES_DECISIONS_BUNDLE"
-    )
+    # Desde el Ciclo Colossus F4 la entrada pasa por el paso `bundle` (que en
+    # los PR y el cron elige el paquete de la tienda): test_golden_eval_ci.py.
+    assert re.search(r"INPUT_BUNDLE:\s*\$\{\{\s*inputs\.bundle\s*\}\}", golden) and re.search(
+        r"SALES_DECISIONS_BUNDLE:\s*\$\{\{\s*steps\.bundle\.outputs\.id\s*\}\}", golden
+    ), "la entrada `bundle` no llega como SALES_DECISIONS_BUNDLE"
     assert "GITHUB_STEP_SUMMARY" in golden and "Paquete de decisión" in golden, "el reporte no dice qué paquete corrió"

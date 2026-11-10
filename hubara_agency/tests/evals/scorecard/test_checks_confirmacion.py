@@ -49,6 +49,38 @@ def test_con01_a_yes_after_the_deferral_lets_the_form_go() -> None:
     assert run("CON-01", t).verdict == "pasa"
 
 
+def test_con01_customer_who_comes_back_and_picks_the_product_lifts_the_deferral() -> None:
+    # Aplaza, el remarketing le escribe y días después vuelve por su cuenta a
+    # pedir dos cajas: el bot las anota y manda el formulario en ese turno.
+    t = traj(T(1, inbound="déjame lo pienso", signal="deferral"),
+             T(2, trigger="remarketing", sent=["¿Te la aparto en azul?"]),
+             T(3, inbound="hola, quiero confirmar dos cajas azules", draft=_CHOSEN,
+               tools=[tool("set_order_slot", producto="Cubo Love", cantidad="2"), tool("request_shipping_details")]))
+    assert run("CON-01", t).verdict == "pasa"
+
+
+def test_con01_a_product_picked_after_the_deferral_still_counts_on_a_later_form() -> None:
+    t = traj(T(1, inbound="para la otra semana", signal="deferral"),
+             T(2, inbound="el verde", draft=_CHOSEN, tools=[tool("set_order_slot", color="verde")]),
+             T(3, inbound="mándame el formulario", draft=_CHOSEN, tools=[tool("request_shipping_details")]))
+    assert run("CON-01", t).verdict == "pasa"
+
+
+def test_con01_a_sticker_after_the_deferral_does_not_lift_it() -> None:
+    t = traj(T(1, inbound="luego miro", signal="deferral", draft=_CHOSEN),
+             T(2, inbound="[sticker]", draft=_CHOSEN, tools=[tool("request_shipping_details")]))
+    r = run("CON-01", t)
+    assert (r.verdict, r.turn) == ("falla", 2)
+
+
+def test_con01_a_slot_written_by_a_bot_turn_does_not_lift_the_deferral() -> None:
+    t = traj(T(1, inbound="después te confirmo", signal="deferral", draft=_CHOSEN),
+             T(2, trigger="remarketing", draft=_CHOSEN, tools=[tool("set_order_slot", color="rojo")]),
+             T(3, inbound="ok", draft=_CHOSEN, tools=[tool("request_shipping_details")]))
+    r = run("CON-01", t)
+    assert (r.verdict, r.turn) == ("falla", 3)
+
+
 def test_con01_rejected_form_is_not_applicable() -> None:
     t = traj(T(1, tools=[tool("request_shipping_details", ok=False, error="customer_deferred")]))
     assert run("CON-01", t).verdict == "no_aplica"

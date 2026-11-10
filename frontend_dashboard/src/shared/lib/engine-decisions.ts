@@ -80,6 +80,10 @@ export const CAPABILITY_LABELS: Record<string, string> = {
   rescate: "Rescate",
   portavelas: "Portavelas",
   saludo: "Saludo",
+  saludo_repetido: "Bienvenida a quien ya conoce la tienda",
+  despedida: "Frases que la tienda no dice",
+  repregunta: "Volver a pedir un dato",
+  afirmacion_previa: "Puerta de afirmaciones",
   burbuja: "Burbuja principal (App Operador)",
   incendio: "Incendio de chat (App Operador)",
 };
@@ -355,6 +359,26 @@ const SENTENCES: Record<string, (value: unknown) => Sentence> = {
   },
   portavelas: () => plain("Revisa lo que dice del portavelas"),
   saludo: (value) => plain(value === true ? "Agrega la bienvenida" : "No hacía falta agregar la bienvenida"),
+  // ventas-8 (informe de huecos, 2026-11-03): el texto que sale ("" = sale igual).
+  saludo_repetido: (value) => {
+    const kept = str(value);
+    return kept ? warn(`Quita la bienvenida: sale «${kept}»`) : plain("No había bienvenida que quitar");
+  },
+  despedida: (value) => {
+    const kept = str(value);
+    return kept ? warn(`Quita las frases que la tienda no dice: sale «${kept}»`) : plain("No dice frases que la tienda no dice");
+  },
+  repregunta: (value) => {
+    const asked = list(value).map(String);
+    return asked.length
+      ? warn(`Devuelve el texto al modelo: le vuelve a pedir ${asked.join(", ")}, que el pedido ya tiene`)
+      : plain("No le vuelve a pedir datos que el pedido ya tiene");
+  },
+  // La puerta de afirmaciones (ventas-8, 2026-11-04): la nota con que el texto vuelve al modelo ("" = sale).
+  afirmacion_previa: (value) => {
+    const note = str(value);
+    return note ? warn(`Devuelve el texto al modelo: «${note}»`) : plain("No afirma nada que no se sostenga");
+  },
   burbuja: (value) => {
     const raw = str(value);
     const index = raw === null ? Number.NaN : Number(raw);
@@ -434,6 +458,8 @@ const QUESTIONS: Record<string, string> = {
   "afirmacion.que_afirma": "¿Qué le afirma el mensaje al cliente?",
   "egreso.destinatario": "¿Para quién es el texto?",
   "egreso.saludo": "¿Algún mensaje ya saluda?",
+  // ventas-8 (saludo v2): la hora del día y la tienda, no un «hola».
+  "egreso.saludo_hora_marca": "¿Algún mensaje ya saluda con la hora del día y nombra a la tienda?",
 };
 
 /** Preguntas numeradas: `persona.2`, `egreso.oracion.1`… */
@@ -444,6 +470,9 @@ const NUMBERED: Array<[RegExp, (n: string) => string]> = [
   [/^egreso\.oracion\.(\d+)$/, (n) => `¿Para quién es la oración ${n}?`],
   [/^egreso\.rescate\.(\d+)$/, (n) => `¿Para quién es el párrafo ${n}?`],
   [/^egreso\.portavelas\.(\d+)$/, (n) => `¿La oración ${n} promete el portavelas?`],
+  [/^saludo_repetido\.(\d+)$/, (n) => `¿La oración ${n} le da la bienvenida como si fuera la primera vez?`],
+  [/^despedida\.(\d+)$/, (n) => `¿La oración ${n} dice algo que la tienda no dice?`],
+  [/^repregunta\.dato_(\d+)$/, (n) => `¿El texto le vuelve a pedir el dato ${n} del pedido?`],
 ];
 
 const CHOICES: Record<string, string> = {

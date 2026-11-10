@@ -49,7 +49,14 @@ Diferencias con el V1, a propósito (cada una con su test en
      vuelve a llamar al modelo hasta que una persona tome el chat o la ventana
      de 24 h esté por cerrar; si se rinde, no envía nada y la traza lo dice
      (`llm_outage_v2.py`, gate `llm-outage-wait-v1` en el turno compartido;
-     tests en `tests/test_sales_workflow_v2_llm_outage.py`).
+     tests en `tests/test_sales_workflow_v2_llm_outage.py`);
+  8. la puerta de afirmaciones (2026-11-03): el egreso puede retener el texto
+     con una nota (`EgressOutput.retain_note`) y el turno compartido le da al
+     modelo UNA ronda más (gate `egress-retain-round-v1` en `run_agent_turn`).
+     El egreso recibe las tools del turno con su resultado (`tool_events`,
+     solo payload) y el texto suelto pasa por las revisiones de `send_reply`
+     (tests en `tests/test_sales_workflow_v2.py` y
+     `tests/platform/test_run_agent_turn_egress_retain.py`).
 
 Ramas del V1 que no pasan (solo existían para re-jugar historias viejas): el
 turno de a un mensaje sin debounce, las notas de ráfaga v1 y previas, el
@@ -128,6 +135,9 @@ with workflow.unsafe.imports_passed_through():
     # Lo que el cliente le escribió a remarketing entra al turno del traspaso
     # (caso 2026-10-16); su gate vive en el helper.
     from src.plugins.chats.agent.sales.workflows.handoff_v2 import handoff_reply, reply_message
+    # Con la conversación en manos del equipo el turno no corre (tarjeta del
+    # ciclo #15); su gate vive en el helper.
+    from src.plugins.chats.agent.sales.workflows.human_route_v2 import team_owns_chat
     # La guarda de listas con el selector que de verdad salió (VAR-01,
     # 2026-10-07): su gate vive en el helper, como el de las ráfagas.
     from src.plugins.chats.agent.sales.workflows.picker_v2 import enumeration_guard_applies
@@ -396,6 +406,9 @@ class HubaraSalesSessionWorkflowV2:
             # Lo que el LLM escribió antes del saneador: el motor decide ahí
             # la muletilla de presentación (capacidad `preambulo`).
             raw_text=raw_text if isinstance(raw_text, str) else None,
+            # Lo que el turno consultó, con su resultado: los hechos de la
+            # puerta de afirmaciones (solo payload, sin parche: L-22).
+            tool_events=[dict(e) for e in context.get("tool_events") or [] if isinstance(e, dict)],
         )
         try:
             out = await workflow.execute_activity(decide_egress_activity, inp, **_EGRESS_OPTIONS)
@@ -607,6 +620,15 @@ class HubaraSalesSessionWorkflowV2:
             # ¿El turno trae un traspaso de remarketing? (el coalesce lo pasa a
             # `plugin_context`: se mira la ráfaga cruda).
             self._turn_has_handoff = any(p.is_handoff for p in raw_batch)
+
+            # La conversación es del equipo (tarjeta del ciclo #15): el turno no
+            # corre y la sesión se apaga. Los mensajes los ve el equipo.
+            if await team_owns_chat(session.session_id):
+                workflow.logger.info(
+                    f"Sesión {session.session_id} en ruta humano: el bot no responde "
+                    f"({len(raw_batch)} mensaje(s) para el equipo). Cerrando workflow."
+                )
+                return
 
             self._processing = True
             try:

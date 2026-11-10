@@ -108,6 +108,9 @@ export const backendAdsCampaignSchema = z.object({
   // es `null` solo si el bucket no tuvo data (venta / uso LLM / cierre).
   revenue: z.number().nullable(),
   avg_ticket: z.number().nullable(),
+  // Episodios que aportaron a `revenue` = ventas PAGADAS (los «ganados»
+  // incluyen además los pedidos por cobrar). Default 0 para backends viejos.
+  revenue_count: z.number().int().default(0),
   llm_cost_usd: z.number().nullable(),
   llm_tokens: z.number().int().nullable(),
   // Costo de WhatsApp acumulado de la campaña (suma de `episode.cost_summary`).
@@ -231,7 +234,10 @@ export const backendAttributedConversationSchema = z.object({
 
   // Faltantes — backend devuelve null hasta integrar CRM / orders
   name: z.string().nullable(),
+  // Ciudad y barrio de entrega del pedido del episodio (de Orders, 2026-10-23).
+  // `.default(null)` tolera un backend viejo sin `neighborhood`.
   city: z.string().nullable(),
+  neighborhood: z.string().nullable().default(null),
 
   // Costo LLM del episodio (USD, congelado a la tarifa del momento) + tokens
   // totales — de `episode.llm_usage` en metadata.json. null si el episodio aún
@@ -297,3 +303,41 @@ export const backendAgentReferralsSchema = z.object({
   by_source: z.record(z.string(), z.number().int()),
 });
 export type BackendAgentReferrals = z.infer<typeof backendAgentReferralsSchema>;
+
+/* ── Dónde compran (`GET /api/ads/purchase-places`, 2026-10-23) ─────────── */
+
+const backendPurchaseZoneSchema = z.object({
+  zone: z.string().nullable(),
+  orders: z.number().int(),
+  value_cop: z.number(),
+});
+
+const backendPurchaseCampaignSchema = z.object({
+  id: z.string(),
+  name: z.string().nullable(),
+  orders: z.number().int(),
+  value_cop: z.number(),
+});
+
+const backendPurchaseCitySchema = z.object({
+  key: z.string(),
+  city: z.string(),
+  orders: z.number().int(),
+  paid_orders: z.number().int(),
+  value_cop: z.number(),
+  overall_orders: z.number().int().nullable(),
+  zones: z.array(backendPurchaseZoneSchema),
+  campaigns: z.array(backendPurchaseCampaignSchema),
+});
+
+export const backendPurchasePlacesSchema = z.object({
+  orders: z.number().int(),
+  paid_orders: z.number().int(),
+  value_cop: z.number(),
+  without_city: z.number().int(),
+  overall_orders: z.number().int().nullable(),
+  cities: z.array(backendPurchaseCitySchema),
+  orders_available: z.boolean(),
+  truncated: z.boolean(),
+});
+export type BackendPurchasePlaces = z.infer<typeof backendPurchasePlacesSchema>;

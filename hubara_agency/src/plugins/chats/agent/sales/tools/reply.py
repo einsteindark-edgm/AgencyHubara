@@ -26,6 +26,7 @@ from src.plugins.chats.agent.sales.decisions.guards import (
     clean_llm_text,
     customer_reply_text,
     option_list,
+    repeated_order_data,
 )
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.tools.fact_check import CatalogRead, FactCheck
@@ -56,6 +57,19 @@ _REJECTED_MESSAGE = (
 _VERIFIED_CHECK_KEY = "verified_photos_denial_checked"
 _PROMISE_CHECK_KEY = "promise_later_checked"
 _LIST_CHECK_KEY = "option_list_checked"
+_KNOWN_DATA_CHECK_KEY = "known_data_checked"
+
+
+def known_data_message(asked: list[tuple[str, str]]) -> str:
+    """Lo que recibe el modelo cuando el texto vuelve a pedir un dato que el
+    pedido ya tiene (capacidad `repregunta`, ventas-8)."""
+    names = ", ".join(term for term, _fact in asked)
+    facts = "; ".join(fact for _term, fact in asked)
+    return (
+        f"No se envió: le vuelves a pedir al cliente {names}, y el pedido ya lo tiene ({facts}). "
+        "No se lo vuelvas a pedir: úsalo y sigue con lo que falta. Si de verdad algo no cuadra, "
+        "dile qué tienes anotado y pregúntale solo por eso. Vuelve a llamar send_reply."
+    )
 
 
 class SendReplyTool(ToolBase):
@@ -214,6 +228,47 @@ class SendReplyTool(ToolBase):
             option_list_message(variant_type, labels, intro_before(text, labels)),
         )
 
+    async def _held_for_known_data(self, session_key: str, text: str) -> str | None:
+        """Informe de huecos del 2026-11-03 (bot V2, VAR-06 y ENV-04): con la
+        cantidad o los datos de envío ya en el pedido, el bot volvía a pedirlos.
+        Si el texto le vuelve a pedir al cliente un dato que el borrador ya
+        tiene (capacidad `repregunta`, desde ventas-8), se devuelve UNA vez por
+        mensaje del cliente con lo que ya está en el pedido. Sin vault, con un
+        paquete anterior, con `reglas` o si algo falla: el texto sale."""
+        if self._vault_dir is None or self._held_before(session_key, _KNOWN_DATA_CHECK_KEY):
+            return None
+        vault_dir = self._vault_dir
+
+        def draft() -> dict[str, Any] | None:
+            from src.plugins.chats.agent.sales.use_cases.order_draft import get_active_draft
+
+            return get_active_draft(FilesystemMetadataStore(vault_dir).read(session_key) or {})
+
+        try:
+            asked = await repeated_order_data(text, draft, session_id=session_key, vault_dir=vault_dir)
+        except Exception as exc:  # noqa: BLE001 — nunca frena la respuesta
+            logger.warning("💬 [TOOL send_reply] sin revisar los datos del pedido ({}) session={}", exc, session_key)
+            return None
+        if not asked:
+            return None
+        return self._hold_once(session_key, _KNOWN_DATA_CHECK_KEY, "known_data", known_data_message(list(asked)))
+
+    async def held_reason(self, session_key: str, text: str) -> str | None:
+        """Las revisiones de `send_reply` sobre un texto ya limpio: el envelope
+        con que vuelve al modelo (una vez por mensaje del cliente), o None
+        (sale). Las pasa también el texto final suelto (el egreso del V2,
+        puerta de afirmaciones, 2026-11-03): la misma marca de retención."""
+        # Los hechos y la lista de opciones leen el mismo catálogo: UNA lectura
+        # (sin catálogo propio, los hechos leen el suyo y la lista no se revisa).
+        catalog = CatalogRead(self._catalog) if self._catalog is not None else None
+        return (
+            self._held_for_verified_photos(session_key, text)
+            or self._held_for_promise(session_key, text)
+            or await self._fact_check.held(session_key, text, tool=self.name, catalog=catalog)
+            or await self._held_for_option_list(session_key, text, catalog)
+            or await self._held_for_known_data(session_key, text)
+        )
+
     async def execute_with_context(
         self, ctx: ToolContext, text: str = "", **_: Any
     ) -> str:
@@ -236,15 +291,7 @@ class SendReplyTool(ToolBase):
                 {"sent": False, "error": "internal_text", "message": _REJECTED_MESSAGE},
                 ensure_ascii=False,
             )
-        # Los hechos y la lista de opciones leen el mismo catálogo: UNA lectura
-        # (sin catálogo propio, los hechos leen el suyo y la lista no se revisa).
-        catalog = CatalogRead(self._catalog) if self._catalog is not None else None
-        held = (
-            self._held_for_verified_photos(ctx.session_key, cleaned)
-            or self._held_for_promise(ctx.session_key, cleaned)
-            or await self._fact_check.held(ctx.session_key, cleaned, tool=self.name, catalog=catalog)
-            or await self._held_for_option_list(ctx.session_key, cleaned, catalog)
-        )
+        held = await self.held_reason(ctx.session_key, cleaned)
         if held is not None:
             return held
         envelope: dict[str, Any] = {

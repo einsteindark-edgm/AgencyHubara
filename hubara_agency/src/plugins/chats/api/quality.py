@@ -13,8 +13,10 @@ production/*`).
   GET /evals/production/jev?days&bot                   el informe de Jev (por defecto, del bot Jev)
 
 La lista y el informe salen de los scorecards de la ventana (por la fecha del
-episodio) y leen las trazas de cada conversación UNA vez (el cast corta a
-los 15 s).
+episodio). La lista lee el índice de cada día de scorecards y el resumen de
+las trazas de cada conversación, nunca los registros completos (Calidad LLM
+sin 504, 2026-11-03: el cast corta a los 15 s y la ventana es de 56 días);
+el informe lee las trazas completas solo de las conversaciones del bot pedido.
 """
 from __future__ import annotations
 
@@ -55,7 +57,7 @@ def _sid(session_id: str) -> str:
 
 def _window(days: int, bot: str | None) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     """Los scorecards de la ventana (por la fecha del episodio) del bot pedido,
-    y las trazas de sus conversaciones (leídas una vez)."""
+    y el resumen de las trazas de sus conversaciones (leído una vez)."""
     vault = get_vault_dir()
     dates = _dates(days)
     rows = store.list_scorecards(store.scorecards_dir(vault), dates=dates, episode_since=dates[-1])
@@ -66,7 +68,7 @@ def _window(days: int, bot: str | None) -> tuple[list[dict[str, Any]], dict[str,
         if not _SESSION_ID_RE.fullmatch(sid):
             continue
         if sid not in traces:
-            traces[sid] = turn_traces.read_traces(vault, sid)
+            traces[sid] = turn_traces.read_summaries(vault, sid)
         if bot is None or episode_bot(t for t in traces[sid] if t.get("episode_id") == ep) == bot:
             kept.append(row)
     return kept, traces
@@ -111,15 +113,9 @@ def turn_trace(session_id: str, turn_key: str = Query(..., max_length=200)) -> d
 
 
 def _session_cards(session_id: str) -> dict[str, dict[str, Any]]:
-    """El último scorecard de cada episodio de la conversación (recorre los
-    archivos una sola vez)."""
-    directory = store.scorecards_dir(get_vault_dir())
-    try:
-        files = sorted(directory.glob("*.jsonl"), reverse=True)[:_SESSION_CARD_FILES]
-    except OSError:
-        return {}
-    records = [r for path in files for r in store.read_scorecards(directory, dates=[path.stem]) if r.get("session_id") == session_id]
-    return {str(r.get("episode_id")): r for r in store.latest_by_unit(records)}
+    """El último scorecard de cada episodio de la conversación (del índice de
+    cada día; de los registros completos, solo los suyos)."""
+    return store.latest_for_session(store.scorecards_dir(get_vault_dir()), session_id, max_files=_SESSION_CARD_FILES)
 
 
 @router.get("/evals/production/conversations/{session_id}/evaluations")

@@ -97,6 +97,28 @@ def sentences(inp: Any) -> Items:
     return [{"text": part} for part in _sentences(inp.text)]
 
 
+def phrase_sentences(inp: Any, *, frases: str) -> Items:
+    """Las oraciones del texto (el mismo corte mecánico del egreso), cada una
+    con `hit` = dice una de las frases del paquete (`fact_rules.phrases`, sobre
+    la oración sin tildes ni mayúsculas). La regla de palabras solo PROPONE:
+    el paquete pregunta por las que tienen `hit` (ventas-8: `despedida`,
+    `saludo_repetido`)."""
+    import re
+
+    from src.plugins.chats.agent.sales.use_cases.fact_rules import phrases
+    from src.sdk.catalogkit import normalize_label
+
+    says = re.compile(phrases(frases))
+    return [{"text": part, "hit": bool(says.search(normalize_label(part)))} for part in _sentences(inp.text)]
+
+
+def known_data_items(inp: Any) -> Items:
+    """Un ítem por dato que el pedido ya tiene (`term`) con lo que dice el
+    sistema de él (`fact`). Los arma quien pregunta desde el borrador (ventas-8,
+    `repregunta`): nunca un dato que el pedido no tiene."""
+    return [{"term": str(term), "fact": str(fact)} for term, fact in zip(inp.terms, inp.facts, strict=True)]
+
+
 def leading_sentences(inp: Any) -> Items:
     """Las oraciones del texto con lo que hace falta para cortar la muletilla:
     `askable` (solo las primeras, nunca la última), `preamble` (lo que se cae

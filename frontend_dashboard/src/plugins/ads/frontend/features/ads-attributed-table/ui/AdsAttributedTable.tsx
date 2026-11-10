@@ -12,6 +12,7 @@
 import {
   ADS_STATES,
   waCostBreakdown,
+  type AdsStateReason,
   type AttributedConversation,
   type CapiEvent,
 } from "@plugins/ads/frontend/entities/ads-campaign";
@@ -48,6 +49,27 @@ function capiTitle(event: CapiEvent): string {
     return "Pedido cancelado reportado a Meta (OrderCanceled). Si antes se reportó un Purchase, Ads Manager lo sigue contando: Meta no permite retractarlo.";
   return `Evento ${event} reportado a Meta (CAPI)`;
 }
+
+/** Por qué el estado no sale del chat: rótulo corto del badge + explicación
+ *  del tooltip. */
+const STATE_REASON_TEXT: Record<AdsStateReason, { label: string; why: string }> = {
+  order_cancelled: {
+    label: "pedido cancelado",
+    why: "El pedido de esta conversación está cancelado en Pedidos",
+  },
+  order_test: {
+    label: "pedido de prueba",
+    why: "El pedido está marcado como prueba en Pedidos: no cuenta como venta",
+  },
+  order_missing: {
+    label: "pedido borrado",
+    why: "El pedido ya no existe en Pedidos: no cuenta como venta",
+  },
+  order_repeated: {
+    label: "pedido ya contado",
+    why: "Este pedido ya se contó en una conversación anterior del mismo cliente",
+  },
+};
 
 interface Props {
   rows: AttributedConversation[];
@@ -128,7 +150,10 @@ export function AdsAttributedTable({ rows }: Props) {
                       </div>
                     </div>
                   </td>
-                  <td>{c.city ?? <MissingField />}</td>
+                  <td>
+                    {c.city ?? <MissingField />}
+                    {c.neighborhood && <div className="att-id">{c.neighborhood}</div>}
+                  </td>
                   <td>{c.started}</td>
                   <td>{c.lastMsg ?? <MissingField />}</td>
                   <td className="num">{c.msgs}</td>
@@ -137,19 +162,15 @@ export function AdsAttributedTable({ rows }: Props) {
                     {meta ? (
                       <span
                         className="att-state"
-                        title={
-                          c.stateReason === "order_cancelled"
-                            ? "El pedido de esta conversación está cancelado en Pedidos"
-                            : undefined
-                        }
+                        title={c.stateReason ? STATE_REASON_TEXT[c.stateReason].why : undefined}
                         style={{ background: meta.bg, color: meta.color }}
                       >
                         <span
                           className="att-dot"
                           style={{ background: meta.color }}
                         />
-                        {c.stateReason === "order_cancelled"
-                          ? `${meta.label} · pedido cancelado`
+                        {c.stateReason
+                          ? `${meta.label} · ${STATE_REASON_TEXT[c.stateReason].label}`
                           : meta.label}
                       </span>
                     ) : (

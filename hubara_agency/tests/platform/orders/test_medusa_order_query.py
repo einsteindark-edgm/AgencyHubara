@@ -191,6 +191,17 @@ async def test_list_returns_summaries_with_correct_shape(adapter):
     assert o.created_at_ms > 0
 
 
+@pytest.mark.asyncio
+@respx.mock
+async def test_list_summary_carries_the_neighborhood(adapter):
+    """Ads cuenta las compras por ciudad y zona (2026-10-23): el barrio que
+    el formulario guarda en `address_2` viaja en el resumen, como la ciudad."""
+    await _list_single(_sample_order())
+    result = await adapter.list(limit=50, offset=0, include_drafts=True)
+    assert result.orders[0].city == "Bogotá"
+    assert result.orders[0].neighborhood == "Chapinero"
+
+
 def _with_scheduled(order: dict, due_iso: str) -> dict:
     order["metadata"]["hubara_scheduled_delivery_iso"] = due_iso
     return order
@@ -961,6 +972,31 @@ async def test_detail_item_exposes_the_coupon_and_list_price_of_a_discounted_lin
     })
     assert (it.unit_price_cop, it.list_unit_price_cop) == (18900, 21000)
     assert (it.coupon_code, it.discount_unit_cop) == ("AMOR26", 2100)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_detail_item_exposes_its_id_and_a_negotiated_price(adapter):
+    """Pedido #169: el operador ajustó la línea al precio negociado. El
+    inspector necesita el id de la línea (para ajustarla) y el precio de lista
+    + el motivo (para explicar el precio)."""
+    it = await _detail_item(adapter, {
+        "id": "ordli_ond",
+        "title": "Caja de Velas de deseos onduladas",
+        "quantity": 10,
+        "unit_price": 18000,
+        "total": 180000,
+        "metadata": {
+            "handle": "velas-de-deseos-onduladas",
+            "list_unit_price_cop": 22500,
+            "price_adjusted_reason": "Precio por mayor negociado",
+            "price_adjusted_by": "edgm",
+        },
+    })
+    assert it.item_id == "ordli_ond"
+    assert (it.unit_price_cop, it.list_unit_price_cop) == (18000, 22500)
+    assert it.price_adjusted_reason == "Precio por mayor negociado"
+    assert it.coupon_code is None
 
 
 @pytest.mark.asyncio

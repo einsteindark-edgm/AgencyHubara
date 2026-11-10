@@ -159,6 +159,20 @@ en uno de `{"no_reply", "nuevo", "activo", "calificado", "cotizado",
 - AND el badge CAPI de la conversación es `OrderCanceled` (pisa a `Purchase`: Meta no permite retractar la compra)
 - AND si Orders no puede responder por el pedido (`unresolved`), se conserva el estado del chat — no se degrada una venta sin evidencia
 
+#### Scenario: Un pedido es una venta una sola vez y solo si es real (2026-11-10)
+
+- GIVEN un episodio con `order_id`
+- WHEN el pedido está marcado «prueba» en Orders (`is_test`), Medusa confirma que ya no existe, o un episodio ANTERIOR de la misma conversación ya tiene ese `order_id`
+- THEN el episodio sale `"cotizado"` con `state_reason` = `"order_test"` / `"order_missing"` / `"order_repeated"` — nunca `"ganado"`
+- AND no suma revenue; el pedido repetido tampoco lleva `order_status` ni `order_value_cop` en su fila (la venta y el `Purchase` de CAPI son del primer episodio)
+- AND «ganado» sigue siendo «el chat terminó en un pedido real» (pagado o por cobrar); el dashboard muestra aparte las ventas PAGADAS (`revenue_count`) y mide ROAS y CAC sobre ellas
+
+#### Scenario: Episodio cerrado por abandono (2026-11-10)
+
+- GIVEN un episodio cerrado con `closing_tag` `"TIMEOUT"` (14 días sin respuesta) o `"CAMPAIGN_REPLY"`
+- WHEN el dashboard Ads lo clasifica
+- THEN devuelve `"no_reply"` — un abandono no es una cotización
+
 ### Requirement: Tag de conversación visible para operador
 
 El sistema SHALL permitir al LLM marcar la conversación con un tag

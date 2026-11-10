@@ -114,6 +114,15 @@ module "review_config" {
   config = each.value.reviews
 }
 
+# ── Alertas del scorecard de ventas: repo de los issues [ALR] (git = verdad) ─
+module "eval_alerts_config" {
+  source   = "./modules/eval-alerts-config"
+  for_each = var.tenants
+
+  tenant = each.key
+  config = each.value.eval_alerts
+}
+
 # ── GraphAgents (subsistema separado): secretos SSM en /graphagents/ ─────────
 module "graphagents_secrets" {
   source      = "./modules/graphagents-secrets"

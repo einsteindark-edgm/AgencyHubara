@@ -30,6 +30,10 @@ class ReplyFacts:
 
     #: Los productos de los que habla el texto (`product_options.focus_products`).
     focus: tuple[Any, ...] = ()
+    #: Los productos contra cuyos precios se mira el texto: el foco o, si el
+    #: texto no habla de ninguno ni hay pedido, los de la charla (lo que el bot
+    #: acaba de mostrar, incidente 2026-10-26). Vacío = los del foco.
+    price_focus: tuple[Any, ...] = ()
     #: Los aromas y colores de todo el catálogo (donde la regla busca).
     aromas: tuple[str, ...] = ()
     colors: tuple[str, ...] = ()
@@ -80,10 +84,10 @@ class ReplyFacts:
 
     @property
     def price_lines(self) -> tuple[str, ...]:
-        """«Título: $25.000» por producto en foco con precio en el catálogo."""
+        """«Título: $25.000» por producto de `price_focus` con precio en el catálogo."""
         return tuple(
             f"{p.title}: {' o '.join(format_cop(x) for x in sorted(catalog_prices(p)))}"
-            for p in self.focus if catalog_prices(p)
+            for p in self.price_focus or self.focus if catalog_prices(p)
         )
 
     @property

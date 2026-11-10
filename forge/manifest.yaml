@@ -304,6 +304,7 @@ deletes:
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-5"
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-6"
   - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-7"
+  - "hubara_agency/src/plugins/chats/shared/decisions/bundles/ventas-8"
   # Los guiones de venta de las campañas de ESTA tienda (2026-10-19): el clon
   # recibe la carpeta con su README y sin campañas.
   - "hubara_agency/src/plugins/chats/shared/campaigns/velitas-7-dic.yaml"
@@ -373,6 +374,7 @@ scan:
     - "wa_573000000000"       # el normalizado por telefono-ejemplo
     - "wa_573000000001"       # el normalizado por telefono-ejemplo-2
     - "wa_573000000005"       # sintéticos de tests (reengagement + marketing #190)
+    - "wa_570000000015"       # sintético: test de la ruta humano (tarjeta del ciclo #15)
     - "wa_573001111111"
     - "wa_573007654321"
     - "wa_573009990000"

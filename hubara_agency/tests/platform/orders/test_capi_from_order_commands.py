@@ -43,6 +43,15 @@ class TestPaymentConfirmation:
             ("Purchase", "purchase_order_42", 120000, "COP", "confirm_payment")
         ]
 
+    def test_purchase_value_is_the_medusa_total_when_known(self) -> None:
+        """Pedido #169: el precio se ajustó al negociado en Medusa; el chat
+        guarda el total de lista. A Meta le llega lo que se vendió."""
+        md = _chat()
+        apply_payment_confirmation_to_chat_metadata(
+            md, now_ms=NOW, by=None, session_id=SESSION, order_id="order_42", value_cop=95000
+        )
+        assert md["capi_outbox"][0]["value"] == 95000
+
     def test_value_falls_back_to_episode_total_when_registered_order_differs(self) -> None:
         md = _chat(registered_order={"success": True, "order_id": "order_99", "total_cop": 5, "currency": "COP"})
         apply_payment_confirmation_to_chat_metadata(md, now_ms=NOW, by=None, session_id=SESSION, order_id="order_42")

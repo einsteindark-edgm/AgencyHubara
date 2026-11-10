@@ -52,14 +52,38 @@ def _product_chosen(traj: Trajectory, upto: int) -> bool:
 
 def _deferral_in_force(traj: Trajectory, upto: int) -> Turn | None:
     """El aplazamiento que sigue vigente en `upto`: la última señal del cliente
-    hasta ese turno fue un «después» (un sí o el botón posteriores lo anulan)."""
+    hasta ese turno fue un «después». Lo anulan un sí o el botón posteriores,
+    y también un turno posterior del cliente en el que el bot anotó un dato
+    del producto (`_resumed_purchase`): el cliente que vuelve a comprar casi
+    nunca dice «sí», elige el producto o el color. Un sticker, un dato
+    anotado en un turno que no es del cliente, quitar un producto o dar solo
+    la ciudad o el pago no lo anulan.
+
+    Es más estricto que la guarda del bot (`customer_deferred`), que solo
+    mira el último mensaje: la guarda frena, el evaluador mide si la venta
+    se retomó. No los alinees."""
     last: Turn | None = None
     for t in traj.turns:
         if t.turn > upto:
             break
         if t.signal or t.confirm_button:
             last = t
+        elif last is not None and last.signal == "deferral" and t.is_customer and _resumed_purchase(t):
+            last = None
     return last if last is not None and last.signal == "deferral" else None
+
+
+_PRODUCT_SLOTS = ("producto", "color", "aroma", "diseno", "cantidad", "lineas")
+
+
+def _resumed_purchase(t: Turn) -> bool:
+    """El bot anotó con éxito un dato del producto, sin quitar nada."""
+    return any(
+        call.ok is True
+        and not call.args.get("quitar")
+        and any(call.args.get(slot) for slot in _PRODUCT_SLOTS)
+        for call in t.tools_named("set_order_slot")
+    )
 
 
 @code_check("CON-01")

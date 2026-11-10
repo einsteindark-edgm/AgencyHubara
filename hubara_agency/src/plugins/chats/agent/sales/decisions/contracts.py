@@ -120,6 +120,11 @@ class EgressInput:
     # escribió el LLM). Con él, el egreso decide la muletilla de presentación
     # del modelo (capacidad `preambulo`) y vuelve a sanear.
     raw_text: str | None = None
+    # Cada tool del turno con su resultado (`{name, args, result}`, acotado:
+    # lo mismo que la traza). La puerta de afirmaciones lee ahí lo que el
+    # turno consultó (el pago de `check_order_status`, los montos). Vacío =
+    # el turno de antes (sin hechos del turno).
+    tool_events: list[dict] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -141,6 +146,10 @@ class EgressOutput:
     * `sanitizer`: `{before, after, actions}` del saneado con la muletilla que
       decidió el motor, SOLO si difiere del que hizo el turno con la regla de
       hoy (vacío = el mismo): el turno corrige con eso su paso de la traza.
+    * `retain_note`: la nota de la puerta de afirmaciones ("" = nada que
+      retener). Con ella, `run_agent_turn` no envía el texto y le da UNA ronda
+      más al modelo («Tu respuesta NO se envió. <nota>»); si el turno no tiene
+      otra vuelta, `text` sale como antes.
     """
 
     text: str = ""
@@ -155,3 +164,4 @@ class EgressOutput:
     guards: list[dict] = field(default_factory=list)
     error: str | None = None
     sanitizer: dict = field(default_factory=dict)
+    retain_note: str = ""

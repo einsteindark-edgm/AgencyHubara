@@ -56,6 +56,7 @@ from src.platform.orders.state import (  # noqa: F401 (re-exposed via module use
     META_KEY_PAYMENT_CONFIRMED,
     META_KEY_PAYMENT_CONFIRMED_AT_MS,
     META_KEY_PAYMENT_REVERSED_AT_MS,
+    META_KEY_PRICE_ADJUSTMENT_REFUND,
     META_KEY_SCHEDULED_DELIVERY_ISO,
     META_KEY_SCHEDULED_DELIVERY_TIME,
     META_KEY_STAGE,
@@ -95,6 +96,7 @@ _EVENT_LABELS: dict[str, str] = {
     "schedule_updated": "Reagendado",
     "test_order_marked": "Marcado como prueba",
     "test_order_unmarked": "Ya no es prueba",
+    "price_adjusted": "Precio ajustado",
 }
 
 
@@ -481,6 +483,7 @@ class MedusaOrderQuery:
             store_shipping_cost_cop=(
                 read_real_shipping_cost(metadata) if read_free_shipping(metadata) is not None else None
             ),
+            neighborhood=shipping_addr.get("address_2"),
         )
 
     def _build_detail(
@@ -510,6 +513,7 @@ class MedusaOrderQuery:
             OrderItemDTO(
                 **_variant_match_fields(it, single_variant_handles),
                 **_coupon_fields(it),
+                **_price_adjustment_fields(it),
                 **_choice_fields(it),
                 title=str(it.get("title", "—")),
                 sku=it.get("sku") or it.get("variant_sku"),
@@ -676,6 +680,22 @@ def _coupon_fields(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _price_adjustment_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """El id de la línea y, si el operador ajustó su precio al valor real de
+    la venta (pedido #169), el motivo y el precio de lista. Una línea con
+    cupón ya trae su precio de lista (`_coupon_fields`)."""
+    out: dict[str, Any] = {"item_id": item.get("id") or None}
+    meta = item.get("metadata")
+    meta = meta if isinstance(meta, dict) else {}
+    reason = meta.get("price_adjusted_reason")
+    if not isinstance(reason, str) or not reason.strip():
+        return out
+    out["price_adjusted_reason"] = reason.strip()
+    if not meta.get("coupon_code"):
+        out["list_unit_price_cop"] = _to_int_cop(meta.get("list_unit_price_cop")) or None
+    return out
+
+
 def _to_int_cop(value: Any) -> int:
     """Medusa v2 usa unidad MAYOR (49.99 = $49.99). COP no tiene fraccion,
     asi que un total de 17000 viene como 17000 (int) o 17000.0 (float).
@@ -789,11 +809,16 @@ def resolve_pay_status(
       * Re-confirmación posterior a una reversa: Medusa v2 queda en
         `partially_refunded` para siempre (`getLastPaymentStatus` mira el
         refund viejo primero) → gana el timestamp de confirmación.
+      * Ajuste de precio de un pedido cobrado (pedido #169): el reembolso
+        parcial de la diferencia corrige el cobro, no devuelve dinero →
+        sigue "paid". Un reembolso total sigue siendo "refund".
     """
     reversed_at = metadata.get(META_KEY_PAYMENT_REVERSED_AT_MS)
     reversed_at = reversed_at if isinstance(reversed_at, (int, float)) else None
     if metadata.get(META_KEY_PAYMENT_CONFIRMED) is True:
         if payment_status not in _REFUND_STATUSES:
+            return "paid"
+        if payment_status == "partially_refunded" and _price_adjusted(metadata):
             return "paid"
         confirmed_at = metadata.get(META_KEY_PAYMENT_CONFIRMED_AT_MS)
         if (
@@ -806,6 +831,12 @@ def resolve_pay_status(
     if reversed_at is not None and payment_status in (*_REFUND_STATUSES, "not_paid", None):
         return "pending"
     return _map_pay_status(payment_status)
+
+
+def _price_adjusted(metadata: dict[str, Any]) -> bool:
+    """¿El pedido tiene un reembolso de Medusa hecho al ajustar su precio?"""
+    refunded = metadata.get(META_KEY_PRICE_ADJUSTMENT_REFUND)
+    return isinstance(refunded, int) and not isinstance(refunded, bool) and refunded > 0
 
 
 def _map_pay_status(payment_status: Any) -> OrderPayStatus:
@@ -882,6 +913,23 @@ def _variant_match_fields(
     return fields
 
 
+def _cop(value: int) -> str:
+    """$475.000 (formato colombiano, sin decimales)."""
+    return "$" + f"{value:,}".replace(",", ".")
+
+
+def _price_adjustment_detail(entry: dict[str, Any]) -> list[str]:
+    """Total antes → después y, si hubo, el reembolso que corrige el cobro."""
+    parts: list[str] = []
+    before, after = entry.get("total_before_cop"), entry.get("total_after_cop")
+    if isinstance(before, int) and isinstance(after, int) and before != after:
+        parts.append(f"{_cop(before)} → {_cop(after)}")
+    refunded = entry.get("refunded_cop")
+    if isinstance(refunded, int) and refunded > 0:
+        parts.append(f"se reembolsaron {_cop(refunded)} en Medusa (corrige el cobro)")
+    return parts
+
+
 def _build_timeline(
     *,
     stage_history: Any,
@@ -940,6 +988,8 @@ def _build_timeline(
                 detail_parts.append(f"por {by}")
             if note:
                 detail_parts.append(note)
+            if event_kind == "price_adjusted":
+                detail_parts.extend(_price_adjustment_detail(entry))
             detail = " · ".join(detail_parts) if detail_parts else None
 
             timeline.append(

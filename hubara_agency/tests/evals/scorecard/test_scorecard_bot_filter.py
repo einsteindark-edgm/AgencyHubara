@@ -87,12 +87,28 @@ def test_the_traces_of_a_session_are_read_once(client: TestClient, tmp_path: Pat
     store.append_scorecard(cards, {"session_id": NEW, "episode_id": "ep_002", "verdict": "PASA",
                                    "stage_final": "descubrimiento", "results": []})
     calls: list[str] = []
-    real = turn_traces.read_traces
-    monkeypatch.setattr(turn_traces, "read_traces", lambda vault, sid: calls.append(sid) or real(vault, sid))
+    real = turn_traces.read_summaries
+    monkeypatch.setattr(turn_traces, "read_summaries", lambda vault, sid: calls.append(sid) or real(vault, sid))
 
     body = client.get("/api/chats/evals/scorecards", params={"days": 7, "bot": "nuevo"}).json()
 
     assert body["count"] == 2 and calls.count(NEW) == 1
+
+
+def test_the_bot_filter_does_not_read_the_full_traces(client: TestClient, monkeypatch) -> None:
+    """Calidad LLM sin 504 (2026-11-03): el bot de cada episodio sale del
+    resumen de las trazas, no de las trazas completas (tools, argumentos y
+    extractos de cada turno de 56 días)."""
+    def boom(*_a, **_k):
+        raise AssertionError("no debería leer las trazas completas")
+
+    monkeypatch.setattr(turn_traces, "read_traces", boom)
+
+    only_new = client.get("/api/chats/evals/scorecards", params={"days": 7, "bot": "nuevo"}).json()
+    current = client.get("/api/chats/evals/checks/stats", params={"days": 14, "bot": "actual"}).json()
+
+    assert [r["session_id"] for r in only_new["scorecards"]] == [NEW]
+    assert current["episodes"] == 2
 
 
 def test_a_mixed_episode_counts_for_neither_bot(client: TestClient, tmp_path: Path) -> None:

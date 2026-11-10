@@ -581,6 +581,66 @@ class HttpMedusaClient:
         )
         return data["order"]
 
+    # ---------- edición de líneas (precio real de la venta) ----------
+    #
+    # Pedido #169 (2026-11-09): el precio negociado se escribe en la línea.
+    # Medusa 2.22.1 (código fuente verificado): una orden real se edita con
+    # `order-edits` y un borrador con `draft-orders/{id}/edit`; en ambos el
+    # cambio queda PENDIENTE hasta `confirm` y se descarta con DELETE.
+    # Abrir y confirmar NO son idempotentes (un reintento tras un timeout
+    # encontraría la edición ya abierta / ya aplicada).
+
+    async def begin_order_edit(
+        self, order_id: str, *, description: str | None = None
+    ) -> dict[str, Any]:
+        """Abrir la edición de una orden real (`POST /admin/order-edits`)."""
+        body: dict[str, Any] = {"order_id": order_id}
+        if description:
+            body["description"] = description
+        return await self._request("POST", "/admin/order-edits", json=body, idempotent=False)
+
+    async def update_order_edit_item(
+        self, order_id: str, item_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Cambiar una línea dentro de la edición abierta (`quantity`,
+        `unit_price`, `metadata`)."""
+        return await self._request(
+            "POST", f"/admin/order-edits/{order_id}/items/item/{item_id}", json=body
+        )
+
+    async def confirm_order_edit(self, order_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/admin/order-edits/{order_id}/confirm", idempotent=False
+        )
+
+    async def cancel_order_edit(self, order_id: str) -> dict[str, Any]:
+        return await self._request("DELETE", f"/admin/order-edits/{order_id}")
+
+    async def begin_draft_order_edit(self, draft_order_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/admin/draft-orders/{draft_order_id}/edit", idempotent=False
+        )
+
+    async def update_draft_order_edit_item(
+        self, draft_order_id: str, item_id: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/admin/draft-orders/{draft_order_id}/edit/items/item/{item_id}", json=body
+        )
+
+    async def confirm_draft_order_edit(self, draft_order_id: str) -> dict[str, Any]:
+        return await self._request(
+            "POST", f"/admin/draft-orders/{draft_order_id}/edit/confirm", idempotent=False
+        )
+
+    async def cancel_draft_order_edit(self, draft_order_id: str) -> dict[str, Any]:
+        return await self._request("DELETE", f"/admin/draft-orders/{draft_order_id}/edit")
+
+    async def delete_payment_collection(self, payment_collection_id: str) -> dict[str, Any]:
+        """Borrar un cobro `not_paid` (`DELETE /admin/payment-collections/{id}`;
+        Medusa rechaza cualquier otro estado)."""
+        return await self._request("DELETE", f"/admin/payment-collections/{payment_collection_id}")
+
     # ---------- promotions (cupones) ----------
 
     PROMOTION_FIELDS = (

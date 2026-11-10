@@ -120,6 +120,24 @@ def test_rescore_with_judge_queues_the_workflow(client: TestClient, monkeypatch)
     assert detail["judge_queued"] is True
 
 
+def test_the_labels_queue_reads_only_what_the_judge_said(client: TestClient, tmp_path: Path, monkeypatch) -> None:
+    """Calidad LLM sin 504 (2026-11-03): la cola de Calibración sale de los
+    resultados del juez que guarda el índice de cada día, no de los registros
+    completos (todos los checks de código de cada turno)."""
+    store.append_scorecard(store.scorecards_dir(tmp_path), {
+        "session_id": SESSION, "episode_id": "ep_007", "verdict": "ALERTA", "judge": True, "mode": "turn",
+        "by_turn": [{"turn": 3, "results": []}],
+        "results": [{"check_id": "DES-04", "verdict": "desconocido", "turn": 3, "evidence": "e", "critique": "c", "source": "judge"},
+                    {"check_id": "CON-01", "verdict": "falla", "turn": 3, "evidence": "", "critique": "", "source": "code"}],
+    })
+    client.get("/api/chats/evals/scorecards", params={"days": 7})  # arma el índice del día
+    monkeypatch.setattr(store, "read_scorecards", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("el día entero")))
+
+    queue = client.get("/api/chats/evals/labels/queue", params={"days": 7}).json()
+
+    assert [(i["check_id"], i["reason"], i["evidence"]) for i in queue["items"]] == [("DES-04", "desconocido", "e")]
+
+
 def test_labels_queue_and_calibration(client: TestClient, tmp_path: Path) -> None:
     store.append_scorecard(store.scorecards_dir(tmp_path), {
         "session_id": SESSION, "episode_id": "ep_007", "verdict": "ALERTA", "judge": True,

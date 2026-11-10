@@ -36,6 +36,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from src.platform import config
+from src.platform.access_log import config_file_sink, install_access_log
 from src.platform.auth import mint_sse_ticket, require_auth
 from src.platform.rate_limit import (
     SlidingWindowRateLimiter,
@@ -79,6 +80,12 @@ install_rate_limit_middleware(
 # SERVER raíz. La propagación del webhook a Temporal la hace add_traced_background_task
 # (en el router de chats); httpx ya lo instrumenta OpenLIT (no se duplica acá).
 instrument_fastapi_app(app)
+
+# Una línea por request con la plantilla de la ruta y la memoria del proceso,
+# sin datos personales (memoria de la caja de app, 2026-11-05). Afuera de todo
+# lo demás: también cuenta los 429 del rate limit. Escribe solo si
+# HUBARA_ACCESS_LOG_FILE nombra un archivo (src/platform/access_log.py).
+install_access_log(app, config_file_sink)
 
 
 # ---------------------------------------------------------------------------

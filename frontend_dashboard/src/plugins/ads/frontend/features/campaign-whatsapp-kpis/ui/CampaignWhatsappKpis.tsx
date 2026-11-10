@@ -43,11 +43,14 @@ export function CampaignWhatsappKpis({ campaign }: { campaign: AdsCampaign }) {
   const send = campaign.whatsappSend;
   if (campaign.sourceType !== "hubara_campaign" || !send) return null;
 
-  const sales = campaign.conversations?.ganado ?? 0;
+  // Pedidos (los «ganados», pagados o por cobrar) vs ventas pagadas (las que
+  // suman al ingreso): el costo por venta y el ROAS van sobre las pagadas.
+  const orders = campaign.conversations?.ganado ?? 0;
+  const paid = campaign.paidSales ?? 0;
   const cost = send.costUsdMicros;
   const costCop = cost !== null ? (cost / 1_000_000) * USD_TO_COP_APPROX : null;
   const perReply = cost !== null && send.replied > 0 ? cost / send.replied : null;
-  const perSale = cost !== null && sales > 0 ? cost / sales : null;
+  const perSale = cost !== null && paid > 0 ? cost / paid : null;
   const roas =
     costCop !== null && costCop > 0 && campaign.revenue !== null
       ? campaign.revenue / costCop
@@ -61,7 +64,7 @@ export function CampaignWhatsappKpis({ campaign }: { campaign: AdsCampaign }) {
     { key: "delivered", label: "Entregados", value: send.delivered, base: send.sent, of: "de los enviados" },
     { key: "read", label: "Leídos", value: send.read, base: send.delivered, of: "de los entregados" },
     { key: "replied", label: "Respondieron", value: send.replied, base: send.delivered, of: "de los entregados" },
-    { key: "sales", label: "Ventas", value: sales, base: send.replied, of: "de los que respondieron" },
+    { key: "sales", label: "Pedidos", value: orders, base: send.replied, of: "de los que respondieron" },
   ];
 
   return (
@@ -105,6 +108,7 @@ export function CampaignWhatsappKpis({ campaign }: { campaign: AdsCampaign }) {
           testId="wa-send-per-sale"
           label="Costo/venta"
           value={perSale !== null ? fmtUsdMicros(perSale) : "—"}
+          hint="por venta pagada"
         />
         <Kpi
           testId="wa-send-roas"

@@ -34,6 +34,13 @@ export const backendReviewPublishedSchema = z.object({
   error: z.string().nullable().default(null),
 });
 
+/** El permiso para publicar que el cliente dio DESPUÉS, por el chat: quién del
+ *  equipo lo registró y cuándo. null = no hubo (o lo dio en el formulario). */
+export const backendConsentGrantedSchema = z.object({
+  by: z.string(),
+  at_ms: z.number(),
+});
+
 export const backendReviewSchema = z.object({
   review_id: z.string(),
   order_id: z.string(),
@@ -53,6 +60,7 @@ export const backendReviewSchema = z.object({
   reply: z.string().nullable().default(null),
   team_alerted: z.boolean().default(false),
   published: backendReviewPublishedSchema.nullable().default(null),
+  consent_granted: backendConsentGrantedSchema.nullable().catch(null).default(null),
 });
 
 export type BackendReview = z.infer<typeof backendReviewSchema>;

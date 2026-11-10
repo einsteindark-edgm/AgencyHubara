@@ -1,13 +1,21 @@
+import { useState } from "react";
 import type {
+  Order,
   OrderDetail,
   OrderItemDetail,
 } from "@plugins/orders/frontend/entities/order";
 import { fmtMoney } from "@/shared/lib";
-import { Icon, InsBlock } from "@/shared/ui";
+import { Icon, InsBlock, MacButton } from "@/shared/ui";
 import { KV } from "./KV";
+import { PriceAdjustEditor } from "./PriceAdjustEditor";
 
-export function ItemsPanel({ detail }: { detail: OrderDetail }) {
+export function ItemsPanel({ detail, order }: { detail: OrderDetail; order?: Order }) {
   const items = detail.items_detail;
+  const [adjusting, setAdjusting] = useState(false);
+  // Ajustar precio (pedido #169): solo con el pedido a mano, líneas con id
+  // de Medusa y un pedido vivo (uno cancelado no cambia de precio).
+  const canAdjust =
+    order !== undefined && order.status !== "cancelled" && items.some((it) => it.item_id);
   return (
     <InsBlock title={`Productos (${items.length})`}>
       {items.map((it, i) => (
@@ -47,6 +55,16 @@ export function ItemsPanel({ detail }: { detail: OrderDetail }) {
           <span className="v">{fmtMoney(detail.summary.total_cop)}</span>
         </div>
       </div>
+      {canAdjust && !adjusting && (
+        <div style={{ marginTop: 10 }}>
+          <MacButton ghost sm onClick={() => setAdjusting(true)}>
+            Ajustar precio…
+          </MacButton>
+        </div>
+      )}
+      {canAdjust && adjusting && order && (
+        <PriceAdjustEditor detail={detail} order={order} onClose={() => setAdjusting(false)} />
+      )}
     </InsBlock>
   );
 }
@@ -69,6 +87,14 @@ function couponNote(item: OrderItemDetail): string {
       ? ` (precio de lista ${fmtMoney(item.list_unit_price_cop)})`
       : "";
   return `Cupón ${item.coupon_code}${off}${list}`;
+}
+
+// Pedido #169: el operador puso el precio real de la venta (negociado); la
+// línea dice por qué y cuál era el precio de lista.
+function adjustedNote(item: OrderItemDetail): string {
+  const list =
+    item.list_unit_price_cop != null ? ` (precio de lista ${fmtMoney(item.list_unit_price_cop)})` : "";
+  return `Precio ajustado: ${item.price_adjusted_reason}${list}`;
 }
 
 // C-3: la combinación que se registró (el cupo por unidad cuenta por
@@ -167,6 +193,11 @@ function ItemRow({ item }: { item: OrderItemDetail }) {
         {item.coupon_code && (
           <div style={{ fontSize: 10, color: "var(--fg-soft)", lineHeight: 1.35 }}>
             {couponNote(item)}
+          </div>
+        )}
+        {item.price_adjusted_reason && (
+          <div style={{ fontSize: 10, color: "var(--fg-soft)", lineHeight: 1.35 }}>
+            {adjustedNote(item)}
           </div>
         )}
       </div>

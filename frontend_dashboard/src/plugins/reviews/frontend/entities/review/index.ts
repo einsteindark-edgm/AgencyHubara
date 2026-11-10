@@ -30,6 +30,7 @@ export {
 export { reviewKeys } from "./keys";
 export {
   useApproveReview,
+  useGrantReviewConsent,
   useHideReview,
   useReplyReview,
   useReviews,

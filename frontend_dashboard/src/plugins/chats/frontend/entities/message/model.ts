@@ -79,8 +79,9 @@ export interface ChatMessage {
   role: string;
   content: string | null;
   tool_calls?: unknown[];
-  /** "human" = operador (handoff); "mba" = eco de Meta Business Agent. */
-  sender?: "human" | "mba";
+  /** "human" = operador (handoff); "mba" = eco de Meta Business Agent;
+   *  "aviso" / "reviews" = aviso automático. Abierto: lo define el backend. */
+  sender?: string;
   /** ms epoch o ISO; el backend hoy no garantiza presencia */
   timestamp?: string | number;
   /** Para tool_execution_result */

@@ -8,6 +8,7 @@ import com.hubara.operator.core.model.SessionId
 import com.hubara.operator.core.network.api.CommandResult
 import com.hubara.operator.core.network.api.OperatorService
 import com.hubara.operator.core.network.api.ToolResult
+import com.hubara.operator.core.network.api.photoPart
 import com.hubara.operator.core.network.dto.ReturnToBotRequest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonPrimitive
@@ -15,6 +16,7 @@ import kotlinx.serialization.json.buildJsonObject
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
+import okio.ByteString.Companion.toByteString
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -71,6 +73,25 @@ class OperatorServiceTest {
             .isEqualTo(ToolResult.Rejected(422, "Ese producto no tiene aromas para elegir."))
         assertThat(service.runTool(laura, ActionRef("present_variant_picker"), "c7"))
             .isEqualTo(ToolResult.Rejected(422, "faltan datos para esta acción"))
+    }
+
+    // La foto del operador va como la lee el backend (`file: UploadFile = File()`): multipart, campo `file`, con su
+    // tipo y los bytes tal cual. Con otro nombre de campo FastAPI responde 422 y la foto nunca sale.
+    @Test fun subir_una_foto_va_en_multipart_con_el_campo_file() = runTest {
+        server.enqueue(MockResponse(code = 200, body = """{"ok":true,"attachment_id":"media-1","media_ref":"/api/dashboard/media/wa_test_laura/out-1.jpg"}"""))
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0x10, 0x20, 0x30)
+
+        val r = service.api.uploadMedia(laura.raw, photoPart("foto.jpg", jpeg))
+
+        assertThat(r.body()!!.attachmentId).isEqualTo("media-1")
+        val req = server.takeRequest()
+        assertThat(req.method).isEqualTo("POST")
+        assertThat(req.url.encodedPath).isEqualTo("/api/dashboard/sessions/wa_test_laura/media")
+        assertThat(req.headers["Content-Type"]).startsWith("multipart/form-data")
+        val body = req.body!!
+        assertThat(body.utf8()).contains("Content-Disposition: form-data; name=\"file\"; filename=\"foto.jpg\"")
+        assertThat(body.utf8()).contains("Content-Type: image/jpeg")
+        assertThat(body.indexOf(jpeg.toByteString())).isAtLeast(0)
     }
 
     @Test fun avanzar_etapa_con_guia_y_costo() = runTest {

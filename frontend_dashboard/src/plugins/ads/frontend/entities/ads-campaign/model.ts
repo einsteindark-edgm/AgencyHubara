@@ -56,9 +56,17 @@ export type CampaignTendency = "up" | "flat" | "down";
  *  value COP). ⚠️ El nombre exacto importa — Meta rechaza "Lead". */
 export type CapiEvent = "LeadSubmitted" | "Purchase" | "OrderCanceled";
 
-/** Por qué el estado de una conversación no sale del chat. `order_cancelled`:
- *  el pedido está cancelado en Pedidos aunque el chat diga COMPRA_EXITOSA. */
-export type AdsStateReason = "order_cancelled";
+/** Por qué el estado de una conversación no sale del chat:
+ *  - `order_cancelled`: el pedido está cancelado en Pedidos aunque el chat diga
+ *    COMPRA_EXITOSA → "perdido".
+ *  - `order_test` / `order_missing` / `order_repeated`: el pedido es de prueba,
+ *    ya no existe, o ya lo contó una conversación anterior del cliente → no es
+ *    una venta de esta conversación ("cotizado"). */
+export type AdsStateReason =
+  | "order_cancelled"
+  | "order_test"
+  | "order_missing"
+  | "order_repeated";
 
 /* ── Rango temporal del dashboard (filtro por fecha) ─────────────────────── */
 
@@ -252,6 +260,11 @@ export interface AdsCampaign {
   revenue: number | null;
   /** Ticket promedio en COP (revenue / nº de episodios que aportaron ingreso). */
   avgTicket: number | null;
+  /** Ventas PAGADAS: los episodios que suman a `revenue`. Los «ganados»
+   *  (`conversations.ganado`) son los pedidos, pagados o por cobrar — la
+   *  diferencia es lo que falta cobrar. ROAS y CAC se miden sobre estas.
+   *  Opcional para tolerar fixtures históricos (ausente = 0). */
+  paidSales?: number;
   /** Costo LLM agregado de la campaña en USD (suma de `episode.llm_usage` de
    *  todos los episodios del bucket). null si ningún episodio acumuló uso. */
   llmCostUsd: number | null;
@@ -335,8 +348,11 @@ export interface AttributedConversation {
   // --- Disponibles parcialmente / faltantes ---
   /** Nombre del cliente. Null hasta CRM — la UI muestra phone. */
   name: string | null;
-  /** Null hasta CRM. */
+  /** Ciudad de entrega del pedido del episodio (de Orders). Null sin pedido. */
   city: string | null;
+  /** Barrio de entrega del pedido (de Orders). Opcional para tolerar fixtures
+   *  históricos. */
+  neighborhood?: string | null;
   /** "Sofía" / "Diego" / "IA Soporte" / null. Backend devuelve `active_route` como proxy. */
   agent: string | null;
   /** Null hasta clasificador conversacional. */
@@ -467,4 +483,52 @@ export interface AgentReferrals {
   total: number;
   withOrder: number;
   bySource: AgentReferralCount[];
+}
+
+/* ── Dónde compran (2026-10-23) ──────────────────────────────────────────── */
+
+/** Compras de una zona (barrio) de una ciudad. `zone: null` = el pedido no
+ *  trae barrio. */
+export interface PurchaseZone {
+  zone: string | null;
+  orders: number;
+  valueCop: number;
+}
+
+/** Cuántas compras de una ciudad trajo una campaña. */
+export interface PurchaseCampaignShare {
+  id: string;
+  name: string | null;
+  orders: number;
+  valueCop: number;
+}
+
+/** Compras de una ciudad. `overallOrders` = sus compras en TODAS las
+ *  campañas (solo en la vista de una campaña: el cotejo). */
+export interface PurchaseCity {
+  key: string;
+  city: string;
+  orders: number;
+  paidOrders: number;
+  valueCop: number;
+  overallOrders: number | null;
+  zones: PurchaseZone[];
+  campaigns: PurchaseCampaignShare[];
+}
+
+/** Las compras de la ventana por ciudad y zona — de una campaña o de todas.
+ *  Compra = pedido registrado (no cancelado ni de prueba), pagado o no. */
+export interface PurchasePlaces {
+  orders: number;
+  paidOrders: number;
+  valueCop: number;
+  /** Compras cuyo pedido no trae ciudad. */
+  withoutCity: number;
+  /** Todas las compras de la ventana (solo en la vista de una campaña). */
+  overallOrders: number | null;
+  cities: PurchaseCity[];
+  /** false = Orders no respondió: no hay datos (≠ cero compras). */
+  ordersAvailable: boolean;
+  /** true = había más pedidos que el tope que se lee por consulta. */
+  truncated: boolean;
 }

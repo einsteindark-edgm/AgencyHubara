@@ -13,7 +13,12 @@ Pieza 3 del `GOLDEN_EVAL_LOOP_PLAN.md`: la alerta ES el issue de GitHub.
     (para ubicarlo en el dashboard), nunca el teléfono completo; la evidencia
     pasa por `redact_pii` (teléfonos, emails, documentos).
   * **Sin configuración, no-op**: sin `SCORECARD_ALERTS_GITHUB_TOKEN` y
-    `SCORECARD_ALERTS_REPO` (`owner/repo`) no se hace nada.
+    `SCORECARD_ALERTS_REPO` (`owner/repo`) no se hace nada; el placeholder con
+    que Terraform crea los parámetros tampoco cuenta.
+  * **Van al ciclo** (Ciclo Colossus F4, 2026-11-03): el repo es el privado del
+    ciclo; cada issue lleva el prefijo `[ALR]` y la etiqueta `origen:alerta`, y
+    la recepción del ciclo lo vuelve tarjeta. Las bandas por regla
+    (`band_alerts.py`) usan el mismo puerto y la misma etiqueta.
 
 R-DIP: `IssueTrackerPort` (protocolo) + adapter GitHub por httpx.
 """
@@ -25,11 +30,16 @@ from typing import Any, Protocol
 
 from src.plugins.chats.agent.sales_eval.evals.redaction import redact_pii
 from src.plugins.chats.agent.sales_eval.scorecard.registry import SPECS_BY_ID
+from src.sdk.runtime import is_placeholder
 
-LABEL = "llm-scorecard"
+LABEL = "origen:alerta"
+#: Prefijo de título de toda alerta de producción en el repo del ciclo.
+TITLE_PREFIX = "[ALR]"
+TOKEN_ENV = "SCORECARD_ALERTS_GITHUB_TOKEN"
+REPO_ENV = "SCORECARD_ALERTS_REPO"
 _GITHUB_API = "https://api.github.com"
 _TIMEOUT_S = 10.0
-_MARKER = "scorecard-fingerprint"
+MARKER = "scorecard-fingerprint"
 
 
 class IssueTrackerPort(Protocol):
@@ -64,7 +74,7 @@ def _episode_ref(record: dict[str, Any]) -> str:
 def render_issue(record: dict[str, Any]) -> tuple[str, str]:
     ids = _critical_ids(record)
     fp = fingerprint(record)
-    title = f"[scorecard] FALLA crítica: {', '.join(ids) or record.get('verdict')}"
+    title = f"{TITLE_PREFIX} FALLA crítica: {', '.join(ids) or record.get('verdict')}"
     rows = []
     for r in record.get("results") or []:
         if not isinstance(r, dict) or r.get("verdict") != "falla":
@@ -89,7 +99,7 @@ def render_issue(record: dict[str, Any]) -> tuple[str, str]:
             "Ábrelo en el dashboard: Calidad LLM → Conversaciones, filtro FALLA en esa fecha.",
             "Cada nuevo episodio con el mismo modo de fallo se agrega como comentario.",
             "",
-            f"<!-- {_MARKER}:{fp} -->",
+            f"<!-- {MARKER}:{fp} -->",
         ]
     )
     return title, body
@@ -132,7 +142,7 @@ class GithubIssueTracker:
         return httpx.AsyncClient(timeout=_TIMEOUT_S, headers=self._headers, transport=self._transport)
 
     async def find_open(self, fingerprint: str) -> int | None:
-        marker = f"{_MARKER}:{fingerprint}"
+        marker = f"{MARKER}:{fingerprint}"
         async with self._client() as client:
             resp = await client.get(
                 f"{_GITHUB_API}/repos/{self._repo}/issues",
@@ -167,8 +177,8 @@ class GithubIssueTracker:
 
 
 def tracker_from_env() -> IssueTrackerPort | None:
-    token = os.getenv("SCORECARD_ALERTS_GITHUB_TOKEN", "").strip()
-    repo = os.getenv("SCORECARD_ALERTS_REPO", "").strip()
-    if not token or not repo or "/" not in repo:
+    token = os.getenv(TOKEN_ENV, "").strip()
+    repo = os.getenv(REPO_ENV, "").strip()
+    if is_placeholder(token) or is_placeholder(repo) or "/" not in repo:
         return None
     return GithubIssueTracker(repo, token)

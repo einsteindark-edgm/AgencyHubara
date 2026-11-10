@@ -88,7 +88,18 @@ async def claim_conversation_routing(session_id: str, new_route: str) -> None:
     # Un metadata dañado se recupera con la última copia buena dentro del
     # store (decisión del operador, 2026-10-06); un error pasajero de lectura
     # falla la activity y Temporal reintenta.
-    def _claim(data: dict) -> dict:
+    def _claim(data: dict) -> dict | None:
+        # La ruta humano es del equipo (tarjeta del ciclo #15): un bot que se
+        # apaga (remarketing por inactividad, abstención o plantilla que no
+        # salió) no se la quita. Solo una persona devuelve el chat al bot, y
+        # eso va por el dashboard, no por esta activity. `None`: no se escribe.
+        if data.get("active_route") == ROUTE_HUMANO and new_route != ROUTE_HUMANO:
+            activity.logger.info(
+                "claim_conversation_routing: la sesión está en ruta humano, no se pasa a %s (session=%s)",
+                new_route,
+                session_id,
+            )
+            return None
         # Sobre la lectura fresca y solo la ruta + su historial (incidente
         # 2026-10-06: la copia entera pisaba otras escrituras).
         data["active_route"] = new_route

@@ -210,3 +210,22 @@ async def test_a_pending_rebuild_is_scheduled_once(monkeypatch):
     finally:
         for task in list(reviews_api._PENDING_FLUSHES):
             task.cancel()
+
+
+def test_the_team_records_the_consent_given_by_chat(env, monkeypatch):
+    """POST /reviews/{id}/consent: el permiso que el cliente dio después por
+    WhatsApp, firmado con quien lo registró (la sesión verificada, nunca el
+    cuerpo del request)."""
+    client, store, port, _grants, _ = env
+    monkeypatch.setattr(reviews_api, "current_actor", lambda request: "equipo@hubara.co")
+    store.save_review(_record("order_A", 4, publish_consent=False))
+    client.post("/api/reviews/reviews/rev_order_A/approve")
+
+    resp = client.post("/api/reviews/reviews/rev_order_A/consent")
+
+    assert resp.status_code == 200, resp.text
+    review = resp.json()["review"]
+    assert review["publish_consent"] is True
+    assert review["consent_granted"] == {"by": "equipo@hubara.co", "at_ms": NOW + 10}
+    assert {r["body"] for r in port.rows.values()} == {"Hermosa"}
+    assert client.post("/api/reviews/reviews/rev_nope/consent").status_code == 404

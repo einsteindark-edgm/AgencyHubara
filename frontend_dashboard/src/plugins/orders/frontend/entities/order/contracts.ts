@@ -122,6 +122,11 @@ export const orderItemDetailSchema = z.object({
   // default para payloads viejos.
   color: z.string().nullable().default(null),
   aroma: z.string().nullable().default(null),
+  // La línea en Medusa (pedido #169): con ella se ajusta el precio al valor
+  // real de la venta. Ajustada → `list_unit_price_cop` es el precio de lista
+  // y `price_adjusted_reason` el motivo. Defaults para payloads viejos.
+  item_id: z.string().nullable().default(null),
+  price_adjusted_reason: z.string().nullable().default(null),
 });
 
 export type OrderItemDetail = z.infer<typeof orderItemDetailSchema>;

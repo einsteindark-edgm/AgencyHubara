@@ -520,6 +520,13 @@ o del cliente MUST llegar a un componente, al resumen ni a Medusa.
 - WHEN el formulario de envío (Flow o texto plano) arma las formas de pago
 - THEN "Contra entrega" aparece; el umbral vive en `config/shipping.py` y los prompts lo citan como "desde $45.000 en productos"
 
+#### Scenario: Los precios de lo que buscó y mostró sobreviven el historial (2026-10-26)
+
+- GIVEN el historial que leen los turnos siguientes (complemento, ghost, el próximo mensaje) guarda cada resultado de tool cortado a 500 caracteres (`exoclaw_conversation`)
+- WHEN `search_products` o `present_products` (con handles, una categoría o el catálogo completo) responden
+- THEN su resultado trae, antes de la lista, `prices`: el rango («de $47.000 a $54.000») y el precio de cada producto, del catálogo
+- AND con una lista que no cabe en el corte, el rango queda (incidente: el turno de complemento solo veía el primer precio y el bot escribió «desde $47.000 hasta $89.900»)
+
 ### Requirement: Tools de UI rica (decision tools)
 
 El sales-worker MUST tener 11 decision tools que emiten UI intents
@@ -611,6 +618,74 @@ preguntes en qué más puedes ayudar».
 - GIVEN primer contacto
 - WHEN el LLM responde solo texto (sin tools outbound), ej. "¡Buenas tardes! Bienvenido a *Hubara*... ¿Buscas algo para ti o es para regalo?"
 - THEN el texto sale como siempre y no se inyecta nada (caso run a15bb71c)
+
+Delta 2026-11-03 (`ventas-8`, saludo v2; informe de huecos de producción, bot
+V2). Con Jev decidiendo `saludo`:
+
+- Un «hola» o una bienvenida sin la hora NO cuentan como saludo: Jev contesta
+  si algún mensaje saluda con la hora del día Y nombra a la tienda; si no, sale
+  la Burbuja 1 (APE-01).
+- El primer contacto de verdad es «la tienda nunca escribió»: el egreso lee del
+  historial las horas desde el último mensaje de la tienda (`hours_since_store`,
+  la cuenta de la vista `reply_gap`). Si la tienda ya escribió (una campaña, un
+  colega, otro episodio), la Burbuja 1 NO sale.
+- Fuera de ese primer contacto, `saludo_repetido` SHALL quitar del texto que
+  sale (también el de `send_reply`) las oraciones que dan la bienvenida o
+  presentan la tienda como si fuera la primera vez (APE-04: el modelo, no la
+  burbuja, le escribía «Bienvenido a *Hubara*, velas artesanales…» al cliente
+  que volvía). La regla de palabras del paquete propone; Jev decide; si todo el
+  texto es la bienvenida, sale igual. Sin Jev no revisa.
+
+#### Scenario: «¡Hola!» ya no deja sin la burbuja (ventas-8)
+
+- GIVEN primer contacto y la tienda nunca escribió
+- WHEN el único texto del turno es «¡Hola! ¿En qué te ayudo?»
+- THEN Jev contesta que no saluda con la hora ni nombra a la tienda y sale la Burbuja 1
+
+#### Scenario: el cliente contesta una campaña (ventas-8)
+
+- GIVEN el historial del LLM no tiene mensajes del agente, pero la tienda le escribió hace 20 horas
+- WHEN el turno sale
+- THEN NO sale la Burbuja 1
+- AND si el texto le da la bienvenida a Hubara, `saludo_repetido` la quita
+
+#### Scenario: el cliente vuelve en otro episodio (informe de huecos, 2026-11-03)
+
+- GIVEN el primer turno del segundo episodio
+- WHEN el modelo escribe «Buenos días. Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma… ¿Buscas algo para regalar o para tu casa?»
+- THEN sale «Buenos días. ¿Buscas algo para regalar o para tu casa?» (guarda `regreeting_guard`)
+
+### Requirement: Lo que la tienda no dice y lo que el pedido ya tiene (`ventas-8`, 2026-11-03)
+
+Con `ventas-8`, el egreso de V2 (que ve el texto final y el de `send_reply`)
+SHALL pasar el texto por `despedida`: las oraciones con una frase que la tienda
+no dice (dar la compra o el pago por hechos, «caso cerrado», «pedido
+transferido», «te confirmo en un rato», «ahí te dejé», «te cuadro el pedido»;
+frases del paquete) que Jev confirma se quitan, y si no queda nada con el pedido
+registrado, sale la despedida aprobada del dominio (CIE-05). Sin pedido
+registrado y sin nada que quede, el texto sale igual.
+
+`send_reply` SHALL devolver UNA vez por mensaje del cliente el texto que le
+vuelve a pedir un dato que el pedido ya tiene (`repregunta`: la cantidad de cada
+producto y los datos de envío y de pago del borrador; VAR-06, ENV-04), con lo
+que ya está en el pedido (sin el valor de un dato personal). Solo si el texto
+pregunta algo; los datos salen del borrador (nunca uno que falta). El segundo
+intento sale. Sin Jev, con un paquete anterior o si algo falla, el texto sale.
+
+Las tres decisiones nuevas nacen apagadas (`reglas`) y se encienden por comando.
+
+#### Scenario: «ahí te dejé el formulario» (informe de huecos, 2026-11-03)
+
+- GIVEN un turno que pide los datos de envío
+- WHEN el texto es «Con gusto, ahí te dejé el formulario. Cuando lo llenes, seguimos con tu pedido 🤍»
+- THEN sale «Cuando lo llenes, seguimos con tu pedido 🤍» (guarda `closing_phrase_guard`)
+
+#### Scenario: la cantidad ya estaba en el pedido (VAR-06)
+
+- GIVEN el borrador con 1 × Velas de deseos cuadradas
+- WHEN `send_reply` recibe «¿Te sirve la caja completa o prefieres ajustar la cantidad?»
+- THEN el texto vuelve al modelo con «el pedido ya tiene la cantidad: 1 × Velas de deseos cuadradas»
+- AND el segundo intento sale
 
 ### Requirement: Todo turno lleva la hora de Bogotá (2026-09-29)
 
@@ -998,6 +1073,49 @@ mide con TAG-09; el paso a paso lo muestra en palabras.
 - WHEN el texto dice «Si quieres te envío las fotos del Velón Koala.»
 - THEN `send_reply` no graba `promises` y el turno sigue como siempre
 
+### Requirement: Lo que el bot afirma antes de enviar se sostiene en los hechos (bot nuevo, 2026-11-03)
+
+Huecos del 10-07 al 11-03: el bot nuevo afirmó hechos que nunca consultó (69
+casos en 51 conversaciones; 25 la última semana: CON-03, POS-01, DES-10,
+ENV-05, EST-05). El egreso del V2 corre antes de grabar y de enviar y SHALL
+poder devolver `retain_note` («retener, con esta nota»). Con nota, `run_agent_turn`
+SHALL no enviar ni grabar el texto del modelo (suelto o de `send_reply`) y dar
+UNA ronda más con «Tu respuesta NO se envió. <nota>»; el texto nuevo vuelve a
+pasar por el egreso. Una segunda nota no retiene otra vez (el texto sale), y no
+hay ronda en un turno administrativo ni sin otra vuelta del modelo (el texto
+sale como antes). Va detrás del parche `egress-retain-round-v1` (solo se
+consulta cuando hay nota).
+
+La nota sale de dos lugares:
+
+- la capacidad `afirmacion_previa` del paquete (el catálogo la pide desde la
+  versión 8; entró en `ventas-8` ya vivo, el 2026-11-04): Jev dice QUÉ afirma el texto y la tabla decide con los hechos
+  (`order_registered_fact`, `paid_in_turn_fact`, `unexplained_amounts_fact`,
+  `bank_details_fact`, `shipping_amounts_fact`, `approved_delivery_time_fact`).
+  Nace apagada (`reglas`: ni retiene ni le pregunta a Jev);
+- el texto final SUELTO pasa por las mismas revisiones que `send_reply`
+  (`SendReplyTool.held_reason`: la foto verificada, «te confirmo después», los
+  hechos y la lista para el selector), con la misma marca: una retención por
+  mensaje del cliente entre los dos caminos.
+
+#### Scenario: Afirma un pedido registrado sin pedido
+
+- GIVEN el paquete trae `afirmacion_previa` encendida y no hay pedido registrado
+- WHEN el texto dice «¡Listo! Tu pedido quedó registrado 🤍»
+- THEN el texto no sale y el modelo recibe la nota del paquete en una ronda más
+- AND lo que escribe después sale (aunque vuelva a afirmarlo)
+
+#### Scenario: La frase aprobada de tiempos no es una promesa
+
+- GIVEN el dominio de la tienda trae `delivery_time_phrases: "1 a 2 dias habiles"`
+- WHEN el texto dice «En Bogotá llega en 1 a 2 días hábiles»
+- THEN la puerta no retiene
+
+#### Scenario: El texto suelto que promete revisar después
+
+- WHEN el modelo contesta sin `send_reply` «Déjame revisar y te confirmo en un momento»
+- THEN el texto no sale y el modelo recibe el mismo mensaje con que lo retendría `send_reply`
+
 ### Requirement: El formulario y las tarifas que el texto promete salen
 
 Detrás de la ronda (por si el modelo insiste sin la tool), antes de enviar el
@@ -1032,6 +1150,51 @@ seguidos sin llamar la tool y el operador lo mandó a mano.
 - WHEN el texto final dice «Te comparto las tarifas de envío 🚚» y la tarjeta no está en la cola
 - THEN la tarjeta de tarifas queda en la cola y sale después del texto
 - AND TAG-09 la cuenta como enviada (la burbuja entregada en el paso a paso)
+
+### Requirement: Un formulario de envío por compra, y sus datos en el pedido al llegar (2026-11-03)
+
+Informe de huecos del 2026-11-03 (ENV-01, 7 conversaciones desde el 10-07): el
+bot V2 volvía a llamar `request_shipping_details` turnos después de que el
+formulario ya le había llegado al cliente (#393 ya había quitado los
+duplicados por carrera; la red de las promesas no los causaba: ya contaba el
+formulario entregado como cumplido). Desde entonces `request_shipping_details`
+SHALL rechazar con `queued=false, error=shipping_form_already_sent` si en el
+episodio activo el formulario ya se entregó (una fila `ok` del registro de
+entregas desde que empezó el episodio); el mensaje le dice al modelo que un
+dato que falte o que el cliente corrija se pide por texto (`send_reply`) y se
+anota con `set_order_slot`. El rechazo no corta el turno. NO SHALL frenar: el
+primer formulario, uno cuyo envío falló, uno de un episodio anterior, otra
+llamada en el mismo turno (ya está en la cola) ni el operador desde la app
+(`api/operator_tools.py`, `once_per_episode=False`: decide él).
+
+ENV-03: los datos del formulario (`nfm_reply`: ciudad, barrio, dirección,
+teléfono, quien recibe, cédula, forma de pago) SHALL quedar en el borrador del
+episodio activo apenas llegan (el ingest, como el carrito web), sin depender
+de que el modelo llame `set_order_slot`. Un campo vacío no borra lo que había.
+No se escribe con un humano al mando ni en un episodio con pedido registrado.
+La forma de pago queda con el id del formulario (`cash_on_delivery`,
+`transfer`, `payment_link`), el mismo que recibe `register_order`. El
+scorecard (ENV-03, registro v12) pasa si cada dato que trajo el formulario
+quedó en el pedido de ese turno.
+
+#### Scenario: El modelo pide el formulario otra vez
+
+- GIVEN un formulario entregado en el episodio activo
+- WHEN el modelo llama `request_shipping_details`
+- THEN la tool devuelve `queued=false, error=shipping_form_already_sent` y no encola nada
+- AND el modelo sigue en el turno y le pide por texto lo que falte
+
+#### Scenario: El primer envío falló
+
+- GIVEN una fila del registro de entregas del formulario con `ok=false`
+- WHEN el modelo llama `request_shipping_details`
+- THEN el formulario queda en la cola
+
+#### Scenario: Llegan los datos del formulario
+
+- GIVEN un borrador con producto y cantidad
+- WHEN llega `nfm_reply` con ciudad, dirección, teléfono, quien recibe y forma de pago
+- THEN el borrador los tiene antes del turno del bot y la nota del pedido se los muestra
 
 ### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
 
@@ -1548,7 +1711,9 @@ cupones. Una frase del paquete son palabras (`*`, `a/b`, `…`), nunca un regex.
   foco (por unidad o por la cantidad, en vivo, con el cupón aplicado o con un
   cupón vigente que el texto le ofrece, con el recargo del link, y sus sumas),
   ni el total del pedido en OrderFacts, ni un monto de política en una
-  oración que lo dice (frases del paquete: «envío», «desde», «total»…).
+  oración que lo dice (frases del paquete: «envío», «desde», «total»…). Si el
+  texto no nombra ningún producto ni hay pedido, los precios se miran contra
+  los productos de la charla: lo que el bot acaba de mostrar (2026-10-26).
 - `pago_ajeno`: contra entrega ofrecida a un pedido cuyo subtotal de productos
   no llega al mínimo (no la regla general: «contra entrega es desde $45.000»),
   y un recargo del link distinto del vigente o «sin recargo».
@@ -1581,6 +1746,13 @@ UNA vez por texto: lo comparten esta revisión y la de la lista de opciones.
 - WHEN el bot escribe «Las cuadradas te quedan en $23.000 cada una»
 - THEN el texto vuelve una vez con el precio del catálogo
 - AND «las dos te quedan en $50.000» o «el total con envío es $66.940» salen
+
+#### Scenario: Un rango inventado sobre la lista que mostró (producción, 2026-10-25/26)
+
+- GIVEN el bot acaba de mostrar la lista de los navideños ($47.000 a $54.000), sin pedido anotado
+- WHEN escribe «Los precios van desde $47.000 hasta $89.900 según el motivo» (no nombra ningún producto)
+- THEN el texto vuelve una vez con el precio de cada producto de la lista
+- AND «van desde $47.000 hasta $54.000» sale
 
 #### Scenario: Contra entrega a un pedido que no llega al mínimo
 

@@ -80,6 +80,8 @@ class EvalRunSummary:
     errors: int = 0
     # Episodios calificados con el scorecard por etapa en la corrida (HU-SC-8).
     scorecards: int = 0
+    # Reglas del scorecard en la banda `abrir` ese día (Ciclo Colossus F4).
+    bands_to_open: int = 0
 
 
 @dataclass(frozen=True)
@@ -197,3 +199,33 @@ class DecisionsProbeSummary:
     """Snapshots de Jev que respondieron, separados por coma."""
     shape_errors: int = 0
     failures: int = 0
+
+
+@dataclass(frozen=True)
+class BandsInput:
+    """Entrada de `compute_scorecard_bands` (bandas por regla, Ciclo Colossus F4)."""
+
+    alert: bool = True
+    """Abrir o comentar las alertas de las reglas en `abrir` (el barrido diario sí)."""
+    end: str = ""
+    """Último día de la ventana (AAAA-MM-DD, UTC); vacío = hoy."""
+
+
+@dataclass(frozen=True)
+class BandsSummary:
+    """Resumen de las bandas por regla (output de `compute_scorecard_bands`).
+
+    Solo escalares (R-JSON). El informe completo (cada regla con sus tasas, σ y
+    ejemplos) queda en `<vault>/_evals/bands/<día>.json`.
+    """
+
+    to_open: int = 0
+    """Reglas en la banda `abrir`."""
+    to_diagnose: int = 0
+    to_note: int = 0
+    opened: int = 0
+    """Alertas abiertas (issues nuevos)."""
+    commented: int = 0
+    """Alertas que ya estaban abiertas y recibieron «volvió a pasar»."""
+    report_path: str = ""
+    error: str = ""
