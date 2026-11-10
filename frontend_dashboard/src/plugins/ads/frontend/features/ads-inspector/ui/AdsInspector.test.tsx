@@ -76,6 +76,18 @@ function campaign(over: Partial<AdsCampaign>): AdsCampaign {
   } as AdsCampaign;
 }
 
+describe("AdsInspector — costo por cliente (auditoría 2026-11-10)", () => {
+  it("el CAC divide la inversión por las ventas PAGADAS, no por los pedidos", () => {
+    mockRuns.current = [];
+    mockConn.current = { data: { connected: true, accountName: "Hubara" } };
+    // 12 pedidos, 4 pagados: 896.823 ÷ 4 = 224.206 (÷ 12 decía 74.735).
+    const { getByText } = render(<AdsInspector campaign={campaign({ paidSales: 4 })} />);
+
+    const row = getByText("Costo por cliente (CAC)").closest(".form-row");
+    expect(row?.querySelector(".val")?.textContent).toBe("$224.206");
+  });
+});
+
 describe("AdsInspector — historial de análisis versionado", () => {
   it("sin análisis → invita a correr el primero (no hay mock quemado)", () => {
     mockRuns.current = [];

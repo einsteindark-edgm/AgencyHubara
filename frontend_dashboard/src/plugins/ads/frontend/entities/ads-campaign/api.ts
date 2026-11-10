@@ -159,7 +159,14 @@ function asCapiEvent(s: string | null): CapiEvent | null {
 }
 
 function asStateReason(s: string | null): AdsStateReason | null {
-  return s === "order_cancelled" ? s : null;
+  if (
+    s === "order_cancelled" ||
+    s === "order_test" ||
+    s === "order_missing" ||
+    s === "order_repeated"
+  )
+    return s;
+  return null;
 }
 
 /** `{cat: {count, usd_micros}}` (snake, backend) → `{cat: {count, usdMicros}}`. */
@@ -204,6 +211,7 @@ export function mapBackendCampaign(b: BackendAdsCampaign): AdsCampaign {
     conversations: b.conversations,
     revenue: b.revenue,
     avgTicket: b.avg_ticket,
+    paidSales: b.revenue_count,
     llmCostUsd: b.llm_cost_usd,
     llmTokens: b.llm_tokens,
     waCostUsdMicros: b.wa_cost_usd_micros,

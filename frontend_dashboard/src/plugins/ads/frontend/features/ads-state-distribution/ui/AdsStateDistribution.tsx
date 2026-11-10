@@ -109,8 +109,15 @@ export function AdsStateDistribution({ campaign }: Props) {
           // Sin avgTicket no podemos calcular el valor estimado. Mostramos
           // <MissingField /> en lugar de "—" para que se distinga "0 reales"
           // de "dato faltante".
-          const canValue = avgTicket !== null;
-          const val = canValue ? n * avgTicket * PIPELINE_WEIGHT[s] : 0;
+          // «Ganado» = el ingreso REAL (ventas pagadas), el mismo número del
+          // KPI de la cabecera; el resto, valor estimado del pipeline.
+          const canValue = s === "ganado" || avgTicket !== null;
+          const val =
+            s === "ganado"
+              ? (campaign.revenue ?? 0)
+              : avgTicket !== null
+                ? n * avgTicket * PIPELINE_WEIGHT[s]
+                : 0;
           const label =
             s === "ganado"
               ? "Ingresos "

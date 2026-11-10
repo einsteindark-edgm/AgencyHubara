@@ -77,6 +77,24 @@ const campaignSample = {
   days_run: null,
 };
 
+describe("mapBackendCampaign — ventas pagadas (auditoría 2026-11-10)", () => {
+  it("revenue_count → paidSales: las ventas que suman al ingreso", () => {
+    const c = mapBackendCampaign(
+      backendAdsCampaignSchema.parse({
+        ...campaignSample,
+        revenue: 100000,
+        avg_ticket: 100000,
+        revenue_count: 1,
+      }),
+    );
+    expect(c.paidSales).toBe(1);
+  });
+
+  it("backend viejo sin revenue_count → 0 ventas pagadas", () => {
+    expect(mapBackendCampaign(backendAdsCampaignSchema.parse(campaignSample)).paidSales).toBe(0);
+  });
+});
+
 describe("mapBackendCampaign — sourceType (campañas internas de marketing)", () => {
   it("mapea source_type al dominio — distingue hubara_campaign de Meta", () => {
     const meta = mapBackendCampaign(campaignSample as never);
