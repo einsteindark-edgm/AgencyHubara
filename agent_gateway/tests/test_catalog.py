@@ -112,3 +112,11 @@ def test_resolve_request_rejects_ids_that_could_escape_the_route(bad: str) -> No
         resolve_request("ads_get_ads", {"campaign_id": "c1", "adset_id": bad})
     with pytest.raises(ArgumentError, match="invalid parameter"):
         resolve_request("ads_get_conversations", {"campaign_id": "c1", "adset_id": bad})
+
+
+def test_resolve_request_rejects_absurd_limit_and_caps_the_echoed_name() -> None:
+    with pytest.raises(ArgumentError, match="limit"):
+        resolve_request("ads_get_analysis_runs", {"limit": "1234567"})
+    with pytest.raises(ArgumentError) as err:
+        resolve_request("ads_get_campaigns", {"x" * 5000: "1"})
+    assert len(str(err.value)) < 300

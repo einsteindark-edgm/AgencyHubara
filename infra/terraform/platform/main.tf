@@ -21,6 +21,7 @@ module "auth" {
   tenant        = each.key
   callback_urls = each.value.callback_urls
   logout_urls   = each.value.logout_urls
+  managed_login = each.value.managed_login
 }
 
 # ── Auth ids (NO-secretos) a SSM — el backend los lee para enforcar Cognito ──

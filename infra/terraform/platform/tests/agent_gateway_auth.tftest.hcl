@@ -8,6 +8,9 @@ mock_provider "aws" {
   mock_data "aws_region" {
     defaults = { name = "us-east-1" }
   }
+  mock_data "aws_iam_policy_document" {
+    defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}" }
+  }
 }
 
 variables {
@@ -82,12 +85,51 @@ run "el_gateway_llama_al_backend_con_su_propio_m2m" {
   }
 }
 
-run "el_dominio_pasa_a_managed_login" {
+# Mergear este cambio NO migra el login: el root `platform` se aplica a menudo por
+# otros motivos (config del bot) y la pantalla nueva necesita sus estilos al momento.
+run "sin_pedirlo_el_login_sigue_en_la_version_clasica" {
   command = plan
   module { source = "./modules/auth" }
 
   assert {
+    condition     = aws_cognito_user_pool_domain.this.managed_login_version == 1
+    error_message = "por defecto el dominio queda en Hosted UI clásica: un apply de rutina no cambia el login"
+  }
+}
+
+run "managed_login_se_activa_por_tienda_y_a_proposito" {
+  command = plan
+  module { source = "./modules/auth" }
+  variables {
+    managed_login = true
+  }
+
+  assert {
     condition     = aws_cognito_user_pool_domain.this.managed_login_version == 2
     error_message = "resource binding (aud = URL del gateway) es exclusivo de managed login (v2)"
+  }
+}
+
+run "la_tienda_decide_managed_login_en_su_entrada_de_tenants" {
+  command = plan
+  variables {
+    tenants = {
+      t1 = {
+        api_url       = "https://api.example.test"
+        callback_urls = ["https://dashboard.example/callback"]
+        logout_urls   = ["https://dashboard.example/"]
+      }
+      t2 = {
+        api_url       = "https://api2.example.test"
+        callback_urls = ["https://dashboard2.example/callback"]
+        logout_urls   = ["https://dashboard2.example/"]
+        managed_login = true
+      }
+    }
+  }
+
+  assert {
+    condition     = module.auth["t1"].managed_login_version == 1 && module.auth["t2"].managed_login_version == 2
+    error_message = "managed_login es por tienda y nace apagado"
   }
 }

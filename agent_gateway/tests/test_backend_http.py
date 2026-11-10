@@ -170,3 +170,51 @@ async def test_get_non_json_body_is_returned_as_none() -> None:
     response = await backend.get("/api/ads/campaigns", {})
 
     assert (response.status, response.body) == (502, None)
+
+
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(200, text="<html>ok</html>"), httpx.Response(200, json={"token_type": "Bearer"}), httpx.Response(200, json=[])],
+)
+async def test_m2m_malformed_token_response_is_backend_unavailable(response: httpx.Response) -> None:
+    provider = M2MTokenProvider(
+        token_url=TOKEN_URL,
+        client_id="c",
+        client_secret="s",
+        scope="hubara-api/ads.read",
+        http=httpx.AsyncClient(transport=httpx.MockTransport(lambda r: response)),
+    )
+
+    with pytest.raises(BackendUnavailable, match="m2m_token: malformed"):
+        await provider.token()
+
+
+async def test_persistent_backend_401_does_not_mint_a_token_per_call() -> None:
+    """Cognito cobra cada emisión M2M: con el backend rechazando (p. ej. aún sin
+    `COGNITO_M2M_CLIENT_IDS`), se re-emite UNA vez por ventana, no una por llamada."""
+    now = [1000.0]
+    backend, cognito = _backend(lambda r: httpx.Response(401, json={"detail": "Token inválido"}), clock=lambda: now[0])
+
+    for _ in range(5):
+        assert (await backend.get("/api/ads/meta/status", {})).status == 401
+    assert len(cognito.requests) == 2  # el inicial + un reintento forzado
+
+    now[0] += 61  # pasada la ventana, se permite otro intento
+    await backend.get("/api/ads/meta/status", {})
+    assert len(cognito.requests) == 3
+
+
+async def test_concurrent_calls_with_a_rotated_token_all_succeed_with_one_reissue() -> None:
+    """Revisión 2026-11-10: con el cooldown, los que perdían la ventana salían con 401
+    aunque ya hubiera un token nuevo."""
+    import asyncio
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        ok = request.headers["authorization"] != "Bearer m2m-1"  # m2m-1 fue revocado
+        return httpx.Response(200 if ok else 401, json={"connected": False})
+
+    backend, cognito = _backend(handler)
+    responses = await asyncio.gather(*(backend.get("/api/ads/meta/status", {}) for _ in range(5)))
+
+    assert [r.status for r in responses] == [200] * 5
+    assert len(cognito.requests) == 2

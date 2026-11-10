@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from hubara_gateway.backend import BackendResponse
-from hubara_gateway.pii import _contract_fields
+from hubara_gateway.pii import PERSONAL_FIELDS, SAFE_FIELDS
 from hubara_gateway.tools import call_tool
 
 _DATASET = "deepseekHarness/AcktosAgency/salesProductsBot/fixtures/ads/prod-2026-10-09/clean"
@@ -113,7 +113,7 @@ async def test_masked_conversations_keep_contract_shape(entry: dict[str, Any]) -
     assert set(masked) == set(body)
     assert len(masked["conversations"]) == len(body["conversations"])
     for got, orig in zip(masked["conversations"], body["conversations"], strict=True):
-        # Proyección sobre el contrato (allowlist): lo que el backend emite fuera del
-        # contrato Zod (hoy order_status, order_value_cop, source_id) no viaja enmascarado.
-        assert set(got) == set(orig) & _contract_fields()
+        # Solo campos clasificados: lo que el backend emite fuera del contrato Zod
+        # (hoy order_status, order_value_cop, source_id) no viaja enmascarado.
+        assert set(got) == set(orig) & (SAFE_FIELDS | PERSONAL_FIELDS)
         assert orig["phone_number"] not in result.content[0].text

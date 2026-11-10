@@ -6,6 +6,11 @@ variable "tenant" { type = string }
 variable "callback_urls" { type = list(string) }
 variable "logout_urls" { type = list(string) }
 # Loopback del login PKCE del plugin @acktos/dsh-hubara (puerto FIJO: Cognito no admite rangos).
+# Pasa el dominio a managed login (v2). Apagado por defecto: ver el recurso del dominio.
+variable "managed_login" {
+  type    = bool
+  default = false
+}
 variable "dsh_hubara_callback_urls" {
   type    = list(string)
   default = ["http://localhost:53682/callback"]
@@ -99,15 +104,17 @@ resource "aws_cognito_user_group" "operarios" {
 resource "aws_cognito_user_pool_domain" "this" {
   domain       = "agencyhubara-${var.tenant}"
   user_pool_id = aws_cognito_user_pool.this.id
-  # Managed login (v2): requisito del resource binding RFC 8707 (`aud` = URL del
-  # Agent Gateway). Cambia la pantalla de login del dashboard (decisión 2026-10-14).
-  managed_login_version = 2
+  # Managed login (v2) es requisito del resource binding RFC 8707 (`aud` = URL del
+  # Agent Gateway), pero CAMBIA la pantalla de login del dashboard y exige un estilo
+  # por app client. Por eso es opt-in por tienda (`managed_login`): este root se aplica
+  # a menudo por otros motivos y un apply de rutina no debe migrar el login.
+  managed_login_version = var.managed_login ? 2 : 1
 }
 
-# Con managed login cada app client con login web lleva un estilo. El provider
-# fijado (aws ~> 5.40, lock 5.100) no tiene `aws_cognito_managed_login_branding`:
-# los estilos (valores por defecto de Cognito) los crea, idempotente, el script
-# infra/scripts/cognito-managed-login-branding.sh justo después del apply.
+# Al activar `managed_login`: cada app client con login web necesita un estilo. El
+# provider usado (aws 5.x) no tiene `aws_cognito_managed_login_branding`; los estilos
+# (valores por defecto de Cognito) los crea, idempotente, el script
+# infra/scripts/cognito-managed-login-branding.sh — correrlo JUSTO después de ese apply.
 
 # ── Agent Gateway (ADR docs/adr/2026-10-14-agent-gateway-auth.md) ──────
 # Dos resource servers: el gateway MCP (lo que el usuario autoriza al plugin) y la
@@ -198,6 +205,7 @@ output "app_client_id" { value = aws_cognito_user_pool_client.dashboard.id }
 output "user_pool_domain" { value = aws_cognito_user_pool_domain.this.domain }
 output "issuer" { value = local.issuer }
 output "jwks_uri" { value = "${local.issuer}/.well-known/jwks.json" }
+output "managed_login_version" { value = aws_cognito_user_pool_domain.this.managed_login_version }
 output "dsh_hubara_client_id" { value = aws_cognito_user_pool_client.dsh_hubara.id }
 output "agent_gateway_client_id" { value = aws_cognito_user_pool_client.agent_gateway.id }
 output "agent_gateway_client_secret" {

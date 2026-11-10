@@ -36,15 +36,20 @@ gateway ──Bearer M2M propio (hubara-api/ads.read) + X-Hubara-On-Behalf-Of─
 - **Errores:**
   - un 404 del backend → `isError` con `404 not_found: …`;
   - cualquier otro → `isError` sin «404»/«not found» (`backend_error <status>`, `backend_unavailable`,
-    `invalid_arguments`, `contract_violation`).
+    `invalid_arguments`, `contract_violation`, `internal_error`).
+- **Argumentos:** solo los que declara cada tool y solo strings. Un nombre mal escrito o un número
+  se rechaza con `invalid_arguments` (no se ignora). `null` o `""` equivalen a no enviarlo.
 - **PII de conversaciones:** se enmascara por defecto (`_meta["hubara/pii_masked"]`). Se ve sin máscara
-  solo con scope `hubara-mcp/ads.pii` **y** grupo `admin`.
+  solo con scope `hubara-mcp/ads.pii` **y** grupo `admin`. Cada campo está clasificado a mano en
+  `hubara_gateway/pii.py`: si el dashboard agrega uno al contrato, un test obliga a clasificarlo.
+- **Fuera de alcance:** «Dónde compran» (`/api/ads/purchase-places`) no está expuesta; el contrato
+  del plugin tiene estas 11 lecturas.
 
 ## Probar
 
 ```bash
 uv --directory agent_gateway sync
-uv --directory agent_gateway run pytest      # 241 tests
+uv --directory agent_gateway run pytest      # 264 tests
 ```
 
 - **Tests de contrato:** leen las capturas de prod seudonimizadas del repo del plugin (`HUBARA_ADS_FIXTURES`,
@@ -79,9 +84,12 @@ Con `.admin`, todas las vistas dan `OK`. Con `.user`, `conversations` difiere so
 ## Levantar en Docker contra el backend real
 
 1. **Requisito (una vez, con OK del operador):**
-   - `terraform apply` de `infra/terraform/platform` (crea resource servers, app clients y managed login);
-   - `infra/scripts/cognito-managed-login-branding.sh`;
+   - `terraform apply` de `infra/terraform/platform` (crea resource servers y app clients; **no**
+     cambia el login);
    - deploy del backend con `COGNITO_M2M_CLIENT_IDS`.
+   - Managed login es una fase aparte y por tienda (`managed_login = true` + script de estilos).
+     Mientras no esté activo, Cognito no emite `aud`: usar `GATEWAY_REQUIRE_AUDIENCE=false`, que
+     solo se admite con un recurso `localhost`.
    - Orden completo en el ADR de auth.
 2. **Configuración:**
 

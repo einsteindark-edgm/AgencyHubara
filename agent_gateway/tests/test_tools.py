@@ -139,3 +139,49 @@ async def test_call_tool_argument_error_echo_cannot_masquerade_as_domain_404() -
 
     assert result.is_error is True
     assert not PLUGIN_DOMAIN_404.search(_text(result))
+
+
+# ── Argumentos: lo que publica el inputSchema se hace cumplir (auditoría 2026-11-10) ──
+
+
+@pytest.mark.parametrize(
+    ("tool", "args", "needle"),
+    [
+        ("ads_get_campaigns", {"window": 7}, '"window" must be a string'),  # número: antes devolvía 30d callado
+        ("ads_get_campaigns", {"windw": "7d"}, 'unknown parameter "windw"'),  # typo: ídem
+        ("ads_get_campaigns", {"window": "7d", "campaign_id": "x"}, 'unknown parameter "campaign_id"'),
+        ("ads_get_analysis_runs", {"limit": 5}, '"limit" must be a string'),
+        ("ads_get_analysis_runs", {"limit": "--5"}, '"limit"'),
+        ("ads_get_analysis_runs", {"limit": "-5"}, '"limit"'),
+        ("ads_get_meta_status", {"anything": "x"}, 'unknown parameter "anything"'),
+    ],
+)
+async def test_call_tool_rejects_arguments_outside_the_input_schema(tool: str, args: dict, needle: str) -> None:
+    backend = FakeBackend(BackendResponse(200, {"campaigns": [], "orders_stale": False}))
+
+    result = await call_tool(tool, args, backend)
+
+    assert backend.calls == []
+    assert result.is_error is True
+    assert "invalid_arguments" in _text(result)
+    assert needle in _text(result)
+    assert not PLUGIN_DOMAIN_404.search(_text(result))
+
+
+async def test_call_tool_null_argument_means_not_sent() -> None:
+    backend = FakeBackend(BackendResponse(200, {"campaigns": [], "orders_stale": False}))
+
+    result = await call_tool("ads_get_campaigns", {"window": None}, backend)
+
+    assert result.is_error is not True
+    assert backend.calls == [("/api/ads/campaigns", {"days": "30"}, None)]
+
+
+async def test_call_tool_unexpected_exception_is_infra_error_without_internal_text() -> None:
+    """Auditoría 2026-11-10: una excepción imprevista salía como error JSON-RPC con el texto crudo."""
+    backend = FakeBackend(KeyError("access_token from https://internal.example.test"))
+
+    result = await call_tool("ads_get_meta_status", {}, backend)
+
+    assert result.is_error is True
+    assert _text(result) == "internal_error: unexpected KeyError in the gateway"

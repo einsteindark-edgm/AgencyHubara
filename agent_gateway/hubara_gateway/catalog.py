@@ -6,6 +6,7 @@ Espejo de `RESOURCES` en `src/shared/resources.ts` del plugin `@acktos/dsh-hubar
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 from urllib.parse import quote
 
 from hubara_gateway.window import WindowError, parse_window, window_query
@@ -15,6 +16,7 @@ DEFAULT_RUNS_LIMIT = "20"
 # ".." haría que el cliente HTTP normalice la ruta hacia OTRO endpoint de /api/ads/.
 _ID = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
 _ID_PARAMS = frozenset({"campaign_id", "adset_id", "ad_id", "run_id"})
+_LIMIT = re.compile(r"[0-9]{1,6}")
 
 
 class ArgumentError(ValueError):
@@ -138,12 +140,24 @@ _SPECS = (
 TOOLS: dict[str, ToolSpec] = {spec.name: spec for spec in _SPECS}
 
 
-def resolve_request(tool: str, args: dict[str, str]) -> tuple[str, dict[str, str]]:
-    """`(path, query)` del GET al backend para `tool(args)`, o `ArgumentError`."""
+def resolve_request(tool: str, args: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    """`(path, query)` del GET al backend para `tool(args)`, o `ArgumentError`.
+
+    Hace cumplir el `inputSchema` publicado: solo los argumentos de la tool y solo strings.
+    Un nombre mal escrito o un número NO se ignoran (devolverían, callados, otra ventana).
+    `null` o `""` equivalen a no enviar el argumento.
+    """
     spec = TOOLS[tool]
-    present = {k: v for k, v in args.items() if v not in (None, "")}
+    for name, value in args.items():
+        if name not in spec.arguments:
+            allowed = ", ".join(spec.arguments) or "none"
+            raise ArgumentError(f'unknown parameter "{str(name)[:64]}" (this tool accepts: {allowed})')
+        if value is not None and not isinstance(value, str):
+            raise ArgumentError(f'parameter "{name}" must be a string, got {type(value).__name__}')
+    present: dict[str, str] = {k: v for k, v in args.items() if v not in (None, "")}
+
     for name in _ID_PARAMS & present.keys():
-        value = str(present[name])
+        value = present[name]
         if not _ID.fullmatch(value) or not value.strip("."):
             raise ArgumentError(f'invalid parameter "{name}": unsupported characters')
 
@@ -151,7 +165,7 @@ def resolve_request(tool: str, args: dict[str, str]) -> tuple[str, dict[str, str
     for name in spec.required:
         if name not in present:
             raise ArgumentError(f'missing parameter "{name}"')
-        path_params[name] = quote(str(present[name]), safe="")
+        path_params[name] = quote(present[name], safe="")
 
     query: dict[str, str] = {}
     if spec.windowed:
@@ -163,9 +177,9 @@ def resolve_request(tool: str, args: dict[str, str]) -> tuple[str, dict[str, str
     query.update(spec.query_defaults)
     for name in spec.optional:
         if name in present:
-            query[name] = str(present[name])
+            query[name] = present[name]
 
-    if "limit" in query and not query["limit"].lstrip("-").isdigit():
-        raise ArgumentError(f'invalid parameter "limit": {query["limit"]!r} is not an integer')
+    if "limit" in query and not _LIMIT.fullmatch(query["limit"]):
+        raise ArgumentError('invalid parameter "limit": expected 1 to 6 digits')
 
     return spec.path.format(**path_params), query

@@ -117,6 +117,17 @@
               }
             ]
           },
+          "neighborhood": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "llm_cost_usd": {
             "anyOf": [
               {

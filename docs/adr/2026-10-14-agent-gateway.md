@@ -39,6 +39,12 @@ está fijado en `src/shared/resources.ts` y `src/shared/window.ts` del plugin:
    - Límite de body (413), rate limit por principal (429) y timeout + tope de tamaño hacia el
      backend.
    - **Deny-by-default:** toda ruta exige token salvo `/healthz` y el PRM.
+   - **Los argumentos se validan contra el `inputSchema` publicado:** un nombre desconocido o un
+     valor que no es string se rechaza con `invalid_arguments`. Antes se ignoraba en silencio y, por
+     ejemplo, `window: 7` devolvía la ventana por defecto.
+   - **Nada imprevisto sale crudo:** una excepción no prevista se responde como `isError`
+     `internal_error` con solo el tipo. El log lleva el tipo y dónde ocurrió, sin el mensaje de la
+     excepción (puede traer URLs o datos).
 4. **El contrato se prueba, no se supone.**
    - `outputSchema` se **genera** desde los contratos Zod del dashboard
      (`scripts/gen_output_schemas.mts`) como draft-07, en modo input y sin
@@ -52,16 +58,22 @@ está fijado en `src/shared/resources.ts` y `src/shared/window.ts` del plugin:
    - Las capturas **no se copian** a este repo (es público) y se leen por `HUBARA_ADS_FIXTURES`.
 5. **Solo lectura por construcción.**
    - No hay tools de escritura, y el cliente HTTP solo hace `GET` a paths bajo `/api/ads/`.
+   - Las rutas del catálogo y las que el backend autoriza al M2M son la misma lista: un test del
+     gateway lee la regla del backend con `ast` y exige igualdad exacta (un solo scope, solo `GET`,
+     los mismos patrones).
    - Los ids de los argumentos tienen allowlist `[A-Za-z0-9_.:-]`, sin `/` y sin solo puntos: un
      `..` normalizado por el cliente HTTP alcanzaría otra ruta.
    - Las tools llevan `readOnlyHint: true`, `destructiveHint: false` e `idempotentHint: true`.
      Son pistas; lo que realmente garantiza la lectura es lo anterior.
 6. **PII enmascarada por defecto en el servidor.**
-   - `ads_get_conversations` **proyecta cada fila sobre los campos del contrato** (allowlist, no
-     exclusión). Un campo nuevo del backend con datos personales no viaja hasta que alguien lo
-     agregue al contrato.
+   - Cada campo de una conversación está **clasificado a mano** en `hubara_gateway/pii.py` como
+     seguro o personal. Solo viajan los clasificados, y del nivel superior del body solo
+     `campaign_id`, `conversations` y `orders_stale`.
+   - Las listas **no** se derivan del schema generado (auditoría 2026-11-10): así salió sin tapar
+     `neighborhood` cuando el dashboard lo agregó al contrato. Un campo del contrato sin clasificar
+     hace fallar un test y, mientras tanto, no viaja.
    - Reemplaza `phone_number`, `name` e `id` (que contiene el teléfono) con el formato de
-     `maskPhone` / `maskName` del plugin, y pone `city` en `null`.
+     `maskPhone` / `maskName` del plugin, y pone `city` y `neighborhood` en `null`.
    - El shape del contrato no cambia, y el resultado lleva `_meta["hubara/pii_masked"]`.
    - Hallazgo: el backend real emite 3 campos que **no** están en el Zod (`order_status`,
      `order_value_cop`, `source_id`). El plugin igual los descarta al parsear. Si hacen falta, se
@@ -87,6 +99,10 @@ Pausar o activar campañas y aprobar corridas requiere todo esto, en un ADR prop
 - `Idempotency-Key` obligatorio.
 
 ## Consecuencias
+
+- **No es todo el menú Ads.** El contrato del plugin tiene 11 lecturas. La vista «Dónde compran»
+  (`GET /api/ads/purchase-places`, posterior a este diseño) no está expuesta: sumarla es una tool
+  nueva en el plugin, en el catálogo y en la regla M2M del backend.
 
 - **Despliegue a prod pendiente** (otro ADR u operación):
   - Caddy hoy hace `reverse-proxy` a un único upstream; publicar `/mcp` exige un Caddyfile con

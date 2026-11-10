@@ -10,6 +10,7 @@ Contrato con `McpAdsSource` del plugin:
 import json
 import logging
 import re
+import traceback
 from typing import Any
 
 from mcp_types import CallToolResult, TextContent
@@ -49,11 +50,28 @@ async def call_tool(
     subject: str | None = None,
     pii_allowed: bool = False,
 ) -> CallToolResult:
+    try:
+        return await _call_tool(name, args, backend, subject=subject, pii_allowed=pii_allowed)
+    except Exception as exc:  # noqa: BLE001 — nada imprevisto sale crudo al cliente
+        # Tipo y lugar, sin el mensaje: el texto de una excepción arbitraria puede traer URLs o datos.
+        where = " < ".join(f"{f.name}:{f.lineno}" for f in reversed(traceback.extract_tb(exc.__traceback__)[-3:]))
+        logger.error("tool=%s internal_error type=%s at=%s", name, type(exc).__name__, where)
+        return _infra_error(f"internal_error: unexpected {type(exc).__name__} in the gateway")
+
+
+async def _call_tool(
+    name: str,
+    args: dict[str, Any],
+    backend: Backend,
+    *,
+    subject: str | None,
+    pii_allowed: bool,
+) -> CallToolResult:
     spec = TOOLS.get(name)
     if spec is None:
         return _infra_error(f"unknown tool {name!r}")
     try:
-        path, query = resolve_request(name, {k: v for k, v in args.items() if isinstance(v, str)})
+        path, query = resolve_request(name, args)
     except ArgumentError as exc:
         return _infra_error(f"invalid_arguments: {exc}")
 
