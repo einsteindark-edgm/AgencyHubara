@@ -29,6 +29,7 @@ Prioridad de señales (de mayor a menor confianza):
        pago — para el dashboard de ads ya es "ganado" porque la intención
        de compra cerró desde el cliente; el ajuste a "perdido" se hace si
        el humano aborta el pedido y reabre el chat).
+  5b. closing_tag TIMEOUT / CAMPAIGN_REPLY   → no_reply  (cierre por abandono)
   6. episode.closed_at_ms != null (otro)     → cotizado  (cierre desconocido, conservador)
   7. current_tag == INTERESADO               → calificado
   8. current_tag in HUMANO/RETOMA_VENTA      → activo
@@ -50,6 +51,17 @@ NO_REPLY_THRESHOLD_MS: int = 24 * 60 * 60 * 1000  # 24 horas
 NEW_CONVERSATION_MSG_THRESHOLD: int = 2
 
 
+# Cierres que pone el ciclo de vida del episodio, no el agente, cuando el
+# cliente abandonó — reflejan `episode_lifecycle.TIMEOUT_CLOSING_TAG` y
+# `CAMPAIGN_CLOSING_TAG` (repetidos acá: ads no importa chats).
+_ABANDON_CLOSING_TAGS: frozenset[str] = frozenset({"TIMEOUT", "CAMPAIGN_REPLY"})
+
+# Cierres que dicen "hubo venta" (pedido registrado).
+_SALE_CLOSING_TAGS: frozenset[str] = frozenset(
+    {"COMPRA_EXITOSA", "CONFIRMADO_PAGO_PENDIENTE"}
+)
+
+
 # Set canónico de estados válidos — útil para validación downstream.
 VALID_STATES: frozenset[str] = frozenset(
     {"no_reply", "nuevo", "activo", "calificado", "cotizado", "ganado", "perdido"}
@@ -64,6 +76,7 @@ def classify_episode_state(
     last_inbound_ms: int | None,
     now_ms: int,
     order_cancelled: bool = False,
+    order_void: bool = False,
 ) -> str:
     """Clasifica un episodio en uno de los 7 `AdsState`.
 
@@ -82,6 +95,10 @@ def classify_episode_state(
       order_cancelled: el pedido del episodio está cancelado en Orders
         (`OrderFacts.stage == "cancelled"`). Gana sobre cualquier señal del
         chat: una venta cancelada no es una venta.
+      order_void: el pedido del episodio no es una venta de ESTE episodio
+        (ya lo contó un episodio anterior de la conversación). El episodio
+        llegó al pedido pero no trae una venta nueva: un cierre de venta pasa
+        a "cotizado" y el resto se clasifica como si no hubiera pedido.
 
     Returns:
       String del `AdsState`. Siempre uno de `VALID_STATES`.
@@ -90,11 +107,15 @@ def classify_episode_state(
     if order_cancelled:
         return "perdido"
 
-    # 1. Episodio con order_id → venta cerrada (Medusa registró).
-    if episode.get("order_id"):
-        return "ganado"
-
     closing_tag = episode.get("closing_tag")
+
+    # 0b. El pedido no es una venta de este episodio → nunca "ganado".
+    if order_void:
+        if closing_tag in _SALE_CLOSING_TAGS:
+            return "cotizado"
+    # 1. Episodio con order_id → venta cerrada (Medusa registró).
+    elif episode.get("order_id"):
+        return "ganado"
 
     # 2-5. Cierre formal via tag.
     if closing_tag == "COMPRA_EXITOSA":
@@ -111,9 +132,11 @@ def classify_episode_state(
         # orders revierte el estado de la orden en Medusa, no acá.
         return "ganado"
 
-    # 5b. CAMPAIGN_REPLY: el episodio quedó abierto sin respuesta y el cliente volvió
-    # respondiendo a una campaña (que abrió otro episodio) — abandono.
-    if closing_tag == "CAMPAIGN_REPLY":
+    # 5b. Cierres sintéticos del ciclo de vida (no los pone el agente) — abandono:
+    #   - TIMEOUT: el cliente no volvió en 14 días (`episode_lifecycle`).
+    #   - CAMPAIGN_REPLY: quedó abierto sin respuesta y el cliente volvió
+    #     respondiendo a una campaña (que abrió otro episodio).
+    if closing_tag in _ABANDON_CLOSING_TAGS:
         return "no_reply"
 
     # 6. Cierre con tag desconocido (defensivo) — conservador: cotizado.
@@ -158,6 +181,7 @@ def classify_state(
     last_inbound_ms: int | None,
     now_ms: int,
     order_cancelled: bool = False,
+    order_void: bool = False,
 ) -> str:
     """Clasifica una sesión sin `episodes[]` (legacy fallback).
 
@@ -196,4 +220,5 @@ def classify_state(
         last_inbound_ms=last_inbound_ms,
         now_ms=now_ms,
         order_cancelled=order_cancelled,
+        order_void=order_void,
     )

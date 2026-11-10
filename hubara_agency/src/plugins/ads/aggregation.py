@@ -447,34 +447,13 @@ def _empty_state_counts() -> dict[str, int]:
 #: `AdsAttributedConversation.state_reason` cuando el estado lo decide la etapa
 #: del pedido en Orders y no el chat.
 STATE_REASON_ORDER_CANCELLED = "order_cancelled"
-
-
-def _episode_order_cancelled(
-    episode: dict[str, Any] | None,
-    metadata: dict[str, Any],
-    order_facts: OrderFactsSnapshot | None,
-) -> bool:
-    """¿El pedido del episodio está cancelado en Orders?
-
-    El chat conserva `order_id` + COMPRA_EXITOSA aunque el pedido se cancele
-    después (caso 2026-09-18: contra entrega confirmado y cancelado al día
-    siguiente), así que la etapa se lee de `OrderFacts` — la misma fuente que
-    el revenue. Sin dato del pedido (Medusa caído, id inexistente) devuelve
-    False: no se degrada una venta sin evidencia.
-
-    `episode=None` = sesión legacy sin `episodes[]` → su `registered_order`.
-    """
-    if order_facts is None:
-        return False
-    if episode is not None:
-        oid = episode.get("order_id")
-    else:
-        reg = metadata.get("registered_order")
-        oid = reg.get("order_id") if isinstance(reg, dict) else None
-    if not isinstance(oid, str) or not oid:
-        return False
-    fact = order_facts.facts.get(oid)
-    return fact is not None and fact.stage == "cancelled"
+#: El pedido del episodio ya lo trajo un episodio anterior de la conversación
+#: (mismo `order_id`): la venta cuenta una sola vez, en el primero.
+STATE_REASON_ORDER_REPEATED = "order_repeated"
+#: El pedido está marcado «prueba» en Órdenes: no es una venta.
+STATE_REASON_ORDER_TEST = "order_test"
+#: Medusa confirmó que el pedido ya no existe (borrador borrado): no es venta.
+STATE_REASON_ORDER_MISSING = "order_missing"
 
 
 #: Lo último que Meta sabe del pedido (badge CAPI) → estado, cuando Orders no
@@ -496,6 +475,39 @@ def _episode_order_id(
         reg = metadata.get("registered_order")
         oid = reg.get("order_id") if isinstance(reg, dict) else None
     return oid if isinstance(oid, str) and oid else None
+
+
+def _episode_order_reason(
+    episode: dict[str, Any] | None,
+    metadata: dict[str, Any],
+    order_facts: OrderFactsSnapshot | None,
+    counted: set[str],
+) -> str | None:
+    """Por qué el pedido del episodio NO es una venta de este episodio, o None
+    (es su venta, o no tiene pedido). Mutates `counted`: los pedidos que la
+    conversación ya contó — un pedido es de su PRIMER episodio.
+
+    La etapa y la marca de prueba se leen de `OrderFacts` (gotcha 13): el chat
+    conserva `order_id` + COMPRA_EXITOSA aunque el pedido se cancele después
+    (caso 2026-09-18). Si Orders no pudo responder por el pedido
+    (`unresolved`, o sin snapshot), el chat manda: sin evidencia no se degrada
+    una venta. `episode=None` = sesión legacy → su `registered_order`."""
+    oid = _episode_order_id(episode, metadata)
+    if oid is None:
+        return None
+    if oid in counted:
+        return STATE_REASON_ORDER_REPEATED
+    counted.add(oid)
+    if order_facts is None:
+        return None
+    fact = order_facts.facts.get(oid)
+    if fact is None:
+        return None if oid in order_facts.unresolved else STATE_REASON_ORDER_MISSING
+    if fact.stage == "cancelled":
+        return STATE_REASON_ORDER_CANCELLED
+    if fact.is_test:
+        return STATE_REASON_ORDER_TEST
+    return None
 
 
 def _episode_order_value(
@@ -568,17 +580,19 @@ def _iter_episodes(
     last_msg_ms: int | None,
     now_ms: int,
     order_facts: OrderFactsSnapshot | None = None,
-) -> Iterator[tuple[dict[str, Any] | None, str]]:
-    """Yields (episode_dict_or_None, state) por cada episodio de la sesión.
+) -> Iterator[tuple[dict[str, Any] | None, str, str | None]]:
+    """Yields (episode_dict_or_None, state, state_reason) por cada episodio.
 
-    Con `order_facts`, un episodio cuyo pedido está cancelado en Orders sale
-    "perdido" (ver `_episode_order_cancelled`).
+    `state_reason` (ver `_episode_order_reason`) dice por qué el pedido del
+    episodio no es una venta suya; con él el episodio no aporta revenue. Con
+    `order_facts`, un pedido cancelado en Orders sale "perdido"; un pedido que
+    ya contó un episodio anterior de la sesión nunca sale "ganado" otra vez.
 
     - Si `metadata.episodes` está poblado → yields uno por episodio.
       `episode_dict` es el dict tal cual, `state` se computa con
       `classify_episode_state`. Para episodios cerrados, `current_tag=None`.
       Para el episodio activo (último sin cerrar), `current_tag=metadata.tag`.
-    - Si NO hay `episodes[]` (legacy) → yields un solo `(None, state)`
+    - Si NO hay `episodes[]` (legacy) → yields un solo `(None, state, reason)`
       donde `state` se computa con `classify_state` legacy.
 
     `total_msgs_fn` es un getter LAZY del conteo de mensajes (lee el JSONL).
@@ -588,23 +602,26 @@ def _iter_episodes(
     `classify_episode_state`) sin tocar el conteo → no se lee su historial.
     """
     episodes = metadata.get("episodes")
+    counted: set[str] = set()
 
     if not episodes:
         # Legacy fallback: una "pseudo-conversación" por sesión.
+        reason = _episode_order_reason(None, metadata, order_facts, counted)
         state = classify_state(
             metadata,
             total_msgs=total_msgs_fn(),
             last_inbound_ms=last_msg_ms,
             now_ms=now_ms,
-            order_cancelled=_episode_order_cancelled(None, metadata, order_facts),
+            **_order_flags(reason),
         )
-        yield (None, state)
+        yield (None, state, reason)
         return
 
     current_tag = metadata.get("tag")
     last_idx = len(episodes) - 1
 
     for idx, ep in enumerate(episodes):
+        reason = _episode_order_reason(ep, metadata, order_facts, counted)
         is_active = idx == last_idx and ep.get("closed_at_ms") is None
         # current_tag solo aplica al episodio activo. Para episodios cerrados,
         # closing_tag ya está en el episode dict.
@@ -618,9 +635,17 @@ def _iter_episodes(
             total_msgs=total_msgs,
             last_inbound_ms=last_msg_ms if is_active else ep.get("closed_at_ms"),
             now_ms=now_ms,
-            order_cancelled=_episode_order_cancelled(ep, metadata, order_facts),
+            **_order_flags(reason),
         )
-        yield (ep, state)
+        yield (ep, state, reason)
+
+
+def _order_flags(reason: str | None) -> dict[str, bool]:
+    """`state_reason` → los flags del clasificador."""
+    return {
+        "order_cancelled": reason == STATE_REASON_ORDER_CANCELLED,
+        "order_void": reason is not None and reason != STATE_REASON_ORDER_CANCELLED,
+    }
 
 
 def _episode_to_campaign_id(
@@ -775,10 +800,11 @@ def _session_capi_by_episode(
     if not isinstance(events, list) or not events:
         return out
 
+    # Un pedido es de su PRIMER episodio (ver `_episode_order_reason`).
     order_to_ep: dict[str, str | None] = {}
     for ep in metadata.get("episodes") or []:
         if isinstance(ep, dict) and isinstance(ep.get("order_id"), str):
-            order_to_ep[ep["order_id"]] = ep.get("episode_id")
+            order_to_ep.setdefault(ep["order_id"], ep.get("episode_id"))
 
     episode_marker = f"_{session_id}_"
     for e in events:
@@ -814,6 +840,25 @@ def _session_capi_by_episode(
         elif status.startswith("skipped"):
             slot["skipped"] += 1
     return out
+
+
+def first_chat_ms(sessions: list[tuple[Path, dict[str, Any]]]) -> int | None:
+    """Inicio del chat más viejo del vault (episodios; legacy: `origin`), o None.
+
+    Es desde cuándo el vault tiene chats: «Total» le pide el gasto a Meta desde
+    ahí, para comparar gasto e ingresos del mismo período."""
+    starts: list[int] = []
+    for _session_dir, metadata in sessions:
+        episodes = [ep for ep in metadata.get("episodes") or [] if isinstance(ep, dict)]
+        if episodes:
+            starts.extend(
+                ep["started_at_ms"] for ep in episodes if isinstance(ep.get("started_at_ms"), int)
+            )
+        else:
+            first_seen = (metadata.get("origin") or {}).get("first_seen_ms")
+            if isinstance(first_seen, int):
+                starts.append(first_seen)
+    return min(starts) if starts else None
 
 
 def session_order_ids(sessions: list[tuple[Path, dict[str, Any]]]) -> set[str]:
@@ -1208,7 +1253,7 @@ def list_ads_campaigns(
         ):
             opted_out[opt_out.campaign_id] = opted_out.get(opt_out.campaign_id, 0) + 1
 
-        for ep, state in _iter_episodes(
+        for ep, state, order_reason in _iter_episodes(
             metadata,
             session_dir=session_dir,
             origin=origin,
@@ -1254,8 +1299,12 @@ def list_ads_campaigns(
                 responders.setdefault(campaign_id, set()).add(session_dir.name)
 
             # Ingreso atribuido (frozen en el episodio, backfill desde
-            # registered_order). Solo episodios con venta aportan.
-            rev = _episode_revenue_cop(ep, order_totals, order_facts)
+            # registered_order). Solo episodios con venta PROPIA aportan.
+            rev = (
+                _episode_revenue_cop(ep, order_totals, order_facts)
+                if order_reason is None
+                else None
+            )
             if rev is not None:
                 bucket["revenue"] += rev
                 bucket["revenue_count"] += 1
@@ -1456,7 +1505,7 @@ def list_attributed_conversations(
         order_totals = _session_order_totals(metadata)
         capi_idx = _session_capi_by_episode(metadata, session_id)
 
-        for ep, state in _iter_episodes(
+        for ep, state, order_reason in _iter_episodes(
             metadata,
             session_dir=session_dir,
             origin=origin,
@@ -1526,6 +1575,9 @@ def list_attributed_conversations(
                 _capi_event = "LeadSubmitted"
             else:
                 _capi_event = None
+            # El pedido repetido es del episodio anterior: esta fila no lo lleva
+            # (el análisis con IA cuenta ventas por `order_status`).
+            _owns_order = order_reason != STATE_REASON_ORDER_REPEATED
             convs.append(
                 AdsAttributedConversation(
                     id=conv_id,
@@ -1541,7 +1593,11 @@ def list_attributed_conversations(
                     neighborhood=_neighborhood,
                     # Valor de la venta atribuida (frozen en el episodio,
                     # backfill desde registered_order) + duración del episodio.
-                    value=_episode_revenue_cop(ep, order_totals, order_facts),
+                    value=(
+                        _episode_revenue_cop(ep, order_totals, order_facts)
+                        if order_reason is None
+                        else None
+                    ),
                     duration_ms=_episode_duration_ms(ep),
                     llm_cost_usd=(
                         _usage.get("cost_usd") if isinstance(_usage, dict) else None
@@ -1561,17 +1617,17 @@ def list_attributed_conversations(
                     audio_cost_usd_micros=_audio[0] if _audio else None,
                     audio_calls=_audio[1] if _audio else None,
                     capi_event=_capi_event,
-                    state_reason=(
-                        STATE_REASON_ORDER_CANCELLED
-                        if _episode_order_cancelled(ep, metadata, order_facts)
+                    state_reason=order_reason,
+                    source_id=ep_campaign_id,
+                    order_status=(
+                        _episode_order_status(ep, metadata, order_facts, _capi_event)
+                        if _owns_order
                         else None
                     ),
-                    source_id=ep_campaign_id,
-                    order_status=_episode_order_status(
-                        ep, metadata, order_facts, _capi_event
-                    ),
-                    order_value_cop=_episode_order_value(
-                        ep, metadata, order_facts, order_totals
+                    order_value_cop=(
+                        _episode_order_value(ep, metadata, order_facts, order_totals)
+                        if _owns_order
+                        else None
                     ),
                 )
             )
@@ -1708,7 +1764,7 @@ def list_daily_series(
         last_msg_ms = _last_msg_at_ms(session_dir, last_touch, origin)
         count_fn = _make_line_counter(session_dir)
 
-        for ep, state in _iter_episodes(
+        for ep, state, _order_reason in _iter_episodes(
             metadata,
             session_dir=session_dir,
             origin=origin,

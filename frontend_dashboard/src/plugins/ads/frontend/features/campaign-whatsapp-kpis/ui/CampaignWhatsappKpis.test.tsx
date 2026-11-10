@@ -31,6 +31,7 @@ function campaign(overrides: Partial<AdsCampaign>): AdsCampaign {
     sourceType: "hubara_campaign",
     started: 12,
     revenue: 94_000,
+    paidSales: 2,
     conversations: {
       no_reply: 0, nuevo: 4, activo: 3, calificado: 2, cotizado: 1, ganado: 2, perdido: 0,
     },
@@ -67,6 +68,14 @@ describe("CampaignWhatsappKpis", () => {
     expect(within(screen.getByTestId("wa-send-roas")).getByText("20.9×")).toBeTruthy();
     expect(within(screen.getByTestId("wa-send-failed")).getByText("3")).toBeTruthy();
     expect(within(screen.getByTestId("wa-send-opted-out")).getByText("2")).toBeTruthy();
+  });
+
+  it("el último paso son pedidos y el costo por venta se mide sobre las pagadas", () => {
+    // Auditoría 2026-11-10: 2 pedidos, 1 pagado → US$1.125 ÷ 1 (antes ÷ 2).
+    render(<CampaignWhatsappKpis campaign={campaign({ paidSales: 1 })} />);
+
+    expect(within(screen.getByTestId("wa-send-sales")).getByText("Pedidos")).toBeTruthy();
+    expect(within(screen.getByTestId("wa-send-per-sale")).getByText("US$1.13")).toBeTruthy();
   });
 
   it("avisa los mensajes que todavía no tienen precio y los enviados sin registro", () => {
