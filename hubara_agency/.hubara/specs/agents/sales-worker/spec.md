@@ -687,6 +687,35 @@ Las tres decisiones nuevas nacen apagadas (`reglas`) y se encienden por comando.
 - THEN el texto vuelve al modelo con «el pedido ya tiene la cantidad: 1 × Velas de deseos cuadradas»
 - AND el segundo intento sale
 
+### Requirement: La objeción del cliente se anota y nada más (`ventas-9`, 2026-11-10)
+
+Con `ventas-9`, el ingest SHALL pedir la decisión `objecion` por cada mensaje
+que el cliente escribió: Jev dice si puso una objeción para comprar y de qué
+tipo (lista cerrada: `precio`, `envio`, `tiempo_entrega`, `confianza`,
+`producto`; «ninguna» se anota como leída y sin tipo). Queda en las decisiones
+de la conversación (`evals/decisions.jsonl`, etapa `ingest`, con su mensaje) y
+el informe de estrategia la cuenta por tipo y por lo que pasó después.
+
+La decisión MUST NOT cambiar nada del turno, en ningún modo: su valor no entra
+a las lecturas del mensaje (`Readings`), no escribe campos del metadata y no va
+a la cola de desacuerdos. Nace apagada (`reglas`: Jev no se consulta); se
+enciende en sombra por comando. Si falla, o Jev tarda más que el tope del
+ingest para lo que solo anota (`OBSERVATION_WAIT_S`), el mensaje sigue sin la
+nota. Con un paquete anterior no existe.
+
+#### Scenario: el cliente objeta el precio (sombra)
+
+- GIVEN `objecion` en sombra y el paquete `ventas-9`
+- WHEN el cliente escribe que la vela le parece muy cara
+- THEN queda una decisión `objecion` con lo que leyó Jev (`precio`) en la conversación
+- AND las lecturas del mensaje son las mismas que con `ventas-8`
+
+#### Scenario: Jev se cuelga en la objeción
+
+- GIVEN `objecion` en sombra
+- WHEN Jev no contesta esa pregunta
+- THEN el ingest no la espera más que su tope y el mensaje sigue sin la nota
+
 ### Requirement: Todo turno lleva la hora de Bogotá (2026-09-29)
 
 Cada turno que llega al LLM MUST traer en `plugin_context` el bloque «Hora

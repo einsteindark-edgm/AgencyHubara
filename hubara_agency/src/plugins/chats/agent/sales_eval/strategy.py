@@ -51,17 +51,30 @@ NORTH_STAR = (
     "conversaciones de la ventana. «relevos_sin_verificar_pago_por_100» deja fuera la verificación del pago de un "
     "pedido que ya registró el bot. Bajar es mejor."
 )
+#: La decisión que anota la objeción de cada mensaje del cliente (paquete
+#: ventas-9) y sus tipos (lista cerrada). `NO_OBJECTION`: Jev leyó el mensaje y
+#: no había objeción.
+OBJECTION_CAPABILITY = "objecion"
+OBJECTION_KINDS = ("precio", "envio", "tiempo_entrega", "confianza", "producto")
+NO_OBJECTION = "ninguna"
+#: Lo que dice la sección mientras no hay ninguna nota en las dos ventanas.
 OBJECTIONS = {
     "disponible": False,
     "motivo": (
-        "Producción no registra el tipo de objeción ni si se resolvió: el scorecard solo califica si el bot escaló "
-        "cuando el guion lo exige (TAG-03) y el motor de decisiones no tiene una capacidad de objeciones."
+        "No hay ninguna objeción anotada en las ventanas del informe: la decisión «objecion» (paquete ventas-9) "
+        "no ha leído ningún mensaje de estas conversaciones."
     ),
     "faltante": (
-        "Una capacidad «objecion» en el paquete de decisiones (tipo cerrado: precio, envío, tiempo de entrega, "
-        "confianza, producto) que deje en evals/decisions.jsonl el tipo y si el cliente siguió hacia la compra."
+        "Promover un paquete que traiga «objecion» (ventas-9 o posterior) y encenderla en sombra por comando. "
+        "Los números de prueba no cuentan en este informe."
     ),
 }
+OBJECTIONS_NOTE = (
+    "Por cada mensaje del cliente, Jev anota si puso una objeción y de qué tipo (solo anota: no cambia lo que el "
+    "bot responde). «lecturas»: mensajes que Jev leyó, con objeción o sin ella; «sin_lectura»: Jev no llegó al "
+    "umbral. Por tipo, en conversaciones: «siguieron_hacia_la_compra» = después de la primera objeción de ese "
+    "tipo la conversación avanzó de etapa; «terminaron_en_pedido» = la conversación tiene un pedido (OrderFacts)."
+)
 JEV_NOTE = (
     "Solo las decisiones en las que Jev participó (proveedor jev o sombra). «jev_dudo»: Jev no llegó al umbral "
     "y decidió la regla; «valor_duda»: la capacidad respondió «duda». En sombra la duda no queda registrada: "
@@ -154,6 +167,28 @@ def _decision(row: dict[str, Any]) -> _Decision:
     )
 
 
+@dataclass(frozen=True)
+class _Objection:
+    """Lo que `objecion` anotó de un mensaje del cliente."""
+
+    #: Un tipo de `OBJECTION_KINDS`, `NO_OBJECTION`, o None si Jev no lo leyó.
+    kind: str | None
+    #: Después de ese mensaje la conversación avanzó de etapa.
+    advanced: bool
+
+
+def _objection_kind(row: dict[str, Any]) -> str | None:
+    """El tipo que quedó anotado: en sombra decide la regla (nada) y lo que
+    leyó Jev está en `jev`; si Jev decide, en `value`. Solo pasa un tipo de la
+    lista: cualquier otro texto se cuenta como no leído, nunca se copia."""
+    read = row.get("value") if row.get("by") == "jev" else row.get("jev")
+    if isinstance(read, str) and read in OBJECTION_KINDS:
+        return read
+    if not read and row.get("agree") is True:
+        return NO_OBJECTION
+    return None
+
+
 @dataclass
 class _Episode:
     window: str
@@ -164,6 +199,7 @@ class _Episode:
     handoffs: list[_Handoff] = field(default_factory=list)
     team: list[_TeamMessage] = field(default_factory=list)
     decisions: list[_Decision] = field(default_factory=list)
+    objections: list[_Objection] = field(default_factory=list)
     #: Lo que dice OrderFacts del pedido del episodio (None: sin pedido).
     order: str | None = None
 
@@ -276,6 +312,15 @@ class _Timeline:
         i = bisect.bisect_right(turns, (at_ms, "\uffff"))
         return (turns[i - 1][1] or NO_BOT_TURN) if i else NO_BOT_TURN
 
+    def advanced_after(self, episode_id: str, at_ms: int) -> bool:
+        """¿Algún turno posterior dejó la conversación en una etapa más
+        adelante que la que tenía en ese momento? (Antes del primer turno del
+        bot, la primera etapa.)"""
+        turns = self._turns.get(episode_id) or []
+        i = bisect.bisect_right(turns, (at_ms, "\uffff"))
+        before = _STAGE_RANK.get(turns[i - 1][1], 0) if i else 0
+        return any(_STAGE_RANK.get(stage, -1) > before for _, stage in turns[i:])
+
 
 def _handoffs(metadata: dict[str, Any], timeline: _Timeline) -> dict[str, list[_Handoff]]:
     """Cada paso a la ruta del equipo (`status_history`), por episodio. Una
@@ -362,6 +407,20 @@ def _decisions_by_episode(rows: list[dict[str, Any]], timeline: _Timeline) -> di
     return out
 
 
+def _objections_by_episode(rows: list[dict[str, Any]], timeline: _Timeline) -> dict[str, list[_Objection]]:
+    out: dict[str, list[_Objection]] = {}
+    for row in rows:
+        if row.get("capability") != OBJECTION_CAPABILITY:
+            continue
+        at_ms = _ms(row.get("at_ms"))
+        episode_id = timeline.episode_at(at_ms) if at_ms is not None else None
+        if episode_id is not None and at_ms is not None:
+            out.setdefault(episode_id, []).append(
+                _Objection(kind=_objection_kind(row), advanced=timeline.advanced_after(episode_id, at_ms))
+            )
+    return out
+
+
 def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, windows: _Windows) -> list[_Episode]:
     raw = [e for e in metadata.get("episodes") or [] if isinstance(e, dict)]
     in_window = [(e, windows.of(e.get("started_at_ms"))) for e in raw]
@@ -371,7 +430,9 @@ def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, win
     timeline = _Timeline(raw, traces)
     handoffs = _handoffs(metadata, timeline)
     team = _team_messages(_team_events(vault_dir, session_id), timeline)
-    decisions = _decisions_by_episode(read_decisions(vault_dir, session_id), timeline)
+    rows = read_decisions(vault_dir, session_id)
+    decisions = _decisions_by_episode(rows, timeline)
+    objections = _objections_by_episode(rows, timeline)
     out: list[_Episode] = []
     for episode, window in in_window:
         if window is None:
@@ -385,7 +446,7 @@ def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, win
             furthest=_furthest([*(t.get("stage_out") for t in own), project_stage(episode)]),
             order_id=str(episode["order_id"]) if episode.get("order_id") else None,
             handoffs=handoffs.get(episode_id, []), team=team.get(episode_id, []),
-            decisions=decisions.get(episode_id, []),
+            decisions=decisions.get(episode_id, []), objections=objections.get(episode_id, []),
         ))
     return out
 
@@ -469,6 +530,37 @@ def _jev_section(episodes: list[_Episode]) -> dict[str, Any]:
         "por_capacidad": dict(ordered),
         "respaldo_por_motivo": _counts(d.fallback for d in items if d.fallback),
     }
+
+
+def _objections_section(episodes: list[_Episode]) -> dict[str, Any]:
+    notes = [o for ep in episodes for o in ep.objections]
+    real = [o.kind for o in notes if o.kind in OBJECTION_KINDS]
+    by_kind: dict[str, dict[str, int]] = {}
+    for kind, messages in _counts(real).items():
+        # Por conversación, desde la primera objeción de ese tipo.
+        firsts = [(ep, first) for ep in episodes
+                  if (first := next((o for o in ep.objections if o.kind == kind), None)) is not None]
+        by_kind[kind] = {
+            "mensajes": messages,
+            "conversaciones": len(firsts),
+            "siguieron_hacia_la_compra": sum(1 for _, first in firsts if first.advanced),
+            "terminaron_en_pedido": sum(1 for ep, _ in firsts if ep.order in (ORDER_PAID, ORDER_PLACED)),
+        }
+    return {
+        "lecturas": sum(1 for o in notes if o.kind is not None),
+        "sin_lectura": sum(1 for o in notes if o.kind is None),
+        "con_objecion": len(real),
+        "conversaciones_con_objecion": sum(1 for ep in episodes if any(o.kind in OBJECTION_KINDS for o in ep.objections)),
+        "por_tipo": by_kind,
+    }
+
+
+def _objections(by_window: dict[str, Any]) -> dict[str, Any]:
+    """La sección, o lo que falta si `objecion` no anotó nada en las ventanas."""
+    noted = any(s["lecturas"] or s["sin_lectura"] for bots in by_window.values() for s in bots.values())
+    if not noted:
+        return dict(OBJECTIONS)
+    return {"disponible": True, "nota": OBJECTIONS_NOTE, "tipos": list(OBJECTION_KINDS), **by_window}
 
 
 def _north_star_section(episodes: list[_Episode]) -> dict[str, Any]:
@@ -593,7 +685,7 @@ async def build_report(
         "equipo": per_window(_team_section),
         "embudo": _funnel(per_window(_funnel_section), episodes),
         "jev_dudas": {"nota": JEV_NOTE, **per_window(_jev_section)},
-        "objeciones": dict(OBJECTIONS),
+        "objeciones": _objections(per_window(_objections_section)),
         "intervenciones_por_100": _north_star(per_window(_north_star_section)),
     }
 
@@ -642,7 +734,18 @@ def render(report: dict[str, Any]) -> str:
             f"({_top({k: v['dudas'] for k, v in doubts['por_capacidad'].items() if v['dudas']})})",
             "",
         ]
-    lines.append(f"Objeciones: no disponible. {report['objeciones']['motivo']}")
+    objections = report["objeciones"]
+    if objections["disponible"]:
+        now = objections["actual"]["colossus"]
+        kinds = now["por_tipo"]
+        lines.append(
+            f"Objeciones (Colossus, ahora): {now['con_objecion']} en {now['lecturas']} mensajes leídos "
+            f"({_top({k: v['mensajes'] for k, v in kinds.items()}, n=len(OBJECTION_KINDS))}); "
+            f"en {sum(v['siguieron_hacia_la_compra'] for v in kinds.values())} de "
+            f"{sum(v['conversaciones'] for v in kinds.values())} casos el cliente siguió hacia la compra."
+        )
+    else:
+        lines.append(f"Objeciones: no disponible. {objections['motivo']}")
     if report["embudo"].get("aviso"):
         lines.append(f"Aviso: {report['embudo']['aviso']}")
     return "\n".join(lines) + "\n"

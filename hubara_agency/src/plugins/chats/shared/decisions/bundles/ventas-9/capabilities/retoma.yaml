@@ -1,0 +1,78 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Dice que retomará más adelante?» y «¿es solo una cortesía?». La fecha la
+# sigue calculando el código (la regla); Jev decide SI hay aplazamiento: veta
+# uno que la regla leyó o, sin fecha del código, uno en que el cliente dice
+# que él escribe otro día (pausa abierta). «Más tarde» del mismo día no pausa.
+capability: retoma
+value: "{deferral: {kind: string, until_ms: int}?, courtesy: bool}"
+input: Inbound
+rule: {builtin: reengagement}
+state:
+  builtin: customer_message
+  with: {header: "Mensaje del cliente:"}
+questions:
+  - id: retoma.aplaza
+    kind: noul
+    text: "¿En este mensaje el cliente dice que retomará la conversación o la compra más adelante (otro día u otra fecha)?"
+    criteria:
+      "true": "sí"
+      "false": "no"
+  - id: retoma.cuando
+    kind: choice
+    text: "¿Para cuándo lo deja?"
+    criteria:
+      "hoy": "hoy mismo, más tarde"
+      "otro_dia_con_fecha": "otro día, con fecha o momento (mañana, el jueves, la otra semana, la quincena)"
+      "otro_dia_sin_fecha": "otro día, sin decir cuándo (yo les escribo cuando…)"
+      "no_aplica": "no está aplazando"
+  - id: retoma.cortesia
+    kind: noul
+    text: "¿El mensaje es solo una cortesía (gracias, ok, un emoji) sin nada más?"
+    criteria:
+      "true": "sí"
+      "false": "no"
+thresholds: {"yes": 0.85, "no": 0.15}
+vars:
+  # La cortesía: Jev si está seguro; si duda, la de la regla.
+  courtesy: "p['retoma.cortesia'] >= th['yes'] ? true : (p['retoma.cortesia'] <= th['no'] ? false : rule.courtesy == true)"
+decide:
+  - when: "!('retoma.aplaza' in p) || !('retoma.cortesia' in p)"
+    then: doubt
+  - when: "p['retoma.aplaza'] <= th['no']"
+    then: {expr: "{'deferral': null, 'courtesy': vars.courtesy}"}
+  - when: "p['retoma.aplaza'] < th['yes']"
+    then: doubt
+  - when: "rule.deferral != null"
+    then: {expr: "{'deferral': rule.deferral, 'courtesy': vars.courtesy}"}
+  - when: "'retoma.cuando' in choice && choice['retoma.cuando'] == 'otro_dia_sin_fecha'"
+    then: {expr: "{'deferral': {'kind': consts.DEFERRAL_KIND_OPEN, 'until_ms': inp.now_ms + consts.OPEN_DEFERRAL_MS}, 'courtesy': vars.courtesy}"}
+  - otherwise: {expr: "{'deferral': null, 'courtesy': vars.courtesy}"}
+floor: {builtin: jev}
+same: {builtin: deferral_and_courtesy_eq}
+examples:
+  - answers: {retoma.aplaza: 0.9, retoma.cortesia: 0.1, retoma.cuando: {choice: otro_dia_sin_fecha, p: 0.9}}
+    rule: {deferral: null, courtesy: false}
+    input: {text: "yo les escribo", now_ms: 1000, synthetic: false}
+    expect: {deferral: {kind: abierto, until_ms: 604801000}, courtesy: false}
+  - answers: {retoma.aplaza: 0.9, retoma.cortesia: 0.9}
+    rule: {deferral: {kind: fecha, until_ms: 5}, courtesy: false}
+    input: {text: "el viernes", now_ms: 1, synthetic: false}
+    expect: {deferral: {kind: fecha, until_ms: 5}, courtesy: true}
+  - answers: {retoma.aplaza: 0.1, retoma.cortesia: 0.5}
+    rule: {deferral: null, courtesy: true}
+    expect: {deferral: null, courtesy: true}
+  - answers: {retoma.aplaza: 0.5, retoma.cortesia: 0.5}
+    rule: {deferral: null, courtesy: true}
+    expect: doubt
+  - answers: {retoma.aplaza: 0.9}
+    rule: {deferral: null, courtesy: true}
+    expect: doubt
+  # Falta la respuesta de si aplaza; aplaza sin fecha de la regla ni «otro día» (premortem 2026-10-02).
+  - answers: {retoma.cortesia: 0.5}
+    rule: {deferral: null, courtesy: true}
+    expect: doubt
+  - answers: {retoma.aplaza: 0.9, retoma.cortesia: 0.1}
+    rule: {deferral: null, courtesy: false}
+    input: {text: "luego", now_ms: 1, synthetic: false}
+    expect: {deferral: null, courtesy: false}

@@ -88,6 +88,9 @@ CAPABILITIES: tuple[str, ...] = (
     # La puerta de afirmaciones del egreso de V2 (2026-11-03; paquetes desde la
     # versión 8): nace apagada, se sube con `bot_control.sh`.
     "afirmacion_previa",
+    # Qué objeción pone el cliente, por mensaje (ventas-9, 2026-11-10): solo
+    # anota para el informe de estrategia. Nace apagada; se enciende en sombra.
+    "objecion",
     # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
     # burbuja va primero en el chat y cómo se clasifica un incendio de chat.
     "burbuja", "incendio",

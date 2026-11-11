@@ -675,6 +675,10 @@ capabilities_since:
   # del V2 (`egress.decide_egress`). En ventas-8, editado en el lugar ya vivo
   # (decisión del operador, 2026-11-04: debió salir con él).
   afirmacion_previa: 8
+  # Informe de estrategia del 2026-11-10: producción no guarda qué objeción pone
+  # el cliente. La pide el ingest por cada mensaje (`EngineReadings.read`) y solo
+  # anota: su valor no entra a las lecturas ni cambia el turno.
+  objecion: 9
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -1101,6 +1105,13 @@ about:
       valor del envío, una cuenta para transferir, cuándo le llega) contra lo
       que el sistema sabe. Si no se sostiene, el texto no sale: el bot lo
       consulta o lo corrige en una ronda más.
+  objecion:
+    name: Objeción del cliente
+    where: [ingest]
+    solves: >-
+      Anota si el cliente puso una objeción para comprar y de qué tipo (precio,
+      envío, tiempo de entrega, confianza o producto). Sirve para saber con
+      cifras qué frena las ventas. Solo mide: no cambia lo que el bot responde.
   contactar:
     name: Escribirle de nuevo
     where: [remarketing]

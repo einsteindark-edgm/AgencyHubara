@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El cliente puso una objeción, y de qué tipo?» (informe de estrategia del
+# 2026-11-10). La mayoría de las conversaciones se queda en la primera etapa y
+# producción no guarda por qué: sin el tipo de objeción no se puede proponer con
+# cifras cuál debería resolver el bot solo.
+#
+# SOLO ANOTA. La pide el ingest por cada mensaje del cliente, con lo que el
+# cliente vio antes, y queda en las decisiones de la conversación
+# (`evals/decisions.jsonl`); el informe de estrategia la cuenta por tipo y por
+# lo que pasó después (si la conversación avanzó de etapa y si terminó en
+# pedido). Su valor no entra a las lecturas del mensaje ni cambia el turno, y
+# no va a la cola de desacuerdos (no hay regla con la cual discrepar).
+#
+# Lo que se anota: el tipo, o "" si el mensaje no trae objeción. «Ninguna» da
+# "" (igual que la regla: queda leída y sin tipo); si Jev no llega al umbral
+# es duda y queda sin leer, así el informe distingue «no hubo» de «no supo».
+#
+# Sin calibrar con Jev real: el umbral y los criterios se ajustan en la versión
+# siguiente con la muestra que el operador etiqueta en Calidad LLM.
+capability: objecion
+value: string
+options: ["", precio, envio, tiempo_entrega, confianza, producto]
+input: Inbound
+# Hoy nadie lo anota: la regla nunca dice nada.
+rule: {builtin: constant_empty}
+state: {builtin: customer_message_with_window}
+questions:
+  - id: objecion.tipo
+    kind: choice
+    text: >-
+      ¿El mensaje del cliente [1] pone una objeción para comprar (un reparo, una
+      queja o una duda que lo frena), y de qué tipo? Preguntar un dato sin
+      quejarse («¿cuánto vale?», «¿hacen envíos?», «¿cuándo llega?») no es una
+      objeción. Si pone varias, la que más pesa en el mensaje.
+    criteria:
+      "precio": "le parece caro, pide rebaja o descuento, dice que no le alcanza o que en otro lado es más barato"
+      "envio": "el reparo es el envío: su costo, que no llega a su ciudad o cómo se lo entregan"
+      "tiempo_entrega": "el reparo es el tiempo: lo necesita para una fecha y no alcanza a llegar, o se demora mucho"
+      "confianza": "desconfía: de pagar por adelantado, de que la tienda sea real o de que le llegue lo que pidió"
+      "producto": "el reparo es el producto: el tamaño, el aroma, el color, la calidad, o no es lo que buscaba"
+      "ninguna": "no pone ninguna objeción: pregunta, elige, confirma, da sus datos, saluda o agradece"
+thresholds: {"choice": 0.7}
+decide:
+  - when: "!('objecion.tipo' in choice) || conf['objecion.tipo'] < th['choice']"
+    then: doubt
+  - when: "choice['objecion.tipo'] == 'precio'"
+    then: precio
+  - when: "choice['objecion.tipo'] == 'envio'"
+    then: envio
+  - when: "choice['objecion.tipo'] == 'tiempo_entrega'"
+    then: tiempo_entrega
+  - when: "choice['objecion.tipo'] == 'confianza'"
+    then: confianza
+  - when: "choice['objecion.tipo'] == 'producto'"
+    then: producto
+  - when: "choice['objecion.tipo'] == 'ninguna'"
+    then: ""
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  # Un ejemplo por tipo, con la forma de lo que escribe un cliente (sintéticos).
+  # «Uy no, me parece muy cara para ser una sola vela».
+  - {answers: {objecion.tipo: {choice: precio, p: 0.9}}, expect: precio}
+  # «¿Y el envío a Pasto cuánto es? Porque así ya no me sale».
+  - {answers: {objecion.tipo: {choice: envio, p: 0.9}}, expect: envio}
+  # «La necesito para el sábado, si no llega no me sirve».
+  - {answers: {objecion.tipo: {choice: tiempo_entrega, p: 0.9}}, expect: tiempo_entrega}
+  # «¿Y cómo sé que sí me llega si pago antes?».
+  - {answers: {objecion.tipo: {choice: confianza, p: 0.9}}, expect: confianza}
+  # «Pensé que era más grande, así tan pequeña no».
+  - {answers: {objecion.tipo: {choice: producto, p: 0.9}}, expect: producto}
+  # «¿Tienen velas de lavanda?»: pregunta, no objeta.
+  - {answers: {objecion.tipo: {choice: ninguna, p: 0.95}}, expect: ""}
+  # Bordes: 0,7 anota; por debajo, duda (queda sin leer).
+  - {answers: {objecion.tipo: {choice: precio, p: 0.7}}, expect: precio}
+  - {answers: {objecion.tipo: {choice: precio, p: 0.69}}, expect: doubt}
+  - {answers: {objecion.tipo: {choice: ninguna, p: 0.69}}, expect: doubt}
+  # Jev no contestó, o contestó algo que no es de la lista.
+  - {answers: {}, expect: doubt}
+  - {answers: {objecion.tipo: {choice: otra, p: 0.9}}, expect: doubt}
