@@ -41,7 +41,7 @@ from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.bundled import customer_text
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CuponEnJuego, PedidoDelCliente
-from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+from src.plugins.chats.agent.sales.decisions.capability_rollout import MAX_P95_MS, DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.registry import capability
@@ -80,8 +80,12 @@ COURTESY_KEY = "last_inbound_courtesy"
 #: cliente, para el informe de estrategia.
 OBSERVED: tuple[str, ...] = ("objecion",)
 #: Lo más que el ingest espera a una decisión que solo anota: corre junto a las
-#: lecturas, pero si Jev se cuelga solo en ella el mensaje sigue sin la nota.
-OBSERVATION_WAIT_S = 3.0
+#: lecturas, pero si Jev se cuelga solo en ella el mensaje sigue sin la nota. Es
+#: la vara de latencia que ya se le exige a Jev para subir una capacidad (su
+#: p95, `MAX_P95_MS`), no un número aparte: una nota nunca le cuesta al mensaje
+#: más de lo que el repo acepta de una decisión que sí actúa. Solo pesa cuando
+#: las lecturas del mensaje no consultan a Jev (o contestan antes que ella).
+OBSERVATION_WAIT_S = MAX_P95_MS / 1000
 
 
 def last_inbound_is_courtesy(metadata: Mapping[str, Any]) -> bool:

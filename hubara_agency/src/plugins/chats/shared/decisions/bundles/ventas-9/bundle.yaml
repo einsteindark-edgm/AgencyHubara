@@ -14,6 +14,9 @@
 #     no cambia el turno y no va a la cola de desacuerdos. Sin Jev no anota.
 # Nace apagada (`reglas`): se enciende en sombra por comando
 # (`bot_control.sh capacidad objecion shadow`), después de promover el paquete.
+# Con los números de prueba que deciden con Jev y en el bot nuevo del laboratorio,
+# Jev la contesta sin ese comando (igual solo anota). El modo es de la tienda: en
+# sombra pregunta en todas las conversaciones, una llamada más a Jev por mensaje.
 #
 # ventas-8:
 # Es `ventas-7@7` con el saludo v2, tres decisiones nuevas (dos del egreso y una de

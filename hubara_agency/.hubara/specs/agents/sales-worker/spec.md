@@ -699,9 +699,11 @@ el informe de estrategia la cuenta por tipo y por lo que pasó después.
 La decisión MUST NOT cambiar nada del turno, en ningún modo: su valor no entra
 a las lecturas del mensaje (`Readings`), no escribe campos del metadata y no va
 a la cola de desacuerdos. Nace apagada (`reglas`: Jev no se consulta); se
-enciende en sombra por comando. Si falla, o Jev tarda más que el tope del
-ingest para lo que solo anota (`OBSERVATION_WAIT_S`), el mensaje sigue sin la
-nota. Con un paquete anterior no existe.
+enciende en sombra por comando (con los números de prueba que deciden con Jev
+y en el bot nuevo del laboratorio, Jev la contesta sin el comando; igual solo
+anota). Corre junto a las lecturas del mensaje y el ingest la espera como
+mucho `OBSERVATION_WAIT_S` (la vara de p95 de Jev, 1,5 s): si falla o tarda
+más, el mensaje sigue sin la nota. Con un paquete anterior no existe.
 
 #### Scenario: el cliente objeta el precio (sombra)
 

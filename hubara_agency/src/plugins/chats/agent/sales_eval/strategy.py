@@ -71,8 +71,9 @@ OBJECTIONS = {
 }
 OBJECTIONS_NOTE = (
     "Por cada mensaje del cliente, Jev anota si puso una objeción y de qué tipo (solo anota: no cambia lo que el "
-    "bot responde). «lecturas»: mensajes que Jev leyó, con objeción o sin ella; «sin_lectura»: Jev no llegó al "
-    "umbral. Por tipo, en conversaciones: «siguieron_hacia_la_compra» = después de la primera objeción de ese "
+    "bot responde). «lecturas»: mensajes (no turnos) que Jev leyó, con objeción o sin ella; «sin_lectura»: Jev "
+    "contestó sin llegar al umbral o falló (si se demoró más que el tope del ingest no queda anotado). Cuenta "
+    "todas las conversaciones de clientes, también las de Botsito. Por tipo, en conversaciones: «siguieron_hacia_la_compra» = después de la primera objeción de ese "
     "tipo la conversación avanzó de etapa; «terminaron_en_pedido» = la conversación tiene un pedido (OrderFacts)."
 )
 JEV_NOTE = (
@@ -400,6 +401,9 @@ def _team_messages(events: list[dict[str, Any]], timeline: _Timeline) -> dict[st
 def _decisions_by_episode(rows: list[dict[str, Any]], timeline: _Timeline) -> dict[str, list[_Decision]]:
     out: dict[str, list[_Decision]] = {}
     for row in rows:
+        if row.get("capability") == OBJECTION_CAPABILITY:
+            # Anota cada mensaje y tiene su sección: aquí inflaría el total.
+            continue
         at_ms = _ms(row.get("at_ms"))
         episode_id = timeline.episode_at(at_ms) if at_ms is not None else None
         if episode_id is not None:

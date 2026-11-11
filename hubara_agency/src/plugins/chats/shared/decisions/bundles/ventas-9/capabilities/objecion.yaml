@@ -16,6 +16,9 @@
 # "" (igual que la regla: queda leída y sin tipo); si Jev no llega al umbral
 # es duda y queda sin leer, así el informe distingue «no hubo» de «no supo».
 #
+# Con los números de prueba que deciden con Jev y en el bot nuevo del
+# laboratorio, Jev la contesta sin encenderla (igual solo anota).
+#
 # Sin calibrar con Jev real: el umbral y los criterios se ajustan en la versión
 # siguiente con la muestra que el operador etiqueta en Calidad LLM.
 capability: objecion
@@ -32,14 +35,16 @@ questions:
       ¿El mensaje del cliente [1] pone una objeción para comprar (un reparo, una
       queja o una duda que lo frena), y de qué tipo? Preguntar un dato sin
       quejarse («¿cuánto vale?», «¿hacen envíos?», «¿cuándo llega?») no es una
-      objeción. Si pone varias, la que más pesa en el mensaje.
+      objeción. Si pone varias, la que más pesa en el mensaje. Aplazar sin decir
+      por qué («lo voy a pensar», «lo consulto y te aviso») no es una objeción;
+      si dice por qué, cuenta ese motivo.
     criteria:
-      "precio": "le parece caro, pide rebaja o descuento, dice que no le alcanza o que en otro lado es más barato"
+      "precio": "le parece caro, pide rebaja o descuento, dice que no le alcanza o que ahora no tiene plata, o que en otro lado es más barato"
       "envio": "el reparo es el envío: su costo, que no llega a su ciudad o cómo se lo entregan"
       "tiempo_entrega": "el reparo es el tiempo: lo necesita para una fecha y no alcanza a llegar, o se demora mucho"
       "confianza": "desconfía: de pagar por adelantado, de que la tienda sea real o de que le llegue lo que pidió"
       "producto": "el reparo es el producto: el tamaño, el aroma, el color, la calidad, o no es lo que buscaba"
-      "ninguna": "no pone ninguna objeción: pregunta, elige, confirma, da sus datos, saluda o agradece"
+      "ninguna": "no pone ninguna objeción de esos tipos: pregunta, elige, confirma, da sus datos, saluda, agradece, aplaza sin decir por qué, o su reparo es otro (por ejemplo, el medio de pago)"
 thresholds: {"choice": 0.7}
 decide:
   - when: "!('objecion.tipo' in choice) || conf['objecion.tipo'] < th['choice']"
