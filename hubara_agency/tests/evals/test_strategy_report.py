@@ -254,6 +254,27 @@ async def test_jev_doubts_are_counted_per_capability(tmp_path: Path) -> None:
     assert "sombra" in jev["nota"]
 
 
+async def test_objection_notes_do_not_count_as_jev_decisions(tmp_path: Path) -> None:
+    """`objecion` anota cada mensaje y tiene su sección: si contara aquí, inflaría
+    «X dudas de N decisiones» solo desde que se enciende."""
+    sid = "wa_100000000001"
+    _conversation(tmp_path, sid, started_ms=RECENT_MS, workflow="v2")
+    at = RECENT_MS + 2 * MINUTE_MS
+    _decisions(tmp_path, sid,
+               {"at_ms": at, "capability": "compra", "by": "respaldo", "provider": "jev", "value": False, "reason": "duda"})
+    before = (await _report(tmp_path))["jev_dudas"]
+    _decisions(tmp_path, sid,
+               {"at_ms": at, "stage": "ingest", "capability": "objecion", "by": "reglas", "provider": "sombra",
+                "value": "", "jev": "precio", "agree": False},
+               {"at_ms": at, "stage": "ingest", "capability": "objecion", "by": "reglas", "provider": "sombra",
+                "value": ""})
+
+    report = await _report(tmp_path)
+
+    assert report["jev_dudas"] == before
+    assert report["objeciones"]["actual"]["colossus"]["lecturas"] == 1  # sí las leyó, en su sección
+
+
 async def test_interventions_per_100_conversations_compare_both_windows(tmp_path: Path) -> None:
     during = RECENT_MS + MINUTE_MS + 1_000
     _conversation(tmp_path, "wa_100000000001", started_ms=RECENT_MS, workflow="v2",
