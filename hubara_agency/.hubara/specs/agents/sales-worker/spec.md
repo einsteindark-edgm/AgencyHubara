@@ -2536,6 +2536,30 @@ Caso del 2026-10-16: un colega atendió a un cliente (le aclaró que el precio e
 - WHEN llega por señal el mismo mensaje (mismo wamid)
 - THEN no hay un segundo turno para él
 
+### Requirement: Las promociones son cupones y categorías de promoción (2026-11-12)
+
+`list_promotions` SHALL devolver, además de los cupones vigentes, las
+categorías del catálogo que el operador marcó como promoción en Medusa
+(`categories`: nombre y cuántos productos), y su resumen MUST pedir mostrarlas
+con `present_products(category="<nombre>")` sin sumar un descuento (el precio
+es el del catálogo). El resumen MUST decir que no hay promociones solo cuando
+no hay cupones NI categorías de promoción. Si los cupones no se pueden leer,
+las categorías igual se ofrecen; si el catálogo no se puede leer, la respuesta
+de los cupones queda como antes.
+
+#### Scenario: «¿Cuáles son las promociones navideñas?» sin cupones navideños
+
+- GIVEN la categoría «Promociones Navideñas» marcada como promoción y ningún cupón vigente
+- WHEN el bot llama `list_promotions`
+- THEN el resultado trae `categories: [{name: "Promociones Navideñas", products: 6}]`
+- AND el resumen pide `present_products(category="Promociones Navideñas")` y no dice «no hay promociones»
+
+#### Scenario: Sin cupones ni categorías de promoción
+
+- GIVEN ningún cupón vigente y ninguna categoría marcada
+- WHEN el bot llama `list_promotions`
+- THEN el resumen dice que no hay promociones, como antes
+
 ### Requirement: La oferta del cupón de la campaña, con su fecha límite (2026-10-20)
 
 Cuando el episodio tiene guion de campaña (`sales_campaign`) con `cupon`, el

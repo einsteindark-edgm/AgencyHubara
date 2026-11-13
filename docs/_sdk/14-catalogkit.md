@@ -27,7 +27,7 @@ no el LLM.
 | `get_catalog_client` | `platform/catalog/composition` | factory singleton (snapshot local) |
 | `product_includes_portavelas` / `order_includes_portavelas` | `platform/catalog/portavelas` | ¿el producto / algún ítem del pedido trae portavela? |
 | `PORTAVELAS_METADATA_KEY` | `platform/catalog/portavelas` | `"portavelas"` — flag explícito en `metadata` de Medusa |
-| `CatalogCategoryDTO` / `CategoryResolution` / `resolve_category` | `platform/catalog/categories` | lista cerrada de categorías y su resolver (regla de hoy de la capacidad `categoria` del motor de decisiones) |
+| `CatalogCategoryDTO` / `CategoryResolution` / `resolve_category` | `platform/catalog/categories` | lista cerrada de categorías (con `promotional`: marcada como promoción en Medusa) y su resolver (regla de hoy de la capacidad `categoria` del motor de decisiones) |
 | `ColorFamilies` / `resolve_color_family` / `family_of_color` | `platform/catalog/color_families` | tabla de familias de color del tenant y su resolver (regla de hoy de la capacidad `familia_de_color`) |
 | `normalize_label` | `platform/catalog/variant_attrs` | normalización para comparar etiquetas (sin tildes, casefold) |
 | `stem_word` | `platform/catalog/variant_attrs` | una palabra ya normalizada sin género ni número («rojas» → «roj», «azules» → «azul»): la única regla para comparar palabras del catálogo (familias de color, colores por variante, scorecard de envío, verdad del producto) |
@@ -43,6 +43,17 @@ no el LLM.
 
 Conservador por diseño: un producto que no resuelve en el catálogo NO cuenta
 como portavela (antes que hablarle del portavelas a quien no lo pidió).
+
+## Categorías de promoción — la marca vive en Medusa
+
+Una categoría es de promoción cuando el operador le pone en Medusa (Admin →
+Categoría → Metadatos) la llave `promocion` con el valor `true` (también `si`,
+`1`, `yes`, `on`; la llave sin importar tildes ni mayúsculas). El sync la lleva
+al snapshot (`CatalogProductDTO.promotional_categories`) y la lista cerrada la
+expone en `CatalogCategoryDTO.promotional`. `list_promotions` del bot de ventas
+la cuenta junto a los cupones: «¿qué promociones tienen?» muestra esa categoría.
+Una promoción nueva = una categoría marcada + Sync, sin desplegar (incidente
+2026-11-12, «Promociones Navideñas»).
 
 ## Cómo se usa
 

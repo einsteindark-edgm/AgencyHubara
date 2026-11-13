@@ -95,3 +95,28 @@ hashes previos para reintentar.
 - GIVEN un batch que sigue `started` tras el máximo de consultas
 - WHEN se agota el presupuesto
 - THEN el push se considera exitoso y el handle queda en el resultado para consulta posterior
+
+### Requirement: Categorías de promoción marcadas en Medusa (2026-11-12)
+
+Una categoría de Medusa es **de promoción** cuando el operador le pone en su
+metadata la llave `promocion` (sin importar tildes ni mayúsculas) con el valor
+`true` (el texto que guarda el editor del admin; también `si`, `1`, `yes` o el
+booleano). El pull SHALL llevar a cada producto del snapshot los slugs de sus
+categorías marcadas (`promotional_categories`) y la lista cerrada de categorías
+MUST decir cuál es promoción (`CatalogCategoryDTO.promotional`). Una categoría
+sin la marca, o con otro valor, no es promoción. Así una promoción nueva es una
+categoría marcada y un Sync, sin desplegar.
+
+#### Scenario: «Promociones Navideñas» marcada
+
+- GIVEN la categoría `promociones` («Promociones Navideñas») con metadata `promocion: "true"` y 6 productos
+- WHEN corre el sync
+- THEN esos 6 productos llevan `promotional_categories: ["promociones"]`
+- AND `list_categories` la devuelve con `promotional: true`; «Decorativas», sin marca, con `promotional: false`
+
+#### Scenario: Snapshot anterior a la marca
+
+- GIVEN un snapshot escrito antes de 2026-11-12 (sin `promotional_categories`)
+- WHEN el bot lee las categorías
+- THEN ninguna es promoción y todo lo demás se lee igual
+
