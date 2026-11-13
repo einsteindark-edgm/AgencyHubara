@@ -28,6 +28,8 @@ vi.mock("@plugins/orders/frontend/entities/order", async (importOriginal) => ({
   }),
   useVaultOrders: () => ({ data: undefined }),
   useOrdersEvents: () => {},
+  // El reporte pide las líneas al abrirse (tarjeta #49): acá, cargando.
+  useOrderLines: () => ({ data: undefined, isLoading: true }),
 }));
 
 vi.mock("@plugins/orders/frontend/features/orders-board", async (importOriginal) => ({

@@ -140,6 +140,33 @@ async def list_orders(
     }
 
 
+# Declarada ANTES de `/orders/{order_id}`: si no, el detalle la captura.
+@router.get("/orders/lines")
+async def list_order_lines(
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    include_drafts: bool = Query(default=True),
+) -> dict[str, Any]:
+    """Líneas de los pedidos de una página de la lista (reporte de ventas por
+    producto, tarjeta del ciclo #49). Mismo tope por defecto que `/orders`,
+    así cubre los mismos pedidos; misma llamada a la tienda (no una por
+    pedido). Solo lectura. Si la tienda falla: `orders=[]` +
+    `catalog_available=false` + `error_detail`, como la lista.
+    """
+    port = get_order_query_port()
+    result = await port.list_lines(
+        limit=limit, offset=offset, include_drafts=include_drafts
+    )
+    return {
+        "orders": [asdict(o) for o in result.orders],
+        "count": result.count,
+        "offset": result.offset,
+        "limit": result.limit,
+        "catalog_available": result.catalog_available,
+        "error_detail": result.error_detail,
+    }
+
+
 @router.get("/orders/by-session/{session_id}")
 async def list_orders_by_session(
     session_id: str = Path(..., min_length=1, max_length=200),

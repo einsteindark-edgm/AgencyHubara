@@ -515,3 +515,45 @@ El frontend (`frontend_dashboard/src/plugins/orders/`) consume estos
 endpoints vía TanStack Query. Invalida list+detail después de cada PATCH
 exitoso. Si `catalog_available=false`, pinta empty state con tarjeta
 explicativa.
+
+### Requirement: Reporte de ventas por producto
+
+El reporte de «Exportar» (tarjeta del ciclo #49) SHALL traer, además del
+resumen por pedido, una fila por producto vendido con estas columnas en este
+orden: Producto · Producto en el catálogo (variante) · Cantidad · Costo
+unitario · Precio unitario · Costo total · Venta total sin envío · Ganancia ·
+Margen · Cliente · Número de pedido · Línea de producto · Costo completo
+unitario · Canal de pago; y después Precio de lista · Descuento · Motivo del
+descuento · Envío asumido por la tienda · Costo del envío asumido. El CSV MUST
+traer la misma tabla con las mismas cifras.
+
+Las líneas salen de `GET /api/orders/orders/lines` (solo lectura, mismo tope
+que `/orders`, la misma llamada a la tienda que la lista y el mismo armador de
+líneas que el detalle). El reporte usa las reglas del reporte por pedido (mismo
+día por pedido, sin pedidos de prueba, cancelados fuera), así que la suma de
+«Venta total sin envío» MUST ser igual a las ventas del reporte por pedido
+menos el envío incluido. Un pedido cuyas líneas no suman su valor sin envío, o
+que no trajo sus líneas, MUST salir avisado. Costo, ganancia, margen, línea y
+costo completo MUST salir solo de la fuente de costo que indique el operador:
+sin ella, celdas vacías y un aviso, nunca un cero ni un valor calculado.
+
+#### Scenario: Sin fuente de costo
+
+- GIVEN pedidos del rango con sus líneas y sin fuente de costo ni de línea
+- WHEN el operador abre «Exportar»
+- THEN la sección «Por producto» muestra una fila por producto con las columnas de costo, ganancia, margen y línea vacías
+- AND avisa «Sin fuente de costo ni de línea: estas columnas quedan vacías»
+
+#### Scenario: Envío gratis y descuento
+
+- GIVEN un pedido con envío gratis que le costó $8.000 a la tienda y una línea con cupón
+- WHEN se arma el reporte por producto
+- THEN las filas del pedido salen con «Envío asumido por la tienda: Sí» y el costo solo en la primera
+- AND la línea con cupón trae el precio de lista, el descuento y «Cupón <código>»
+
+#### Scenario: La tienda no responde
+
+- GIVEN Medusa caído
+- WHEN el diálogo pide las líneas
+- THEN `/orders/lines` responde `orders=[]`, `catalog_available=false` y el motivo
+- AND la sección dice que no se pudo traer el detalle por producto; el resumen por pedido no cambia

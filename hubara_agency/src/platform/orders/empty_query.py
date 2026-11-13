@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 
-from src.platform.orders.query_port import OrderDetailDTO, OrderListDTO
+from src.platform.orders.query_port import OrderDetailDTO, OrderLinesListDTO, OrderListDTO
 
 log = logging.getLogger(__name__)
 
@@ -29,6 +29,25 @@ class EmptyOrderQuery:
     ) -> OrderListDTO:
         log.debug("EmptyOrderQuery.list called (no medusa config)")
         return OrderListDTO(
+            orders=[],
+            count=0,
+            offset=offset,
+            limit=limit,
+            catalog_available=False,
+            error_detail=(
+                "Medusa no esta configurado (falta MEDUSA_BASE_URL / "
+                "MEDUSA_ADMIN_TOKEN). Las ordenes no se pueden consultar."
+            ),
+        )
+
+    async def list_lines(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        include_drafts: bool = True,
+    ) -> OrderLinesListDTO:
+        return OrderLinesListDTO(
             orders=[],
             count=0,
             offset=offset,
