@@ -2679,8 +2679,16 @@ escribe nada, y de la cuenta de destino la visión solo entrega los últimos 4
 dígitos. Un comprobante nunca prueba un pago: el equipo sigue confirmándolo en
 la cuenta. El informe del Estratega (`sales_eval/strategy.py`, sección
 `comprobantes`) cruza el último veredicto de cada pedido con lo que el equipo
-hizo (pagado o cancelado) y solo da el porcentaje con 40 comprobantes o más.
-Un PDF queda `ilegible` (no pasa por visión, decisión 2026-09-01).
+hizo (pagado o cancelado) y solo da el porcentaje con 40 pedidos comparados o
+más. Un PDF queda `ilegible` (no pasa por visión, decisión 2026-09-01).
+
+El pedido contra el que se compara es el del último episodio o, si ese está
+abierto y sin pedido (el comprobante abrió un episodio nuevo), el del anterior;
+solo si cerró con pedido en los últimos 30 días y el pedido todavía espera el
+pago (ni pagado, ni entregado, ni cancelado). Si no, `sin_pedido`; si había
+pedido pero no se pudieron leer sus datos, `sin_pedido` con motivo
+`pedido_no_leido`. Un `coincide` dice además su evidencia: `completa` (monto,
+cuenta del negocio y fecha reciente a la vista) o `parcial` (solo el monto).
 
 #### Scenario: Comprobante que coincide
 
@@ -2694,6 +2702,12 @@ Un PDF queda `ilegible` (no pasa por visión, decisión 2026-09-01).
 - GIVEN el mismo pedido y un comprobante por otro monto, de hace 10 días, a otra cuenta o con una referencia ya usada en otro pedido
 - THEN queda anotado `no_coincide` con su motivo
 - AND el cliente y el equipo ven lo mismo que hoy
+
+#### Scenario: El comprobante abre un episodio nuevo
+
+- GIVEN un pedido recién registrado (su episodio cerró esperando el pago) y el bot atendiendo
+- WHEN llega la foto del comprobante y el ingest abre un episodio nuevo
+- THEN el veredicto se compara con ese pedido y queda anotado en el episodio del pedido
 
 #### Scenario: Anotar falla
 

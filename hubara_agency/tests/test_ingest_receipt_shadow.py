@@ -6,6 +6,7 @@ Datos inventados (la visión falsa lee «$34.000», referencia «1234»).
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -26,9 +27,13 @@ from tests.test_ingest_image_vision import (
 )
 
 _SESSION = "wa_5491111111111"
+#: El pedido se registró hace un minuto: su episodio cerró esperando el pago.
 _WITH_ORDER = {
     "active_route": "ventas",
-    "episodes": [{"episode_id": "ep_001", "order_id": "ord_1", "closed_at_ms": 1}],
+    "episodes": [{
+        "episode_id": "ep_001", "order_id": "ord_1", "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+        "started_at_ms": int(time.time() * 1000) - 600_000, "closed_at_ms": int(time.time() * 1000) - 60_000,
+    }],
 }
 
 
@@ -52,7 +57,7 @@ class _OnceEffects:
 
 
 async def _facts(order_id: str) -> Any:
-    return SimpleNamespace(order_id=order_id, total_cop=34_000)
+    return SimpleNamespace(order_id=order_id, display_id="900", total_cop=34_000, stage="new", pay_status="pending")
 
 
 @pytest.fixture
@@ -97,6 +102,37 @@ async def test_a_receipt_is_noted_and_the_handoff_is_the_same_as_always(sent, _i
     assert [(r["verdict"], r["reason"], r["order_id"], r["source"]) for r in rows] == [
         ("coincide", None, "ord_1", "image")
     ]
+
+
+async def test_through_the_whole_ingest_the_receipt_is_compared_with_the_order_just_placed(
+    sent, _isolate_vault_dir: Path
+) -> None:
+    """El camino real: con el bot atendiendo, el comprobante abre un episodio
+    nuevo (sin pedido) antes de leerse la foto. El veredicto se compara con el
+    pedido recién registrado y queda en el episodio de ese pedido."""
+    use_case, metadata, history = _use_case(_WITH_ORDER)
+
+    await use_case.execute(_make_image("receipt_1"))
+
+    _handed_to_the_team_as_always(metadata, sent, history)
+    assert len(metadata.store[_SESSION]["episodes"]) == 2
+    rows = read_checks(_isolate_vault_dir, _SESSION)
+    assert [(r["verdict"], r["episode_id"], r["order_id"]) for r in rows] == [("coincide", "ep_001", "ord_1")]
+
+
+async def test_if_the_once_per_message_guard_fails_the_handoff_still_goes_out(sent, _isolate_vault_dir) -> None:
+    class _BrokenEffects(_OnceEffects):
+        def claim(self, wamid: str, effect: str) -> bool:
+            if effect == "receipt_check":
+                raise OSError("diario sin disco")
+            return super().claim(wamid, effect)
+
+    use_case, metadata, history = _use_case(_WITH_ORDER, effects=_BrokenEffects())
+
+    await use_case._describe_image_and_reenter(_make_image("receipt_1"))
+
+    _handed_to_the_team_as_always(metadata, sent, history)
+    assert read_checks(_isolate_vault_dir, _SESSION) == []
 
 
 async def test_if_noting_the_verdict_fails_the_handoff_still_goes_out(sent, monkeypatch, _isolate_vault_dir) -> None:

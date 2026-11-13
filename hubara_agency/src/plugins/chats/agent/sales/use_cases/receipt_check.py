@@ -31,13 +31,21 @@ REASON_ACCOUNT = "cuenta_destino"
 REASON_REPEATED = "repetido"
 REASONS = frozenset({REASON_AMOUNT, REASON_OLD_DATE, REASON_ACCOUNT, REASON_REPEATED})
 
+#: Qué tanto respalda el comprobante un «coincide»: con cuenta nuestra y fecha
+#: reciente a la vista, o solo por el monto (lo demás no se leía).
+EVIDENCE_FULL = "completa"
+EVIDENCE_PARTIAL = "parcial"
+EVIDENCE_LEVELS = frozenset({EVIDENCE_FULL, EVIDENCE_PARTIAL})
+
 #: Un pago de hace más días que esto no es el de este pedido.
 MAX_RECEIPT_AGE_DAYS = 3
+#: Un día adelante es diferencia de reloj; más, la fecha no se leyó bien.
+_MAX_DAYS_AHEAD = 1
 #: Con menos dígitos que estos no se sabe de qué cuenta habla el comprobante.
 _MIN_ACCOUNT_DIGITS = 4
 
-_AMOUNT_RE = re.compile(r"\d[\d.,]*")
-_DECIMALS_RE = re.compile(r"[.,]\d{2}$")
+_NUMBER_RE = re.compile(r"\d[\d.,]*")
+_DECIMALS_RE = re.compile(r"[.,]\d{1,2}$")
 _NOT_DIGIT_RE = re.compile(r"\D+")
 _NOT_ALNUM_RE = re.compile(r"[^A-Z0-9]+")
 
@@ -58,6 +66,8 @@ class ReceiptReading:
 class ReceiptVerdict:
     verdict: str
     reason: str | None = None
+    #: Solo en «coincide»: `EVIDENCE_FULL` o `EVIDENCE_PARTIAL`.
+    evidence: str | None = None
 
 
 def reference_fingerprint(reference: str) -> str:
@@ -68,28 +78,35 @@ def reference_fingerprint(reference: str) -> str:
 
 
 def _amount_cop(text: str | None) -> int | None:
-    m = _AMOUNT_RE.search(text or "")
-    if not m:
-        return None
-    digits = _NOT_DIGIT_RE.sub("", _DECIMALS_RE.sub("", m.group(0)))
-    return int(digits) if digits else None
+    """El valor en pesos: el número más grande del campo, sin centavos («1 pago
+    por $84.000», «84.000,00», «84,000.00», «84000.0»)."""
+    values = []
+    for raw in _NUMBER_RE.findall(text or ""):
+        digits = _NOT_DIGIT_RE.sub("", _DECIMALS_RE.sub("", raw.rstrip(".,")))
+        if digits:
+            values.append(int(digits))
+    return max(values, default=None)
 
 
 def _is_our_account(account: str | None, our_accounts: Iterable[str]) -> bool | None:
-    """``None`` = el comprobante no deja saber a qué cuenta fue."""
+    """``None`` = no se puede saber: el comprobante no muestra la cuenta, o no
+    tenemos ninguna cuenta con números contra la cual comparar."""
     digits = _NOT_DIGIT_RE.sub("", account or "")
-    if len(digits) < _MIN_ACCOUNT_DIGITS:
+    ours = [o for o in (_NOT_DIGIT_RE.sub("", a) for a in our_accounts) if len(o) >= _MIN_ACCOUNT_DIGITS]
+    if len(digits) < _MIN_ACCOUNT_DIGITS or not ours:
         return None
-    ours = [_NOT_DIGIT_RE.sub("", a) for a in our_accounts]
-    return any(o and o.endswith(digits) for o in ours)
+    return any(o.endswith(digits) for o in ours)
 
 
-def _is_old(day: str | None, today: date) -> bool:
+def _is_recent(day: str | None, today: date) -> bool | None:
+    """``None`` = la fecha no se lee (o viene del futuro): ni condena ni respalda."""
     try:
-        paid = date.fromisoformat((day or "").strip())
+        age = (today - date.fromisoformat((day or "").strip())).days
     except ValueError:
-        return False  # una fecha que no se lee no condena el comprobante
-    return (today - paid).days > MAX_RECEIPT_AGE_DAYS
+        return None
+    if age < -_MAX_DAYS_AHEAD:
+        return None
+    return age <= MAX_RECEIPT_AGE_DAYS
 
 
 def check_receipt(
@@ -107,12 +124,14 @@ def check_receipt(
         return ReceiptVerdict(VERDICT_UNREADABLE)
     if reading.reference and reference_fingerprint(reading.reference) in used_references:
         return ReceiptVerdict(VERDICT_MISMATCH, REASON_REPEATED)
-    if order_total_cop is None:
+    if order_total_cop is None or order_total_cop <= 0:
         return ReceiptVerdict(VERDICT_NO_ORDER)
     if amount != order_total_cop:
         return ReceiptVerdict(VERDICT_MISMATCH, REASON_AMOUNT)
-    if _is_our_account(reading.account, our_accounts) is False:
+    ours = _is_our_account(reading.account, our_accounts)
+    if ours is False:
         return ReceiptVerdict(VERDICT_MISMATCH, REASON_ACCOUNT)
-    if _is_old(reading.date, today):
+    recent = _is_recent(reading.date, today)
+    if recent is False:
         return ReceiptVerdict(VERDICT_MISMATCH, REASON_OLD_DATE)
-    return ReceiptVerdict(VERDICT_MATCH)
+    return ReceiptVerdict(VERDICT_MATCH, evidence=EVIDENCE_FULL if ours and recent else EVIDENCE_PARTIAL)

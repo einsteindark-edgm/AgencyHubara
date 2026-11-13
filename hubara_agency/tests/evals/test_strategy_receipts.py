@@ -39,10 +39,12 @@ def _conversation(vault: Path, n: int, *, order_id: str | None, started_ms: int 
 
 
 def _noted(vault: Path, sid: str, verdict: str, reason: str | None = None, *, source: str = "image",
-           order_id: str | None = "x", minutes: int = 10) -> None:
+           order_id: str | None = "x", minutes: int = 10, evidence: str | None = None) -> None:
+    if verdict == "coincide" and evidence is None:
+        evidence = "completa"
     append_check(vault, sid, {
         "at_ms": RECENT_MS + minutes * MINUTE_MS, "episode_id": "ep_001", "order_id": order_id,
-        "verdict": verdict, "reason": reason, "source": source,
+        "verdict": verdict, "reason": reason, "evidence": evidence, "source": source,
     })
 
 
@@ -118,6 +120,9 @@ async def test_the_agreement_rate_waits_for_forty_receipts(tmp_path: Path) -> No
     assert few["minimo_para_medir"] == 40
     assert few["actual"]["colossus"]["suficientes"] is False
     assert few["actual"]["colossus"]["coincidencia_pct"] is None
+    assert "faltan 37 pedidos" in strategy.render(
+        await _report(tmp_path, *(_order(f"ord_{n}", pay_status="paid") for n in range(1, 4)))
+    )
 
     for n in range(4, 41):
         _noted(tmp_path, _conversation(tmp_path, n, order_id=f"ord_{n}"), "coincide")
@@ -158,3 +163,55 @@ async def test_the_text_report_tells_the_receipts_in_plain_words(tmp_path: Path)
     text = strategy.render(await _report(tmp_path, _order("ord_a", pay_status="paid")))
 
     assert "Comprobantes" in text and "faltan" in text
+
+
+async def test_forty_receipts_that_cannot_be_compared_do_not_make_a_rate(tmp_path: Path) -> None:
+    """37 PDF (siempre ilegibles) y 3 pedidos comparados no son 40 comparaciones."""
+    for n in range(1, 4):
+        _noted(tmp_path, _conversation(tmp_path, n, order_id=f"ord_{n}"), "coincide")
+    for n in range(4, 41):
+        _noted(tmp_path, _conversation(tmp_path, n, order_id=None), "ilegible", source="pdf", order_id=None)
+
+    now = (await _report(tmp_path, *(_order(f"ord_{n}", pay_status="paid") for n in range(1, 4))))["comprobantes"][
+        "actual"]["colossus"]
+
+    assert (now["comprobantes"], now["suficientes"], now["coincidencia_pct"]) == (40, False, None)
+
+
+async def test_receipts_of_test_orders_are_not_counted_at_all(tmp_path: Path) -> None:
+    _noted(tmp_path, _conversation(tmp_path, 1, order_id="ord_test"), "coincide")
+    _noted(tmp_path, _conversation(tmp_path, 2, order_id="ord_a"), "coincide")
+
+    now = (await _report(tmp_path, _order("ord_test", is_test=True), _order("ord_a", pay_status="paid")))[
+        "comprobantes"]["actual"]["colossus"]
+
+    assert now["comprobantes"] == 1
+
+
+async def test_matches_on_the_amount_alone_are_told_apart(tmp_path: Path) -> None:
+    _noted(tmp_path, _conversation(tmp_path, 1, order_id="ord_a"), "coincide", evidence="completa")
+    _noted(tmp_path, _conversation(tmp_path, 2, order_id="ord_b"), "coincide", evidence="parcial")
+    _noted(tmp_path, _conversation(tmp_path, 3, order_id="ord_c"), "coincide", evidence="texto libre")
+
+    now = (await _report(tmp_path))["comprobantes"]["actual"]["colossus"]
+
+    assert now["coincide_por_evidencia"] == {"completa": 1, "parcial": 1, "otro": 1}
+
+
+async def test_an_order_whose_data_could_not_be_read_is_counted_apart(tmp_path: Path) -> None:
+    _noted(tmp_path, _conversation(tmp_path, 1, order_id="ord_a"), "sin_pedido", "pedido_no_leido")
+    _noted(tmp_path, _conversation(tmp_path, 2, order_id=None), "sin_pedido", order_id=None)
+
+    now = (await _report(tmp_path))["comprobantes"]["actual"]["colossus"]
+
+    assert now["por_veredicto"] == {"sin_pedido": 2}
+    assert now["por_motivo"] == {"pedido_no_leido": 1}
+
+
+def test_the_report_knows_every_code_the_bot_can_write() -> None:
+    from src.plugins.chats.agent.sales.use_cases import receipt_check, receipt_shadow
+
+    assert set(strategy.RECEIPT_VERDICTS) == receipt_check.VERDICTS
+    assert set(strategy.RECEIPT_REASONS) == receipt_check.REASONS | {receipt_shadow.REASON_ORDER_UNREAD}
+    assert set(strategy.RECEIPT_EVIDENCE) == receipt_check.EVIDENCE_LEVELS
+    assert set(strategy.RECEIPT_SOURCES) == {receipt_shadow.SOURCE_IMAGE, receipt_shadow.SOURCE_PDF}

@@ -18,20 +18,25 @@ _NOW_MS = 1_794_500_000_000  # 2026-11-12 (Bogotá)
 _SESSION = "wa_570000000001"
 
 
-def _receipt(amount="$84.000", day="2026-11-12", account="2233", reference="M0001") -> Any:
+def _receipt(amount="$84.000", day="2026-11-12", account="2233", reference="M000123") -> Any:
     return SimpleNamespace(amount=amount, date=day, account=account, reference=reference)
 
 
+def _episode_with_order(order_id: str = "ord_1", **extra: Any) -> dict[str, Any]:
+    return {"episode_id": "ep_002", "order_id": order_id, "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+            "closed_at_ms": _NOW_MS - 60_000, **extra}
+
+
 def _closed_with_order(order_id: str = "ord_1", **extra: Any) -> dict[str, Any]:
-    return {"episodes": [{"episode_id": "ep_002", "order_id": order_id, "closed_at_ms": _NOW_MS - 60_000, **extra}]}
+    return {"episodes": [_episode_with_order(order_id, **extra)]}
 
 
-def _facts(total: int = 84_000):
+def _facts(total: int = 84_000, *, stage: str = "new", pay_status: str = "pending"):
     calls: list[str] = []
 
     async def reader(order_id: str) -> Any:
         calls.append(order_id)
-        return SimpleNamespace(order_id=order_id, total_cop=total)
+        return SimpleNamespace(order_id=order_id, total_cop=total, stage=stage, pay_status=pay_status)
 
     reader.calls = calls  # type: ignore[attr-defined]
     return reader
@@ -64,17 +69,18 @@ async def test_a_matching_receipt_is_noted_with_codes_only(tmp_path: Path) -> No
         "order_id": "ord_1",
         "verdict": "coincide",
         "reason": None,
+        "evidence": "completa",
         "source": "image",
     }
     assert read_checks(tmp_path, _SESSION) == [row]
 
 
 async def test_nothing_read_from_the_receipt_is_written_to_disk(tmp_path: Path) -> None:
-    await _record(tmp_path, receipt=_receipt(amount="$84.000", account="2233", reference="M0001"))
+    await _record(tmp_path, receipt=_receipt(amount="$84.000", account="2233", reference="M000123"))
 
     written = "".join(p.read_text(encoding="utf-8") for p in tmp_path.rglob("*") if p.is_file())
     assert written
-    for secret in ("84.000", "84000", "2233", "M0001"):
+    for secret in ("84.000", "84000", "2233", "M000123"):
         assert secret not in written
 
 
@@ -123,7 +129,7 @@ async def test_an_order_that_cannot_be_read_never_breaks_the_note(tmp_path: Path
 
     row = await _record(tmp_path, receipt=_receipt(), facts=broken)
 
-    assert row["verdict"] == "sin_pedido"
+    assert (row["verdict"], row["reason"]) == ("sin_pedido", "pedido_no_leido")
 
 
 async def test_without_an_order_reader_there_is_nothing_to_compare(tmp_path: Path) -> None:
@@ -136,9 +142,9 @@ async def test_without_an_order_reader_there_is_nothing_to_compare(tmp_path: Pat
 
 
 async def test_the_same_reference_on_another_order_is_a_repeated_receipt(tmp_path: Path) -> None:
-    first = await _record(tmp_path, receipt=_receipt(reference="M0001"))
+    first = await _record(tmp_path, receipt=_receipt(reference="M000123"))
     other = await _record(
-        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="m-0001")
+        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="m-000123")
     )
 
     assert first["verdict"] == "coincide"
@@ -163,3 +169,51 @@ async def test_an_old_receipt_is_judged_with_the_bogota_date(tmp_path: Path) -> 
     row = await _record(tmp_path, receipt=_receipt(day="2026-11-01"))
 
     assert (row["verdict"], row["reason"]) == ("no_coincide", "fecha_vieja")
+
+
+async def test_the_receipt_that_arrives_in_a_new_episode_is_compared_with_the_order_just_placed(tmp_path: Path) -> None:
+    """El camino real: el pedido cerró su episodio y el comprobante abre otro."""
+    metadata = {"episodes": [_episode_with_order("ord_1", episode_id="ep_001"), {"episode_id": "ep_002"}]}
+
+    row = await _record(tmp_path, metadata=metadata, receipt=_receipt())
+
+    assert (row["verdict"], row["episode_id"], row["order_id"]) == ("coincide", "ep_001", "ord_1")
+
+
+async def test_an_order_closed_long_ago_is_not_the_order_of_this_receipt(tmp_path: Path) -> None:
+    """Con el chat en manos del equipo los episodios no rotan: el último puede
+    ser de una compra de hace meses."""
+    old = _closed_with_order(closed_at_ms=_NOW_MS - 45 * 86_400_000)
+
+    row = await _record(tmp_path, metadata=old, receipt=_receipt())
+
+    assert (row["verdict"], row["order_id"]) == ("sin_pedido", None)
+
+
+@pytest.mark.parametrize("facts", [{"pay_status": "paid"}, {"stage": "cancelled"}, {"stage": "delivered"}])
+async def test_an_order_already_paid_or_finished_is_not_waiting_for_a_receipt(tmp_path: Path, facts: dict) -> None:
+    row = await _record(tmp_path, receipt=_receipt(amount="$48.000"), facts=_facts(**facts))
+
+    assert (row["verdict"], row["reason"]) == ("sin_pedido", None)
+
+
+async def test_resending_a_receipt_first_seen_without_an_order_is_not_repeated(tmp_path: Path) -> None:
+    before = await _record(tmp_path, metadata={"episodes": [{"episode_id": "ep_001"}]}, receipt=_receipt())
+    after = await _record(tmp_path, receipt=_receipt())
+
+    assert (before["verdict"], after["verdict"]) == ("sin_pedido", "coincide")
+
+
+async def test_a_short_reference_is_not_enough_to_call_a_receipt_repeated(tmp_path: Path) -> None:
+    await _record(tmp_path, receipt=_receipt(reference="1234"))
+    other = await _record(
+        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="1234")
+    )
+
+    assert other["verdict"] == "coincide"
+
+
+async def test_a_match_on_the_amount_alone_is_noted_as_partial_evidence(tmp_path: Path) -> None:
+    row = await _record(tmp_path, receipt=_receipt(day=None, account=None))
+
+    assert (row["verdict"], row["evidence"]) == ("coincide", "parcial")

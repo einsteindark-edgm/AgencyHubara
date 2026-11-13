@@ -92,15 +92,17 @@ ORDER_PAID, ORDER_PLACED, ORDER_CANCELLED, ORDER_TEST, ORDER_UNCONFIRMED = (
 #: equipo hizo con ese pedido. Listas cerradas: lo demás se cuenta como «otro».
 RECEIPT_MATCH, RECEIPT_MISMATCH = "coincide", "no_coincide"
 RECEIPT_VERDICTS = (RECEIPT_MATCH, RECEIPT_MISMATCH, "ilegible", "sin_pedido")
-RECEIPT_REASONS = ("monto", "fecha_vieja", "cuenta_destino", "repetido")
+RECEIPT_REASONS = ("monto", "fecha_vieja", "cuenta_destino", "repetido", "pedido_no_leido")
+RECEIPT_EVIDENCE = ("completa", "parcial")
 RECEIPT_SOURCES = ("image", "pdf")
-#: Con menos comprobantes que estos el porcentaje de coincidencia engaña.
+#: Con menos pedidos comparados que estos el porcentaje de coincidencia engaña.
 RECEIPTS_MIN_TO_MEASURE = 40
 RECEIPTS_NOTE = (
     "Sombra: Colossus anota qué diría de cada comprobante y no cambia nada para el cliente ni el equipo. "
     "«contra_el_equipo» compara el último veredicto de cada pedido con lo que el equipo hizo: pagado = lo aceptó, "
     "cancelado = no lo aceptó; un pedido que sigue pendiente queda sin resolver. El porcentaje solo sale con "
-    f"{RECEIPTS_MIN_TO_MEASURE} comprobantes o más."
+    f"{RECEIPTS_MIN_TO_MEASURE} pedidos comparados o más. «coincide_por_evidencia»: completa = monto, cuenta nuestra "
+    "y fecha reciente a la vista; parcial = solo cuadró el monto. Los pedidos de prueba no cuentan."
 )
 RECEIPTS = {
     "disponible": False,
@@ -222,6 +224,7 @@ class _Receipt:
     verdict: str
     reason: str | None
     source: str
+    evidence: str | None = None
 
 
 def _closed(value: Any, known: tuple[str, ...]) -> str:
@@ -236,12 +239,13 @@ def _receipts_by_episode(rows: list[dict[str, Any]]) -> dict[str, list[_Receipt]
         episode_id = row.get("episode_id")
         if not isinstance(episode_id, str) or not episode_id:
             continue
-        reason = row.get("reason")
+        reason, evidence = row.get("reason"), row.get("evidence")
         out.setdefault(episode_id, []).append(_Receipt(
             at_ms=_ms(row.get("at_ms")) or 0,
             verdict=_closed(row.get("verdict"), RECEIPT_VERDICTS),
             reason=_closed(reason, RECEIPT_REASONS) if reason else None,
             source=_closed(row.get("source"), RECEIPT_SOURCES),
+            evidence=_closed(evidence, RECEIPT_EVIDENCE) if evidence else None,
         ))
     return out
 
@@ -627,7 +631,7 @@ def _objections(by_window: dict[str, Any]) -> dict[str, Any]:
 
 
 def _receipts_section(episodes: list[_Episode]) -> dict[str, Any]:
-    notes = [r for ep in episodes for r in ep.receipts]
+    notes = [r for ep in episodes if ep.order != ORDER_TEST for r in ep.receipts]
     compared = agreed = said_match_team_refused = said_mismatch_team_accepted = unresolved = 0
     for ep in episodes:
         judged = [r for r in ep.receipts if r.verdict in (RECEIPT_MATCH, RECEIPT_MISMATCH)]
@@ -643,13 +647,14 @@ def _receipts_section(episodes: list[_Episode]) -> dict[str, Any]:
         agreed += said_match == accepted
         said_match_team_refused += said_match and not accepted
         said_mismatch_team_accepted += accepted and not said_match
-    enough = len(notes) >= RECEIPTS_MIN_TO_MEASURE
+    enough = compared >= RECEIPTS_MIN_TO_MEASURE
     return {
         "comprobantes": len(notes),
         "suficientes": enough,
         "por_veredicto": _counts(r.verdict for r in notes),
         "por_motivo": _counts(r.reason for r in notes if r.reason),
         "por_origen": _counts(r.source for r in notes),
+        "coincide_por_evidencia": _counts(r.evidence or "otro" for r in notes if r.verdict == RECEIPT_MATCH),
         "contra_el_equipo": {
             "pedidos_comparados": compared,
             "coincidencias": agreed,
@@ -858,7 +863,7 @@ def render(report: dict[str, Any]) -> str:
         cross = now["contra_el_equipo"]
         measured = (
             f"coincidencia {now['coincidencia_pct']} %" if now["suficientes"]
-            else f"faltan {RECEIPTS_MIN_TO_MEASURE - now['comprobantes']} comprobantes para medir el porcentaje"
+            else f"faltan {RECEIPTS_MIN_TO_MEASURE - cross['pedidos_comparados']} pedidos comparados para medir el porcentaje"
         )
         lines.append(
             f"Comprobantes (Colossus, ahora, en sombra): {now['comprobantes']} ({_top(now['por_veredicto'], n=4)}); "
