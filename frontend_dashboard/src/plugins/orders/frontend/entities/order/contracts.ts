@@ -354,3 +354,27 @@ export const orderPhotoSchema = z.object({
 });
 
 export type OrderPhoto = z.infer<typeof orderPhotoSchema>;
+
+/* ── OrderLines — /api/orders/orders/lines (tarjeta del ciclo #49) ─────── */
+
+// Las líneas de cada pedido de una página de la lista, para el reporte por
+// producto. Mismas líneas que el detalle (mismo armador en el backend).
+export const orderLinesSchema = z.object({
+  order_id: z.string(),
+  display_id: z.string(),
+  payment_method_label: z.string().nullable(),
+  items: z.array(orderItemDetailSchema),
+});
+
+export type OrderLines = z.infer<typeof orderLinesSchema>;
+
+export const orderLinesResponseSchema = z.object({
+  orders: z.array(orderLinesSchema),
+  count: z.number().int(),
+  offset: z.number().int(),
+  limit: z.number().int(),
+  catalog_available: z.boolean(),
+  error_detail: z.string().nullable(),
+});
+
+export type OrderLinesResponse = z.infer<typeof orderLinesResponseSchema>;

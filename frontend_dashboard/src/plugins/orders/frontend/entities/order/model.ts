@@ -15,6 +15,7 @@ import type {
   OrderDetail,
   OrderItemDetail,
   OrderAddress,
+  OrderLines,
   OrderSummary,
   OrderTimelineEvent,
 } from "./contracts";
@@ -218,6 +219,80 @@ export function salesReport(orders: Order[], range: DateRange): SalesReport {
   };
 }
 
+/* ── Reporte por producto (tarjeta del ciclo #49) ─────────────────────── */
+
+/** Aviso cuando no hay de dónde leer costo ni línea de producto. */
+export const NO_COST_SOURCE_NOTE = "Sin fuente de costo ni de línea: estas columnas quedan vacías";
+
+/** Costo y línea de un producto, de la fuente que indique el operador. */
+export interface ProductCost {
+  unitCost: number | null;
+  line: string | null;
+  fullUnitCost: number | null;
+}
+
+/** La ÚNICA entrada para costo y línea: hoy no hay fuente (`NO_PRODUCT_COSTS`). */
+export type ProductCostSource = (item: OrderItemDetail) => ProductCost | null;
+
+export const NO_PRODUCT_COSTS: ProductCostSource = () => null;
+
+/** Una fila del reporte por producto: un producto vendido en un pedido. */
+export interface ProductSaleRow {
+  product: string;
+  variant: string;
+  quantity: number;
+  unitCost: number | null;
+  unitPrice: number;
+  totalCost: number | null;
+  saleWithoutShipping: number;
+  profit: number | null;
+  /** Porcentaje sobre la venta, con un decimal. */
+  margin: number | null;
+  customer: string;
+  orderId: string;
+  line: string | null;
+  fullUnitCost: number | null;
+  paymentChannel: string;
+  listPrice: number | null;
+  /** Descuento de la línea (precio de lista − precio cobrado) × cantidad. */
+  discount: number;
+  discountReason: string;
+  storePaysShipping: boolean;
+  /** Lo que pagó la tienda por el envío gratis: solo en la primera fila del
+   *  pedido, para que la columna sume una vez por pedido. */
+  storeShippingCost: number | null;
+}
+
+export interface ProductLineTotals {
+  line: string;
+  quantity: number;
+  sales: number;
+  profit: number;
+  margin: number | null;
+}
+
+export interface ProductSalesReport {
+  rows: ProductSaleRow[];
+  /** Suma de «Venta total sin envío». */
+  sales: number;
+  /** Aviso de las celdas de costo/línea vacías; null si no falta ninguna. */
+  costNote: string | null;
+  byLine: ProductLineTotals[];
+  /** Pedidos cuyas líneas no suman su valor sin envío (valor − líneas). */
+  mismatches: { orderId: string; difference: number }[];
+  /** Pedidos del rango sin sus líneas cargadas. */
+  ordersWithoutLines: string[];
+}
+
+export function salesReportByProduct(
+  _orders: Order[],
+  _lines: OrderLines[],
+  _range: DateRange,
+  _costs: ProductCostSource = NO_PRODUCT_COSTS,
+): ProductSalesReport {
+  return { rows: [], sales: 0, costNote: null, byLine: [], mismatches: [], ordersWithoutLines: [] };
+}
+
 export interface OrderStatusMeta {
   label: string;
   color: string;
@@ -242,4 +317,4 @@ export const PAY_STATUS_META: Record<PayStatus, { label: string; color: string }
 };
 
 // Re-export the backend types for components that need the richer detail.
-export type { OrderDetail, OrderItemDetail, OrderAddress, OrderSummary, OrderTimelineEvent };
+export type { OrderDetail, OrderItemDetail, OrderAddress, OrderLines, OrderSummary, OrderTimelineEvent };

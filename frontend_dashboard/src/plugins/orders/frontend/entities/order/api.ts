@@ -33,8 +33,10 @@ import {
   customerSummarySchema,
   orderCommandResultSchema,
   orderDetailSchema,
+  orderLinesResponseSchema,
   orderListResponseSchema,
   orderPhotoSchema,
+  type OrderLinesResponse,
   type OrderPhoto,
   reconciliationOutcomeSchema,
   vaultOrdersResponseSchema,
@@ -163,6 +165,41 @@ export function useOrders() {
     refetchInterval: ORDERS_FALLBACK_REFETCH_MS,
     staleTime: 10_000,
     retry: 1, // Premortem C3: 1 retry rápido, luego fallback a empty.
+  });
+}
+
+/**
+ * Líneas de los pedidos de la lista (reporte por producto, tarjeta del ciclo
+ * #49). Mismo tope por defecto que `useOrders` (100), así cubre los mismos
+ * pedidos. Lo monta el diálogo del reporte: se pide solo al abrirlo. Si el
+ * backend no responde, el mismo «vacío con el motivo» que la lista.
+ */
+export function useOrderLines() {
+  return useQuery<OrderLinesResponse>({
+    queryKey: orderKeys.lines(),
+    queryFn: async ({ signal }) => {
+      try {
+        const raw = await apiClient.get<unknown>("/api/orders/orders/lines", { signal });
+        return orderLinesResponseSchema.parse(raw);
+      } catch (exc) {
+        if (exc instanceof ApiError || (exc instanceof TypeError && /fetch/i.test(exc.message))) {
+          return {
+            orders: [],
+            count: 0,
+            offset: 0,
+            limit: 100,
+            catalog_available: false,
+            error_detail:
+              exc instanceof ApiError
+                ? `backend_api_error: HTTP ${exc.status}`
+                : "backend_unreachable: el backend no responde",
+          };
+        }
+        throw exc;
+      }
+    },
+    staleTime: 10_000,
+    retry: 1,
   });
 }
 

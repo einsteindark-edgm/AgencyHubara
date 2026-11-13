@@ -18,13 +18,27 @@ export {
   orderDayIso,
   orderValueWithoutShipping,
   salesReport,
+  salesReportByProduct,
+  NO_COST_SOURCE_NOTE,
+  NO_PRODUCT_COSTS,
 } from "./model";
-export type { SalesBreakdown, SalesReport, SalesTotals } from "./model";
+export type {
+  SalesBreakdown,
+  SalesReport,
+  SalesTotals,
+  OrderLines,
+  ProductCost,
+  ProductCostSource,
+  ProductLineTotals,
+  ProductSaleRow,
+  ProductSalesReport,
+} from "./model";
 export { orderKeys } from "./keys";
 export {
   useOrders,
   useOrdersEvents,
   useOrderDetail,
+  useOrderLines,
   useVaultOrders,
   useRetryVaultOrder,
   useResolveVaultOrder,
@@ -53,6 +67,7 @@ export {
   customerScoreSchema,
   customerSummarySchema,
   orderPhotoSchema,
+  orderLinesResponseSchema,
 } from "./contracts";
 export type {
   VaultOrderRecord,
@@ -63,4 +78,5 @@ export type {
   CustomerSummary,
   ScoreBreakdownItem,
   OrderPhoto,
+  OrderLinesResponse,
 } from "./contracts";
