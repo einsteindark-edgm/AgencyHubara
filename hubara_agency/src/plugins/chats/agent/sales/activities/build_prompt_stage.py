@@ -21,7 +21,11 @@ conversación real sumaron 1.06M prompt tokens). Este override:
      `plugin_context` desde el draft persistido (el que armó el ingest puede
      estar desactualizado tras la captura del paso 2; también cubre el retry
      de la activity, que ya no captura pero sí debe proyectar).
-  5. Pasa `skills=[<etapa>]` al `DefaultConversation.build_prompt` → el
+  5. Agrega la nota de lo que no le llegó al cliente (las tarjetas que el
+     flush no pudo enviar, `use_cases/undelivered_cards`) y la marca como
+     dicha: la tool le dijo al LLM «enviado» al encolar (celda local de
+     Acktos, 2026-10-23).
+  6. Pasa `skills=[<etapa>]` al `DefaultConversation.build_prompt` → el
      ContextBuilder inyecta SOLO el guion de esa etapa como Active Skill
      (además del core `sales_script`, que es `always:true`).
 
@@ -66,6 +70,7 @@ from src.plugins.chats.agent.sales.use_cases.quantity_capture import (
     last_visible_agent_text,
     quantity_slot_open,
 )
+from src.plugins.chats.agent.sales.use_cases.undelivered_cards import tell_undelivered, undelivered_note
 
 _DRAFT_NOTE_PREFIX = "[DATOS DEL PEDIDO YA CONFIRMADOS POR EL CLIENTE"
 
@@ -145,6 +150,28 @@ async def sales_build_prompt(input: BuildPromptInput) -> list[dict[str, Any]]:
 
     stage = resolve_funnel_stage(metadata)
     plugin_context = _refresh_order_draft_note(input.plugin_context, metadata)
+    # Lo que no le llegó al cliente (`undelivered_cards`): el turno lo sabe. La
+    # nota se arma y se marca dicha sobre la lectura fresca (con el candado del
+    # store); sin avisos no se toca el vault. La marca es de mejor esfuerzo: si
+    # el vault no deja escribir, el aviso entra igual (y se repite en el turno
+    # siguiente) en vez de tumbar el turno.
+    undelivered: str | None = None
+    if undelivered_note(metadata, now_ms=now_ms):
+
+        def _tell(fresh: dict[str, Any]) -> dict[str, Any] | None:
+            nonlocal undelivered
+            undelivered = tell_undelivered(fresh, now_ms=now_ms)
+            return fresh if undelivered else None
+
+        try:
+            store.update(input.session_id, _tell)
+        except OSError:
+            activity.logger.warning(
+                "build_prompt: no se marcaron como dichos los envíos fallidos session=%s", input.session_id
+            )
+            undelivered = undelivered_note(metadata, now_ms=now_ms)
+    if undelivered:
+        plugin_context = [*(plugin_context or []), undelivered]
 
     if plugin_context and _turn_notes_in_message(input.session_id):
         # Instrucciones idénticas turno a turno (caché de prefijo de DeepSeek):

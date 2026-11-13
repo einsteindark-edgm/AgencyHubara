@@ -77,6 +77,12 @@ from src.plugins.chats.agent.sales.config.shipping import (
     SHIPPING_RATES_MESSAGE,
     shipping_flow_id,
 )
+from src.plugins.chats.agent.sales.use_cases.undelivered_cards import (
+    any_told,
+    card_words,
+    forget_told,
+    record_undelivered,
+)
 
 # Delay entre fotos del gallery — sin pausa Meta los entrega como burst, lo
 # que se ve robótico (3 thumbnails todos al mismo segundo). Una pausa
@@ -366,8 +372,23 @@ async def flush_pending_ui_intents_activity(session_id: str) -> list[dict[str, A
     HTTP). Devuelve qué entregó, intent por intent (`[{kind, wamid, ok}]`,
     traza v2). La anotación admite `int` A PROPÓSITO: Temporal decodifica el
     resultado grabado con este tipo, y las histories anteriores a la traza v2
-    grabaron la cantidad (replay, L-22)."""
+    grabaron la cantidad (replay, L-22).
+
+    Es el final del turno: antes de enviar, borra los avisos de envíos
+    fallidos que este turno ya vio en su contexto (`undelivered_cards`): llegan
+    una sola vez. Lo que falle ahora queda para el turno siguiente."""
+    _forget_told_undelivered(session_id)
     return await flush_pending_ui_intents_report(session_id)
+
+
+def _forget_told_undelivered(session_id: str) -> None:
+    """Borra los avisos que el turno ya vio (sin avisos dichos no escribe)."""
+    from src.platform.config import WORKSPACE_VAULT_DIR
+    from src.sdk.runtime import FilesystemMetadataStore
+
+    store = FilesystemMetadataStore(WORKSPACE_VAULT_DIR)
+    if any_told(read_retrying_transient_errors_sync(store, session_id)):
+        _safe_update(store, session_id, forget_told)
 
 
 async def flush_pending_ui_intents(
@@ -519,6 +540,9 @@ async def flush_pending_ui_intents_report(
 
     report: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
+    # Lo que no le llegó al cliente, en palabras: el turno siguiente lo sabe
+    # (`use_cases/undelivered_cards`).
+    undelivered: list[str] = []
 
     # PREMORTEM #1 (idempotencia ante el retry de Temporal): cada intent
     # despachado se anota en el registro de entregas y sale de la cola ANTES
@@ -576,8 +600,13 @@ async def flush_pending_ui_intents_report(
                 failures=page_failures,
             )
         except Exception as e:  # noqa: BLE001
+            # El porqué va en el mensaje: el puente a loguru
+            # (`platform/logging.InterceptHandler`) no imprime los `extra`.
             activity.logger.warning(
-                "flush_ui_intents.dispatch_failed",
+                "flush_ui_intents.dispatch_failed session=%s kind=%s error=%r",
+                session_id,
+                kind,
+                e,
                 extra={
                     "session_id": session_id,
                     "kind": kind,
@@ -585,6 +614,7 @@ async def flush_pending_ui_intents_report(
                 },
             )
             failed.append({"kind": kind, "error": str(e)})
+            undelivered.append(card_words(kind, params))
             report.append({"kind": kind, "wamid": None, "ok": False})
             # Fuera de la cola (NO retry automático — el LLM puede decidir
             # reemitir en próxima iteración).
@@ -595,6 +625,7 @@ async def flush_pending_ui_intents_report(
         if result is None:
             # kind desconocido o intent inválido (sin imagen, etc)
             failed.append({"kind": kind, "error": "no_dispatch"})
+            undelivered.append(card_words(kind, params))
             report.append({"kind": kind, "wamid": None, "ok": False})
             _record_delivery(session_dir, intent, ok=False, wamid=None)
             _settle_intents(store, session_id, {intent_id})
@@ -602,7 +633,10 @@ async def flush_pending_ui_intents_report(
 
         if not result.ok:
             activity.logger.warning(
-                "flush_ui_intents.send_failed",
+                "flush_ui_intents.send_failed session=%s kind=%s error=%s",
+                session_id,
+                kind,
+                result.error,
                 extra={
                     "session_id": session_id,
                     "kind": kind,
@@ -610,6 +644,7 @@ async def flush_pending_ui_intents_report(
                 },
             )
             failed.append({"kind": kind, "error": result.error})
+            undelivered.append(card_words(kind, params))
             report.append({"kind": kind, "wamid": None, "ok": False})
             _record_delivery(session_dir, intent, ok=False, wamid=None)
             _settle_intents(store, session_id, {intent_id})
@@ -621,6 +656,7 @@ async def flush_pending_ui_intents_report(
         _settle_intents(store, session_id, {intent_id}, media_log=media_log)
         report.append({"kind": kind, "wamid": result.wa_message_id, "ok": True})
         failed.extend(page_failures)
+        undelivered.extend(card_words(kind, params, page=f["page"], pages=f["pages"]) for f in page_failures)
 
         # Auditoría CAPI 2026-09-08: lo que el cliente acaba de VER es la
         # señal de embudo para Meta (ViewContent / AddToCart /
@@ -675,9 +711,11 @@ async def flush_pending_ui_intents_report(
         except Exception:  # noqa: BLE001 - analytics never bloquea
             pass
 
-    # Persistir failures finales (histórico, último N).
+    # Persistir failures finales (histórico, último N) y los avisos del turno
+    # siguiente. Lo que mandó el operador no es aviso: la app ya se lo dijo y
+    # el bot no se lo prometió al cliente.
     if failed:
-        _append_failures(store, session_id, failed)
+        _append_failures(store, session_id, failed, [] if operator_tool else undelivered, now_ms=now_ms)
 
     return report
 
@@ -869,14 +907,17 @@ def _enqueue_capi_after_send(
         pass
 
 
-def _append_failures(store: Any, session_id: str, failed: list[dict[str, Any]]) -> None:
-    """Agrega los fallos del flush al histórico (`ui_intents_failures`, últimos 50)."""
+def _append_failures(
+    store: Any, session_id: str, failed: list[dict[str, Any]], undelivered: list[str], *, now_ms: int
+) -> None:
+    """Agrega los fallos del flush al histórico (`ui_intents_failures`, últimos 50)
+    y lo que no le llegó al cliente a los avisos del turno siguiente."""
 
     def _append(fresh: dict[str, Any]) -> dict[str, Any]:
         history = list(fresh.get("ui_intents_failures") or [])
         history.extend(failed)
         fresh["ui_intents_failures"] = history[-50:]
-        return fresh
+        return record_undelivered(fresh, undelivered, now_ms=now_ms)
 
     _safe_update(store, session_id, _append)
 
