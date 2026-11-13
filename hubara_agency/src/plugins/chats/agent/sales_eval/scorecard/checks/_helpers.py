@@ -5,7 +5,7 @@ import re
 import unicodedata
 from collections.abc import Iterator
 
-from src.plugins.chats.shared.team_exchange import our_lines_in_turn
+from src.plugins.chats.shared.team_exchange import TEAM_NOTE_HEAD, UNSEEN_NOTE_HEAD, our_lines_in_turn
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
 
@@ -33,6 +33,25 @@ def our_quoted_message(text: str) -> str | None:
         return m.group(1)
     ours = our_lines_in_turn(text or "")
     return "\n".join(ours) if ours else None
+
+
+#: La foto entra como texto con su descripción y, si se reconoció, el producto
+#: nuestro que es (identificación de fotos, 2026-09-30).
+PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]", re.IGNORECASE)
+
+
+def customer_written(text: str) -> str:
+    """El texto del turno sin lo que el cliente NO escribió: la cita del mensaje
+    nuestro que contesta, la nota de lo que dijo el equipo o un aviso, y la
+    descripción de su foto. Una palabra que solo está ahí no es un pedido suyo
+    (tarjeta 23 del ciclo: «catálogo» en la descripción de una foto)."""
+    text = _OUR_QUOTED_RE.sub(" ", text or "")
+    for head in (TEAM_NOTE_HEAD, UNSEEN_NOTE_HEAD):
+        start = text.find(head)
+        if start >= 0:
+            end = text.find("]", start)
+            text = text[:start] + " " + (text[end + 1 :] if end >= 0 else "")
+    return PHOTO_ANNOTATION_RE.sub(" ", text)
 
 
 def clip(text: str, limit: int = _EVIDENCE_MAX) -> str:
