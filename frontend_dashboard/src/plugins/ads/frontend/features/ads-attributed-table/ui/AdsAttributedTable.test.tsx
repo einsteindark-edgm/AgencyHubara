@@ -92,6 +92,19 @@ describe("AdsAttributedTable — pedido cancelado", () => {
   });
 });
 
+describe("AdsAttributedTable — pedido que no es una venta (2026-11-10)", () => {
+  it.each([
+    ["order_test", /Cotizado · pedido de prueba/, "prueba"],
+    ["order_missing", /Cotizado · pedido borrado/, "ya no existe"],
+    ["order_repeated", /Cotizado · pedido ya contado/, "conversación anterior"],
+  ] as const)("%s lo dice en el badge de estado", (reason, label, why) => {
+    const { getByText } = render(
+      <AdsAttributedTable rows={[makeRow({ state: "cotizado", stateReason: reason })]} />,
+    );
+    expect(getByText(label).getAttribute("title")).toContain(why);
+  });
+});
+
 describe("AdsAttributedTable — costo de WhatsApp por conversación (2026-09-18)", () => {
   it("columna 'Costo WA': total en US$ + las categorías de Meta que usó", () => {
     const { getByText, getByTestId } = render(

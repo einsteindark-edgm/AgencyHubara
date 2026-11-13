@@ -154,7 +154,20 @@ function buildTimelineSteps(
     });
   }
 
-  // 4. Si cancelled, agregamos el paso "Cancelada" al final.
+  // 4. Ajustes de precio (pedido #169): cada uno es un hecho del pedido —
+  //    quién, por qué y el total antes → después (el `detail` del backend).
+  for (const ev of events) {
+    if (ev.type !== "price_adjusted") continue;
+    steps.push({
+      key: `price_adjusted-${ev.timestamp_ms}`,
+      label: ev.label,
+      state: "done",
+      timestamp_ms: ev.timestamp_ms,
+      detail: ev.detail,
+    });
+  }
+
+  // 5. Si cancelled, agregamos el paso "Cancelada" al final.
   if (isCancelled) {
     const cancelEv = evByType.get("stage:cancelled");
     steps.push({

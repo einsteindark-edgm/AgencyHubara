@@ -175,6 +175,54 @@ def test_the_view_fields_are_readable_as_input(tmp_path: Path) -> None:
     assert got == ["affirmation", "text"]
 
 
+#: Un hecho más de la entrada, en otra vista (puerta de afirmaciones, 2026-11-03).
+CATALOG_TWO_VIEWS: dict[str, Any] = {
+    **CATALOG3,
+    "builtins": {
+        **CATALOG3["builtins"],
+        "reply_gap": {"kind": "view", "input": "Inbound", "fields": {"opens_episode": "bool"}},
+        "same_context": {"kind": "view", "input": "Inbound", "fields": {"context": "bool"}},
+    },
+}
+
+COMPRA_TWO_VIEWS: dict[str, Any] = {
+    **COMPRA,
+    "view": [{"builtin": "purchase_window"}, {"builtin": "reply_gap"}],
+    "decide": [
+        {"when": "inp.opens_episode == true", "then": [None, "text"]},
+        *COMPRA["decide"],
+    ],
+    "examples": [
+        *COMPRA["examples"],
+        {"answers": {"compra.que_hace": {"choice": "confirma", "p": 0.9}},
+         "input": {"context": True, "asked_known": "confirmar_compra", "opens_episode": True}, "expect": [None, "text"]},
+    ],
+}
+
+
+def test_a_capability_reads_the_fields_of_several_views(tmp_path: Path) -> None:
+    """Cada hecho en su builtin: la capacidad pide varias vistas y lee los
+    campos de todas (`view: [ … ]`)."""
+    bundle_dir, catalog_path = _write(tmp_path, {"compra": COMPRA_TWO_VIEWS}, catalog=CATALOG_TWO_VIEWS)
+
+    assert [str(d) for d in check_bundle(bundle_dir, catalog_path)] == []
+    table = load_bundle(bundle_dir, catalog_path).capability("compra")
+    assert set(table.input_fields) == {"text", "now_ms", "context", "asked_known", "opens_episode"}
+    got = table.decide(
+        answers={"compra.que_hace": ("confirma", 0.9)},
+        inp={"context": True, "asked_known": "confirmar_compra", "opens_episode": True},
+    )
+    assert got == [None, "text"]
+
+
+def test_two_views_that_give_the_same_field_are_rejected(tmp_path: Path) -> None:
+    spec = {**COMPRA, "view": [{"builtin": "purchase_window"}, {"builtin": "same_context"}]}
+    bundle_dir, catalog_path = _write(tmp_path, {"compra": spec}, catalog=CATALOG_TWO_VIEWS)
+
+    codes = [str(d) for d in check_bundle(bundle_dir, catalog_path)]
+    assert any(c.startswith("DB004") and "same_context" in c for c in codes), codes
+
+
 def test_positional_tuples_and_unions_keep_their_python_shape(tmp_path: Path) -> None:
     table = _load(tmp_path, {"enumeracion": ENUMERACION}).capability("enumeracion")
 

@@ -235,7 +235,11 @@ _AMOUNT_TOOLS = ("verify_order_for_checkout", "register_order", "present_order_c
 
 
 def _amount_problem(turn: Turn) -> str | None:
-    for tc in turn.tools:
+    """Un rechazo de `present_order_confirmation` por monto no cuenta si en
+    el mismo turno sale después un resumen bueno: la guarda lo frenó antes
+    de que el cliente lo viera y el bot lo corrigió. Las diferencias de
+    `register_order` y la verificación fallida cuentan siempre."""
+    for i, tc in enumerate(turn.tools):
         if tc.name == "register_order" and tc.error in (
             "amount_mismatch", "price_mismatch", "shipping_mismatch"
         ):
@@ -244,6 +248,8 @@ def _amount_problem(turn: Turn) -> str | None:
             return f"verify_order_for_checkout falló ({tc.error or 'sin detalle'})"
         if tc.name == "present_order_confirmation" and tc.error in (
             "price_drift", "price_mismatch", "shipping_mismatch"
+        ) and not any(
+            later.name == "present_order_confirmation" and later.ok is True for later in turn.tools[i + 1:]
         ):
             return f"present_order_confirmation reportó {tc.error}"
     return None

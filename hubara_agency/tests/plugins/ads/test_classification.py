@@ -242,3 +242,28 @@ def test_episode_superseded_by_campaign_reply_is_no_reply():
         )
         == "no_reply"
     )
+
+
+def test_episode_closed_by_timeout_is_no_reply():
+    """`TIMEOUT`: el ciclo de vida cerró el episodio porque el cliente no volvió en
+    14 días (`episode_lifecycle.TIMEOUT_CLOSING_TAG`). Es abandono, no una
+    cotización: contarlo como «cotizado» inflaba Cotizados y el pipeline."""
+    from src.plugins.ads.classification import classify_episode_state
+
+    episode = {
+        "episode_id": "ep_001",
+        "started_at_ms": _NOW_MS - 17 * _ONE_DAY_MS,
+        "closed_at_ms": _NOW_MS - 3 * _ONE_DAY_MS,
+        "closing_tag": "TIMEOUT",
+        "order_id": None,
+    }
+    assert (
+        classify_episode_state(
+            episode,
+            current_tag=None,
+            total_msgs=0,
+            last_inbound_ms=episode["closed_at_ms"],
+            now_ms=_NOW_MS,
+        )
+        == "no_reply"
+    )

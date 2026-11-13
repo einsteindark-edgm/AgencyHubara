@@ -619,6 +619,105 @@ preguntes en qué más puedes ayudar».
 - WHEN el LLM responde solo texto (sin tools outbound), ej. "¡Buenas tardes! Bienvenido a *Hubara*... ¿Buscas algo para ti o es para regalo?"
 - THEN el texto sale como siempre y no se inyecta nada (caso run a15bb71c)
 
+Delta 2026-11-03 (`ventas-8`, saludo v2; informe de huecos de producción, bot
+V2). Con Jev decidiendo `saludo`:
+
+- Un «hola» o una bienvenida sin la hora NO cuentan como saludo: Jev contesta
+  si algún mensaje saluda con la hora del día Y nombra a la tienda; si no, sale
+  la Burbuja 1 (APE-01).
+- El primer contacto de verdad es «la tienda nunca escribió»: el egreso lee del
+  historial las horas desde el último mensaje de la tienda (`hours_since_store`,
+  la cuenta de la vista `reply_gap`). Si la tienda ya escribió (una campaña, un
+  colega, otro episodio), la Burbuja 1 NO sale.
+- Fuera de ese primer contacto, `saludo_repetido` SHALL quitar del texto que
+  sale (también el de `send_reply`) las oraciones que dan la bienvenida o
+  presentan la tienda como si fuera la primera vez (APE-04: el modelo, no la
+  burbuja, le escribía «Bienvenido a *Hubara*, velas artesanales…» al cliente
+  que volvía). La regla de palabras del paquete propone; Jev decide; si todo el
+  texto es la bienvenida, sale igual. Sin Jev no revisa.
+
+#### Scenario: «¡Hola!» ya no deja sin la burbuja (ventas-8)
+
+- GIVEN primer contacto y la tienda nunca escribió
+- WHEN el único texto del turno es «¡Hola! ¿En qué te ayudo?»
+- THEN Jev contesta que no saluda con la hora ni nombra a la tienda y sale la Burbuja 1
+
+#### Scenario: el cliente contesta una campaña (ventas-8)
+
+- GIVEN el historial del LLM no tiene mensajes del agente, pero la tienda le escribió hace 20 horas
+- WHEN el turno sale
+- THEN NO sale la Burbuja 1
+- AND si el texto le da la bienvenida a Hubara, `saludo_repetido` la quita
+
+#### Scenario: el cliente vuelve en otro episodio (informe de huecos, 2026-11-03)
+
+- GIVEN el primer turno del segundo episodio
+- WHEN el modelo escribe «Buenos días. Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma… ¿Buscas algo para regalar o para tu casa?»
+- THEN sale «Buenos días. ¿Buscas algo para regalar o para tu casa?» (guarda `regreeting_guard`)
+
+### Requirement: Lo que la tienda no dice y lo que el pedido ya tiene (`ventas-8`, 2026-11-03)
+
+Con `ventas-8`, el egreso de V2 (que ve el texto final y el de `send_reply`)
+SHALL pasar el texto por `despedida`: las oraciones con una frase que la tienda
+no dice (dar la compra o el pago por hechos, «caso cerrado», «pedido
+transferido», «te confirmo en un rato», «ahí te dejé», «te cuadro el pedido»;
+frases del paquete) que Jev confirma se quitan, y si no queda nada con el pedido
+registrado, sale la despedida aprobada del dominio (CIE-05). Sin pedido
+registrado y sin nada que quede, el texto sale igual.
+
+`send_reply` SHALL devolver UNA vez por mensaje del cliente el texto que le
+vuelve a pedir un dato que el pedido ya tiene (`repregunta`: la cantidad de cada
+producto y los datos de envío y de pago del borrador; VAR-06, ENV-04), con lo
+que ya está en el pedido (sin el valor de un dato personal). Solo si el texto
+pregunta algo; los datos salen del borrador (nunca uno que falta). El segundo
+intento sale. Sin Jev, con un paquete anterior o si algo falla, el texto sale.
+
+Las tres decisiones nuevas nacen apagadas (`reglas`) y se encienden por comando.
+
+#### Scenario: «ahí te dejé el formulario» (informe de huecos, 2026-11-03)
+
+- GIVEN un turno que pide los datos de envío
+- WHEN el texto es «Con gusto, ahí te dejé el formulario. Cuando lo llenes, seguimos con tu pedido 🤍»
+- THEN sale «Cuando lo llenes, seguimos con tu pedido 🤍» (guarda `closing_phrase_guard`)
+
+#### Scenario: la cantidad ya estaba en el pedido (VAR-06)
+
+- GIVEN el borrador con 1 × Velas de deseos cuadradas
+- WHEN `send_reply` recibe «¿Te sirve la caja completa o prefieres ajustar la cantidad?»
+- THEN el texto vuelve al modelo con «el pedido ya tiene la cantidad: 1 × Velas de deseos cuadradas»
+- AND el segundo intento sale
+
+### Requirement: La objeción del cliente se anota y nada más (`ventas-9`, 2026-11-10)
+
+Con `ventas-9`, el ingest SHALL pedir la decisión `objecion` por cada mensaje
+que el cliente escribió: Jev dice si puso una objeción para comprar y de qué
+tipo (lista cerrada: `precio`, `envio`, `tiempo_entrega`, `confianza`,
+`producto`; «ninguna» se anota como leída y sin tipo). Queda en las decisiones
+de la conversación (`evals/decisions.jsonl`, etapa `ingest`, con su mensaje) y
+el informe de estrategia la cuenta por tipo y por lo que pasó después.
+
+La decisión MUST NOT cambiar nada del turno, en ningún modo: su valor no entra
+a las lecturas del mensaje (`Readings`), no escribe campos del metadata y no va
+a la cola de desacuerdos. Nace apagada (`reglas`: Jev no se consulta); se
+enciende en sombra por comando (con los números de prueba que deciden con Jev
+y en el bot nuevo del laboratorio, Jev la contesta sin el comando; igual solo
+anota). Corre junto a las lecturas del mensaje y el ingest la espera como
+mucho `OBSERVATION_WAIT_S` (la vara de p95 de Jev, 1,5 s): si falla o tarda
+más, el mensaje sigue sin la nota. Con un paquete anterior no existe.
+
+#### Scenario: el cliente objeta el precio (sombra)
+
+- GIVEN `objecion` en sombra y el paquete `ventas-9`
+- WHEN el cliente escribe que la vela le parece muy cara
+- THEN queda una decisión `objecion` con lo que leyó Jev (`precio`) en la conversación
+- AND las lecturas del mensaje son las mismas que con `ventas-8`
+
+#### Scenario: Jev se cuelga en la objeción
+
+- GIVEN `objecion` en sombra
+- WHEN Jev no contesta esa pregunta
+- THEN el ingest no la espera más que su tope y el mensaje sigue sin la nota
+
 ### Requirement: Todo turno lleva la hora de Bogotá (2026-09-29)
 
 Cada turno que llega al LLM MUST traer en `plugin_context` el bloque «Hora
@@ -1005,6 +1104,49 @@ mide con TAG-09; el paso a paso lo muestra en palabras.
 - WHEN el texto dice «Si quieres te envío las fotos del Velón Koala.»
 - THEN `send_reply` no graba `promises` y el turno sigue como siempre
 
+### Requirement: Lo que el bot afirma antes de enviar se sostiene en los hechos (bot nuevo, 2026-11-03)
+
+Huecos del 10-07 al 11-03: el bot nuevo afirmó hechos que nunca consultó (69
+casos en 51 conversaciones; 25 la última semana: CON-03, POS-01, DES-10,
+ENV-05, EST-05). El egreso del V2 corre antes de grabar y de enviar y SHALL
+poder devolver `retain_note` («retener, con esta nota»). Con nota, `run_agent_turn`
+SHALL no enviar ni grabar el texto del modelo (suelto o de `send_reply`) y dar
+UNA ronda más con «Tu respuesta NO se envió. <nota>»; el texto nuevo vuelve a
+pasar por el egreso. Una segunda nota no retiene otra vez (el texto sale), y no
+hay ronda en un turno administrativo ni sin otra vuelta del modelo (el texto
+sale como antes). Va detrás del parche `egress-retain-round-v1` (solo se
+consulta cuando hay nota).
+
+La nota sale de dos lugares:
+
+- la capacidad `afirmacion_previa` del paquete (el catálogo la pide desde la
+  versión 8; entró en `ventas-8` ya vivo, el 2026-11-04): Jev dice QUÉ afirma el texto y la tabla decide con los hechos
+  (`order_registered_fact`, `paid_in_turn_fact`, `unexplained_amounts_fact`,
+  `bank_details_fact`, `shipping_amounts_fact`, `approved_delivery_time_fact`).
+  Nace apagada (`reglas`: ni retiene ni le pregunta a Jev);
+- el texto final SUELTO pasa por las mismas revisiones que `send_reply`
+  (`SendReplyTool.held_reason`: la foto verificada, «te confirmo después», los
+  hechos y la lista para el selector), con la misma marca: una retención por
+  mensaje del cliente entre los dos caminos.
+
+#### Scenario: Afirma un pedido registrado sin pedido
+
+- GIVEN el paquete trae `afirmacion_previa` encendida y no hay pedido registrado
+- WHEN el texto dice «¡Listo! Tu pedido quedó registrado 🤍»
+- THEN el texto no sale y el modelo recibe la nota del paquete en una ronda más
+- AND lo que escribe después sale (aunque vuelva a afirmarlo)
+
+#### Scenario: La frase aprobada de tiempos no es una promesa
+
+- GIVEN el dominio de la tienda trae `delivery_time_phrases: "1 a 2 dias habiles"`
+- WHEN el texto dice «En Bogotá llega en 1 a 2 días hábiles»
+- THEN la puerta no retiene
+
+#### Scenario: El texto suelto que promete revisar después
+
+- WHEN el modelo contesta sin `send_reply` «Déjame revisar y te confirmo en un momento»
+- THEN el texto no sale y el modelo recibe el mismo mensaje con que lo retendría `send_reply`
+
 ### Requirement: El formulario y las tarifas que el texto promete salen
 
 Detrás de la ronda (por si el modelo insiste sin la tool), antes de enviar el
@@ -1039,6 +1181,51 @@ seguidos sin llamar la tool y el operador lo mandó a mano.
 - WHEN el texto final dice «Te comparto las tarifas de envío 🚚» y la tarjeta no está en la cola
 - THEN la tarjeta de tarifas queda en la cola y sale después del texto
 - AND TAG-09 la cuenta como enviada (la burbuja entregada en el paso a paso)
+
+### Requirement: Un formulario de envío por compra, y sus datos en el pedido al llegar (2026-11-03)
+
+Informe de huecos del 2026-11-03 (ENV-01, 7 conversaciones desde el 10-07): el
+bot V2 volvía a llamar `request_shipping_details` turnos después de que el
+formulario ya le había llegado al cliente (#393 ya había quitado los
+duplicados por carrera; la red de las promesas no los causaba: ya contaba el
+formulario entregado como cumplido). Desde entonces `request_shipping_details`
+SHALL rechazar con `queued=false, error=shipping_form_already_sent` si en el
+episodio activo el formulario ya se entregó (una fila `ok` del registro de
+entregas desde que empezó el episodio); el mensaje le dice al modelo que un
+dato que falte o que el cliente corrija se pide por texto (`send_reply`) y se
+anota con `set_order_slot`. El rechazo no corta el turno. NO SHALL frenar: el
+primer formulario, uno cuyo envío falló, uno de un episodio anterior, otra
+llamada en el mismo turno (ya está en la cola) ni el operador desde la app
+(`api/operator_tools.py`, `once_per_episode=False`: decide él).
+
+ENV-03: los datos del formulario (`nfm_reply`: ciudad, barrio, dirección,
+teléfono, quien recibe, cédula, forma de pago) SHALL quedar en el borrador del
+episodio activo apenas llegan (el ingest, como el carrito web), sin depender
+de que el modelo llame `set_order_slot`. Un campo vacío no borra lo que había.
+No se escribe con un humano al mando ni en un episodio con pedido registrado.
+La forma de pago queda con el id del formulario (`cash_on_delivery`,
+`transfer`, `payment_link`), el mismo que recibe `register_order`. El
+scorecard (ENV-03, registro v12) pasa si cada dato que trajo el formulario
+quedó en el pedido de ese turno.
+
+#### Scenario: El modelo pide el formulario otra vez
+
+- GIVEN un formulario entregado en el episodio activo
+- WHEN el modelo llama `request_shipping_details`
+- THEN la tool devuelve `queued=false, error=shipping_form_already_sent` y no encola nada
+- AND el modelo sigue en el turno y le pide por texto lo que falte
+
+#### Scenario: El primer envío falló
+
+- GIVEN una fila del registro de entregas del formulario con `ok=false`
+- WHEN el modelo llama `request_shipping_details`
+- THEN el formulario queda en la cola
+
+#### Scenario: Llegan los datos del formulario
+
+- GIVEN un borrador con producto y cantidad
+- WHEN llega `nfm_reply` con ciudad, dirección, teléfono, quien recibe y forma de pago
+- THEN el borrador los tiene antes del turno del bot y la nota del pedido se los muestra
 
 ### Requirement: Guardas del cierre en el registro, el resumen y la etiqueta de venta
 
@@ -2349,6 +2536,30 @@ Caso del 2026-10-16: un colega atendió a un cliente (le aclaró que el precio e
 - WHEN llega por señal el mismo mensaje (mismo wamid)
 - THEN no hay un segundo turno para él
 
+### Requirement: Las promociones son cupones y categorías de promoción (2026-11-12)
+
+`list_promotions` SHALL devolver, además de los cupones vigentes, las
+categorías del catálogo que el operador marcó como promoción en Medusa
+(`categories`: nombre y cuántos productos), y su resumen MUST pedir mostrarlas
+con `present_products(category="<nombre>")` sin sumar un descuento (el precio
+es el del catálogo). El resumen MUST decir que no hay promociones solo cuando
+no hay cupones NI categorías de promoción. Si los cupones no se pueden leer,
+las categorías igual se ofrecen; si el catálogo no se puede leer, la respuesta
+de los cupones queda como antes.
+
+#### Scenario: «¿Cuáles son las promociones navideñas?» sin cupones navideños
+
+- GIVEN la categoría «Promociones Navideñas» marcada como promoción y ningún cupón vigente
+- WHEN el bot llama `list_promotions`
+- THEN el resultado trae `categories: [{name: "Promociones Navideñas", products: 6}]`
+- AND el resumen pide `present_products(category="Promociones Navideñas")` y no dice «no hay promociones»
+
+#### Scenario: Sin cupones ni categorías de promoción
+
+- GIVEN ningún cupón vigente y ninguna categoría marcada
+- WHEN el bot llama `list_promotions`
+- THEN el resumen dice que no hay promociones, como antes
+
 ### Requirement: La oferta del cupón de la campaña, con su fecha límite (2026-10-20)
 
 Cuando el episodio tiene guion de campaña (`sales_campaign`) con `cupon`, el
@@ -2518,3 +2729,51 @@ corrió y la falla ocurre después del turno.
 - GIVEN la lista de respaldo sale en 3 páginas y la 2 no llega
 - THEN el contexto del turno siguiente dice que no le llegó la página 2 de 3 de la lista de productos
 
+### Requirement: El comprobante de pago se revisa en sombra contra el pedido (2026-11-12)
+
+Cuando el cliente manda un comprobante de pago (foto o PDF), el sistema SHALL
+anotar qué diría Colossus al compararlo con el pedido: `coincide`,
+`no_coincide` (con motivo `monto`, `fecha_vieja`, `cuenta_destino` o
+`repetido`), `ilegible` o `sin_pedido`. Es sombra: el mensaje al cliente y el
+relevo al equipo (`PAYMENT_VERIFICATION_PENDING`) MUST salir igual que sin el
+veredicto, y una falla al anotarlo MUST NOT frenarlos. El total del pedido sale
+de `OrderFacts`. La fila guarda solo códigos
+(`<sesión>/evals/receipt_checks.jsonl`); de lo leído en el comprobante no se
+escribe nada, y de la cuenta de destino la visión solo entrega los últimos 4
+dígitos. Un comprobante nunca prueba un pago: el equipo sigue confirmándolo en
+la cuenta. El informe del Estratega (`sales_eval/strategy.py`, sección
+`comprobantes`) cruza el último veredicto de cada pedido con lo que el equipo
+hizo (pagado o cancelado) y solo da el porcentaje con 40 pedidos comparados o
+más. Un PDF queda `ilegible` (no pasa por visión, decisión 2026-09-01).
+
+El pedido contra el que se compara es el del último episodio o, si ese está
+abierto y sin pedido (el comprobante abrió un episodio nuevo), el del anterior;
+solo si cerró con pedido en los últimos 30 días y el pedido todavía espera el
+pago (ni pagado, ni entregado, ni cancelado). Si no, `sin_pedido`; si había
+pedido pero no se pudieron leer sus datos, `sin_pedido` con motivo
+`pedido_no_leido`. Un `coincide` dice además su evidencia: `completa` (monto,
+cuenta del negocio y fecha reciente a la vista) o `parcial` (solo el monto).
+
+#### Scenario: Comprobante que coincide
+
+- GIVEN un pedido registrado por $84.000 y un comprobante de hoy por $84.000 a una cuenta del negocio
+- WHEN el cliente lo manda
+- THEN recibe el mismo «Recibimos tu comprobante» y la conversación pasa al equipo como siempre
+- AND queda anotado `coincide`
+
+#### Scenario: Comprobante que no cuadra
+
+- GIVEN el mismo pedido y un comprobante por otro monto, de hace 10 días, a otra cuenta o con una referencia ya usada en otro pedido
+- THEN queda anotado `no_coincide` con su motivo
+- AND el cliente y el equipo ven lo mismo que hoy
+
+#### Scenario: El comprobante abre un episodio nuevo
+
+- GIVEN un pedido recién registrado (su episodio cerró esperando el pago) y el bot atendiendo
+- WHEN llega la foto del comprobante y el ingest abre un episodio nuevo
+- THEN el veredicto se compara con ese pedido y queda anotado en el episodio del pedido
+
+#### Scenario: Anotar falla
+
+- GIVEN que no se puede leer el pedido o escribir la fila
+- THEN el relevo y el mensaje salen igual

@@ -5,8 +5,10 @@ import androidx.compose.foundation.text.input.clearText
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.hubara.operator.core.data.ApplicationScope
 import com.hubara.operator.core.data.Clock
 import com.hubara.operator.core.data.outbox.OutboxRepository
+import com.hubara.operator.core.data.repo.PENDING_KEY_PREFIX
 import com.hubara.operator.core.data.repo.ChatRepository
 import com.hubara.operator.core.data.repo.PendingAction
 import com.hubara.operator.core.data.repo.SeenRepository
@@ -25,7 +27,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.async
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +40,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 data class ChatUiState(
@@ -54,7 +59,38 @@ data class ChatUiState(
     val history: HistoryView = HistoryView.MESSAGES,
     /** El operador tiró hacia abajo y se está pidiendo la conversación al servidor. */
     val refreshing: Boolean = false,
+    /** Las fotos elegidas que salen al tocar «Enviar» (`content://` del selector), en el orden en que se eligieron. */
+    val attachments: ImmutableList<String> = persistentListOf(),
 )
+
+/**
+ * Lo que se pinta de un mensaje: las fotos del historial solo desde nuestro backend (con el token de la sesión) y las
+ * de una tarjeta también del CDN de los productos (`https://`, sin token). La foto que todavía está saliendo es un
+ * archivo del teléfono: solo la burbuja del outbox puede mostrarlo.
+ */
+internal fun Message.forDisplay(mediaUrl: (String?) -> String?): Message {
+    val local = key.startsWith(PENDING_KEY_PREFIX) && imageUrl?.startsWith("file://") == true
+    return copy(imageUrl = if (local) imageUrl else mediaUrl(imageUrl), card = card?.reachable(mediaUrl))
+}
+
+/** Qué hace «Enviar» con lo que hay en el composer. */
+internal sealed interface SendPlan {
+    data object Nothing : SendPlan
+    data class Text(val text: String) : SendPlan
+    /** Cada foto en su mensaje; el texto, como pie de la primera. */
+    data class Photos(val sources: List<String>, val caption: String?) : SendPlan
+    /** WhatsApp corta el pie de una foto en 1024 caracteres: se avisa antes de subir nada. */
+    data object CaptionTooLong : SendPlan
+}
+
+internal fun sendPlan(text: String, attachments: List<String>): SendPlan {
+    val trimmed = text.trim()
+    return when {
+        attachments.isEmpty() -> if (trimmed.isEmpty()) SendPlan.Nothing else SendPlan.Text(trimmed)
+        trimmed.length > OutboxRepository.MAX_CAPTION -> SendPlan.CaptionTooLong
+        else -> SendPlan.Photos(attachments, trimmed.ifEmpty { null })
+    }
+}
 
 /** Cómo va la carga del historial desde el backend. */
 enum class HistoryLoad { LOADING, LOADED, FAILED }
@@ -83,6 +119,7 @@ class ChatViewModel @AssistedInject constructor(
     private val clock: Clock,
     private val config: ApiConfig,
     private val seen: SeenRepository,
+    @ApplicationScope private val appScope: CoroutineScope,
 ) : ViewModel() {
     val sessionId: SessionId = requireNotNull(SessionId.parse(sessionRaw)) { "sesión inválida" }
 
@@ -95,9 +132,11 @@ class ChatViewModel @AssistedInject constructor(
     private val pulling = MutableStateFlow(false)
     private val watch = sync.watch(sessionId)
 
+    private val attachments = MutableStateFlow<ImmutableList<String>>(persistentListOf())
+
     val state: StateFlow<ChatUiState> = combine(
-        chats.observeChat(sessionId), suggestions.observe(sessionId), combine(busy, pulling) { b, p -> b to p }, error, load,
-    ) { chat, set, (b, pulled), e, l ->
+        chats.observeChat(sessionId), suggestions.observe(sessionId), combine(busy, pulling, attachments, ::Triple), error, load,
+    ) { chat, set, (b, pulled, picked), e, l ->
         val human = chat.route == Route.HUMAN
         ChatUiState(
             phone = chat.phone,
@@ -106,11 +145,7 @@ class ChatViewModel @AssistedInject constructor(
             orderRef = chat.orderRef,
             windowOpen = chat.windowExpiresAtMs?.let { it > clock.nowMs() } ?: true,
             stage = set?.stage,
-            // Las fotos se cargan con el token de sesión, y solo desde nuestro backend; las de una tarjeta, también
-            // del CDN de los productos (`https://`, sin token).
-            messages = chat.messages.map { m ->
-                m.copy(imageUrl = config.mediaUrl(m.imageUrl), card = m.card?.reachable(config::mediaUrl))
-            }.toImmutableList(),
+            messages = chat.messages.map { it.forDisplay(config::mediaUrl) }.toImmutableList(),
             // Las burbujas solo tienen sentido con el humano en control y la ventana abierta.
             suggestions = if (human && set?.windowOpen != false) set?.suggestions.orEmpty().toImmutableList() else persistentListOf(),
             pending = chat.pendingActions.toImmutableList(),
@@ -118,6 +153,7 @@ class ChatViewModel @AssistedInject constructor(
             error = e,
             history = historyLoad(l, hasMessages = chat.messages.isNotEmpty()),
             refreshing = pulled,
+            attachments = picked,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ChatUiState(history = HistoryView.LOADING))
 
@@ -174,14 +210,43 @@ class ChatViewModel @AssistedInject constructor(
 
     fun returnToBot() = act("No se pudo devolver la conversación al bot.") { chats.returnToBot(sessionId) }
 
+    /** Las fotos que devolvió el selector se suman a las ya elegidas (sin repetir y hasta el máximo). */
+    fun attach(sources: List<String>) {
+        attachments.update { (it + sources).distinct().take(OutboxRepository.MAX_PHOTOS).toImmutableList() }
+    }
+
+    fun removeAttachment(source: String) {
+        attachments.update { (it - source).toImmutableList() }
+    }
+
     fun sendText() {
-        val text = draft.text.toString().trim()
-        if (text.isEmpty()) return
-        viewModelScope.launch {
-            outbox.sendText(sessionId, text)
-            draft.clearText()
-            chats.saveDraft(sessionId, "", clock.nowMs())
+        when (val plan = sendPlan(draft.text.toString(), attachments.value)) {
+            SendPlan.Nothing -> Unit
+            SendPlan.CaptionTooLong -> error.value = "El texto de una foto puede tener hasta ${OutboxRepository.MAX_CAPTION} caracteres."
+            is SendPlan.Text -> viewModelScope.launch {
+                outbox.sendText(sessionId, plan.text)
+                clearDraft()
+            }
+            is SendPlan.Photos -> {
+                // Fuera del composer ya: un segundo toque mientras se preparan no las manda dos veces.
+                attachments.value = persistentListOf()
+                val typed = draft.text.toString()
+                viewModelScope.launch {
+                    clearDraft()
+                    // Prepararlas tarda (decodificar y comprimir): va en el alcance de la app para que salgan todas
+                    // aunque el operador salga del chat apenas toca «Enviar».
+                    val batch = appScope.async { outbox.sendPhotos(sessionId, plan.sources, plan.caption) }.await()
+                    if (batch.unreadable > 0) error.value = unreadablePhotos(batch.unreadable)
+                    // Ninguna se pudo leer: el texto no salió con ninguna y vuelve al campo.
+                    if (batch.sent.isEmpty() && draft.text.isEmpty()) draft.edit { replace(0, length, typed) }
+                }
+            }
         }
+    }
+
+    private suspend fun clearDraft() {
+        draft.clearText()
+        chats.saveDraft(sessionId, "", clock.nowMs())
     }
 
     fun send(suggestion: Suggestion) {
@@ -214,5 +279,8 @@ class ChatViewModel @AssistedInject constructor(
         fun create(sessionRaw: String): ChatViewModel
     }
 }
+
+private fun unreadablePhotos(n: Int) =
+    if (n == 1) "No se pudo leer una de las fotos: no se envió." else "No se pudieron leer $n fotos: no se enviaron."
 
 private const val OFFLINE = "Sin conexión: mostrando lo último guardado. Desliza hacia abajo para reintentar."

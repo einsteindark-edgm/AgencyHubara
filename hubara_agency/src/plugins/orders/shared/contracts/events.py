@@ -112,4 +112,28 @@ class OrderReadyPhotoRequestedEvent:
     requested_at_ms: int = 0
 
 
-__all__ = ["OrderReadyPhotoRequestedEvent", "OrderStageChangedEvent"]
+@dataclass(frozen=True)
+class OrderDeliveredEvent:
+    """El pedido quedó entregado, se haya avisado o no al cliente.
+
+    Lo emite el paso de la etapa con CADA entrega (decisión del operador,
+    2026-10-23): saltar etapas en el tablero (preparación → entregado) trae
+    «Avisar al cliente» apagado y el WhatsApp de «entregado» del ETA no sale
+    (`OrderStageChangedEvent` no se emite), pero lo que depende de que se
+    entregó — la invitación a calificar del plugin `reviews` — tiene que
+    enterarse igual. Nunca le escribe al cliente por sí mismo: quien lo
+    escucha decide (reviews espera, mira la ventana y el horario).
+
+    Fields:
+        session_id: la sesión WhatsApp del cliente (``wa_<phone>``); sin
+            sesión no se emite.
+        order_id: id backend del pedido (``order_01...``).
+        occurred_at_ms: epoch ms de la entrega (cuándo se marcó).
+    """
+
+    session_id: str
+    order_id: str
+    occurred_at_ms: int = 0
+
+
+__all__ = ["OrderDeliveredEvent", "OrderReadyPhotoRequestedEvent", "OrderStageChangedEvent"]

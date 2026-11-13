@@ -26,7 +26,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +37,7 @@ from src.platform.orders import display_id_cache
 from src.platform.state import FilesystemMetadataStore, is_vault_session_id
 from src.platform.whatsapp.capi_outbox import enqueue_capi_event, schedule_capi_flush
 from src.platform.orders.command_port import (
+    AdjustPricesCommand,
     CancelOrderCommand,
     ConfirmPaymentCommand,
     OrderCommandResult,
@@ -44,6 +45,12 @@ from src.platform.orders.command_port import (
     ScheduleDeliveryCommand,
     SetTestOrderCommand,
     TransitionStageCommand,
+)
+from src.platform.orders.price_adjustment import (
+    LinePriceUpdate,
+    PriceAdjustmentError,
+    build_price_adjustment_patch,
+    plan_line_prices,
 )
 from src.platform.orders.state import (
     InvalidStageTransitionError,
@@ -110,13 +117,19 @@ def _enqueue_order_capi(
     matched_episode: dict[str, Any] | None,
     source: str,
     now_ms: int,
+    value_cop: int | None = None,
 ) -> None:
     """Auditoría CAPI 2026-09-08: las acciones humanas sobre el pedido
     (confirmar pago / cancelar) encolan su evento en el outbox del chat.
-    Sin ``session_id`` (callers legacy) no se puede armar el event_id."""
+    Sin ``session_id`` (callers legacy) no se puede armar el event_id.
+
+    ``value_cop``: el total vigente en Medusa (gotcha 13: OrderFacts). Manda
+    sobre la copia del chat — pedido #169, el precio se ajustó al negociado."""
     if not session_id:
         return
     ev_order_id, value, currency = _order_value_from_chat(chat_metadata, matched_episode, order_id)
+    if isinstance(value_cop, int) and not isinstance(value_cop, bool) and value_cop > 0:
+        value = value_cop
     if not ev_order_id:
         return
     if event_name == "Purchase" and value is None:
@@ -148,6 +161,7 @@ def apply_payment_confirmation_to_chat_metadata(
     session_id: str | None = None,
     order_id: str | None = None,
     is_test_order: bool = False,
+    value_cop: int | None = None,
 ) -> bool:
     """Aplica el cierre con tag `COMPRA_EXITOSA` al `metadata.json` del chat
     después de que un humano confirmó el pago desde el dashboard de orders.
@@ -231,6 +245,7 @@ def apply_payment_confirmation_to_chat_metadata(
         order_id=order_id,
         matched_episode=matched_ep,
         source="confirm_payment",
+        value_cop=value_cop,
         now_ms=now_ms,
     )
     return True
@@ -776,6 +791,7 @@ class MedusaOrderCommand:
                 order_id=order_id,
                 by=command.by,
                 is_test_order=current_metadata.get(META_KEY_TEST_ORDER) is True,
+                value_cop=_effective_total(current_data) or None,
             )
 
         return OrderCommandResult(
@@ -791,10 +807,11 @@ class MedusaOrderCommand:
         order_id: str,
         by: str | None,
         is_test_order: bool = False,
+        value_cop: int | None = None,
     ) -> None:
         """Side effect: patchear el `metadata.json` del chat para reflejar
         el cierre con tag COMPRA_EXITOSA después de que el humano confirmó
-        el pago.
+        el pago. ``value_cop``: total vigente en Medusa para el Purchase.
 
         Defensivo: si el file no existe / está corrupto / falla la
         escritura, logueamos warning pero NO levantamos — el Medusa side
@@ -826,6 +843,7 @@ class MedusaOrderCommand:
                     session_id=session_key,
                     order_id=order_id,
                     is_test_order=is_test_order,
+                    value_cop=value_cop,
                 ),
             )
             if changed:
@@ -1213,6 +1231,200 @@ class MedusaOrderCommand:
             )
         return result
 
+    async def adjust_prices(
+        self, command: AdjustPricesCommand
+    ) -> OrderCommandResult:
+        """Poner el precio real de la venta en las líneas (pedido #169).
+
+        Sequence:
+          1. Leer el pedido con sus líneas y pagos. Cancelado → error.
+          2. Planear qué líneas cambian (`plan_line_prices`): motivo
+             obligatorio, precios enteros > 0, líneas del pedido.
+          3. Con un pago ya registrado, el precio solo puede bajar (subirlo
+             dejaría un saldo sin cobrar: primero se reversa el pago).
+          4. Editar las líneas en Medusa (orden real → `order-edits`;
+             borrador → `draft-orders/{id}/edit`). Si algo falla a mitad, se
+             descarta la edición: Medusa queda como estaba.
+          5. Si lo cobrado supera el nuevo total, reembolsar la diferencia en
+             Medusa (no mueve dinero: el cobro se había registrado por el
+             precio de lista). Idempotente: un reintento con los mismos
+             precios no vuelve a editar, solo reembolsa lo que falte.
+          6. Historial `price_adjusted` (+ acumulado del reembolso).
+        """
+        order_id = command.order_id
+        try:
+            backend_id = await self._resolve_backend_id(order_id)
+            order = await self._fetch_for_adjust(backend_id)
+        except MedusaAPIError as exc:
+            return _exc_to_result(order_id, exc, "adjust_prices.fetch")
+
+        metadata: dict[str, Any] = order.get("metadata") or {}
+        stage = read_stage(metadata)
+        is_draft = order.get("status") == "draft"
+        if stage == "cancelled" or order.get("status") in ("canceled", "cancelled"):
+            return OrderCommandResult(
+                success=False,
+                order_id=order_id,
+                current_stage=stage,
+                error_detail="invalid_state: el pedido está cancelado; no se le cambia el precio.",
+            )
+
+        now_ms = int(time.time() * 1000)
+        items = [it for it in order.get("items") or [] if isinstance(it, dict)]
+        try:
+            updates = plan_line_prices(
+                items,
+                {p.item_id: p.unit_price_cop for p in command.prices},
+                by=command.by,
+                reason=command.reason,
+                now_ms=now_ms,
+            )
+        except PriceAdjustmentError as exc:
+            return OrderCommandResult(
+                success=False, order_id=order_id, current_stage=stage,
+                error_detail=f"validation_error: {exc}",
+            )
+
+        total_before = _effective_total(order)
+        paid = sum(amount for _pid, amount in _refundable_payments(order))
+        current_prices = {str(it.get("id")): _to_int(it.get("unit_price")) for it in items}
+        delta = sum((u.unit_price_cop - current_prices[u.item_id]) * u.quantity for u in updates)
+        if paid > 0 and delta > 0:
+            return OrderCommandResult(
+                success=False, order_id=order_id, current_stage=stage,
+                error_detail=(
+                    "validation_error: el pedido ya tiene un pago registrado; para "
+                    "subir el precio, reversa el pago primero y vuelve a confirmarlo."
+                ),
+            )
+        if not updates and paid <= total_before:
+            return OrderCommandResult(
+                success=False, order_id=order_id, current_stage=stage,
+                error_detail="validation_error: los precios ya son esos; no hay nada que cambiar.",
+            )
+
+        if updates:
+            pending_before = _pending_collections(order)
+            try:
+                await self._edit_line_prices(backend_id, is_draft=is_draft, updates=updates)
+                order = await self._fetch_for_adjust(backend_id)
+            except MedusaAPIError as exc:
+                return _exc_to_result(order_id, exc, "adjust_prices.edit")
+            # Medusa 2.22: confirmar la edición CREA un cobro `not_paid` por lo
+            # pendiente (`createOrUpdateOrderPaymentCollectionWorkflow`). Hubara
+            # registra el pago con su propio cobro al confirmar; dejar ese
+            # dejaría el pedido con un cobro pagado y otro pendiente.
+            for pc_id in _pending_collections(order) - pending_before:
+                try:
+                    await self._client.delete_payment_collection(pc_id)
+                except MedusaAPIError as exc:
+                    log.warning(
+                        "adjust_prices: could not drop the payment collection the edit created",
+                        extra={"order_id": order_id, "payment_collection_id": pc_id,
+                               "status_code": exc.status_code},
+                    )
+            log.info(
+                "adjust_prices: lines edited in Medusa",
+                extra={"order_id": order_id, "backend_id": backend_id, "lines": len(updates)},
+            )
+
+        total_after = _effective_total(order)
+        refunded = 0
+        refund_due = sum(amount for _pid, amount in _refundable_payments(order)) - total_after
+        for payment_id, available in _refundable_payments(order):
+            if refunded >= refund_due:
+                break
+            amount = min(available, refund_due - refunded)
+            try:
+                await self._client.refund_payment(
+                    payment_id, amount=amount,
+                    note=f"Ajuste de precio (no es devolución): {command.reason.strip()}",
+                )
+            except MedusaAPIError as exc:
+                return _exc_to_result(order_id, exc, "adjust_prices.refund")
+            refunded += amount
+
+        patch = build_price_adjustment_patch(
+            order.get("metadata") or metadata,
+            by=command.by,
+            reason=command.reason,
+            total_before_cop=total_before,
+            total_after_cop=total_after,
+            refunded_cop=refunded,
+            now_ms=now_ms,
+        )
+        try:
+            if is_draft:
+                await self._client.patch_draft_order_metadata(backend_id, patch)
+            else:
+                await self._client.patch_order_metadata(backend_id, patch)
+        except MedusaAPIError as exc:
+            return _exc_to_result(order_id, exc, "adjust_prices.patch_metadata")
+        return OrderCommandResult(success=True, order_id=order_id, current_stage=stage)
+
+    async def _resolve_backend_id(self, order_id: str) -> str:
+        """display_id ("#169" / "169") → id de Medusa (404 si no existe)."""
+        normalized = order_id.lstrip("#")
+        if not normalized.isdigit():
+            return order_id
+        resolved = await self._resolve_display_id(normalized)
+        if resolved is None:
+            raise MedusaAPIError(
+                404, f"/admin/orders/{order_id}", f"display_id {order_id!r} no resuelve"
+            )
+        return resolved
+
+    async def _fetch_for_adjust(self, backend_id: str) -> dict[str, Any]:
+        """El pedido con líneas y pagos (`/admin/orders` devuelve también los
+        borradores, con `status="draft"`; si responde 404, el de borradores)."""
+        try:
+            return await self._client.get_order(backend_id, fields=_ADJUST_FIELDS)
+        except MedusaAPIError as exc:
+            if exc.status_code != 404:
+                raise
+        draft = await self._client.get_draft_order(backend_id, fields=_ADJUST_FIELDS)
+        return {**draft, "status": "draft"}
+
+    async def _edit_line_prices(
+        self, backend_id: str, *, is_draft: bool, updates: list[LinePriceUpdate]
+    ) -> None:
+        """Abre la edición, cambia cada línea y la confirma. Si algo falla
+        antes de confirmar, descarta la edición (Medusa queda como estaba)."""
+        update: Callable[[str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
+        confirm: Callable[[str], Awaitable[dict[str, Any]]]
+        cancel: Callable[[str], Awaitable[dict[str, Any]]]
+        if is_draft:
+            await self._client.begin_draft_order_edit(backend_id)
+            update, confirm, cancel = (
+                self._client.update_draft_order_edit_item,
+                self._client.confirm_draft_order_edit,
+                self._client.cancel_draft_order_edit,
+            )
+        else:
+            await self._client.begin_order_edit(backend_id, description="Ajuste de precio")
+            update, confirm, cancel = (
+                self._client.update_order_edit_item,
+                self._client.confirm_order_edit,
+                self._client.cancel_order_edit,
+            )
+        try:
+            for u in updates:
+                await update(
+                    backend_id,
+                    u.item_id,
+                    {"quantity": u.quantity, "unit_price": u.unit_price_cop, "metadata": u.metadata},
+                )
+            await confirm(backend_id)
+        except MedusaAPIError:
+            try:
+                await cancel(backend_id)
+            except MedusaAPIError as exc:
+                log.error(
+                    "adjust_prices: could not discard the open edit",
+                    extra={"backend_id": backend_id, "status_code": exc.status_code},
+                )
+            raise
+
     def _sync_chat_test_order(
         self, *, session_key: str, order_id: str, aliases: tuple[str, ...]
     ) -> None:
@@ -1513,6 +1725,43 @@ _REVERSAL_FIELDS = (
 )
 
 
+#: Lo que lee `adjust_prices`: líneas (precio, cantidad, metadata) y pagos.
+_ADJUST_FIELDS = (
+    "id,status,total,shipping_total,payment_status,metadata,"
+    "items.id,items.title,items.quantity,items.unit_price,items.metadata,"
+    "payment_collections.id,payment_collections.status,"
+    "payment_collections.payments.id,"
+    "payment_collections.payments.captures.amount,"
+    "payment_collections.payments.refunds.amount"
+)
+
+
+def _pending_collections(order: dict[str, Any]) -> set[str]:
+    """Ids de los cobros `not_paid` del pedido."""
+    return {
+        str(pc["id"])
+        for pc in order.get("payment_collections") or []
+        if isinstance(pc, dict) and pc.get("id") and pc.get("status") == "not_paid"
+    }
+
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _effective_total(order: dict[str, Any]) -> int:
+    """Total vigente (con el envío real o el envío gratis de la campaña)."""
+    total, _, _ = effective_amounts(
+        total=_to_int(order.get("total")),
+        shipping_total=_to_int(order.get("shipping_total")),
+        metadata=order.get("metadata") or {},
+    )
+    return total
+
+
 def _refundable_payments(order: dict[str, Any]) -> list[tuple[str, int]]:
     """(payment_id, saldo) de cada payment con captura no reembolsada."""
     out: list[tuple[str, int]] = []
@@ -1637,5 +1886,10 @@ class NoopOrderCommand:
 
     async def set_test_order(
         self, command: SetTestOrderCommand
+    ) -> OrderCommandResult:
+        return self._unavailable(command.order_id)
+
+    async def adjust_prices(
+        self, command: AdjustPricesCommand
     ) -> OrderCommandResult:
         return self._unavailable(command.order_id)

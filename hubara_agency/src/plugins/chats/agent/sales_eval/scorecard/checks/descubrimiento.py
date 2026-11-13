@@ -5,7 +5,9 @@ import re
 
 from src.plugins.chats.agent.sales_eval.scorecard.checks import code_check
 from src.plugins.chats.agent.sales_eval.scorecard.checks._helpers import (
+    PHOTO_ANNOTATION_RE,
     PRICE_RE,
+    customer_written,
     failed,
     fold,
     in_focus,
@@ -41,10 +43,6 @@ _CATALOG_REQUEST_RE = re.compile(
 # Framing del handoff: "Usuario respondió: <texto>. Siguiente paso: <instrucción>".
 _HANDOFF_USER_RE = re.compile(r"usuario respondi[oó]:\s*(.*?)(?:siguiente paso:.*)?$", re.IGNORECASE | re.DOTALL)
 _SELECTION_MARKER = "[el cliente seleccionó:"
-#: La foto entra como texto con su descripción y, si se reconoció, el producto
-#: nuestro que es (identificación de fotos, 2026-09-30): eso no lo escribió el
-#: cliente.
-_PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]")
 #: Decir que lo quiere (DES-08). «no quiero» no cuenta; «quiero ver/saber…» es
 #: pedir información; «me gusta» y «me encanta» tampoco: que le guste no es que
 #: lo quiera (operador, 2026-10-07), el bot le pregunta si se lo lleva.
@@ -159,7 +157,7 @@ def _is_catalog_request(turn: Turn) -> bool:
     words = _customer_words(turn)
     if words is None:
         return False
-    low = words.lower()
+    low = customer_written(words).lower()
     return _CATALOG_BUTTON in low or bool(_CATALOG_REQUEST_RE.search(low))
 
 
@@ -308,7 +306,7 @@ def _is_product_choice(traj: Trajectory, index: int, titles: list[str]) -> bool:
     words = _customer_words(turn)
     if words is None or low.startswith("["):
         return False
-    words = _PHOTO_ANNOTATION_RE.sub(" ", words)
+    words = PHOTO_ANNOTATION_RE.sub(" ", words)
     shown = any(set(t.intents) & CATALOG_DISPLAY_INTENTS for t in previous)
     ask = _last_ask(previous)
     return shown and any(title.lower() in words.lower() and _wants(words, title, ask) for title in titles)

@@ -56,9 +56,17 @@ export type CampaignTendency = "up" | "flat" | "down";
  *  value COP). ⚠️ El nombre exacto importa — Meta rechaza "Lead". */
 export type CapiEvent = "LeadSubmitted" | "Purchase" | "OrderCanceled";
 
-/** Por qué el estado de una conversación no sale del chat. `order_cancelled`:
- *  el pedido está cancelado en Pedidos aunque el chat diga COMPRA_EXITOSA. */
-export type AdsStateReason = "order_cancelled";
+/** Por qué el estado de una conversación no sale del chat:
+ *  - `order_cancelled`: el pedido está cancelado en Pedidos aunque el chat diga
+ *    COMPRA_EXITOSA → "perdido".
+ *  - `order_test` / `order_missing` / `order_repeated`: el pedido es de prueba,
+ *    ya no existe, o ya lo contó una conversación anterior del cliente → no es
+ *    una venta de esta conversación ("cotizado"). */
+export type AdsStateReason =
+  | "order_cancelled"
+  | "order_test"
+  | "order_missing"
+  | "order_repeated";
 
 /* ── Rango temporal del dashboard (filtro por fecha) ─────────────────────── */
 
@@ -252,6 +260,11 @@ export interface AdsCampaign {
   revenue: number | null;
   /** Ticket promedio en COP (revenue / nº de episodios que aportaron ingreso). */
   avgTicket: number | null;
+  /** Ventas PAGADAS: los episodios que suman a `revenue`. Los «ganados»
+   *  (`conversations.ganado`) son los pedidos, pagados o por cobrar — la
+   *  diferencia es lo que falta cobrar. ROAS y CAC se miden sobre estas.
+   *  Opcional para tolerar fixtures históricos (ausente = 0). */
+  paidSales?: number;
   /** Costo LLM agregado de la campaña en USD (suma de `episode.llm_usage` de
    *  todos los episodios del bucket). null si ningún episodio acumuló uso. */
   llmCostUsd: number | null;

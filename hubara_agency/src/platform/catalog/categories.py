@@ -42,6 +42,8 @@ class CatalogCategoryDTO:
     slug: str
     label: str
     product_count: int = 0
+    # El operador la marcó como promoción en Medusa (`promocion: true`).
+    promotional: bool = False
 
 
 @dataclass(frozen=True)
@@ -107,7 +109,9 @@ def collect_categories(
     """
     counts: dict[str, int] = {}
     labels: dict[str, str] = {}
+    promotional: set[str] = set()
     for product in products:
+        promotional.update(product.promotional_categories)
         for slug in product.categories:
             counts[slug] = counts.get(slug, 0) + 1
             label = (product.category_labels or {}).get(slug)
@@ -119,6 +123,7 @@ def collect_categories(
                 slug=slug,
                 label=labels.get(slug) or deslugify(slug),
                 product_count=count,
+                promotional=slug in promotional,
             )
             for slug, count in counts.items()
         ),

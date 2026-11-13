@@ -192,6 +192,7 @@ export function useOrderDetail(displayId: string | null) {
  *   useTransitionOrderStage→ PATCH /api/orders/orders/{id}/stage
  *   useConfirmOrderPayment → PATCH /api/orders/orders/{id}/confirm-payment
  *   useReverseOrderPayment → PATCH /api/orders/orders/{id}/reverse-payment
+ *   useAdjustOrderPrices   → POST  /api/orders/orders/{id}/adjust-prices
  *   useCancelOrder         → POST  /api/orders/orders/{id}/cancel
  *
  * Todas devuelven `OrderCommandResult` (success/error_detail) y todas
@@ -333,6 +334,35 @@ export function useReverseOrderPayment() {
       const raw = await apiClient.patch<unknown>(
         `/api/orders/orders/${encodeURIComponent(orderId)}/reverse-payment`,
         { reason },
+      );
+      return orderCommandResultSchema.parse(raw);
+    },
+    onSuccess: (result, vars) => {
+      if (result.success) {
+        qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
+      }
+    },
+  });
+}
+
+interface AdjustPricesVariables {
+  orderId: string;
+  prices: { item_id: string; unit_price_cop: number }[];
+  reason: string;
+}
+
+/** Pone el precio real de la venta en las líneas (precio negociado, p. ej.
+ *  al por mayor — pedido #169). Medusa queda con ese precio y todo Hubara lee
+ *  el nuevo total; si el pedido ya estaba cobrado, Medusa registra la
+ *  diferencia como reembolso (corrige el cobro, no mueve dinero). */
+export function useAdjustOrderPrices() {
+  const qc = useQueryClient();
+  return useMutation<OrderCommandResult, Error, AdjustPricesVariables>({
+    mutationFn: async ({ orderId, prices, reason }) => {
+      const raw = await apiClient.post<unknown>(
+        `/api/orders/orders/${encodeURIComponent(orderId)}/adjust-prices`,
+        { prices, reason },
       );
       return orderCommandResultSchema.parse(raw);
     },

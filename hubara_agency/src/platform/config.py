@@ -176,6 +176,11 @@ def _int_env(name: str, default: int) -> int:
 
 RATE_LIMIT_PER_MINUTE = _int_env("RATE_LIMIT_PER_MINUTE", 0)
 
+# Archivo de la línea de acceso por request (`src/platform/access_log.py`).
+# Vacío = no se escribe. En prod lo fija el compose de la API y CloudWatch lo
+# guarda (memoria de la caja de app, 2026-11-05).
+ACCESS_LOG_FILE = os.getenv("HUBARA_ACCESS_LOG_FILE", "")
+
 # Temporal Cluster
 TEMPORAL_URL = os.getenv("TEMPORAL_URL", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")

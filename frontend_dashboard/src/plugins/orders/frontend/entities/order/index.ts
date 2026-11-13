@@ -17,7 +17,9 @@ export {
   isCollectedRevenue,
   orderDayIso,
   orderValueWithoutShipping,
+  salesReport,
 } from "./model";
+export type { SalesBreakdown, SalesReport, SalesTotals } from "./model";
 export { orderKeys } from "./keys";
 export {
   useOrders,
@@ -30,6 +32,7 @@ export {
   useTransitionOrderStage,
   useConfirmOrderPayment,
   useReverseOrderPayment,
+  useAdjustOrderPrices,
   useCancelOrder,
   useSetTestOrder,
   useCustomerScore,

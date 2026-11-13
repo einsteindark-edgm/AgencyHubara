@@ -104,14 +104,20 @@ def _event_ms(stamp: Any) -> int | None:
 
 
 def _hours_since_store(inp: Any) -> int | None:
-    """Desde el final del historial (append-only): el último mensaje de la
-    tienda que se puede fechar. Uno sin hora se salta."""
-    for event in reversed(list(getattr(inp, "events", ()) or ())):
+    return hours_since_store(getattr(inp, "events", ()) or (), int(getattr(inp, "now_ms", 0) or 0))
+
+
+def hours_since_store(events: Any, now_ms: int) -> int | None:
+    """Desde el final del historial (append-only): las horas enteras desde el
+    último mensaje de la tienda que se puede fechar (el bot, el equipo o una
+    plantilla); uno sin hora se salta. None si nunca escribió. La misma cuenta
+    la lee el egreso para el saludo v2 (ventas-8)."""
+    for event in reversed(list(events or ())):
         if not isinstance(event, Mapping) or event.get("role") != "assistant":
             continue
         at_ms = _event_ms(event.get("timestamp"))
         if at_ms is not None:
-            return max(0, int(getattr(inp, "now_ms", 0) or 0) - at_ms) // _HOUR_MS
+            return max(0, int(now_ms or 0) - at_ms) // _HOUR_MS
     return None
 
 

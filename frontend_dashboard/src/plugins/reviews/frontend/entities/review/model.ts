@@ -55,6 +55,9 @@ export interface Review {
   /** Con 1–3 estrellas la conversación pasó al equipo. */
   teamAlerted: boolean;
   published: ReviewPublished | null;
+  /** El cliente autorizó publicarla por el chat (no en el formulario): quién
+   *  del equipo lo registró y cuándo (epoch ms). */
+  consentGranted: { by: string; atMs: number } | null;
 }
 
 export interface ReviewCounts {

@@ -1,0 +1,49 @@
+# Manifest de costs — nacido con `hubara create plugin` (F-SDK-3).
+# Contrato: PLUGIN_CONTRACT.md · schema: ../_schema/plugin.schema.yaml
+id: costs
+version: 0.1.0
+archetype: full_stack  # P-29: pestaña (entities/features) + api que pregunta a cada proveedor
+display_name: Costos
+description: |
+  Cuánto cuesta el sistema productivo en un rango de fechas. DeepSeek (el bot),
+  Jev (OpenRouter) y Gemini (fotos y audios) salen de los costos que cada
+  conversación ya guarda en el vault; WhatsApp, del pricing_analytics de Meta;
+  Campañas, de la sección Ads (gasto de cada campaña de Meta Ads y costo de
+  cada campaña de WhatsApp, que la tarjeta de WhatsApp descuenta para no
+  contarla dos veces); Temporal Cloud, de su uso diario × la tarifa publicada.
+  Un endpoint por proveedor, con tiempo máximo y caché, para que ninguna
+  consulta cuelgue la pestaña.
+
+# - chats: lee los costos que el ingest y los workers de chats escriben en cada
+#   episodio (`llm_usage`, `jev_usage`, `vision_usage`, `audio_usage` de
+#   `wa_*/metadata.json`); sin chats no hay conversaciones que sumar. Solo lee.
+# - ads: provider del cast de la tarjeta Campañas (ver `consumes`).
+depends_on: [chats, ads]
+
+consumes:
+  - provider: ads
+    contract: campaigns@v1   # GET /api/ads/campaigns?from&to (spend de Meta Ads + whatsapp_send)
+    into: campaigns-cost
+    cast: api/ads_cast
+
+frontend:
+  entry: ./frontend
+  contributes:
+    sections:
+      - { key: costs, label: Costos, order: 9, icon: pay }
+    sidebar:
+      - { route: /costs, label: Costos, icon: pay }
+
+api:
+  python_module: src.plugins.costs.api
+  prefix: /api/costs
+  tags: [Costs]
+
+wiring_intents:
+  # Ninguna es obligatoria: una tarjeta sin su secreto sale «Sin conectar» con
+  # el cómo conectarla (nunca $0). DeepSeek, Jev y Gemini no piden nada (leen el
+  # vault, WORKSPACE_VAULT_DIR). Opcionales, ya existentes en SSM:
+  #   WHATSAPP_ACCESS_TOKEN, WHATSAPP_BUSINESS_ACCOUNT_ID — pricing_analytics del WABA
+  #   TEMPORAL_API_KEY, TEMPORAL_NAMESPACE — uso de Temporal Cloud
+  # Perillas no secretas (tarifas de Temporal, caché, tasas): src/plugins/costs/config/costs.yaml.
+  env_vars_required: []

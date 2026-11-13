@@ -200,7 +200,9 @@ def test_skip_to_delivered_without_notice_is_forced_and_silent(harness):
 async def test_emit_activity_silent_sends_capi_but_not_whatsapp(monkeypatch):
     """`emit_order_stage_activity(..., notify_customer=False)` encola el evento
     CAPI de la etapa (OrderDelivered) pero NO despacha el
-    OrderStageChangedEvent que dispara el WhatsApp del Agente ETA."""
+    OrderStageChangedEvent que dispara el WhatsApp del Agente ETA. La entrega
+    sí sale como `OrderDeliveredEvent` (la invitación a calificar, operador
+    2026-10-23), que no le escribe al cliente por sí mismo."""
     import src.platform.orchestration as orchestration
     import src.platform.temporal.client as temporal_client
     from src.plugins.orders import api as orders_api
@@ -232,11 +234,12 @@ async def test_emit_activity_silent_sends_capi_but_not_whatsapp(monkeypatch):
 
     assert result == "capi_only"
     assert capi == [("wa_573001234567", "order_01HX", "delivered")]
-    assert dispatched == []
+    assert [e.event_type for e in dispatched] == ["OrderDeliveredEvent"]
 
     # Default (llamada legacy de 3 args): avisa como siempre.
+    dispatched.clear()
     assert await emit_stage.emit_order_stage_activity("order_01HX", "delivered") == "dispatched"
-    assert len(dispatched) == 1
+    assert [e.event_type for e in dispatched] == ["OrderDeliveredEvent", "OrderStageChangedEvent"]
 
 
 async def test_emit_activity_dispatches_with_the_workers_client(monkeypatch):

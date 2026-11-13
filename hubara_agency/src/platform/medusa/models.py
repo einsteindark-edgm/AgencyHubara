@@ -76,6 +76,9 @@ class MedusaCategory(_Base):
     name: str
     handle: str | None = None
     parent_category_id: str | None = None
+    # Lo que el operador anota en la categoría (Admin → Categoría → Metadatos);
+    # p. ej. `promocion: true` la marca como categoría de promoción.
+    metadata: dict[str, Any] | None = None
 
 
 class MedusaCollection(_Base):

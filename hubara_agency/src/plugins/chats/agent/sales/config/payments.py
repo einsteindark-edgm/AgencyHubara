@@ -38,3 +38,11 @@ def get_nequi_number() -> str:
     if override is not None:
         return override.strip()
     return PAYMENT_NEQUI_NUMBER_DEFAULT
+
+
+def get_payment_accounts() -> tuple[str, ...]:
+    """Las cuentas del negocio a las que un cliente puede pagar: el Nequi/llave
+    y la cuenta bancaria (``PAYMENT_TRANSFER_ACCOUNT_NUMBER``). Sirve para ver
+    si un comprobante fue a una cuenta nuestra."""
+    bank = (os.getenv("PAYMENT_TRANSFER_ACCOUNT_NUMBER") or "").strip()
+    return tuple(account for account in (get_nequi_number(), bank) if account)

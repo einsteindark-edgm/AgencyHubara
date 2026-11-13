@@ -179,8 +179,10 @@ class Capability(_Strict):
     #: decisión preguntada de otra forma). Default: ella misma.
     control: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9_]*$")
     input: str = Field(min_length=1)
-    #: Builtin (clase `view`) que deriva campos de la entrada (`inp.campo`).
-    view: BuiltinRef | None = None
+    #: Builtin (clase `view`) que deriva campos de la entrada (`inp.campo`), o
+    #: una lista de ellos: cada hecho en su builtin (puerta de afirmaciones,
+    #: 2026-11-03). Dos vistas no dan el mismo campo (DB004).
+    view: BuiltinRef | list[BuiltinRef] | None = None
     rule: BuiltinRef
     state: BuiltinRef | None
     questions: list[Question] = Field(default_factory=list)
@@ -200,6 +202,13 @@ class Capability(_Strict):
     @classmethod
     def _value_type(cls, value: str) -> str:
         return _type_text(value)
+
+    @property
+    def views(self) -> tuple[BuiltinRef, ...]:
+        """Las vistas que pide, en orden (ninguna, una o varias)."""
+        if self.view is None:
+            return ()
+        return tuple(self.view) if isinstance(self.view, list) else (self.view,)
 
     @model_validator(mode="after")
     def _options_only_for_strings(self) -> Capability:

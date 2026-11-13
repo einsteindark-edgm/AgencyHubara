@@ -251,6 +251,18 @@ class CajaDelTexto:
 
 
 @dataclass(frozen=True)
+class KnownOrderData:
+    """Un texto para el cliente y los datos que el borrador del pedido ya
+    tiene: su nombre (`terms`) y lo que dice el sistema de cada uno (`facts`),
+    en el mismo orden. Capacidad `repregunta` (ventas-8, informe del
+    2026-11-03: el bot volvía a pedir la cantidad o un dato de envío)."""
+
+    text: str
+    terms: tuple[str, ...]
+    facts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class NegacionDelTexto:
     """Un texto para el cliente, los títulos del catálogo (`titles`), lo que
     tienen los productos de los que habla (`own`: aromas, colores y

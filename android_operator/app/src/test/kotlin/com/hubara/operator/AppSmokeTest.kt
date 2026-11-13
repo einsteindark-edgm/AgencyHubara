@@ -22,7 +22,9 @@ import com.google.common.truth.Truth.assertThat
 import com.hubara.operator.core.data.auth.InMemoryTokenStore
 import com.hubara.operator.core.data.auth.TokenStore
 import com.hubara.operator.core.data.di.DataBindings
+import com.hubara.operator.core.data.outbox.AndroidPhotoPreparer
 import com.hubara.operator.core.data.outbox.OutboxScheduler
+import com.hubara.operator.core.data.outbox.PhotoPreparer
 import com.hubara.operator.core.data.outbox.WorkManagerOutboxScheduler
 import com.hubara.operator.core.network.di.AccessTokenProvider
 import com.hubara.operator.core.network.di.ApiConfig
@@ -125,6 +127,7 @@ object TestAppModule {
 abstract class TestDataBindings {
     @Binds abstract fun accessTokens(impl: AuthRepository): AccessTokenProvider
     @Binds abstract fun outboxScheduler(impl: WorkManagerOutboxScheduler): OutboxScheduler
+    @Binds abstract fun photoPreparer(impl: AndroidPhotoPreparer): PhotoPreparer
 
     companion object {
         // El Android Keystore no existe en Robolectric: la sesión va en memoria.

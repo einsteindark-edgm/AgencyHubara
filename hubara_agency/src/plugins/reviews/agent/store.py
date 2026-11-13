@@ -65,6 +65,9 @@ class ReviewRecord:
     published: dict[str, Any] = field(default_factory=dict)
     #: 1–3 estrellas: se avisó al equipo (conversación a humano).
     team_alerted: bool = False
+    #: El permiso para publicar que el cliente dio DESPUÉS, por el chat (no en
+    #: el formulario): {by, at_ms, via} — quién del equipo lo registró y cuándo.
+    consent_granted: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)

@@ -35,6 +35,7 @@ que solo se mira al leer crece sin límite (incidente 2026-09-25).
 """
 from __future__ import annotations
 
+import datetime
 import functools
 import logging
 import threading
@@ -51,6 +52,7 @@ from src.plugins.ads.aggregation import (
     CAMPAIGN_SOURCE_TYPE,
     SYNTHETIC_CAMPAIGN_IDS,
     bogota_day_start_ms,
+    first_chat_ms,
     list_ads_campaigns,
     list_attributed_conversations,
     list_daily_series,
@@ -190,6 +192,52 @@ def _meta_ads():
     return get_ads_port()
 
 
+_BOGOTA = datetime.timezone(datetime.timedelta(hours=-5))
+
+
+def _now_ms() -> int:
+    """Reloj de la capa API (un solo lugar, para que los tests lo fijen)."""
+    return int(time.time() * 1000)
+
+
+#: Meta insights no responde más atrás de 37 meses: un `since` más viejo se
+#: recorta a este tope (con margen) en vez de hacer fallar la consulta.
+_META_MAX_LOOKBACK_DAYS = 37 * 30
+
+
+def _spend_since_ms(
+    since_ms: int | None, sessions: list[tuple[FsPath, dict[str, Any]]]
+) -> int | None:
+    """Desde cuándo pedirle el gasto a Meta. Con ventana, la misma de los chats.
+    Sin ventana («Total»), desde el primer chat del vault: antes el gasto eran
+    los últimos 90 días contra los ingresos de TODO el historial (auditoría
+    2026-11-10) — ROAS inflado en campañas viejas."""
+    return since_ms if since_ms is not None else first_chat_ms(sessions)
+
+
+def _meta_dates(since_ms: int | None, until_ms: int | None) -> tuple[Any, Any]:
+    """`(since, until)` as Meta insights want them: INCLUSIVE Bogotá dates.
+
+    `until_ms` from `_window` is EXCLUSIVE (midnight after `to`), so the last
+    day is the one just before it — `date.fromtimestamp(until_ms)` asked Meta
+    for one extra day (guard `test_meta_window_inclusive.py`, 2026-11-05).
+    Without a lower bound (empty vault on «Total»), the last 90 days up to
+    today in Bogotá. Never older than Meta's lookback limit.
+    """
+    until_d = (
+        datetime.datetime.fromtimestamp((until_ms - 1) / 1000, _BOGOTA).date()
+        if until_ms
+        else datetime.datetime.fromtimestamp(_now_ms() / 1000, _BOGOTA).date()
+    )
+    since_d = (
+        datetime.datetime.fromtimestamp(since_ms / 1000, _BOGOTA).date()
+        if since_ms
+        else until_d - datetime.timedelta(days=90)
+    )
+    oldest = until_d - datetime.timedelta(days=_META_MAX_LOOKBACK_DAYS)
+    return max(since_d, oldest), until_d
+
+
 def _cached_meta_campaigns(
     since_ms: int | None, until_ms: int | None
 ) -> tuple[list, list]:
@@ -197,11 +245,9 @@ def _cached_meta_campaigns(
 
     Best-effort como el resto de la capa Meta: sin conexión, Graph caído o
     cualquier excepción → `([], [])` y el listado queda solo-vault (nunca 500).
-    Sin ventana ("Total") las métricas se acotan a 90 días — insights necesita
-    un rango y el spend histórico completo no aporta al operador.
+    El caller pasa como `since_ms` el de `_spend_since_ms` («Total» = desde el
+    primer chat); sin ninguno, `_meta_dates` acota a 90 días.
     """
-    from datetime import date, timedelta
-
     try:
         token = _meta_store().load()
     except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
@@ -209,10 +255,7 @@ def _cached_meta_campaigns(
     if token is None or not token.account_id:
         return [], []
 
-    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
-    since_d = (
-        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
-    )
+    since_d, until_d = _meta_dates(since_ms, until_ms)
     key = f"{since_d}|{until_d}"
     hit = _meta_campaign_cache.get(key)
     if hit is not None:
@@ -245,8 +288,6 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
     Best-effort como toda la capa Meta: sin conexión / Graph caído → `[]`
     y el drill-down queda solo-vault (nunca 500).
     """
-    from datetime import date, timedelta
-
     try:
         token = _meta_store().load()
     except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
@@ -254,10 +295,7 @@ def _cached_meta_adsets(since_ms: int | None, until_ms: int | None) -> list:
     if token is None or not token.account_id:
         return []
 
-    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
-    since_d = (
-        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
-    )
+    since_d, until_d = _meta_dates(since_ms, until_ms)
     key = f"{since_d}|{until_d}"
     hit = _meta_adset_cache.get(key)
     if hit is not None:
@@ -285,8 +323,6 @@ _meta_ad_cache: BoundedTTLCache[str, list] = BoundedTTLCache(
 def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
     """Insights level=ad del Marketing API para la ventana pedida. Best-effort:
     sin conexión / Graph caído → `[]` y el drill-down queda solo-vault."""
-    from datetime import date, timedelta
-
     try:
         token = _meta_store().load()
     except Exception:  # noqa: BLE001 — best-effort (SSM caído ≠ dashboard caído)
@@ -294,10 +330,7 @@ def _cached_meta_ads(since_ms: int | None, until_ms: int | None) -> list:
     if token is None or not token.account_id:
         return []
 
-    until_d = date.fromtimestamp(until_ms / 1000) if until_ms else date.today()
-    since_d = (
-        date.fromtimestamp(since_ms / 1000) if since_ms else until_d - timedelta(days=90)
-    )
+    since_d, until_d = _meta_dates(since_ms, until_ms)
     key = f"{since_d}|{until_d}"
     hit = _meta_ad_cache.get(key)
     if hit is not None:
@@ -336,7 +369,10 @@ def _scope_names(
 
 
 def _since_ms(days: int | None) -> int | None:
-    """Epoch ms del inicio de la ventana (`now - days`), o None para 'todo'.
+    """Inicio de un preset: medianoche de Bogotá de hace `days − 1` días, o None
+    para 'todo'. Un preset son `days` días CALENDARIO terminando hoy — los mismos
+    que pinta el gráfico diario y los que se le piden a Meta (auditoría
+    2026-11-10: `now − days×24 h` dejaba el gasto con ~18 h sin sus chats).
 
     El filtro por fecha se empuja al backend: con una ventana acotada, el scan
     saltea (vía mtime) las sesiones sin actividad reciente y la agregación solo
@@ -345,7 +381,9 @@ def _since_ms(days: int | None) -> int | None:
     """
     if not days:
         return None
-    return int(time.time() * 1000) - days * _DAY_MS
+    today = datetime.datetime.fromtimestamp(_now_ms() / 1000, _BOGOTA).date()
+    first_day = today - datetime.timedelta(days=days - 1)
+    return bogota_day_start_ms(first_day.isoformat())
 
 
 def _window(
@@ -541,7 +579,7 @@ def get_ads_campaigns(
     # Merge de campañas Meta (pedido 2026-07-09): las campañas del Marketing API
     # entran a ESTA lista (seleccionables como las del vault, canvas central
     # incluido) — bucket único matcheado se enriquece; el resto entra standalone.
-    metas, metrics = _cached_meta_campaigns(since_ms, until_ms)
+    metas, metrics = _cached_meta_campaigns(_spend_since_ms(since_ms, sessions), until_ms)
     if metas or metrics:
         campaigns = merge_meta_campaigns(campaigns, metas, metrics)
     return {
@@ -775,6 +813,7 @@ def get_ads_campaign_daily(
         WORKSPACE_VAULT_DIR,
         campaign_id,
         days=days,
+        now_ms=_now_ms(),
         since_ms=since_ms,
         until_ms=until_ms,
         sessions=sessions,
@@ -832,7 +871,7 @@ def get_ads_campaign_adsets(
         members = [b for b in buckets if b.id in scope]
         rows = group_buckets_by_adset(members, names)
     metrics = [
-        m for m in _cached_meta_adsets(since_ms, until_ms)
+        m for m in _cached_meta_adsets(_spend_since_ms(since_ms, sessions), until_ms)
         if m.campaign_id == campaign_id
     ]
     if metrics:
@@ -886,7 +925,7 @@ def get_ads_adset_ads(
         members = [b for b in buckets if b.id in scope]
         rows = group_buckets_by_ad(members, names)
     metrics = [
-        m for m in _cached_meta_ads(since_ms, until_ms)
+        m for m in _cached_meta_ads(_spend_since_ms(since_ms, sessions), until_ms)
         if m.campaign_id == campaign_id and m.adset_id == adset_id
     ]
     if metrics:

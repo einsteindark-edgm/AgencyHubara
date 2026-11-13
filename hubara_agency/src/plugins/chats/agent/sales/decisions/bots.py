@@ -75,11 +75,22 @@ CAPABILITIES: tuple[str, ...] = (
     "cajas", "caja_nombrada", "por_mayor",
     # El precio de la caja dicho por unidad («cada velita vale $25.000», ventas-7, 2026-10-16).
     "caja_por_unidad",
+    # Volver a pedir un dato que el pedido ya tiene, en `send_reply` (ventas-8, 2026-11-03).
+    "repregunta",
     # Decisiones del agente (F8) y la promesa del relevo a un colega
     # (red de seguridad antes de enviar, 2026-09-30).
     "contactar", "cierre", "relevo",
     # Egreso del workflow V2 (F4/F5): solo actúan en conversaciones con V2.
     "destinatario", "rescate", "portavelas", "saludo",
+    # La bienvenida a quien ya conoce la tienda y las frases que la tienda no
+    # dice, en el egreso de V2 (ventas-8, 2026-11-03).
+    "saludo_repetido", "despedida",
+    # La puerta de afirmaciones del egreso de V2 (2026-11-03; paquetes desde la
+    # versión 8): nace apagada, se sube con `bot_control.sh`.
+    "afirmacion_previa",
+    # Qué objeción pone el cliente, por mensaje (ventas-9, 2026-11-10): solo
+    # anota para el informe de estrategia. Nace apagada; se enciende en sombra.
+    "objecion",
     # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
     # burbuja va primero en el chat y cómo se clasifica un incendio de chat.
     "burbuja", "incendio",

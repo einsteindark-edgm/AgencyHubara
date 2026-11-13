@@ -22,6 +22,8 @@ Operaciones cubiertas:
   * `cancel_order`: humano cancela (cliente arrepintió, error operativo).
   * `set_test_order`: humano marca/desmarca el pedido como "prueba" (fuera
     de las estadísticas y de los eventos a Meta).
+  * `adjust_prices`: humano escribe el precio real de las líneas (precio
+    negociado, p. ej. al por mayor) → Medusa queda con ese precio.
 """
 from __future__ import annotations
 
@@ -121,6 +123,29 @@ class SetTestOrderCommand:
 
 
 @dataclass(frozen=True)
+class LinePrice:
+    """El precio unitario real (COP entero) de una línea del pedido."""
+    item_id: str
+    unit_price_cop: int
+
+
+@dataclass(frozen=True)
+class AdjustPricesCommand:
+    """Poner el precio real de la venta en las líneas del pedido.
+
+    Pedido #169 (2026-11-09): los precios al por mayor se negocian en cada
+    venta; el pedido quedó con los de lista. `prices` trae el precio unitario
+    real de cada línea que cambia; `reason` (obligatorio) queda en la línea y
+    en el historial. Si el pedido ya tenía el cobro registrado en Medusa por
+    más del nuevo total, se reembolsa la diferencia (no mueve dinero).
+    """
+    order_id: str
+    prices: tuple[LinePrice, ...]
+    reason: str
+    by: str = "human"
+
+
+@dataclass(frozen=True)
 class OrderCommandResult:
     """Resultado uniforme de cualquier comando.
 
@@ -185,4 +210,8 @@ class OrderCommandPort(Protocol):
 
     async def set_test_order(
         self, command: SetTestOrderCommand
+    ) -> OrderCommandResult: ...
+
+    async def adjust_prices(
+        self, command: AdjustPricesCommand
     ) -> OrderCommandResult: ...

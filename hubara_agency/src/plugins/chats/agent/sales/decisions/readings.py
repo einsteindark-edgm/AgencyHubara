@@ -18,6 +18,10 @@ en el catálogo (`read_catalog_gap`) no escriben campos del metadata ni leen el
 texto crudo: el ingest las pide más adelante, con el texto efectivo (un audio
 o una foto ya leídos), y usa el valor para una relectura o una nota.
 
+Decisiones que solo anotan (`OBSERVED`, desde ventas-9): corren junto a las
+lecturas y quedan en las decisiones de la conversación; su valor no entra a
+`Readings` ni escribe campos (`objecion`: qué objeción pone el cliente).
+
 El acuse tras la despedida (`EngineReadings.read_ack`, capacidad `acuse`)
 tampoco escribe campos: decide si el mensaje despierta al agente, así que el
 ingest lo pide ANTES del ciclo de episodios, con el mismo proveedor.
@@ -32,11 +36,12 @@ from typing import Any
 
 import structlog
 
+from src.plugins.chats.agent.sales.decisions import registry
 from src.plugins.chats.agent.sales.decisions.bots import bot_for_session
 from src.plugins.chats.agent.sales.decisions.bundled import customer_text
 from src.plugins.chats.agent.sales.decisions.capabilities import BY_RULE, Verdict, decide
 from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import CuponEnJuego, PedidoDelCliente
-from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+from src.plugins.chats.agent.sales.decisions.capability_rollout import MAX_P95_MS, DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.registry import capability
@@ -69,6 +74,18 @@ class Inbound:
 
 #: Metadata: el último mensaje del cliente que solo agradece o saluda.
 COURTESY_KEY = "last_inbound_courtesy"
+#: Decisiones del ingest que SOLO ANOTAN (nacen en una versión del paquete; con
+#: uno anterior no existen): quedan en las decisiones de la conversación y su
+#: valor no entra a las lecturas. `objecion` (ventas-9): qué objeción pone el
+#: cliente, para el informe de estrategia.
+OBSERVED: tuple[str, ...] = ("objecion",)
+#: Lo más que el ingest espera a una decisión que solo anota: corre junto a las
+#: lecturas, pero si Jev se cuelga solo en ella el mensaje sigue sin la nota. Es
+#: la vara de latencia que ya se le exige a Jev para subir una capacidad (su
+#: p95, `MAX_P95_MS`), no un número aparte: una nota nunca le cuesta al mensaje
+#: más de lo que el repo acepta de una decisión que sí actúa. Solo pesa cuando
+#: las lecturas del mensaje no consultan a Jev (o contestan antes que ella).
+OBSERVATION_WAIT_S = MAX_P95_MS / 1000
 
 
 def last_inbound_is_courtesy(metadata: Mapping[str, Any]) -> bool:
@@ -126,11 +143,12 @@ class EngineReadings:
         marketing = has_recent_marketing_context(
             dict(inbound.metadata), inbound.now_ms, text=customer_text(inbound) or ""
         )
-        compra_v, retoma_v, baja_v, cortesia_v = await asyncio.gather(
+        compra_v, retoma_v, baja_v, cortesia_v, *_noted = await asyncio.gather(
             run(capability("compra")),
             run(capability("retoma")),
             run(baja) if marketing else _completed(_rule_verdict_off(baja, inbound)),
             run(capability("cortesia")),
+            *(self._note(name, inbound, bot, metrics) for name in OBSERVED),
         )
         deferral = (retoma_v.value or {}).get("deferral")
         return Readings(
@@ -141,6 +159,30 @@ class EngineReadings:
             verdicts=tuple(v.to_trace() for v in (compra_v, retoma_v, baja_v, cortesia_v)),
             courtesy_only=bool(cortesia_v.value),
         )
+
+    async def _note(self, name: str, inbound: Inbound, bot: Any, metrics: Any) -> None:
+        """Una decisión que solo anota (`OBSERVED`): Jev la contesta y queda en
+        las decisiones de la conversación. No devuelve nada: su valor no entra
+        a las lecturas, en ningún modo. Sin cola de desacuerdos (no hay regla
+        con la cual discrepar). Apagada no pregunta; si el paquete no la trae,
+        falla o se demora más que `OBSERVATION_WAIT_S`, el mensaje sigue igual."""
+        try:
+            observed = registry.capability_if_present(name)
+            if observed is None:
+                return
+            provider = bot.provider(observed.name)
+            if provider == "reglas":
+                return
+            await asyncio.wait_for(
+                decide(
+                    observed, inbound, provider=provider, profile_id=bot.profile, disagreements=None,
+                    session_id=inbound.session_id, redact=self._redact, metrics=metrics,
+                    decisions=SessionDecisionLog(self._vault), stage="ingest", message_id=inbound.message_id,
+                ),
+                timeout=OBSERVATION_WAIT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 — anotar nunca frena el mensaje
+            logger.warning("decisions.observation_failed", capability=name, error=repr(exc)[:200])
 
     async def read_ack(self, inbound: Inbound) -> Verdict:
         """¿El mensaje solo le acusa recibo a la despedida del agente?

@@ -78,8 +78,9 @@ export function AdsInspector({ campaign, adId = null }: Props) {
       : null;
   const costPerChat =
     c.spend !== null && c.started > 0 ? Math.round(c.spend / c.started) : null;
-  const cpa =
-    won !== null && won > 0 && c.spend !== null ? Math.round(c.spend / won) : null;
+  // Por venta PAGADA, como el ROAS (los ganados incluyen pedidos por cobrar).
+  const paid = c.paidSales ?? 0;
+  const cpa = paid > 0 && c.spend !== null ? Math.round(c.spend / paid) : null;
 
   return (
     <aside className="inspector">

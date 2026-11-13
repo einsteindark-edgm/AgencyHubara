@@ -174,7 +174,7 @@ export function OrdersInspector({ order }: Props) {
         {detail && (
           <>
             <TimelinePanel detail={detail} order={order} missing={missing} />
-            <ItemsPanel detail={detail} />
+            <ItemsPanel detail={detail} order={order} />
             <DeliveryPanel detail={detail} missing={missing} order={order} />
             <PaymentPanel detail={detail} missing={missing} order={order} />
             <NotesPanel detail={detail} />

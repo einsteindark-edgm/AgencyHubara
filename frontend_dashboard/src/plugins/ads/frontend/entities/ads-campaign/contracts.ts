@@ -108,6 +108,9 @@ export const backendAdsCampaignSchema = z.object({
   // es `null` solo si el bucket no tuvo data (venta / uso LLM / cierre).
   revenue: z.number().nullable(),
   avg_ticket: z.number().nullable(),
+  // Episodios que aportaron a `revenue` = ventas PAGADAS (los «ganados»
+  // incluyen además los pedidos por cobrar). Default 0 para backends viejos.
+  revenue_count: z.number().int().default(0),
   llm_cost_usd: z.number().nullable(),
   llm_tokens: z.number().int().nullable(),
   // Costo de WhatsApp acumulado de la campaña (suma de `episode.cost_summary`).

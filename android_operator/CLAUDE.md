@@ -311,9 +311,24 @@ cd android_operator && ./gradlew :app:bundleRelease \
     Para saber si un teléfono está al día: **«Más → Sincronización»** (fuente `sync`, catálogo 2), **`adb logcat -s
     HubaraSync`** (sin datos de clientes) y en el servidor las líneas `sse: conexión abierta|viva|cerrada`. S37.
 
+39. **Fotos del operador al cliente** (pedido del operador, 2026-11-03): con el humano al mando y la ventana abierta el
+    composer trae «Adjuntar fotos» (selector del sistema `PickMultipleVisualMedia`, sin permisos; hasta
+    `OutboxRepository.MAX_PHOTOS`). Las elegidas se ven arriba del campo con «Quitar» y lo escrito va como pie de la
+    primera (máx. 1024, el tope de WhatsApp). `AndroidPhotoPreparer` las deja en `filesDir/outbox_photos` como JPEG de
+    lado ≤ 1600 px, derechas, sin EXIF y con fondo blanco (un PNG transparente salía negro); «Cerrar sesión» las borra.
+    Salen por el outbox (`kind = "photo"`, en `argsJson` el archivo y el `attachment_id`) en dos pasos, como el
+    dashboard: `POST …/media` una vez y `POST …/messages` con `attachment_id` + `client_message_id`; un reintento del
+    envío no vuelve a subir (un 422 sí: el backend perdió la subida). Mientras sale es la burbuja «enviando…» con la
+    foto del teléfono (solo una clave `outbox:` puede mostrar un `file://`: `Message.forDisplay`); si falla, además
+    «Reintentar / Descartar» abajo. **Trampa del emulador (S38):** Android 11 sin el selector nuevo cae al de archivos,
+    que ignora `input tap` (llega sin tipo de dedo, `SelectionTracker` lo descarta): el paso `finger_tap` toca por la
+    consola del emulador. Y la foto se pone con `add_photo` (`content call … scan_file`, síncrono): con el aviso
+    `MEDIA_SCANNER_SCAN_FILE` pasaba en local (la galería ya la tenía) y en el emulador nuevo de CI el selector salía
+    vacío; además le borra la memoria al selector, que abre donde la app lo dejó («Downloads», sin la foto).
+
 ## Endpoints
 
-Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/sse-ticket`,
+Existentes: `/api/dashboard/sessions[/{id}]`, `/intervene`, `/return-to-bot`, `/messages`, `/media` (fotos), `/sse-ticket`,
 `/events` (la app con `?inbox=delta`), `/api/orders/orders[/{id}]`, `PATCH /api/orders/orders/{id}/stage`.
 Nuevos: `GET /api/chats/mobile/suggestions/{id}`, `GET /api/chats/mobile/fires`,
 `GET /api/chats/mobile/hot`, `GET /api/chats/mobile/human` (página «Humano» del widget), `GET /api/chats/mobile/push`, `POST /api/chats/mobile/devices`,

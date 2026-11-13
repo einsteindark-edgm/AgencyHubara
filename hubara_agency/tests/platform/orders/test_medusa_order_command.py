@@ -1732,3 +1732,66 @@ def test_apply_payment_confirmation_keeps_route_when_bot_already_has_it():
     assert chat["active_route"] == "remarketing"
     assert chat["status_history"][-1]["active_route"] == "remarketing"
     assert "vuelve al bot" not in chat["motivo"]
+
+
+@pytest.mark.asyncio
+@respx.mock(base_url=_BASE_URL)
+async def test_confirm_payment_purchase_value_is_the_medusa_total(
+    respx_mock, adapter, _isolate_vault_dir
+):
+    """Pedido #169: el precio se ajustó al negociado en Medusa ($380.000) y
+    el chat guarda el total de lista ($475.000). El Purchase a Meta lleva lo
+    que se vendió (gotcha 13: el valor de un pedido se lee de Medusa)."""
+    import json as _json
+
+    order_id = "order_01HXX_WHOLESALE"
+    session_key = "wa_57300012399"
+    chat_dir = _isolate_vault_dir / session_key
+    chat_dir.mkdir(parents=True, exist_ok=True)
+    chat_meta_file = chat_dir / "metadata.json"
+    chat_meta_file.write_text(
+        _json.dumps(
+            {
+                "tag": "HUMANO",
+                "active_route": "humano",
+                "ctwa_referrals": [{"ctwa_clid": "CLID", "captured_at_ms": 1}],
+                "episodes": [
+                    {
+                        "episode_id": "ep_001",
+                        "closing_tag": "CONFIRMADO_PAGO_PENDIENTE",
+                        "order_id": order_id,
+                        "order_total_cop": 475000,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    medusa_order = {
+        "id": order_id,
+        "metadata": {"hubara_stage": "delivered", "session_key": session_key},
+        "total": 380000,
+        "shipping_total": 0,
+        "status": "pending",
+        "payment_status": "not_paid",
+    }
+    respx_mock.get(f"/admin/orders/{order_id}").mock(
+        return_value=Response(200, json={"order": medusa_order})
+    )
+    respx_mock.post("/admin/payment-collections").mock(
+        return_value=Response(200, json={"payment_collection": {"id": "pc_01", "amount": 380000}})
+    )
+    respx_mock.post("/admin/payment-collections/pc_01/mark-as-paid").mock(
+        return_value=Response(200, json={"payment_collection": {"id": "pc_01"}})
+    )
+    respx_mock.post(f"/admin/orders/{order_id}").mock(
+        return_value=Response(200, json={"order": {**medusa_order, "metadata": {
+            **medusa_order["metadata"], "hubara_payment_confirmed": True}}})
+    )
+
+    result = await adapter.confirm_payment(ConfirmPaymentCommand(order_id=order_id, by="edgm"))
+
+    assert result.success is True
+    chat_after = _json.loads(chat_meta_file.read_text(encoding="utf-8"))
+    purchases = [e for e in chat_after.get("capi_outbox", []) if e["event_name"] == "Purchase"]
+    assert [e["value"] for e in purchases] == [380000]

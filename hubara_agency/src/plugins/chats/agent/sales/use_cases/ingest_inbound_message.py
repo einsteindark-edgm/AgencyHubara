@@ -127,6 +127,11 @@ from src.plugins.chats.agent.sales.use_cases.load_or_start_sales_session import 
     LoadOrStartSalesSession,
 )
 from src.plugins.chats.agent.sales.metadata_reads import read_retrying_transient_errors
+from src.plugins.chats.agent.sales.use_cases.receipt_shadow import (
+    SOURCE_IMAGE,
+    SOURCE_PDF,
+    record_receipt_check,
+)
 from src.plugins.chats.shared.quotes import build_quote_note, resolve_quote
 from src.plugins.chats.shared.customer_profiles import intent_in_reading, stamp_interest
 from src.plugins.chats.shared.purchase_signals import build_deferral_note
@@ -140,6 +145,7 @@ from src.plugins.chats.agent.sales.decisions.readings import (
     read_coupon_talk,
 )
 from src.plugins.chats.agent.sales.use_cases.funnel_stage import resolve_funnel_stage
+from src.plugins.chats.agent.sales.use_cases.shipping_form_reply import record_form_reply
 from src.plugins.chats.agent.sales.use_cases.order_draft import (
     build_order_draft_note,
     get_projectable_draft,
@@ -1390,6 +1396,27 @@ class IngestInboundMessage:
             tags=effective.debug_tags,
         )
 
+        # --- 5.5. Datos del formulario de envío: al pedido al llegar (ENV-03) ---
+        # Informe de huecos del 2026-11-03: llegan estructurados (`nfm_reply`)
+        # y solo quedaban en el borrador si el modelo llamaba set_order_slot
+        # en ese turno. Son hechos, no una decisión: se escriben como el
+        # carrito web (RMW sobre la lectura fresca, FM-01) y el modelo los lee
+        # en la nota del pedido. Con un humano al mando no se siembra nada (el
+        # borrador del operador lee el formulario del chat).
+        structured = effective.structured_payload or {}
+        if structured.get("kind") == "nfm_reply" and metadata.get("active_route") != ROUTE_HUMANO:
+            response_json = structured.get("response_json")
+
+            def _form_reply_mutator(fresh: dict[str, Any]) -> dict[str, Any] | None:
+                if fresh.get("active_route") == ROUTE_HUMANO:
+                    return None
+                return fresh if record_form_reply(fresh, response_json, now_ms=now_ms) else None
+
+            written_form = self._update_best_effort(session_id, _form_reply_mutator, what="datos_del_formulario")
+            if written_form is not None:
+                metadata = written_form
+                _rebase(base, metadata)
+
         # --- 5.7. Documento PDF inbound (comprobante de pago probable): bajar
         #     los bytes de Meta (cap 10 MB — arriba de eso NO se descarga) y
         #     persistirlos para que el operador pueda ABRIR el archivo desde el
@@ -1475,6 +1502,7 @@ class IngestInboundMessage:
                     )
                 except Exception:  # noqa: BLE001 — cortesía best-effort
                     pass
+            await self._note_receipt_check(parsed, session_id, receipt=None, source=SOURCE_PDF)
 
         # Plantilla a la que responde (fase 3, run 28a8e407): el LLM no ve
         # las plantillas (van solo al JSONL del dashboard). Se lee ANTES de
@@ -1955,6 +1983,29 @@ class IngestInboundMessage:
             logger.error("ingest.coupon_reading_failed", session_id=session_id, error=f"{type(exc).__name__}: {exc}"[:300])
             return bool(coupon_in_play(_Inbound(session_id=session_id, text=text, now_ms=0, metadata=metadata)))
         return bool(verdict.value)
+
+    async def _note_receipt_check(
+        self, parsed: WhatsAppMessage, session_id: str, *, receipt: Any, source: str
+    ) -> None:
+        """Sombra del comprobante (tarjeta 33 del ciclo): anota qué habría
+        dicho Colossus al compararlo con el pedido. Va DESPUÉS del relevo y del
+        mensaje de siempre, y nunca los frena: si algo falla, queda un aviso en
+        el log y nada más. Una vez por mensaje, aunque el paso se reintente."""
+        try:
+            wamid = parsed.message_id
+            if self._effects is not None and wamid and not self._effects.claim(wamid, "receipt_check"):
+                return
+            await record_receipt_check(
+                vault_dir=WORKSPACE_VAULT_DIR,
+                session_id=session_id,
+                metadata=self._metadata_store.read(session_id),
+                receipt=receipt,
+                source=source,
+                order_facts=self._order_facts,
+                now_ms=_now_ms(),
+            )
+        except Exception as exc:  # noqa: BLE001 — la sombra nunca frena el ingest
+            logger.warning("ingest.receipt_check_failed", session_id=session_id, error=type(exc).__name__)
 
     async def _order_in_course(self, prev_episode: dict[str, Any], session_id: str, now_ms: int) -> Any:
         """Los datos (OrderFacts) del pedido con el que cerró el episodio
@@ -3076,6 +3127,8 @@ class IngestInboundMessage:
                 )
             except Exception:  # noqa: BLE001
                 pass
+        if result.is_payment_receipt:
+            await self._note_receipt_check(parsed, session_id, receipt=result.receipt, source=SOURCE_IMAGE)
 
         # --- Reinyectar la descripción como texto y reentrar. Si la ruta quedó
         #     en humano (comprobante o handoff previo), LoadOrStart omite el

@@ -152,6 +152,58 @@ def test_des03_legacy_category_menu_answers_the_catalog_request() -> None:
     assert _run("DES-03", t).verdict == "pasa"
 
 
+_ORDER_NOTICE_QUOTE = (
+    "[El cliente responde a este mensaje que le enviamos: «Hola, tu pedido #900 ya fue entregado. "
+    "Si quieres ver más, el catálogo está en nuestra tienda.»]"
+)
+_RECOGNIZED_PHOTO = (
+    "[el cliente envió una foto: tres velas aromáticas sobre una mesa, iguales a las fotos del catálogo "
+    "(es nuestro producto «Vela Bosque»: se lee su nombre en la imagen)]"
+)
+
+
+def test_des03_thanks_with_recognized_photo_replying_to_order_notice_is_not_a_request() -> None:
+    """Tarjeta 23 del ciclo: el cliente agradece con una foto de lo que recibió,
+    contestando al aviso de su pedido. «Catálogo» solo aparece en la nota que
+    describe la foto y en la cita de nuestro mensaje: eso no lo escribió él."""
+    inbound = f'{_ORDER_NOTICE_QUOTE}\n{_RECOGNIZED_PHOTO}\n"Ya me llegó todo, quedaron divinas"'
+    t = traj(T(1, inbound=inbound, sent=["¡Qué alegría que te gustaran!"]))
+    assert _run("DES-03", t).verdict == "no_aplica"
+
+
+def test_des03_catalog_word_only_in_photo_note_is_not_a_request() -> None:
+    t = traj(T(1, inbound=f"{_RECOGNIZED_PHOTO}\nmuchas gracias", sent=["¡Con gusto!"]))
+    assert _run("DES-03", t).verdict == "no_aplica"
+
+
+def test_des03_catalog_word_only_in_our_quoted_message_is_not_a_request() -> None:
+    t = traj(T(1, inbound=f"{_ORDER_NOTICE_QUOTE}\nmuchas gracias", sent=["¡Con gusto!"]))
+    assert _run("DES-03", t).verdict == "no_aplica"
+
+
+def test_des03_catalog_word_only_in_team_note_is_not_a_request() -> None:
+    inbound = (
+        "[Después de tu último mensaje, el cliente recibió estos mensajes:\n"
+        "- Mensaje automático: «Tu pedido va en camino. Mira el catálogo cuando quieras.»]\n"
+        "listo, gracias"
+    )
+    t = traj(T(1, inbound=inbound, sent=["¡Con gusto!"]))
+    assert _run("DES-03", t).verdict == "no_aplica"
+
+
+def test_des03_written_request_next_to_a_photo_still_counts() -> None:
+    inbound = f"{_ORDER_NOTICE_QUOTE}\n{_RECOGNIZED_PHOTO}\nme encantaron, mándame el catálogo para pedir más"
+    t = traj(T(1, inbound=inbound, sent=["¡Qué alegría!"]))
+    r = _run("DES-03", t)
+    assert (r.verdict, r.turn) == ("falla", 1)
+
+
+def test_des03_written_request_next_to_a_photo_answered_passes() -> None:
+    inbound = f"{_RECOGNIZED_PHOTO}\n¿qué tienen parecido a esta?"
+    t = traj(T(1, inbound=inbound, tools=[tool("present_products")]))
+    assert _run("DES-03", t).verdict == "pasa"
+
+
 # ── DES-05 ────────────────────────────────────────────────────────────────
 def test_des05_price_after_search_passes() -> None:
     t = traj(

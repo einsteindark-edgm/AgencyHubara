@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# Las frases que la tienda no le dice al cliente (ventas-8, CIE-05). Informe de
+# huecos del 2026-11-03: «Con gusto, ahí te dejé el formulario.» salió por
+# `send_reply` (el egreso de V2 ve ese texto antes de enviarlo). El guion las
+# prohíbe: dan la compra o el pago por hechos sin verificar, suenan a sistema
+# («caso cerrado», «pedido transferido»), prometen escribir después o son
+# muletillas al pedir los datos.
+#
+# La regla de palabras (frases del paquete) PROPONE las oraciones; Jev dice si
+# de verdad la dicen y esas se quitan. Si no queda nada y el pedido quedó
+# registrado, sale la despedida aprobada del dominio, como en `portavelas`.
+# Sin Jev no revisa (`constant_empty`: el texto sale igual).
+# Valor: el texto que sale; "" = sale igual.
+capability: despedida
+value: string
+input: OutgoingText
+# Las frases son de la tienda (las del guion, skills etapa_cierre y
+# etapa_datos_envio): un falso positivo, o algo que se escapa, se corrige aquí
+# con otra frase en una versión nueva del paquete, no en el código.
+items:
+  builtin: phrase_sentences
+  with:
+    frases: >-
+      gracias por tu compra, compra realizada, compra exitosa, tu pago fue procesado, pago procesado,
+      te confirmo en un rato, te cuadro el pedido, ahí te dejo/dejé, conversación … cerrada,
+      caso cerrado, pedido transferido
+rule: {builtin: constant_empty}
+state:
+  builtin: numbered_items
+  with: {header: "Mensaje que la tienda le va a enviar a un cliente por WhatsApp, oración por oración:", max: 12}
+each:
+  id: "despedida.{n}"
+  kind: noul
+  when: "item.hit"
+  text: "La tienda prohíbe decirle al cliente estas frases: «gracias por tu compra», «compra realizada», «compra exitosa», «pago procesado», «te confirmo en un rato», «te cuadro el pedido», «ahí te dejo» o «ahí te dejé», «conversación cerrada», «caso cerrado» y «pedido transferido». ¿La oración [{n}] usa una de ellas?"
+  criteria:
+    "true": "sí: la usa"
+    "false": "no: la niega, la cita como ejemplo o dice otra cosa"
+thresholds: {"yes": 0.85}
+vars:
+  # Lo que queda: las oraciones que Jev no marcó con certeza.
+  kept: "items.filter(i, !(i.hit && has(i.p) && i.p >= th['yes']))"
+decide:
+  # Jev no contestó: decide la regla (el texto sale igual).
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - when: "size(vars.kept) == size(items)"
+    then: ""
+  - when: "size(vars.kept) > 0"
+    then: {expr: "vars.kept.map(i, i.text).join(' ')"}
+  # No queda nada: con el pedido registrado, la despedida aprobada.
+  - when: "inp.order_registered == true"
+    then: {expr: "dom.farewell_order_registered"}
+  # Sin pedido no hay despedida aprobada que lo reemplace: decide la regla.
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  # Sonda con Jev real (jev-v5, textos sintéticos, 2026-11-03): la muletilla del formulario,
+  # «gracias por tu compra», «caso cerrado», «ahí te dejo el link» y «compra exitosa» 0,95–0,98;
+  # negarla («todavía no es una compra realizada») 0,10 y citarla 0,21. Con la primera
+  # redacción (sin nombrar las frases) daba 0,78–0,83: por eso la pregunta las nombra.
+  # El caso del informe (sintético): la muletilla al pedir los datos.
+  - items:
+      - {text: "Con gusto, ahí te dejé el formulario.", hit: true, p: 0.95}
+      - {text: "Cuando lo llenes, seguimos con tu pedido 🤍", hit: false}
+    expect: "Cuando lo llenes, seguimos con tu pedido 🤍"
+  # «No es una compra realizada todavía»: la frase aparece, pero lo niega.
+  - items:
+      - {text: "Todavía no es una compra realizada: falta tu pago.", hit: true, p: 0.10}
+    expect: ""
+  # Borde de la certeza: 0,85 se quita; 0,84 queda.
+  - items:
+      - {text: "¡Gracias por tu compra!", hit: true, p: 0.85}
+      - {text: "Caso cerrado.", hit: true, p: 0.84}
+      - {text: "Te escribimos cuando lo despachemos.", hit: false}
+    expect: "Caso cerrado. Te escribimos cuando lo despachemos."
+  # No queda nada y el pedido quedó registrado: la despedida aprobada.
+  - items: [{text: "¡Gracias por tu compra, compra exitosa!", hit: true, p: 0.95}]
+    input: {order_registered: true}
+    expect: "Listo, tu pedido quedó registrado 🤍. Gracias por elegir a Hubara."
+  # No queda nada y no hay pedido registrado: decide la regla (sale igual).
+  - items: [{text: "¡Gracias por tu compra!", hit: true, p: 0.95}]
+    input: {order_registered: false}
+    expect: doubt
+  # Jev no contestó.
+  - items: [{text: "Caso cerrado.", hit: true}]
+    expect: doubt

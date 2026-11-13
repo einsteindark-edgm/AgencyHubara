@@ -69,6 +69,11 @@ export function AdsOverviewHeader({
 
   const total = totalConversations(campaign);
   const won = campaign.conversations?.ganado ?? null;
+  // «Ganados» = chats que terminaron en pedido (pagado o por cobrar); el
+  // ingreso suma solo los pagados. ROAS y CAC se miden sobre lo mismo: ventas
+  // pagadas (auditoría 2026-11-10 — antes el CAC dividía por los pedidos).
+  const paid = campaign.paidSales ?? 0;
+  const toCollect = won !== null ? Math.max(0, won - paid) : 0;
 
   // Derivados: cada uno requiere TODOS sus inputs no-null. Si alguno falta,
   // el cálculo queda `null` y el slot renderiza <MissingField />.
@@ -77,9 +82,7 @@ export function AdsOverviewHeader({
       ? campaign.revenue / campaign.spend
       : null;
   const cac =
-    won !== null && won > 0 && campaign.spend !== null
-      ? campaign.spend / won
-      : null;
+    paid > 0 && campaign.spend !== null ? campaign.spend / paid : null;
   const costPerChat =
     campaign.spend !== null && campaign.started > 0
       ? campaign.spend / campaign.started
@@ -198,7 +201,7 @@ export function AdsOverviewHeader({
           sub={
             <>
               ROAS {roas !== null ? `${roas.toFixed(2)}×` : <MissingField />}
-              {won !== null ? ` · ${won} ventas` : ""}
+              {won !== null ? ` · ${salesText(paid, toCollect)}` : ""}
             </>
           }
         />
@@ -300,6 +303,12 @@ export function AdsOverviewHeader({
       </div>
     </header>
   );
+}
+
+/** "1 venta pagada · 3 por cobrar" / "4 ventas pagadas". */
+function salesText(paid: number, toCollect: number): string {
+  const paidText = `${fmtN(paid)} ${paid === 1 ? "venta pagada" : "ventas pagadas"}`;
+  return toCollect > 0 ? `${paidText} · ${fmtN(toCollect)} por cobrar` : paidText;
 }
 
 interface KpiProps {

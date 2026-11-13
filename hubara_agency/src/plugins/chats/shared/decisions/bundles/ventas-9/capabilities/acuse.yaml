@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿Es solo un acuse o una cortesía a la despedida?» (run 4cb3a34f, #379). El
+# agente ya se despidió y cerró el episodio; un acuse queda en el chat y no
+# despierta al agente. Lo estructural (episodio cerrado, reacción, sticker)
+# lo decide el código antes. Sesgo a la seguridad: absorbe solo con mucha
+# certeza; si Jev duda, despierta al bot. Piso: un mensaje con signo de
+# pregunta nunca se absorbe.
+capability: acuse
+value: bool
+input: Inbound
+rule: {builtin: closing_ack}
+state: {builtin: message_after_close}
+questions:
+  - id: acuse.solo_cortesia
+    kind: noul
+    text: "¿Este mensaje del cliente es solo un acuse de recibo o una cortesía a la despedida del asesor (gracias, ok, un emoji, una bendición), sin preguntar, pedir, responder ni contar nada nuevo?"
+    criteria:
+      "true": "sí"
+      "false": "no"
+thresholds: {"absorb": 0.9}
+decide:
+  - when: "!('acuse.solo_cortesia' in p)"
+    then: doubt
+  - when: "p['acuse.solo_cortesia'] >= th['absorb']"
+    then: true
+  - otherwise: false
+floor: {builtin: jev_without_question_mark}
+same: {builtin: bool_eq}
+examples:
+  - {answers: {acuse.solo_cortesia: 0.9}, expect: true}
+  - {answers: {acuse.solo_cortesia: 0.89}, expect: false}
+  - {answers: {}, expect: doubt}

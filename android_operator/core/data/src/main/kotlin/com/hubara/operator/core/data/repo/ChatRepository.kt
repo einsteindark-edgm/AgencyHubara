@@ -1,6 +1,8 @@
 package com.hubara.operator.core.data.repo
 
 import com.hubara.operator.core.data.mapping.orderRef
+import com.hubara.operator.core.data.outbox.OutboxRepository
+import com.hubara.operator.core.data.outbox.photoPreviewUrl
 import com.hubara.operator.core.data.mapping.toDomain
 import com.hubara.operator.core.data.mapping.toEntity
 import com.hubara.operator.core.data.safeCall
@@ -25,6 +27,9 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+
+/** La clave de las burbujas que todavía están en el outbox: solo esas pueden mostrar una foto del teléfono. */
+const val PENDING_KEY_PREFIX = "outbox:"
 
 /** Una acción del operador que todavía está en el outbox (para la barra de deshacer). */
 data class PendingAction(
@@ -73,7 +78,9 @@ class ChatRepository @Inject constructor(
         messages.observe(sessionId.raw),
         outbox.observeUnsent(sessionId.raw),
     ) { conv, rows, pending ->
-        val texts = pending.filter { it.kind == "text" }.map { it.toPendingMessage() }
+        // Textos y fotos salen como burbuja «enviando…» en el historial; las fotos que fallaron, además, en la barra
+        // de abajo con «Reintentar» y «Descartar».
+        val bubbles = pending.filter { it.kind == "text" || it.kind == OutboxRepository.KIND_PHOTO }.map { it.toPendingMessage() }
         ChatView(
             sessionId = sessionId,
             phone = conv?.phone.orEmpty(),
@@ -81,8 +88,8 @@ class ChatRepository @Inject constructor(
             route = conv?.route?.let { runCatching { Route.valueOf(it) }.getOrNull() } ?: Route.BOT,
             orderRef = conv?.orderRef(),
             windowExpiresAtMs = conv?.windowExpiresAtMs,
-            messages = rows.map { it.toDomain() } + texts,
-            pendingActions = pending.filter { it.kind != "text" }.map {
+            messages = rows.map { it.toDomain() } + bubbles,
+            pendingActions = pending.filter { it.kind != "text" && (it.kind != OutboxRepository.KIND_PHOTO || it.state == "failed") }.map {
                 PendingAction(it.clientActionId, it.label, OutboxState.fromDb(it.state), it.createdMs, it.error)
             },
         )
@@ -125,10 +132,10 @@ class ChatRepository @Inject constructor(
     }
 
     private fun OutboxEntity.toPendingMessage() = Message(
-        key = "outbox:$clientActionId",
+        key = PENDING_KEY_PREFIX + clientActionId,
         author = Author.HUMAN,
         text = text,
-        imageUrl = null,
+        imageUrl = if (kind == OutboxRepository.KIND_PHOTO) photoPreviewUrl(argsJson) else null,
         timestampMs = createdMs,
         state = if (state == "failed") DeliveryState.FAILED else DeliveryState.PENDING,
     )

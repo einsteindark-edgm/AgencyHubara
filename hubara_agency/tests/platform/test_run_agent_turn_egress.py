@@ -204,6 +204,8 @@ async def test_the_hook_decides_what_the_llm_remembers_and_travels_in_the_result
         # Lo que escribió el LLM antes del saneador: el egreso decide la
         # muletilla de presentación (capacidad `preambulo`).
         "raw_text": LEAK,
+        # Cada tool del turno con su resultado (puerta de afirmaciones): ninguna.
+        "tool_events": [],
     }
     assert result["egress"] == out
     assert result["final_content"] == ANSWER
