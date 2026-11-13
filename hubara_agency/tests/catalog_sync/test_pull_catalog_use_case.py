@@ -222,3 +222,48 @@ async def test_tags_and_categories_flattened():
     assert payload[0]["tags"] == ["Aroma: Lavanda", "Color: Morado"]
     # Categoria con handle usa handle; sin handle cae a name
     assert payload[0]["categories"] == ["velas", "Aromaticas"]
+
+
+@pytest.mark.asyncio
+async def test_categories_marked_as_promotion_in_medusa_reach_the_snapshot():
+    """Incidente 2026-11-12: la categoría «Promociones Navideñas» no salía
+    cuando el cliente preguntaba por promociones. La marca vive en Medusa
+    (metadata de la categoría): `promocion: true`, o el texto "true" que
+    guarda el editor de metadatos del admin. Sin marca, no es promoción."""
+    svc = _FakeService(
+        [
+            {
+                **_product("p1", "trio-de-sabuesos", "Trío de sabuesos"),
+                "categories": [
+                    {"id": "c1", "name": "Decorativas", "handle": "decorativas"},
+                    {
+                        "id": "c2",
+                        "name": "Promociones Navideñas",
+                        "handle": "promociones",
+                        "metadata": {"promocion": "true"},
+                    },
+                ],
+            },
+            {
+                **_product("p2", "vela-buda", "Vela Buda"),
+                "categories": [
+                    {
+                        "id": "c3",
+                        "name": "Ofertas de San Valentín",
+                        "handle": "san-valentin",
+                        "metadata": {"Promoción": True},
+                    },
+                    {
+                        "id": "c4",
+                        "name": "Religiosas",
+                        "handle": "religiosas",
+                        "metadata": {"promocion": "false"},
+                    },
+                ],
+            },
+        ]
+    )
+    result = await PullCatalogUseCase(medusa_service=svc).execute(CatalogSyncInput())
+    payload = json.loads(result.products_json)
+    assert payload[0]["promotional_categories"] == ["promociones"]
+    assert payload[1]["promotional_categories"] == ["san-valentin"]

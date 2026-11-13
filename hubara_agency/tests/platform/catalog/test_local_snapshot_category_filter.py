@@ -143,3 +143,35 @@ async def test_catalog_without_categories_degrades_to_text_search(tmp_path: Path
     assert [p.handle for p in result.results] == ["corona"]
     assert result.category is not None
     assert result.category.confidence == "no_categories"
+
+
+@pytest.mark.asyncio
+async def test_list_categories_marks_the_promotions_written_by_the_sync(tmp_path: Path):
+    """El snapshot que escribe el sync lleva `promotional_categories` por
+    producto; el lector lo conserva y la lista cerrada dice cuál es promoción."""
+    labels = {"promociones": "Promociones Navideñas", "decorativas": "Decorativas"}
+    (tmp_path / "snapshot.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "1", "handle": "trio", "title": "Trío", "status": "published",
+                    "categories": ["decorativas", "promociones"],
+                    "category_labels": labels,
+                    "promotional_categories": ["promociones"],
+                },
+                {
+                    "id": "2", "handle": "cubo", "title": "Cubo", "status": "published",
+                    "categories": ["decorativas"], "category_labels": labels,
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"version": "v1", "fetched_at": "2099-01-01T00:00:00+00:00", "product_count": 2})
+    )
+    cats = await LocalSnapshotCatalogClient(tmp_path).list_categories()
+    assert [(c.label, c.promotional) for c in cats] == [
+        ("Decorativas", False),
+        ("Promociones Navideñas", True),
+    ]

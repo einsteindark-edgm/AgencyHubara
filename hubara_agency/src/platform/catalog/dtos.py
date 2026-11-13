@@ -71,6 +71,10 @@ class CatalogProductDTO:
     # "Velas Religiosas"). None = snapshot viejo (pre filtro por categoría);
     # el resolver cae al deslugify del slug.
     category_labels: dict[str, str] | None = None
+    # Slugs de sus categorías que el operador marcó como promoción en Medusa
+    # (`promocion: true` en la metadata de la categoría). Vacío = ninguna, o
+    # snapshot anterior a 2026-11-12.
+    promotional_categories: list[str] = field(default_factory=list)
     metadata: dict[str, str] | None = None
     # Ejes de selección reales del producto ({"Signo": ["Aries", ...]}).
     # None = producto sin options en Medusa (snapshots viejos también).
@@ -131,6 +135,9 @@ def product_dto_from_raw(raw: dict) -> CatalogProductDTO:
             if raw.get("category_labels")
             else None
         ),
+        promotional_categories=[
+            str(slug) for slug in raw.get("promotional_categories") or []
+        ],
         metadata=(
             {k: str(v) for k, v in (raw.get("metadata") or {}).items()}
             if raw.get("metadata")

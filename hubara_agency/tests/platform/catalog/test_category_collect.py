@@ -32,3 +32,22 @@ def test_collect_counts_products_per_category_with_real_labels():
 def test_collect_falls_back_to_deslugified_label_on_old_snapshots():
     cats = collect_categories([_product("a", ["velas-religiosas"])])
     assert cats[0].label == "Velas Religiosas"
+
+
+def test_collect_says_which_categories_are_promotions():
+    """Una categoría es promoción si el operador la marcó en Medusa: basta con
+    que un producto del snapshot lo diga (todos vienen de la misma categoría)."""
+    labels = {"promociones": "Promociones Navideñas", "decorativas": "Decorativas"}
+    products = [
+        CatalogProductDTO(
+            id="prod_trio", handle="trio", title="Trío", status="published",
+            categories=["decorativas", "promociones"], category_labels=labels,
+            promotional_categories=["promociones"],
+        ),
+        _product("cubo", ["decorativas"], labels),
+    ]
+    cats = collect_categories(products)
+    assert [(c.slug, c.promotional) for c in cats] == [
+        ("decorativas", False),
+        ("promociones", True),
+    ]

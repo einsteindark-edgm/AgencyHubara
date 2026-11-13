@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
+import unicodedata
 from dataclasses import asdict
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Any, Iterable
 
 from src.plugins.catalog.agent.contracts import CatalogSyncInput, PullCatalogResult
 from src.platform.catalog.dtos import (
@@ -137,6 +138,9 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
         category_labels=(
             {(c.handle or c.name): c.name for c in mp.categories} or None
         ),
+        promotional_categories=[
+            c.handle or c.name for c in mp.categories if is_promotion(c.metadata)
+        ],
         metadata=(
             {
                 k: (json.dumps(v) if not isinstance(v, str) else v)
@@ -146,6 +150,31 @@ def _to_dto(mp: MedusaProduct) -> CatalogProductDTO:
         ),
         dimensions=_dimensions(mp),
     )
+
+
+#: La llave de la metadata de una categoría que la marca como promoción
+#: (Admin de Medusa → Categoría → Metadatos: `promocion` = `true`). Así una
+#: promoción nueva es una categoría marcada y un Sync, sin desplegar.
+PROMOTION_METADATA_KEY = "promocion"
+#: Los mismos valores que acepta la marca `portavelas` del producto.
+_TRUE_TEXTS = frozenset({"true", "1", "yes", "si", "on"})
+
+
+def _fold(text: str) -> str:
+    """Sin tildes ni mayúsculas: «Promoción» → «promocion»."""
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", str(text).strip().lower())
+        if not unicodedata.combining(ch)
+    )
+
+
+def is_promotion(metadata: dict[str, Any] | None) -> bool:
+    """¿La metadata de la categoría la marca como promoción? El editor del
+    admin guarda texto ("true"); la API acepta el booleano."""
+    for key, value in (metadata or {}).items():
+        if _fold(key) == PROMOTION_METADATA_KEY:
+            return value is True or _fold(value) in _TRUE_TEXTS
+    return False
 
 
 #: Títulos de la opción de Medusa que es el color del producto (los mismos

@@ -58,6 +58,36 @@ async def _product_titles(catalog: Any, promotion: PromotionDTO) -> list[str] | 
     return [p["title"] for p in await eligible_products(catalog, promotion)]
 
 
+async def _promo_categories(catalog: Any) -> list[dict[str, Any]]:
+    """Las categorías que el operador marcó como promoción en Medusa (llegan
+    en el catálogo con `promotional`). Sin catálogo o ilegible: ninguna, y
+    queda la respuesta de los cupones."""
+    list_categories = getattr(catalog, "list_categories", None)
+    if list_categories is None:
+        return []
+    try:
+        categories = await list_categories()
+    except Exception as exc:  # noqa: BLE001 — sin catálogo quedan los cupones
+        logger.warning("🎟️ [TOOL list_promotions] sin categorías de promoción: {}", exc)
+        return []
+    return [
+        {"name": c.label, "products": c.product_count}
+        for c in categories
+        if getattr(c, "promotional", False)
+    ]
+
+
+def _promo_categories_summary(categories: list[dict[str, Any]]) -> str:
+    names = ", ".join(f"«{c['name']}» ({c['products']} productos)" for c in categories)
+    return (
+        f"Categorías de promoción del catálogo: {names}. Son las promociones de la "
+        "tienda: cuando pregunte por promociones, ofrécelas y muéstrale los productos "
+        "con present_products(category=\"<nombre de la categoría>\"), por ejemplo "
+        f"present_products(category=\"{categories[0]['name']}\"). El precio es el del "
+        "catálogo: no le sumes un descuento."
+    )
+
+
 def _promotion_summary(p: dict[str, Any]) -> str:
     if p.get("first_purchase_only"):
         return _first_purchase_summary(p)
@@ -94,8 +124,9 @@ class ListPromotionsTool(ToolBase):
     read_only = True
     description = (
         "Lista los cupones/promociones VIGENTES (código, descuento, productos a "
-        "los que aplica, vigencia). Úsala cuando el cliente pregunta si hay "
-        "descuentos o promociones. Si devuelve vacío, NO hay promociones: dilo "
+        "los que aplica, vigencia) y las categorías de promoción del catálogo "
+        "(`categories`). Úsala cuando el cliente pregunta si hay descuentos o "
+        "promociones. Si no trae cupones NI categorías, NO hay promociones: dilo "
         "y no inventes ninguna; si el cliente insiste en negociar un precio, "
         "`escalate_to_human(reason_category='DISCOUNT_REQUEST')`."
     )
@@ -159,15 +190,23 @@ class ListPromotionsTool(ToolBase):
             return None
 
     async def execute_with_context(self, ctx: ToolContext) -> str:
+        categories = await _promo_categories(self._catalog)
         try:
             promotions = await self._promotions.list_active()
         except PromotionsUnavailableError as exc:
             logger.warning("🎟️ [TOOL list_promotions] unavailable session={} err={}", ctx.session_key, exc)
+            summary = (
+                "No pude consultar los cupones ahora mismo: no ofrezcas descuentos. "
+                + _promo_categories_summary(categories)
+                if categories
+                else "No pude consultar las promociones ahora mismo. No inventes ninguna."
+            )
             return json.dumps(
                 {
                     "promotions": [],
+                    "categories": categories,
                     "error": "unavailable",
-                    "summary": "No pude consultar las promociones ahora mismo. No inventes ninguna.",
+                    "summary": summary,
                 },
                 ensure_ascii=False,
             )
@@ -215,7 +254,12 @@ class ListPromotionsTool(ToolBase):
                     entry["exhausted"] = offer.reason == "quota_exhausted"
                     entry["units_unavailable"] = offer.reason == "quota_unavailable"
             out.append(entry)
-        if not out:
+        if not out and categories:
+            summary = (
+                "No hay cupones vigentes: no prometas descuentos. "
+                + _promo_categories_summary(categories)
+            )
+        elif not out:
             summary = "No hay promociones ni cupones vigentes. No prometas descuentos."
         else:
             summary = "Cupones vigentes: " + "; ".join(
@@ -226,7 +270,12 @@ class ListPromotionsTool(ToolBase):
                 "ejemplo «el de primera compra» o «el de la página»), aplícale ese; el "
                 "sistema verifica la condición."
             )
-        return json.dumps({"promotions": out, "summary": summary}, ensure_ascii=False)
+            if categories:
+                summary += " " + _promo_categories_summary(categories)
+        return json.dumps(
+            {"promotions": out, "categories": categories, "summary": summary},
+            ensure_ascii=False,
+        )
 
 
 class ApplyCouponTool(ToolBase):
