@@ -15,7 +15,7 @@ from src.plugins.chats.agent.sales.use_cases.receipt_shadow import record_receip
 from src.plugins.chats.shared.receipt_checks import read_checks
 
 _NOW_MS = 1_794_500_000_000  # 2026-11-12 (Bogotá)
-_SESSION = "wa_570000000001"
+_SESSION = "wa_100000000001"
 
 
 def _receipt(amount="$84.000", day="2026-11-12", account="2233", reference="M000123") -> Any:
@@ -144,7 +144,7 @@ async def test_without_an_order_reader_there_is_nothing_to_compare(tmp_path: Pat
 async def test_the_same_reference_on_another_order_is_a_repeated_receipt(tmp_path: Path) -> None:
     first = await _record(tmp_path, receipt=_receipt(reference="M000123"))
     other = await _record(
-        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="m-000123")
+        tmp_path, session="wa_100000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="m-000123")
     )
 
     assert first["verdict"] == "coincide"
@@ -207,7 +207,7 @@ async def test_resending_a_receipt_first_seen_without_an_order_is_not_repeated(t
 async def test_a_short_reference_is_not_enough_to_call_a_receipt_repeated(tmp_path: Path) -> None:
     await _record(tmp_path, receipt=_receipt(reference="1234"))
     other = await _record(
-        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="1234")
+        tmp_path, session="wa_100000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference="1234")
     )
 
     assert other["verdict"] == "coincide"
@@ -223,7 +223,7 @@ async def test_a_match_on_the_amount_alone_is_noted_as_partial_evidence(tmp_path
 async def test_words_or_filler_in_the_reference_field_never_make_a_repeated_receipt(tmp_path: Path, words: str) -> None:
     await _record(tmp_path, receipt=_receipt(reference=words))
     other = await _record(
-        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference=words)
+        tmp_path, session="wa_100000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference=words)
     )
 
     assert other["verdict"] == "coincide"
