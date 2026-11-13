@@ -34,6 +34,21 @@ class VisibleText:
 
 
 @dataclass(frozen=True)
+class ReceiptText:
+    """Los datos de un comprobante de pago, copiados tal cual por el modelo.
+
+    Cada campo es None si no se ve. ``date`` viene en ``AAAA-MM-DD``;
+    ``account`` son solo los últimos 4 dígitos de la cuenta que recibe el pago
+    (el número entero no sale de acá).
+    """
+
+    amount: str | None = None
+    date: str | None = None
+    account: str | None = None
+    reference: str | None = None
+
+
+@dataclass(frozen=True)
 class VisionRequest:
     """Pedido de descripción de una imagen inbound.
 
@@ -74,6 +89,8 @@ class VisionResult:
         (formato viejo o error).
       is_screenshot: si la imagen es una captura de pantalla (None si no se
         sabe).
+      receipt: los datos del comprobante por campo, solo cuando es un
+        comprobante de pago y la respuesta los trae.
     """
 
     description: str
@@ -86,3 +103,4 @@ class VisionResult:
     latency_ms: int | None = None
     visible_text: VisibleText | None = None
     is_screenshot: bool | None = None
+    receipt: ReceiptText | None = None

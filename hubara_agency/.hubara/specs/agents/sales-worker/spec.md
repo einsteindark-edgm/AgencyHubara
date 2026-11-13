@@ -2688,3 +2688,52 @@ intent. El verificador de cifras explica hasta 20 unidades por línea.
 - GIVEN un pedido con 2 cajas cuadradas y 4 Trilogías del Terror (o 6 Trilogías)
 - THEN el envío es la tarifa mínima publicada y un $0 se rechaza (`shipping_mismatch`)
 
+
+### Requirement: El comprobante de pago se revisa en sombra contra el pedido (2026-11-12)
+
+Cuando el cliente manda un comprobante de pago (foto o PDF), el sistema SHALL
+anotar qué diría Colossus al compararlo con el pedido: `coincide`,
+`no_coincide` (con motivo `monto`, `fecha_vieja`, `cuenta_destino` o
+`repetido`), `ilegible` o `sin_pedido`. Es sombra: el mensaje al cliente y el
+relevo al equipo (`PAYMENT_VERIFICATION_PENDING`) MUST salir igual que sin el
+veredicto, y una falla al anotarlo MUST NOT frenarlos. El total del pedido sale
+de `OrderFacts`. La fila guarda solo códigos
+(`<sesión>/evals/receipt_checks.jsonl`); de lo leído en el comprobante no se
+escribe nada, y de la cuenta de destino la visión solo entrega los últimos 4
+dígitos. Un comprobante nunca prueba un pago: el equipo sigue confirmándolo en
+la cuenta. El informe del Estratega (`sales_eval/strategy.py`, sección
+`comprobantes`) cruza el último veredicto de cada pedido con lo que el equipo
+hizo (pagado o cancelado) y solo da el porcentaje con 40 pedidos comparados o
+más. Un PDF queda `ilegible` (no pasa por visión, decisión 2026-09-01).
+
+El pedido contra el que se compara es el del último episodio o, si ese está
+abierto y sin pedido (el comprobante abrió un episodio nuevo), el del anterior;
+solo si cerró con pedido en los últimos 30 días y el pedido todavía espera el
+pago (ni pagado, ni entregado, ni cancelado). Si no, `sin_pedido`; si había
+pedido pero no se pudieron leer sus datos, `sin_pedido` con motivo
+`pedido_no_leido`. Un `coincide` dice además su evidencia: `completa` (monto,
+cuenta del negocio y fecha reciente a la vista) o `parcial` (solo el monto).
+
+#### Scenario: Comprobante que coincide
+
+- GIVEN un pedido registrado por $84.000 y un comprobante de hoy por $84.000 a una cuenta del negocio
+- WHEN el cliente lo manda
+- THEN recibe el mismo «Recibimos tu comprobante» y la conversación pasa al equipo como siempre
+- AND queda anotado `coincide`
+
+#### Scenario: Comprobante que no cuadra
+
+- GIVEN el mismo pedido y un comprobante por otro monto, de hace 10 días, a otra cuenta o con una referencia ya usada en otro pedido
+- THEN queda anotado `no_coincide` con su motivo
+- AND el cliente y el equipo ven lo mismo que hoy
+
+#### Scenario: El comprobante abre un episodio nuevo
+
+- GIVEN un pedido recién registrado (su episodio cerró esperando el pago) y el bot atendiendo
+- WHEN llega la foto del comprobante y el ingest abre un episodio nuevo
+- THEN el veredicto se compara con ese pedido y queda anotado en el episodio del pedido
+
+#### Scenario: Anotar falla
+
+- GIVEN que no se puede leer el pedido o escribir la fila
+- THEN el relevo y el mensaje salen igual

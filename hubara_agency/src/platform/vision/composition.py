@@ -35,6 +35,7 @@ from src.platform.vision.dtos import (
     VISION_KIND_OTHER,
     VISION_KIND_PAYMENT_RECEIPT,
     VISION_KIND_PRODUCT_PHOTO,
+    ReceiptText,
     VisionRequest,
     VisionResult,
 )
@@ -108,6 +109,7 @@ class _FakeVisionAdapter:
                 provider=self.name,
                 cost_usd_estimate=0.0,
                 latency_ms=10,
+                receipt=ReceiptText(amount="$34.000", reference="1234"),
             )
         if "product" in mid or "vela" in mid:
             return VisionResult(
