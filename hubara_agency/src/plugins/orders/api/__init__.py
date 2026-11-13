@@ -98,9 +98,14 @@ def _require_vault_session_id(session_id: str) -> None:
         raise HTTPException(status_code=400, detail="session_id inválido")
 
 
+# Tope por defecto de la lista Y de sus líneas (reporte por producto): el mismo
+# número, para que las líneas cubran los mismos pedidos que la lista.
+LIST_DEFAULT_LIMIT = 100
+
+
 @router.get("/orders")
 async def list_orders(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=LIST_DEFAULT_LIMIT, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     include_drafts: bool = Query(
         default=True,
@@ -143,7 +148,7 @@ async def list_orders(
 # Declarada ANTES de `/orders/{order_id}`: si no, el detalle la captura.
 @router.get("/orders/lines")
 async def list_order_lines(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=LIST_DEFAULT_LIMIT, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     include_drafts: bool = Query(default=True),
 ) -> dict[str, Any]:

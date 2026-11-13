@@ -12,13 +12,13 @@ import { PRODUCT_REPORT_COLUMNS } from "../model/salesReportCsv";
 const money = (v: number | null) => (v === null ? "" : fmtMoney(v));
 
 interface Props {
-  lines: { data?: OrderLinesResponse; isLoading: boolean };
+  lines: { data?: OrderLinesResponse; isLoading: boolean; isError?: boolean };
   report: ProductSalesReport | null;
 }
 
 export function ProductSales({ lines, report }: Props) {
   let body;
-  if (lines.isLoading || (!lines.data && !report)) {
+  if (!lines.isError && (lines.isLoading || (!lines.data && !report))) {
     body = <p className="m-0 text-xs text-fg-muted">Cargando el detalle por producto…</p>;
   } else if (!lines.data?.catalog_available || !report) {
     body = (

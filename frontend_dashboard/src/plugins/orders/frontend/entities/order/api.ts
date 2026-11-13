@@ -257,6 +257,7 @@ export function useScheduleOrder() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -328,6 +329,7 @@ export function useTransitionOrderStage() {
     onSettled: (_data, _err, vars) => {
       // Siempre refetch para reconciliar con server state.
       qc.invalidateQueries({ queryKey: orderKeys.list() });
+      qc.invalidateQueries({ queryKey: orderKeys.lines() });
       qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
     },
   });
@@ -350,6 +352,7 @@ export function useConfirmOrderPayment() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -377,6 +380,7 @@ export function useReverseOrderPayment() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -406,6 +410,7 @@ export function useAdjustOrderPrices() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -430,6 +435,7 @@ export function useCancelOrder() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -455,6 +461,7 @@ export function useSetTestOrder() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -510,6 +517,7 @@ export function useRetryVaultOrder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: orderKeys.vault() });
       qc.invalidateQueries({ queryKey: orderKeys.list() });
+      qc.invalidateQueries({ queryKey: orderKeys.lines() });
     },
   });
 }
