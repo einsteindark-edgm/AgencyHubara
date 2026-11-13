@@ -5,7 +5,12 @@ import re
 import unicodedata
 from collections.abc import Iterator
 
-from src.plugins.chats.shared.team_exchange import TEAM_NOTE_HEAD, UNSEEN_NOTE_HEAD, our_lines_in_turn
+from src.plugins.chats.shared.team_exchange import (
+    TEAM_NOTE_HEAD,
+    TEAM_SPEAKERS,
+    UNSEEN_NOTE_HEAD,
+    our_lines_in_turn,
+)
 from src.plugins.chats.agent.sales_eval.scorecard.model import CheckResult
 from src.plugins.chats.agent.sales_eval.scorecard.trajectory import Trajectory, Turn
 
@@ -37,20 +42,33 @@ def our_quoted_message(text: str) -> str | None:
 
 #: La foto entra como texto con su descripción y, si se reconoció, el producto
 #: nuestro que es (identificación de fotos, 2026-09-30).
-PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]", re.IGNORECASE)
+PHOTO_ANNOTATION_RE = re.compile(r"\[el cliente envió una foto: [^\]]*\]")
+#: La cita de la campaña que el cliente contesta (`campaign_reply.quote_campaign_in_turn`).
+_CAMPAIGN_QUOTED_RE = re.compile(
+    r"\[El cliente responde a la campaña «[^»]*» que le enviamos(?:: «.*?»)?\]", re.DOTALL
+)
+#: Los avisos de la tienda que recibió antes de escribir (`episode_memory.quote_notices_in_turn`).
+_NOTICES_NOTE_HEAD = "[Antes de este mensaje el cliente recibió estos mensajes automáticos"
+#: Lo que escribió el cliente dentro de la nota del equipo (`team_exchange._quoted_lines`).
+_CUSTOMER_LINE_PREFIX = f"- {TEAM_SPEAKERS['cliente']}: «"
 
 
 def customer_written(text: str) -> str:
     """El texto del turno sin lo que el cliente NO escribió: la cita del mensaje
-    nuestro que contesta, la nota de lo que dijo el equipo o un aviso, y la
-    descripción de su foto. Una palabra que solo está ahí no es un pedido suyo
-    (tarjeta 23 del ciclo: «catálogo» en la descripción de una foto)."""
+    nuestro que contesta (plantilla o campaña), las notas de lo que dijo el
+    equipo o un aviso, y la descripción de su foto. Una palabra que solo está
+    ahí no es un pedido suyo (tarjeta 23 del ciclo: «catálogo» en la
+    descripción de una foto). Las líneas «Cliente» de la nota del equipo sí se
+    conservan: las escribió él y no fueron turno del bot en otro lado."""
     text = _OUR_QUOTED_RE.sub(" ", text or "")
-    for head in (TEAM_NOTE_HEAD, UNSEEN_NOTE_HEAD):
+    text = _CAMPAIGN_QUOTED_RE.sub(" ", text)
+    for head in (TEAM_NOTE_HEAD, UNSEEN_NOTE_HEAD, _NOTICES_NOTE_HEAD):
         start = text.find(head)
         if start >= 0:
             end = text.find("]", start)
-            text = text[:start] + " " + (text[end + 1 :] if end >= 0 else "")
+            note = text[start : end if end >= 0 else len(text)]
+            theirs = "\n".join(line for line in note.splitlines() if line.startswith(_CUSTOMER_LINE_PREFIX))
+            text = f"{text[:start]} {theirs}\n{text[end + 1 :] if end >= 0 else ''}"
     return PHOTO_ANNOTATION_RE.sub(" ", text)
 
 
