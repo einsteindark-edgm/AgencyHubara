@@ -345,6 +345,22 @@ async def bulk_reading(
     return verdict.value
 
 
+async def note_bulk_handoff(charla: str, *, session_id: str, vault_dir: Path | None) -> None:
+    """Anota qué datos ya había dado el cliente al relevar un pedido al por
+    mayor y si pidió una persona (capacidad `datos_por_mayor`, tarjeta 34 del
+    ciclo). Solo anota: queda en las decisiones de la conversación y el
+    relevo no cambia. Apagada (o si el paquete no la trae) no pregunta."""
+    from src.plugins.chats.agent.sales.decisions.capabilities.lecturas_pedido import RelevoPorMayor
+
+    cap = capability_if_present("datos_por_mayor")
+    if cap is None:
+        return
+    vault = Path(vault_dir) if vault_dir is not None else None
+    if bot_for_session(session_id, vault_dir=vault).provider(cap.name) == "reglas":
+        return
+    await decide_for_session(cap, RelevoPorMayor(charla=charla), session_id=session_id, vault_dir=vault_dir)
+
+
 async def named_box_reading(
     producto: str, por_caja: int, otro: str, otro_por_caja: int, charla: str,
     *, session_id: str, vault_dir: Path | None,

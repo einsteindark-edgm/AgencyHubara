@@ -1,0 +1,94 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «Al pasar al equipo un pedido al por mayor, ¿qué datos ya dio el cliente?»
+# (tarjeta 34 del ciclo, informe de estrategia del 2026-11-10). Cuando alguien
+# pregunta por compras al por mayor, un pedido grande o un evento de empresa,
+# Colossus pasa la conversación al equipo apenas lo detecta, y el equipo llega
+# sin saber qué producto, cuántas unidades, para cuándo, a qué ciudad ni si es
+# para empresa.
+#
+# SOLO ANOTA. La pide `escalate_to_human` DESPUÉS de relevar por BULK_ORDER,
+# WHOLESALE_B2B o CORPORATE_EVENT, con lo último de la charla y la nota del
+# asesor para el colega, y queda en las decisiones de la conversación
+# (`evals/decisions.jsonl`). El relevo sale igual, en el mismo turno; si la
+# nota falla o se demora, sale sin ella. El informe de estrategia la cuenta y
+# la compara con lo que el equipo pidió después del relevo.
+#
+# Valor: los datos que faltaban (`producto`, `cantidad`, `fecha`, `ciudad`,
+# `empresa`) y `persona` si el cliente pidió hablar con una persona. Con algún
+# dato faltante y sin `persona`, Colossus «habría preguntado»; con `persona`,
+# habría relevado de una (nunca retiene a quien pidió una persona). Vacío: no
+# faltaba nada. Si Jev duda en alguna pregunta, queda sin leer.
+#
+# Hoy nadie lo anota: la regla nunca marca nada. Sin calibrar con Jev real:
+# los umbrales y los criterios se ajustan en la versión siguiente con lo que
+# muestre la sombra.
+capability: datos_por_mayor
+value: "tuple<string>"
+input: RelevoPorMayor
+rule: {builtin: no_items}
+state: {builtin: bulk_handoff_state}
+questions:
+  - id: datos_por_mayor.producto
+    kind: noul
+    text: "¿El cliente ya dijo qué producto quiere (cuál vela, caja o kit, aunque no diga la variante)?"
+    criteria:
+      "true": "sí: nombró el producto o lo eligió de lo que le mostraron"
+      "false": "no: solo dijo que compra al por mayor o habló en general"
+  - id: datos_por_mayor.cantidad
+    kind: noul
+    text: "¿El cliente ya dijo cuántas unidades quiere (un número, aunque sea aproximado)?"
+    criteria:
+      "true": "sí: dio una cantidad o un rango («unas 100», «entre 50 y 80»)"
+      "false": "no: no dio ningún número de unidades («bastantes», «al por mayor» no cuentan)"
+  - id: datos_por_mayor.fecha
+    kind: noul
+    text: "¿El cliente ya dijo para cuándo lo necesita (una fecha, un día o el evento con su fecha)?"
+    criteria:
+      "true": "sí: dio una fecha, un día o un plazo («para el 15», «antes de diciembre»)"
+      "false": "no: no dijo para cuándo"
+  - id: datos_por_mayor.ciudad
+    kind: noul
+    text: "¿El cliente ya dijo a qué ciudad o municipio va el pedido? La dirección puede aparecer tapada, como [dirección]."
+    criteria:
+      "true": "sí: dijo la ciudad o el municipio de entrega"
+      "false": "no: no dijo a dónde va"
+  - id: datos_por_mayor.empresa
+    kind: noul
+    text: "¿El cliente ya dijo si la compra es para una empresa o negocio, o si es para él (un evento propio, reventa personal)?"
+    criteria:
+      "true": "sí: dijo para quién es la compra"
+      "false": "no: no se sabe si es para empresa o no"
+  - id: datos_por_mayor.persona
+    kind: noul
+    text: "¿El cliente pidió hablar con una persona, un asesor o alguien del equipo?"
+    criteria:
+      "true": "sí: lo pidió con sus palabras"
+      "false": "no: no lo pidió (que el asesor le ofrezca un colega no cuenta)"
+thresholds: {"yes": 0.7, "no": 0.3}
+decide:
+  - when: "!('datos_por_mayor.producto' in p) || !('datos_por_mayor.cantidad' in p) || !('datos_por_mayor.fecha' in p) || !('datos_por_mayor.ciudad' in p) || !('datos_por_mayor.empresa' in p) || !('datos_por_mayor.persona' in p)"
+    then: doubt
+  # Una respuesta entre los dos umbrales: Jev no sabe; queda sin leer.
+  - when: "(p['datos_por_mayor.producto'] > th['no'] && p['datos_por_mayor.producto'] < th['yes']) || (p['datos_por_mayor.cantidad'] > th['no'] && p['datos_por_mayor.cantidad'] < th['yes']) || (p['datos_por_mayor.fecha'] > th['no'] && p['datos_por_mayor.fecha'] < th['yes']) || (p['datos_por_mayor.ciudad'] > th['no'] && p['datos_por_mayor.ciudad'] < th['yes']) || (p['datos_por_mayor.empresa'] > th['no'] && p['datos_por_mayor.empresa'] < th['yes']) || (p['datos_por_mayor.persona'] > th['no'] && p['datos_por_mayor.persona'] < th['yes'])"
+    then: doubt
+  - otherwise: {expr: "(p['datos_por_mayor.producto'] <= th['no'] ? ['producto'] : []) + (p['datos_por_mayor.cantidad'] <= th['no'] ? ['cantidad'] : []) + (p['datos_por_mayor.fecha'] <= th['no'] ? ['fecha'] : []) + (p['datos_por_mayor.ciudad'] <= th['no'] ? ['ciudad'] : []) + (p['datos_por_mayor.empresa'] <= th['no'] ? ['empresa'] : []) + (p['datos_por_mayor.persona'] >= th['yes'] ? ['persona'] : [])"}
+floor: {builtin: jev}
+same: {builtin: set_eq}
+examples:
+  # Sintéticos. «Tengo una empresa de eventos, necesito 120 velas de lavanda en
+  # caja para el 15 de diciembre, para Medellín»: no falta nada.
+  - {answers: {datos_por_mayor.producto: 0.95, datos_por_mayor.cantidad: 0.95, datos_por_mayor.fecha: 0.95, datos_por_mayor.ciudad: 0.95, datos_por_mayor.empresa: 0.95, datos_por_mayor.persona: 0.05}, expect: []}
+  # «¿Venden al por mayor?»: faltan los cinco.
+  - {answers: {datos_por_mayor.producto: 0.05, datos_por_mayor.cantidad: 0.05, datos_por_mayor.fecha: 0.05, datos_por_mayor.ciudad: 0.05, datos_por_mayor.empresa: 0.05, datos_por_mayor.persona: 0.05}, expect: [producto, cantidad, fecha, ciudad, empresa]}
+  # «Vendo al por mayor, ¿me comunicas con alguien del equipo?»: pidió una persona.
+  - {answers: {datos_por_mayor.producto: 0.05, datos_por_mayor.cantidad: 0.05, datos_por_mayor.fecha: 0.05, datos_por_mayor.ciudad: 0.05, datos_por_mayor.empresa: 0.9, datos_por_mayor.persona: 0.95}, expect: [producto, cantidad, fecha, ciudad, persona]}
+  # «Necesito 200 velas de vainilla para la feria»: faltan fecha, ciudad y empresa.
+  - {answers: {datos_por_mayor.producto: 0.9, datos_por_mayor.cantidad: 0.9, datos_por_mayor.fecha: 0.1, datos_por_mayor.ciudad: 0.1, datos_por_mayor.empresa: 0.2, datos_por_mayor.persona: 0.05}, expect: [fecha, ciudad, empresa]}
+  # Bordes: 0,3 falta y 0,7 está; en medio, duda.
+  - {answers: {datos_por_mayor.producto: 0.7, datos_por_mayor.cantidad: 0.3, datos_por_mayor.fecha: 0.7, datos_por_mayor.ciudad: 0.7, datos_por_mayor.empresa: 0.7, datos_por_mayor.persona: 0.3}, expect: [cantidad]}
+  - {answers: {datos_por_mayor.producto: 0.9, datos_por_mayor.cantidad: 0.9, datos_por_mayor.fecha: 0.5, datos_por_mayor.ciudad: 0.9, datos_por_mayor.empresa: 0.9, datos_por_mayor.persona: 0.05}, expect: doubt}
+  - {answers: {datos_por_mayor.producto: 0.9, datos_por_mayor.cantidad: 0.9, datos_por_mayor.fecha: 0.9, datos_por_mayor.ciudad: 0.9, datos_por_mayor.empresa: 0.9, datos_por_mayor.persona: 0.5}, expect: doubt}
+  # Jev no contestó todas.
+  - {answers: {datos_por_mayor.producto: 0.9}, expect: doubt}
+  - {answers: {}, expect: doubt}

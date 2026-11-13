@@ -718,6 +718,46 @@ más, el mensaje sigue sin la nota. Con un paquete anterior no existe.
 - WHEN Jev no contesta esa pregunta
 - THEN el ingest no la espera más que su tope y el mensaje sigue sin la nota
 
+### Requirement: Los datos del pedido al por mayor se anotan al relevar y nada más (`ventas-10`, 2026-11-13)
+
+Con `ventas-10`, `escalate_to_human` SHALL pedir la decisión `datos_por_mayor`
+DESPUÉS de relevar por `BULK_ORDER`, `WHOLESALE_B2B` o `CORPORATE_EVENT`: Jev
+lee lo último de la charla (con la nota del asesor para el colega) y dice, dato
+por dato, si el cliente ya dio el producto, la cantidad, la fecha, la ciudad y
+si es para empresa, y si pidió hablar con una persona. Valor: los datos que
+faltaban, más `persona` si la pidió. Queda en las decisiones de la conversación
+(`evals/decisions.jsonl`, etapa `turno`) y el informe de estrategia lo cuenta y
+lo compara con lo que el equipo pidió después (Jev lee, en la caja y con lo
+personal tapado, los primeros mensajes del equipo tras el relevo; al informe
+solo llega el conteo).
+
+La decisión MUST NOT cambiar el relevo, en ningún modo: el resultado de la
+herramienta es el mismo y sale en el mismo turno. Solo se pide si el relevo
+salió (no cuando `por_mayor` lo devolvió al modelo). Nace apagada (`reglas`:
+Jev no se consulta); se enciende en sombra por comando (en el bot nuevo del
+laboratorio, Jev la contesta sin el comando; igual solo anota). La herramienta
+la espera como mucho `NOTE_WAIT_S` (la vara de p95 de Jev, 1,5 s): si falla o
+tarda más, el relevo sale sin la nota. Con un paquete anterior no existe.
+
+#### Scenario: un mayorista que solo dijo «al por mayor» (sombra)
+
+- GIVEN `datos_por_mayor` en sombra y el paquete `ventas-10`
+- WHEN el bot releva con `WHOLESALE_B2B` a un cliente que solo preguntó si venden al por mayor
+- THEN el relevo sale igual que con `ventas-9`
+- AND queda una decisión `datos_por_mayor` con los cinco datos como faltantes
+
+#### Scenario: el cliente pidió una persona
+
+- GIVEN `datos_por_mayor` en sombra
+- WHEN el cliente pidió hablar con alguien del equipo
+- THEN la nota lleva `persona`: Colossus habría relevado de una, aunque faltaran datos
+
+#### Scenario: Jev se cuelga en la nota
+
+- GIVEN `datos_por_mayor` en sombra
+- WHEN Jev no contesta
+- THEN la herramienta no la espera más que su tope y el relevo sale sin la nota
+
 ### Requirement: Todo turno lleva la hora de Bogotá (2026-09-29)
 
 Cada turno que llega al LLM MUST traer en `plugin_context` el bloque «Hora

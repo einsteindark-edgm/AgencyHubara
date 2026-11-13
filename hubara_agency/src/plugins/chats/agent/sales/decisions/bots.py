@@ -91,6 +91,9 @@ CAPABILITIES: tuple[str, ...] = (
     # Qué objeción pone el cliente, por mensaje (ventas-9, 2026-11-10): solo
     # anota para el informe de estrategia. Nace apagada; se enciende en sombra.
     "objecion",
+    # Qué datos ya dio el cliente al relevar un pedido al por mayor (ventas-10,
+    # tarjeta 34 del ciclo): solo anota. Nace apagada; se enciende en sombra.
+    "datos_por_mayor",
     # App Operador (paquete `operador`, chats/shared/operator/decisions): qué
     # burbuja va primero en el chat y cómo se clasifica un incendio de chat.
     "burbuja", "incendio",

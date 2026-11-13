@@ -19,16 +19,29 @@ velas de deseos): si el cliente dio una cifra que, contada en velas, cabe en
 20 cajas o menos, decide la capacidad `por_mayor`. «velas» no escala y el
 modelo recibe las cuentas; «duda» (sin Jev) lo devuelve UNA vez por mensaje
 del cliente (`BULK_CHECK_KEY`: el segundo intento escala, nunca un bucle).
+
+Relevo al por mayor (tarjeta 34 del ciclo, ventas-10): DESPUÉS de relevar por
+`BULK_HANDOFF_REASONS`, la capacidad `datos_por_mayor` anota qué datos ya
+había dado el cliente (producto, cantidad, fecha, ciudad, empresa) y si pidió
+una persona. Solo anota: el resultado de la herramienta es el mismo, y la nota
+espera como mucho `NOTE_WAIT_S`; si falla o se demora, el relevo sale sin ella.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from typing import Any
 
 from exoclaw.agent.tools import ToolContext
 
-from src.plugins.chats.agent.sales.decisions.guards import bulk_reading, clean_llm_text, safe_customer_text
+from src.plugins.chats.agent.sales.decisions.capability_rollout import MAX_P95_MS
+from src.plugins.chats.agent.sales.decisions.guards import (
+    bulk_reading,
+    clean_llm_text,
+    note_bulk_handoff,
+    safe_customer_text,
+)
 from src.plugins.chats.agent.sales.state import FilesystemMetadataStore
 from src.plugins.chats.agent.sales.use_cases.pack_quantity import BULK_UNITS, candle_counts, loose_candles_note
 from src.plugins.chats.agent.sales.use_cases.product_options import boxed_products
@@ -42,6 +55,15 @@ BULK_REASON = "BULK_ORDER"
 BULK_CHECK_KEY = "por_mayor_revisado"
 #: Lo último de la charla que lee Jev (`por_mayor`).
 TALK_EVENTS = 6
+#: Relevos de pedidos al por mayor, pedidos grandes y eventos de empresa: los
+#: que anota `datos_por_mayor` (ventas-10).
+BULK_HANDOFF_REASONS = frozenset({BULK_REASON, "WHOLESALE_B2B", "CORPORATE_EVENT"})
+#: Lo que lee Jev para esa nota: más que `TALK_EVENTS`, porque el producto o la
+#: ciudad pueden haberse dicho al principio.
+HANDOFF_TALK_EVENTS = 12
+#: Lo más que el relevo espera a la nota: la vara de p95 que ya se le exige a
+#: Jev (`MAX_P95_MS`), igual que las notas del ingest (`readings.OBSERVATION_WAIT_S`).
+NOTE_WAIT_S = MAX_P95_MS / 1000
 
 
 def guarded_escalation_tool(base: type) -> type:
@@ -80,12 +102,40 @@ def guarded_escalation_tool(base: type) -> type:
                 held = await self._loose_candles(ctx, summary)
                 if held is not None:
                     return held
-            return await super().execute_with_context(
+            result = await super().execute_with_context(
                 ctx,
                 reason_category=reason_category,
                 summary=summary,
                 customer_message=customer_message,
             )
+            if reason_category in BULK_HANDOFF_REASONS and "escalation_decision" in result:
+                await self._note_bulk_handoff(ctx, summary)
+            return result
+
+        async def _note_bulk_handoff(self, ctx: ToolContext, summary: str) -> None:
+            """`datos_por_mayor` (ver el módulo): el relevo ya salió; esto solo
+            anota, nunca lo frena ni lo cambia."""
+            try:
+                await asyncio.wait_for(
+                    note_bulk_handoff(
+                        self._talk(ctx.session_key, HANDOFF_TALK_EVENTS, summary),
+                        session_id=ctx.session_key, vault_dir=self._vault_dir,
+                    ),
+                    timeout=NOTE_WAIT_S,
+                )
+            except Exception:  # noqa: BLE001 — anotar nunca frena el relevo
+                return
+
+        def _talk(self, session_key: str, last: int, summary: str) -> str:
+            """Lo último de la charla, con la nota del asesor para el colega."""
+            events = [
+                e for e in self._events(session_key)[-last:]
+                if e.get("role") in ("user", "assistant") and str(e.get("content") or "").strip()
+            ]
+            talk = "\n".join(
+                f"[{'cliente' if e['role'] == 'user' else 'asesor'}] {str(e['content']).strip()[:400]}" for e in events
+            )
+            return f"{talk}\n[asesor, nota para el colega] {summary.strip()[:400]}"
 
         async def _loose_candles(self, ctx: ToolContext, summary: str) -> str | None:
             """El error que devuelve el «por mayor» al modelo si eran velas
@@ -174,4 +224,4 @@ def guarded_escalation_tool(base: type) -> type:
     return SalesEscalateToHumanTool
 
 
-__all__ = ["BULK_CHECK_KEY", "BULK_REASON", "GUARDED_REASON", "guarded_escalation_tool"]
+__all__ = ["BULK_CHECK_KEY", "BULK_HANDOFF_REASONS", "BULK_REASON", "GUARDED_REASON", "guarded_escalation_tool"]
