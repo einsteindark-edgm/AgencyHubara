@@ -31,6 +31,7 @@ from src.plugins.chats.agent.sales.decisions.decision_log import read_decisions
 from src.plugins.chats.agent.sales.turn_trace import STAGES, project_stage
 from src.plugins.chats.agent.sales_eval.scorecard.bot import episode_bot
 from src.plugins.chats.shared import turn_traces
+from src.plugins.chats.shared.receipt_checks import read_checks
 
 BOTS = ("colossus", "botsito", "mixto", "sin_bot")
 WINDOWS = ("actual", "base")
@@ -86,6 +87,29 @@ JEV_NOTE = (
 ORDER_PAID, ORDER_PLACED, ORDER_CANCELLED, ORDER_TEST, ORDER_UNCONFIRMED = (
     "pagado", "pedido", "cancelado", "de_prueba", "sin_confirmar",
 )
+#: Comprobantes de pago en sombra (tarjeta 33 del ciclo): lo que Colossus dijo
+#: de cada comprobante (`sales/use_cases/receipt_check.py`), contra lo que el
+#: equipo hizo con ese pedido. Listas cerradas: lo demás se cuenta como «otro».
+RECEIPT_MATCH, RECEIPT_MISMATCH = "coincide", "no_coincide"
+RECEIPT_VERDICTS = (RECEIPT_MATCH, RECEIPT_MISMATCH, "ilegible", "sin_pedido")
+RECEIPT_REASONS = ("monto", "fecha_vieja", "cuenta_destino", "repetido")
+RECEIPT_SOURCES = ("image", "pdf")
+#: Con menos comprobantes que estos el porcentaje de coincidencia engaña.
+RECEIPTS_MIN_TO_MEASURE = 40
+RECEIPTS_NOTE = (
+    "Sombra: Colossus anota qué diría de cada comprobante y no cambia nada para el cliente ni el equipo. "
+    "«contra_el_equipo» compara el último veredicto de cada pedido con lo que el equipo hizo: pagado = lo aceptó, "
+    "cancelado = no lo aceptó; un pedido que sigue pendiente queda sin resolver. El porcentaje solo sale con "
+    f"{RECEIPTS_MIN_TO_MEASURE} comprobantes o más."
+)
+RECEIPTS = {
+    "disponible": False,
+    "motivo": "No hay ningún comprobante de pago anotado en las ventanas del informe.",
+    "faltante": (
+        "Desplegar la sombra del comprobante (tarjeta 33 del ciclo) y esperar a que lleguen comprobantes. "
+        "Los números de prueba no cuentan en este informe."
+    ),
+}
 _STAGE_RANK = {stage: i for i, stage in enumerate(STAGES)}
 
 
@@ -190,6 +214,38 @@ def _objection_kind(row: dict[str, Any]) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _Receipt:
+    """Lo que Colossus anotó de un comprobante (solo códigos de lista cerrada)."""
+
+    at_ms: int
+    verdict: str
+    reason: str | None
+    source: str
+
+
+def _closed(value: Any, known: tuple[str, ...]) -> str:
+    return value if isinstance(value, str) and value in known else "otro"
+
+
+def _receipts_by_episode(rows: list[dict[str, Any]]) -> dict[str, list[_Receipt]]:
+    """Por el episodio que trae la fila: el comprobante suele llegar con el
+    episodio ya cerrado (se cierra al registrar el pedido)."""
+    out: dict[str, list[_Receipt]] = {}
+    for row in rows:
+        episode_id = row.get("episode_id")
+        if not isinstance(episode_id, str) or not episode_id:
+            continue
+        reason = row.get("reason")
+        out.setdefault(episode_id, []).append(_Receipt(
+            at_ms=_ms(row.get("at_ms")) or 0,
+            verdict=_closed(row.get("verdict"), RECEIPT_VERDICTS),
+            reason=_closed(reason, RECEIPT_REASONS) if reason else None,
+            source=_closed(row.get("source"), RECEIPT_SOURCES),
+        ))
+    return out
+
+
 @dataclass
 class _Episode:
     window: str
@@ -201,6 +257,7 @@ class _Episode:
     team: list[_TeamMessage] = field(default_factory=list)
     decisions: list[_Decision] = field(default_factory=list)
     objections: list[_Objection] = field(default_factory=list)
+    receipts: list[_Receipt] = field(default_factory=list)
     #: Lo que dice OrderFacts del pedido del episodio (None: sin pedido).
     order: str | None = None
 
@@ -437,6 +494,7 @@ def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, win
     rows = read_decisions(vault_dir, session_id)
     decisions = _decisions_by_episode(rows, timeline)
     objections = _objections_by_episode(rows, timeline)
+    receipts = _receipts_by_episode(read_checks(vault_dir, session_id))
     out: list[_Episode] = []
     for episode, window in in_window:
         if window is None:
@@ -451,6 +509,7 @@ def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, win
             order_id=str(episode["order_id"]) if episode.get("order_id") else None,
             handoffs=handoffs.get(episode_id, []), team=team.get(episode_id, []),
             decisions=decisions.get(episode_id, []), objections=objections.get(episode_id, []),
+            receipts=receipts.get(episode_id, []),
         ))
     return out
 
@@ -565,6 +624,48 @@ def _objections(by_window: dict[str, Any]) -> dict[str, Any]:
     if not noted:
         return dict(OBJECTIONS)
     return {"disponible": True, "nota": OBJECTIONS_NOTE, "tipos": list(OBJECTION_KINDS), **by_window}
+
+
+def _receipts_section(episodes: list[_Episode]) -> dict[str, Any]:
+    notes = [r for ep in episodes for r in ep.receipts]
+    compared = agreed = said_match_team_refused = said_mismatch_team_accepted = unresolved = 0
+    for ep in episodes:
+        judged = [r for r in ep.receipts if r.verdict in (RECEIPT_MATCH, RECEIPT_MISMATCH)]
+        if not judged or ep.order == ORDER_TEST:
+            continue
+        if ep.order not in (ORDER_PAID, ORDER_CANCELLED):
+            unresolved += 1
+            continue
+        # Un pedido, un veredicto: el del último comprobante que mandó.
+        said_match = max(judged, key=lambda r: r.at_ms).verdict == RECEIPT_MATCH
+        accepted = ep.order == ORDER_PAID
+        compared += 1
+        agreed += said_match == accepted
+        said_match_team_refused += said_match and not accepted
+        said_mismatch_team_accepted += accepted and not said_match
+    enough = len(notes) >= RECEIPTS_MIN_TO_MEASURE
+    return {
+        "comprobantes": len(notes),
+        "suficientes": enough,
+        "por_veredicto": _counts(r.verdict for r in notes),
+        "por_motivo": _counts(r.reason for r in notes if r.reason),
+        "por_origen": _counts(r.source for r in notes),
+        "contra_el_equipo": {
+            "pedidos_comparados": compared,
+            "coincidencias": agreed,
+            "dijo_coincide_y_el_equipo_no_acepto": said_match_team_refused,
+            "dijo_no_coincide_y_el_equipo_acepto": said_mismatch_team_accepted,
+            "sin_resolver": unresolved,
+        },
+        "coincidencia_pct": _per_100(agreed, compared) if enough else None,
+    }
+
+
+def _receipts(by_window: dict[str, Any]) -> dict[str, Any]:
+    """La sección, o lo que falta si no hay ningún comprobante anotado."""
+    if not any(s["comprobantes"] for bots in by_window.values() for s in bots.values()):
+        return dict(RECEIPTS)
+    return {"disponible": True, "nota": RECEIPTS_NOTE, "minimo_para_medir": RECEIPTS_MIN_TO_MEASURE, **by_window}
 
 
 def _north_star_section(episodes: list[_Episode]) -> dict[str, Any]:
@@ -690,6 +791,7 @@ async def build_report(
         "embudo": _funnel(per_window(_funnel_section), episodes),
         "jev_dudas": {"nota": JEV_NOTE, **per_window(_jev_section)},
         "objeciones": _objections(per_window(_objections_section)),
+        "comprobantes": _receipts(per_window(_receipts_section)),
         "intervenciones_por_100": _north_star(per_window(_north_star_section)),
     }
 
@@ -750,6 +852,21 @@ def render(report: dict[str, Any]) -> str:
         )
     else:
         lines.append(f"Objeciones: no disponible. {objections['motivo']}")
+    receipts = report["comprobantes"]
+    if receipts["disponible"]:
+        now = receipts["actual"]["colossus"]
+        cross = now["contra_el_equipo"]
+        measured = (
+            f"coincidencia {now['coincidencia_pct']} %" if now["suficientes"]
+            else f"faltan {RECEIPTS_MIN_TO_MEASURE - now['comprobantes']} comprobantes para medir el porcentaje"
+        )
+        lines.append(
+            f"Comprobantes (Colossus, ahora, en sombra): {now['comprobantes']} ({_top(now['por_veredicto'], n=4)}); "
+            f"en {cross['coincidencias']} de {cross['pedidos_comparados']} pedidos dijo lo mismo que el equipo; "
+            f"dijo «coincide» y el equipo no aceptó el pago: {cross['dijo_coincide_y_el_equipo_no_acepto']}; {measured}."
+        )
+    else:
+        lines.append(f"Comprobantes: no disponible. {receipts['motivo']}")
     if report["embudo"].get("aviso"):
         lines.append(f"Aviso: {report['embudo']['aviso']}")
     return "\n".join(lines) + "\n"
