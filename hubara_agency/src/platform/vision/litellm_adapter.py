@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import time
 
 import litellm
@@ -57,6 +58,7 @@ from src.platform.vision.dtos import (
     VISION_KIND_OTHER,
     VISION_KIND_PAYMENT_RECEIPT,
     VISION_KIND_PRODUCT_PHOTO,
+    ReceiptText,
     VisibleText,
     VisionRequest,
     VisionResult,
@@ -102,6 +104,16 @@ _PROMPT_ES = (
     '    "sku": "<copia exacta de un código tipo HUB-XXXX si se ve; si no, '
     'null>",\n'
     '    "otros": ["<otras líneas de texto relevantes, copiadas tal cual>"]\n'
+    "  },\n"
+    '  "comprobante": {\n'
+    '    "monto": "<solo si es un comprobante de pago: copia exacta del valor '
+    'pagado, p. ej. $ 84.000,00; si no, null>",\n'
+    '    "fecha": "<la fecha del pago en formato AAAA-MM-DD; si no se ve, '
+    'null>",\n'
+    '    "cuenta_destino": "<SOLO los últimos 4 dígitos de la cuenta, celular '
+    'o llave que RECIBE el pago; si no se ve, null>",\n'
+    '    "referencia": "<copia exacta del número de referencia, aprobación o '
+    'comprobante; si no, null>"\n'
     "  },\n"
     '  "descripcion": "<una sola línea en español con lo relevante para un '
     "vendedor: si es un producto, su forma, su figura y los colores de cada "
@@ -297,6 +309,7 @@ class LiteLLMVisionAdapter:
                 name = visible_text.product_name
                 description = f"imagen con el texto «{name}»" if name else "imagen sin descripción"
 
+        receipt = _parse_receipt(raw) if kind == VISION_KIND_PAYMENT_RECEIPT else None
         return VisionResult(
             description=description,
             ok=True,
@@ -307,6 +320,7 @@ class LiteLLMVisionAdapter:
             latency_ms=latency_ms,
             visible_text=visible_text,
             is_screenshot=is_screenshot,
+            receipt=receipt,
         )
 
 
@@ -362,6 +376,28 @@ def _parse_json_answer(
     screenshot = data.get("es_captura_de_pantalla")
     is_screenshot = screenshot if isinstance(screenshot, bool) else None
     return kind, _clean(data.get("descripcion")) or "", visible_text, is_screenshot
+
+
+_NOT_DIGIT_RE = re.compile(r"\D+")
+_ACCOUNT_TAIL_DIGITS = 4
+
+
+def _parse_receipt(raw: str) -> ReceiptText | None:
+    """Los datos del comprobante por campo, o None si la respuesta no los trae.
+    De la cuenta de destino solo quedan los últimos 4 dígitos, aunque el modelo
+    copie el número entero."""
+    data = json_object(raw)
+    block = data.get("comprobante") if data else None
+    if not isinstance(block, dict):
+        return None
+    account = _NOT_DIGIT_RE.sub("", _clean(block.get("cuenta_destino")) or "")[-_ACCOUNT_TAIL_DIGITS:]
+    receipt = ReceiptText(
+        amount=_clean(block.get("monto")),
+        date=_clean(block.get("fecha")),
+        account=account or None,
+        reference=_clean(block.get("referencia")),
+    )
+    return receipt if receipt != ReceiptText() else None
 
 
 def _parse_kind_and_description(raw: str) -> tuple[str, str]:
