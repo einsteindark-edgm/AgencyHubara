@@ -378,6 +378,7 @@ scan:
     - "wa_573000000005"       # sintéticos de tests (reengagement + marketing #190)
     - "wa_570000000015"       # sintético: test de la ruta humano (tarjeta del ciclo #15)
     - "wa_573001111111"
+    - "wa_573002222222"       # sintético: test_decisions_ventas_10.py (tarjeta 34 del ciclo)
     - "wa_573007654321"
     - "wa_573009990000"
     - "wa_573000000002"
