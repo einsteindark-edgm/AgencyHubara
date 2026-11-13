@@ -33,7 +33,7 @@ from src.plugins.chats.agent.sales.decisions.capabilities.mapeos import (
     ColorPedido,
     DatoDelItem,
 )
-from src.plugins.chats.agent.sales.decisions.capability_rollout import DecisionMetrics
+from src.plugins.chats.agent.sales.decisions.capability_rollout import MAX_P95_MS, DecisionMetrics
 from src.plugins.chats.agent.sales.decisions.decision_log import SessionDecisionLog
 from src.plugins.chats.agent.sales.decisions.disagreements import DisagreementLog
 from src.plugins.chats.agent.sales.decisions.registry import capability, capability_if_present
@@ -343,6 +343,12 @@ async def bulk_reading(
         vault_dir=vault_dir,
     )
     return verdict.value
+
+
+#: Lo más que una herramienta espera a una decisión que solo anota (la nota de
+#: `datos_por_mayor` en el relevo): la vara de p95 que ya se le exige a Jev
+#: (`MAX_P95_MS`), igual que las notas del ingest (`readings.OBSERVATION_WAIT_S`).
+NOTE_WAIT_S = MAX_P95_MS / 1000
 
 
 async def note_bulk_handoff(charla: str, *, session_id: str, vault_dir: Path | None) -> None:

@@ -35,8 +35,8 @@ from typing import Any
 
 from exoclaw.agent.tools import ToolContext
 
-from src.plugins.chats.agent.sales.decisions.capability_rollout import MAX_P95_MS
 from src.plugins.chats.agent.sales.decisions.guards import (
+    NOTE_WAIT_S,
     bulk_reading,
     clean_llm_text,
     note_bulk_handoff,
@@ -61,9 +61,6 @@ BULK_HANDOFF_REASONS = frozenset({BULK_REASON, "WHOLESALE_B2B", "CORPORATE_EVENT
 #: Lo que lee Jev para esa nota: más que `TALK_EVENTS`, porque el producto o la
 #: ciudad pueden haberse dicho al principio.
 HANDOFF_TALK_EVENTS = 12
-#: Lo más que el relevo espera a la nota: la vara de p95 que ya se le exige a
-#: Jev (`MAX_P95_MS`), igual que las notas del ingest (`readings.OBSERVATION_WAIT_S`).
-NOTE_WAIT_S = MAX_P95_MS / 1000
 
 
 def guarded_escalation_tool(base: type) -> type:
@@ -224,4 +221,4 @@ def guarded_escalation_tool(base: type) -> type:
     return SalesEscalateToHumanTool
 
 
-__all__ = ["BULK_CHECK_KEY", "BULK_HANDOFF_REASONS", "BULK_REASON", "GUARDED_REASON", "guarded_escalation_tool"]
+__all__ = ["BULK_CHECK_KEY", "BULK_HANDOFF_REASONS", "BULK_REASON", "GUARDED_REASON", "NOTE_WAIT_S", "guarded_escalation_tool"]

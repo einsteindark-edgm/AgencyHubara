@@ -21,7 +21,7 @@ import bisect
 import json
 import re
 from collections import Counter
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -29,7 +29,7 @@ from typing import Any
 
 from src.plugins.chats.agent.sales.decisions.decision_log import read_decisions
 from src.plugins.chats.agent.sales.turn_trace import STAGES, project_stage
-from src.plugins.chats.agent.sales_eval.bulk_handoffs import BULK_DATA, jev_team_reader
+from src.plugins.chats.agent.sales_eval.bulk_handoffs import BULK_DATA, BULK_HANDOFF_REASONS, jev_team_reader
 from src.plugins.chats.agent.sales_eval.scorecard.bot import episode_bot
 from src.plugins.chats.shared import turn_traces
 from src.plugins.chats.shared.receipt_checks import read_checks
@@ -122,13 +122,18 @@ BULK_PERSON = "persona"
 BULK_MIN_TO_MEASURE = 12
 #: Lo que lee Jev del equipo: sus primeros mensajes después del relevo.
 BULK_TEAM_MESSAGES = 6
+#: Lecturas del equipo a la vez (el informe corre fuera de línea, en la caja).
+BULK_TEAM_CONCURRENCY = 4
 BULK_HANDOFFS_NOTE = (
     "Sombra: en cada relevo por mayorista, pedido grande o evento de empresa, Colossus anota qué datos ya había "
     "dado el cliente y si pidió una persona; el relevo sale igual. «habria_preguntado»: faltaba algún dato y el "
     "cliente no pidió una persona. «contra_el_equipo»: Jev lee los primeros mensajes del equipo después del relevo "
     "(con lo personal tapado) y dice qué datos le pidió al cliente; sin mensajes del equipo, no pidió ninguno. "
     "«acierto_pct»: de los relevos en que el equipo pidió algún dato, en cuántos Colossus había marcado como "
-    f"faltante al menos uno de esos; solo sale con {BULK_MIN_TO_MEASURE} o más. Solo conteos."
+    f"faltante al menos uno de esos; solo sale con {BULK_MIN_TO_MEASURE} o más de esos relevos (no del total). "
+    "«relevos_sin_nota»: relevos de ese tipo sin nota (Jev tardó más que el tope de la herramienta o falló); si "
+    "son muchos, la muestra no alcanza. «pidio_persona» es lo que leyó Jev en el relevo: un cliente que pidió una "
+    "persona y se relevó por otro motivo no entra a esta muestra. Solo conteos."
 )
 BULK_HANDOFFS = {
     "disponible": False,
@@ -311,7 +316,11 @@ def _bulk_reading(row: dict[str, Any]) -> tuple[frozenset[str] | None, bool]:
 
 def _bulk_by_episode(
     rows: list[dict[str, Any]], team: list[dict[str, Any]], timeline: _Timeline,
+    redact: dict[str, Sequence[str]],
 ) -> dict[str, list[_BulkHandoff]]:
+    """`redact`: por episodio, lo personal del borrador del pedido (el nombre
+    de quien recibe, la dirección, el teléfono) que se tapa además de lo
+    genérico antes de que el texto del equipo salga hacia Jev."""
     from src.sdk.connectorkit import anonymize_text
 
     dated_team = [(ms, e) for e in team if (ms := _iso_ms(e.get("timestamp"))) is not None]
@@ -332,7 +341,7 @@ def _bulk_by_episode(
         missing, person = _bulk_reading(row)
         out.setdefault(episode_id, []).append(_BulkHandoff(
             missing=missing, person=person, team_after=len(after),
-            team_text=anonymize_text("\n".join(texts)) if texts else "",
+            team_text=anonymize_text("\n".join(texts), redact=redact.get(episode_id, ())) if texts else "",
         ))
     return out
 
@@ -349,15 +358,20 @@ async def _read_team(episodes: list[_Episode], reader: TeamReader | None) -> Non
     if not to_read:
         return
     read = reader or jev_team_reader
-    for handoff in to_read:
-        for _attempt in range(2):
-            try:
-                asked = await read(handoff.team_text)
-            except Exception:  # noqa: BLE001 — Jev caído: el relevo queda sin comparar
-                asked = None
-            if asked is not None:
-                handoff.team_asked = frozenset(asked) & frozenset(BULK_DATA)
-                break
+    gate = asyncio.Semaphore(BULK_TEAM_CONCURRENCY)
+
+    async def one(handoff: _BulkHandoff) -> None:
+        async with gate:
+            for _attempt in range(2):
+                try:
+                    asked = await read(handoff.team_text)
+                except Exception:  # noqa: BLE001 — Jev caído: el relevo queda sin comparar
+                    asked = None
+                if asked is not None:
+                    handoff.team_asked = frozenset(asked) & frozenset(BULK_DATA)
+                    return
+
+    await asyncio.gather(*(one(h) for h in to_read))
 
 
 @dataclass
@@ -608,7 +622,7 @@ def _episodes_of(vault_dir: Path, metadata: dict[str, Any], session_id: str, win
     team_events = _team_events(vault_dir, session_id)
     team = _team_messages(team_events, timeline)
     rows = read_decisions(vault_dir, session_id)
-    bulk = _bulk_by_episode(rows, team_events, timeline)
+    bulk = _bulk_by_episode(rows, team_events, timeline, _personal_terms(raw))
     decisions = _decisions_by_episode(rows, timeline)
     objections = _objections_by_episode(rows, timeline)
     receipts = _receipts_by_episode(read_checks(vault_dir, session_id))
@@ -786,6 +800,21 @@ def _receipts(by_window: dict[str, Any]) -> dict[str, Any]:
     return {"disponible": True, "nota": RECEIPTS_NOTE, "minimo_para_medir": RECEIPTS_MIN_TO_MEASURE, **by_window}
 
 
+def _personal_terms(episodes: list[dict[str, Any]]) -> dict[str, Sequence[str]]:
+    """Lo personal del borrador de cada episodio (lo que tapa el bot antes de
+    preguntarle a Jev: `redact_terms_from_slots`)."""
+    from src.plugins.chats.agent.sales.decisions.context import redact_terms_from_slots
+    from src.plugins.chats.agent.sales.turn_trace import draft_slots
+
+    out: dict[str, Sequence[str]] = {}
+    for episode in episodes:
+        try:
+            out[str(episode.get("episode_id") or "")] = tuple(redact_terms_from_slots(draft_slots(episode)))
+        except Exception:  # noqa: BLE001 — un borrador raro: queda lo genérico
+            continue
+    return out
+
+
 def _bulk_section(episodes: list[_Episode]) -> dict[str, Any]:
     items = [h for ep in episodes for h in ep.bulk]
     read = [h for h in items if h.missing is not None]
@@ -795,6 +824,9 @@ def _bulk_section(episodes: list[_Episode]) -> dict[str, Any]:
     enough = len(team_asked) >= BULK_MIN_TO_MEASURE
     return {
         "relevos": len(items),
+        "relevos_sin_nota": sum(
+            max(0, sum(1 for h in ep.handoffs if h.reason in BULK_HANDOFF_REASONS) - len(ep.bulk)) for ep in episodes
+        ),
         "leidos": len(read),
         "sin_lectura": len(items) - len(read),
         "con_algun_faltante": sum(1 for h in read if h.missing),

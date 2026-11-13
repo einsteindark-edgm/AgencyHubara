@@ -17,6 +17,8 @@ from typing import Any
 
 #: Los datos que anota `datos_por_mayor` (mismo orden y mismos códigos).
 BULK_DATA: tuple[str, ...] = ("producto", "cantidad", "fecha", "ciudad", "empresa")
+#: Los relevos que anota (los mismos de `escalate_to_human`; una prueba lo exige).
+BULK_HANDOFF_REASONS: tuple[str, ...] = ("BULK_ORDER", "WHOLESALE_B2B", "CORPORATE_EVENT")
 _ASKED_YES = 0.7
 _TIMEOUT_S = 20.0
 
@@ -35,7 +37,7 @@ def _questions() -> list[Any]:
     return [
         TypedQuestion(
             id=f"equipo_por_mayor.{datum}", kind="noul", text=text,
-            criteria={"true": "sí: se lo preguntó", "false": "no se lo preguntó (o el cliente ya lo había dicho)"},
+            criteria={"true": "sí: se lo preguntó", "false": "no se lo preguntó"},
         )
         for datum, text in _QUESTION_TEXT.items()
     ]
@@ -74,4 +76,4 @@ async def jev_team_reader(team_text: str) -> frozenset[str] | None:
     return frozenset(asked)
 
 
-__all__ = ["BULK_DATA", "jev_team_reader"]
+__all__ = ["BULK_DATA", "BULK_HANDOFF_REASONS", "jev_team_reader"]
