@@ -51,6 +51,9 @@ inputs:
   CajasDelPedido: {producto: string, cantidad: int, por_caja: int, precio: "int?", charla: string}
   PedidoPorMayor: {charla: string, cifras: "tuple<int>", productos: "tuple<string>", por_caja: "tuple<int>"}
   CajaNombrada: {producto: string, por_caja: int, otro: string, otro_por_caja: int, charla: string}
+  # `datos_por_mayor` (ventas-10): lo último de la charla con la nota del asesor
+  # para el colega, al relevar un pedido al por mayor.
+  RelevoPorMayor: {charla: string}
   TextCheck: {text: string, extended: bool}
   # `hours_since_store` (ventas-8): horas enteras desde el último mensaje de la tienda
   # (la cuenta de la vista `reply_gap`); null = la tienda nunca escribió.
@@ -378,6 +381,10 @@ builtins:
     kind: state
     input: PedidoPorMayor
     doc: "Lo último de la charla (con la nota del asesor para el colega), lo que se cobra por caja y las cifras del cliente contadas en velas en cada caja («36 velas = 3 cajas»); sin cifras o sin lo que escribió el cliente, no se pregunta."
+  bulk_handoff_state:
+    kind: state
+    input: RelevoPorMayor
+    doc: "Lo último de la charla (cliente y asesor) con la nota del asesor para el colega, al pasar al equipo un pedido al por mayor; sin lo que escribió el cliente, no se pregunta."
   named_box_state:
     kind: state
     input: CajaNombrada
@@ -679,6 +686,11 @@ capabilities_since:
   # el cliente. La pide el ingest por cada mensaje (`EngineReadings.read`) y solo
   # anota: su valor no entra a las lecturas ni cambia el turno.
   objecion: 9
+  # Tarjeta 34 del ciclo (informe de estrategia del 2026-11-10): el equipo recibe
+  # los relevos al por mayor sin datos. La pide `escalate_to_human` después de
+  # relevar por BULK_ORDER, WHOLESALE_B2B o CORPORATE_EVENT y solo anota: el
+  # relevo sale igual.
+  datos_por_mayor: 10
 
 # El motor de ventas le pasa los ítems (`items=`) al estado de una capacidad
 # por ítems (`BundledCapability.ask`): ese estado tiene que recibirlos.
@@ -1112,6 +1124,15 @@ about:
       Anota si el cliente puso una objeción para comprar y de qué tipo (precio,
       envío, tiempo de entrega, confianza o producto). Sirve para saber con
       cifras qué frena las ventas. Solo mide: no cambia lo que el bot responde.
+  datos_por_mayor:
+    name: Datos del pedido al por mayor
+    where: [herramientas]
+    solves: >-
+      Al pasar al equipo un pedido al por mayor, un pedido grande o un evento
+      de empresa, anota qué datos ya dio el cliente (producto, cantidad, fecha,
+      ciudad, si es para empresa) y si pidió hablar con una persona. Sirve para
+      medir si Colossus podría reunirlos antes del relevo. Solo mide: el relevo
+      sale igual.
   contactar:
     name: Escribirle de nuevo
     where: [remarketing]

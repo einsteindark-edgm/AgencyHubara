@@ -118,7 +118,8 @@ def _store() -> LabStorePort:
 
 
 def _bundles() -> list[dict[str, Any]]:
-    """Los paquetes de decisión que trae la imagen (id, versión, si es el de la tienda)."""
+    """Los paquetes de decisión que trae la imagen (id, versión, si es el de la
+    tienda), por versión: por nombre, `ventas-10` quedaba antes de `ventas-2`."""
     active = active_bundle_id()
     out: list[dict[str, Any]] = []
     for path in sorted(BUNDLES_DIR.glob("*/bundle.yaml")):
@@ -127,7 +128,7 @@ def _bundles() -> list[dict[str, Any]]:
         except (OSError, ValueError, yaml.YAMLError):
             version = 0
         out.append({"id": path.parent.name, "version": version, "active": path.parent.name == active})
-    return out
+    return sorted(out, key=lambda b: (b["version"], b["id"]))
 
 
 def _bundle_arm(arm: str) -> str:

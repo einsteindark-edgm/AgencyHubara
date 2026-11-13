@@ -344,6 +344,19 @@ def bulk_candles_state(inp: Any) -> str | None:
     )
 
 
+def bulk_handoff_state(inp: Any) -> str | None:
+    """Lo último de la charla con la nota del asesor para el colega, al pasar
+    al equipo un pedido al por mayor (`datos_por_mayor`); sin lo que escribió
+    el cliente, no se le pregunta a Jev."""
+    if "[cliente]" not in (inp.charla or ""):
+        return None
+    return (
+        "El asesor de la tienda le acaba de pasar a un colega del equipo una conversación de un pedido al por "
+        "mayor, un pedido grande o un evento de empresa.\n\n"
+        f"Lo último de la conversación:\n{inp.charla.strip()}"
+    )
+
+
 def named_box_rule(inp: Any) -> str:
     """Sin Jev no se sabe si el cliente pide este producto o el de la caja
     que nombró: «duda» (el bot lo revisa una vez)."""

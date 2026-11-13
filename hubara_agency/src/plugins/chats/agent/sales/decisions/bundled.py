@@ -377,6 +377,7 @@ LAZY_BUILTINS: dict[str, dict[str, str]] = {
         "customer_and_reply_facts": _CATALOG,
         "pack_quantity_state": _CATALOG,
         "bulk_candles_state": _CATALOG,
+        "bulk_handoff_state": _CATALOG,
         "named_box_state": _CATALOG,
         "greeting_texts": _EGRESS,
         "leading_sentences_state": _PARTS,
