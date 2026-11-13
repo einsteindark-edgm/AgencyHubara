@@ -44,6 +44,11 @@ _MAX_DAYS_AHEAD = 1
 #: Con menos dígitos que estos no se sabe de qué cuenta habla el comprobante.
 _MIN_ACCOUNT_DIGITS = 4
 
+#: Un número corrido de este largo es un celular o una cuenta, no un valor.
+_MIN_ID_DIGITS = 9
+#: Desde acá un número del campo es una cifra de plata y no un «1 pago».
+_MIN_FIGURE_COP = 1_000
+
 _NUMBER_RE = re.compile(r"\d[\d.,]*")
 _DECIMALS_RE = re.compile(r"[.,]\d{1,2}$")
 _NOT_DIGIT_RE = re.compile(r"\D+")
@@ -78,13 +83,18 @@ def reference_fingerprint(reference: str) -> str:
 
 
 def _amount_cop(text: str | None) -> int | None:
-    """El valor en pesos: el número más grande del campo, sin centavos («1 pago
-    por $84.000», «84.000,00», «84,000.00», «84000.0»)."""
-    values = []
+    """El valor en pesos, sin centavos («1 pago por $84.000», «84.000,00»,
+    «84,000.00», «84000.0»). Un celular o una cuenta pegados al valor no son el
+    valor; con dos cifras distintas (el valor y un saldo, lo pagado y lo que
+    falta) no se sabe cuál es: ``None``."""
+    values: set[int] = set()
     for raw in _NUMBER_RE.findall(text or ""):
-        digits = _NOT_DIGIT_RE.sub("", _DECIMALS_RE.sub("", raw.rstrip(".,")))
-        if digits:
-            values.append(int(digits))
+        raw = raw.rstrip(".,")
+        digits = _NOT_DIGIT_RE.sub("", _DECIMALS_RE.sub("", raw))
+        if digits and not (raw.isdigit() and len(raw) >= _MIN_ID_DIGITS):
+            values.add(int(digits))
+    if len([v for v in values if v >= _MIN_FIGURE_COP]) > 1:
+        return None
     return max(values, default=None)
 
 

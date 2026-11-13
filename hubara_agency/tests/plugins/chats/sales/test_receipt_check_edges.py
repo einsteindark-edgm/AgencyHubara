@@ -59,3 +59,16 @@ def test_the_amount_is_the_biggest_number_however_it_is_written(amount: str) -> 
 
 def test_a_mismatch_carries_no_evidence_level() -> None:
     assert _check(amount="$48.000").evidence is None
+
+
+@pytest.mark.parametrize("amount", ["$84.000 saldo $1.250.000", "Pagaste $50.000 de $84.000"])
+def test_two_different_figures_in_the_amount_are_not_a_readable_amount(amount: str) -> None:
+    assert _check(amount=amount).verdict == "ilegible"
+
+
+def test_a_phone_or_account_number_next_to_the_amount_is_not_the_amount() -> None:
+    assert _check(amount="$84.000 a 3001234567").verdict == "coincide"
+
+
+def test_the_same_figure_written_twice_is_still_one_amount() -> None:
+    assert _check(amount="$84.000 (84.000,00 COP)").verdict == "coincide"

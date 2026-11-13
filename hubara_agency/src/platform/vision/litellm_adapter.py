@@ -390,12 +390,19 @@ def _parse_receipt(raw: str) -> ReceiptText | None:
     block = data.get("comprobante") if data else None
     if not isinstance(block, dict):
         return None
-    account = _NOT_DIGIT_RE.sub("", _clean(block.get("cuenta_destino")) or "")[-_ACCOUNT_TAIL_DIGITS:]
+    def field(name: str) -> str | None:
+        value = block.get(name)
+        # El modelo a veces escribe el valor o la referencia como número.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            value = str(value)
+        return _clean(value)
+
+    account = _NOT_DIGIT_RE.sub("", field("cuenta_destino") or "")[-_ACCOUNT_TAIL_DIGITS:]
     receipt = ReceiptText(
-        amount=_clean(block.get("monto")),
-        date=_clean(block.get("fecha")),
+        amount=field("monto"),
+        date=field("fecha"),
         account=account or None,
-        reference=_clean(block.get("referencia")),
+        reference=field("referencia"),
     )
     return receipt if receipt != ReceiptText() else None
 

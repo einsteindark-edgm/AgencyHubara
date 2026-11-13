@@ -103,3 +103,24 @@ async def test_the_model_is_asked_for_the_receipt_fields(monkeypatch: pytest.Mon
     prompt = json.dumps(calls[0]["messages"], ensure_ascii=False)
     for field in ("monto", "fecha", "cuenta_destino", "referencia", "AAAA-MM-DD"):
         assert field in prompt
+
+
+@pytest.mark.asyncio
+async def test_fields_the_model_wrote_as_numbers_are_read_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = {**_RECEIPT, "comprobante": {"monto": 84000, "fecha": "2026-11-12", "cuenta_destino": 3001112233,
+                                          "referencia": 123456789}}
+
+    result, _ = await _describe(monkeypatch, answer)
+
+    receipt = result.receipt
+    assert receipt is not None
+    assert (receipt.amount, receipt.account, receipt.reference) == ("84000", "2233", "123456789")
+
+
+@pytest.mark.asyncio
+async def test_a_true_or_false_is_not_a_receipt_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    answer = {**_RECEIPT, "comprobante": {"monto": True, "referencia": False}}
+
+    result, _ = await _describe(monkeypatch, answer)
+
+    assert result.receipt is None

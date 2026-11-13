@@ -217,3 +217,13 @@ async def test_a_match_on_the_amount_alone_is_noted_as_partial_evidence(tmp_path
     row = await _record(tmp_path, receipt=_receipt(day=None, account=None))
 
     assert (row["verdict"], row["evidence"]) == ("coincide", "parcial")
+
+
+@pytest.mark.parametrize("words", ["No visible", "Transferencia exitosa", "000000", "Comprobante No."])
+async def test_words_or_filler_in_the_reference_field_never_make_a_repeated_receipt(tmp_path: Path, words: str) -> None:
+    await _record(tmp_path, receipt=_receipt(reference=words))
+    other = await _record(
+        tmp_path, session="wa_570000000002", metadata=_closed_with_order("ord_2"), receipt=_receipt(reference=words)
+    )
+
+    assert other["verdict"] == "coincide"

@@ -46,8 +46,10 @@ _PAID = "paid"
 #: `sin_pedido` porque había pedido pero no se pudieron leer sus datos (Medusa
 #: caído o lento): se distingue de «todavía no hay pedido».
 REASON_ORDER_UNREAD = "pedido_no_leido"
-#: Una referencia más corta que esto se repite entre clientes por casualidad.
-_MIN_REFERENCE_CHARS = 6
+#: Una referencia con menos dígitos que estos (o con un solo dígito repetido)
+#: se repite entre clientes por casualidad; un texto («No visible») no es una
+#: referencia.
+_MIN_REFERENCE_DIGITS = 6
 
 
 def _text(value: Any) -> str | None:
@@ -56,7 +58,8 @@ def _text(value: Any) -> str | None:
 
 def _reference(value: Any) -> str | None:
     text = _text(value)
-    return text if text and sum(c.isalnum() for c in text) >= _MIN_REFERENCE_CHARS else None
+    digits = [c for c in text or "" if c.isdigit()]
+    return text if len(digits) >= _MIN_REFERENCE_DIGITS and len(set(digits)) > 1 else None
 
 
 def _reading(receipt: Any) -> ReceiptReading | None:
