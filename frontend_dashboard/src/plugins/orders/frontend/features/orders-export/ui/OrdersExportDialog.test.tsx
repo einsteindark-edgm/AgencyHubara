@@ -5,11 +5,18 @@
  *   - Dice qué cuenta: todas las modalidades, sin la búsqueda ni la vista.
  *   - Las tablas de desglose dicen qué es cada columna.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { NO_DATE_RANGE } from "@/shared/lib";
 import type { Order } from "@plugins/orders/frontend/entities/order";
 import { OrdersExportDialog } from "./OrdersExportDialog";
+
+// El reporte pide las líneas al abrirse (tarjeta #49): acá, cargando. La
+// sección «Por producto» se prueba en OrdersExportDialog.byProduct.test.tsx.
+vi.mock("@plugins/orders/frontend/entities/order", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useOrderLines: () => ({ data: undefined, isLoading: true }),
+}));
 
 function order(id: string, dueIso: string): Order {
   return {

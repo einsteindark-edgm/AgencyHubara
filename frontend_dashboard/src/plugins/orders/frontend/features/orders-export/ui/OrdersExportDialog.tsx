@@ -13,6 +13,10 @@
  *
  * Alcance: todas las modalidades, sin la búsqueda ni la vista del tablero (el
  * reporte es del periodo, como el KPI «Ingresos»). El diálogo lo dice.
+ *
+ * «Por producto» (tarjeta del ciclo #49): las líneas de los pedidos se piden
+ * solo al abrir el diálogo (`useOrderLines` vive en `ExportBody`, que no se
+ * monta cerrado) y salen también en el CSV.
  */
 import { useId, useState } from "react";
 import {
@@ -28,11 +32,14 @@ import {
   ORDER_STATUS_META,
   orderDayIso,
   salesReport,
+  salesReportByProduct,
+  useOrderLines,
   type Order,
   type OrderStatus,
   type SalesBreakdown,
 } from "@plugins/orders/frontend/entities/order";
 import { salesReportCsv } from "../model/salesReportCsv";
+import { ProductSales } from "./ProductSales";
 
 interface Props {
   open: boolean;
@@ -109,6 +116,9 @@ function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, toda
   const titleId = useId();
   const [range, setRange] = useState<DateRange>(initialRange);
   const report = salesReport(orders, range);
+  const lines = useOrderLines();
+  const byProduct =
+    lines.data?.catalog_available ? salesReportByProduct(orders, lines.data.orders, range) : undefined;
   const rangeLabel = range.from ? describeDateRange(range, today) : "Todas las fechas";
 
   const loadedDays = orders.map(orderDayIso).filter(Boolean).sort();
@@ -118,7 +128,7 @@ function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, toda
 
   const download = () => {
     const name = range.from ? `ventas_${range.from}_${range.to ?? range.from}.csv` : "ventas_todas.csv";
-    downloadText(name, salesReportCsv(report, orders, range));
+    downloadText(name, salesReportCsv(report, orders, range, byProduct));
   };
 
   return (
@@ -195,6 +205,8 @@ function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, toda
           <Breakdown title="Por canal" rows={report.byChannel} />
           <Breakdown title="Por ciudad" rows={report.byCity} />
         </div>
+
+        <ProductSales lines={lines} report={byProduct ?? null} />
       </div>
 
       <div className="flex justify-end gap-2 border-t border-line px-4 py-3">

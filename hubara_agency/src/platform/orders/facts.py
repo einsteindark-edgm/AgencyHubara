@@ -35,10 +35,12 @@ import logging
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from src.platform.orders.query_port import (
     OrderDetailDTO,
+    OrderLinesListDTO,
+    OrderLinesQueryPort,
     OrderListDTO,
     OrderQueryPort,
     OrderSummaryDTO,
@@ -328,6 +330,15 @@ class RecordingOrderQuery:
         )
         self._store.record_list(page)
         return page
+
+    async def list_lines(
+        self, *, limit: int = 50, offset: int = 0, include_drafts: bool = True
+    ) -> OrderLinesListDTO:
+        """Líneas para el reporte por producto: no son facts, no se graban."""
+        lines_port = cast(OrderLinesQueryPort, self._query)
+        return await lines_port.list_lines(
+            limit=limit, offset=offset, include_drafts=include_drafts
+        )
 
     async def get(self, order_id: str) -> OrderDetailDTO | None:
         detail = await self._query.get(order_id)

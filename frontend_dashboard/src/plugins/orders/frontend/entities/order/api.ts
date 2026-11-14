@@ -33,8 +33,10 @@ import {
   customerSummarySchema,
   orderCommandResultSchema,
   orderDetailSchema,
+  orderLinesResponseSchema,
   orderListResponseSchema,
   orderPhotoSchema,
+  type OrderLinesResponse,
   type OrderPhoto,
   reconciliationOutcomeSchema,
   vaultOrdersResponseSchema,
@@ -166,6 +168,41 @@ export function useOrders() {
   });
 }
 
+/**
+ * Líneas de los pedidos de la lista (reporte por producto, tarjeta del ciclo
+ * #49). Mismo tope por defecto que `useOrders` (100), así cubre los mismos
+ * pedidos. Lo monta el diálogo del reporte: se pide solo al abrirlo. Si el
+ * backend no responde, el mismo «vacío con el motivo» que la lista.
+ */
+export function useOrderLines() {
+  return useQuery<OrderLinesResponse>({
+    queryKey: orderKeys.lines(),
+    queryFn: async ({ signal }) => {
+      try {
+        const raw = await apiClient.get<unknown>("/api/orders/orders/lines", { signal });
+        return orderLinesResponseSchema.parse(raw);
+      } catch (exc) {
+        if (exc instanceof ApiError || (exc instanceof TypeError && /fetch/i.test(exc.message))) {
+          return {
+            orders: [],
+            count: 0,
+            offset: 0,
+            limit: 100,
+            catalog_available: false,
+            error_detail:
+              exc instanceof ApiError
+                ? `backend_api_error: HTTP ${exc.status}`
+                : "backend_unreachable: el backend no responde",
+          };
+        }
+        throw exc;
+      }
+    },
+    staleTime: 10_000,
+    retry: 1,
+  });
+}
+
 export function useOrderDetail(displayId: string | null) {
   return useQuery<OrderDetail>({
     queryKey: orderKeys.detail(displayId ?? "—"),
@@ -220,6 +257,7 @@ export function useScheduleOrder() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -291,6 +329,7 @@ export function useTransitionOrderStage() {
     onSettled: (_data, _err, vars) => {
       // Siempre refetch para reconciliar con server state.
       qc.invalidateQueries({ queryKey: orderKeys.list() });
+      qc.invalidateQueries({ queryKey: orderKeys.lines() });
       qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
     },
   });
@@ -313,6 +352,7 @@ export function useConfirmOrderPayment() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -340,6 +380,7 @@ export function useReverseOrderPayment() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -369,6 +410,7 @@ export function useAdjustOrderPrices() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -393,6 +435,7 @@ export function useCancelOrder() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -418,6 +461,7 @@ export function useSetTestOrder() {
     onSuccess: (result, vars) => {
       if (result.success) {
         qc.invalidateQueries({ queryKey: orderKeys.list() });
+        qc.invalidateQueries({ queryKey: orderKeys.lines() });
         qc.invalidateQueries({ queryKey: orderKeys.detail(vars.orderId) });
       }
     },
@@ -473,6 +517,7 @@ export function useRetryVaultOrder() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: orderKeys.vault() });
       qc.invalidateQueries({ queryKey: orderKeys.list() });
+      qc.invalidateQueries({ queryKey: orderKeys.lines() });
     },
   });
 }

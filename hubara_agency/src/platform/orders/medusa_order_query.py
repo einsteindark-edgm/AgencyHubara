@@ -42,6 +42,8 @@ from src.platform.orders.query_port import (
     OrderAddressDTO,
     OrderDetailDTO,
     OrderItemDTO,
+    OrderLinesDTO,
+    OrderLinesListDTO,
     OrderListDTO,
     OrderPayStatus,
     OrderPayType,
@@ -133,38 +135,16 @@ class MedusaOrderQuery:
         include_drafts: bool = True,
     ) -> OrderListDTO:
         try:
-            # Paralelizar las dos queries — orders + draft-orders viven en
-            # endpoints separados de Medusa. Hacerlas secuenciales serializa
-            # un round-trip evitable.
-            tasks: list[Any] = [
-                self._client.list_orders(limit=limit, offset=offset),
-            ]
-            if include_drafts:
-                tasks.append(
-                    self._client.list_draft_orders(limit=limit, offset=offset)
-                )
-            results = await asyncio.gather(*tasks, return_exceptions=False)
-
-            orders_resp = results[0]
-            drafts_resp = results[1] if include_drafts else {"draft_orders": [], "count": 0}
-
-            summaries: list[OrderSummaryDTO] = []
-            for raw in orders_resp.get("orders", []):
-                summaries.append(self._build_summary(raw, is_draft=False))
-                self._cache_display_id(raw)
-            for raw in drafts_resp.get("draft_orders", []):
-                summaries.append(self._build_summary(raw, is_draft=True))
-                self._cache_display_id(raw)
+            orders_raw, drafts_raw, total_count = await self._fetch_page(
+                limit=limit, offset=offset, include_drafts=include_drafts
+            )
+            summaries: list[OrderSummaryDTO] = [
+                self._build_summary(raw, is_draft=False) for raw in orders_raw
+            ] + [self._build_summary(raw, is_draft=True) for raw in drafts_raw]
 
             # Ordenar por created_at descendiente (mas reciente primero) —
             # los draft_orders se intercalan con orders por timestamp.
             summaries.sort(key=lambda s: s.created_at_ms, reverse=True)
-
-            total_count = orders_resp.get("count", len(orders_resp.get("orders", [])))
-            if include_drafts:
-                total_count += drafts_resp.get(
-                    "count", len(drafts_resp.get("draft_orders", []))
-                )
 
             return OrderListDTO(
                 orders=summaries,
@@ -203,6 +183,86 @@ class MedusaOrderQuery:
                 catalog_available=False,
                 error_detail=f"unexpected_error: {type(exc).__name__}: {exc}",
             )
+
+    async def _fetch_page(
+        self, *, limit: int, offset: int, include_drafts: bool
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
+        """Una página cruda de la tienda: pedidos + borradores y el conteo.
+        Levanta `MedusaAPIError`; cada llamador decide su «vacío con el
+        motivo»."""
+        # Paralelizar las dos queries — orders + draft-orders viven en
+        # endpoints separados de Medusa. Hacerlas secuenciales serializa
+        # un round-trip evitable.
+        tasks: list[Any] = [
+            self._client.list_orders(limit=limit, offset=offset),
+        ]
+        if include_drafts:
+            tasks.append(
+                self._client.list_draft_orders(limit=limit, offset=offset)
+            )
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+
+        orders_resp = results[0]
+        drafts_resp = results[1] if include_drafts else {"draft_orders": [], "count": 0}
+        orders_raw = list(orders_resp.get("orders", []))
+        drafts_raw = list(drafts_resp.get("draft_orders", []))
+        for raw in orders_raw + drafts_raw:
+            self._cache_display_id(raw)
+
+        total_count = orders_resp.get("count", len(orders_raw))
+        if include_drafts:
+            total_count += drafts_resp.get("count", len(drafts_raw))
+        return orders_raw, drafts_raw, total_count
+
+    async def list_lines(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        include_drafts: bool = True,
+    ) -> OrderLinesListDTO:
+        """Líneas de los pedidos de una página (reporte por producto, tarjeta
+        del ciclo #49): la MISMA llamada que `list` (la lista ya trae
+        `*items`) y el MISMO armador de líneas que el detalle."""
+        try:
+            orders_raw, drafts_raw, total_count = await self._fetch_page(
+                limit=limit, offset=offset, include_drafts=include_drafts
+            )
+            lines = [
+                self._build_lines(raw, is_draft=False) for raw in orders_raw
+            ] + [self._build_lines(raw, is_draft=True) for raw in drafts_raw]
+            return OrderLinesListDTO(
+                orders=lines,
+                count=total_count,
+                offset=offset,
+                limit=limit,
+                catalog_available=True,
+            )
+        except MedusaAPIError as exc:
+            log.error(
+                "MedusaOrderQuery.list_lines failed",
+                extra={"status_code": exc.status_code, "path": exc.path},
+            )
+            return OrderLinesListDTO(
+                orders=[], count=0, offset=offset, limit=limit,
+                catalog_available=False, error_detail=_format_medusa_error(exc),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.exception("MedusaOrderQuery.list_lines unexpected failure")
+            return OrderLinesListDTO(
+                orders=[], count=0, offset=offset, limit=limit,
+                catalog_available=False,
+                error_detail=f"unexpected_error: {type(exc).__name__}: {exc}",
+            )
+
+    def _build_lines(self, raw: dict[str, Any], *, is_draft: bool) -> OrderLinesDTO:
+        summary = self._build_summary(raw, is_draft=is_draft)
+        return OrderLinesDTO(
+            order_id=summary.id,
+            display_id=summary.display_id,
+            payment_method_label=_payment_method_label(raw.get("metadata") or {}),
+            items=_build_items(raw),
+        )
 
     async def get(self, order_id: str) -> OrderDetailDTO | None:
         """Get a single order by ID.
@@ -501,37 +561,7 @@ class MedusaOrderQuery:
         # entry correspondiente en `metadata.variant_mismatches` indica que
         # el `selected_variant_title == "Unico"` (sentinel de single-variant),
         # suppress el flag — no era un mismatch real, solo un tag descriptivo.
-        order_meta = raw.get("metadata") or {}
-        order_mismatches = order_meta.get("variant_mismatches") or []
-        single_variant_handles: set[str] = {
-            str(m.get("handle"))
-            for m in order_mismatches
-            if isinstance(m, dict) and m.get("selected_variant_title") == "Unico"
-        }
-
-        items_detail = [
-            OrderItemDTO(
-                **_variant_match_fields(it, single_variant_handles),
-                **_coupon_fields(it),
-                **_price_adjustment_fields(it),
-                **_choice_fields(it),
-                title=str(it.get("title", "—")),
-                sku=it.get("sku") or it.get("variant_sku"),
-                quantity=int(it.get("quantity", 0)),
-                unit_price_cop=_to_int_cop(it.get("unit_price", 0)),
-                total_cop=_to_int_cop(it.get("total", 0)) or (
-                    _to_int_cop(it.get("unit_price", 0))
-                    * int(it.get("quantity", 0))
-                ),
-                thumbnail=it.get("thumbnail"),
-                product_id=it.get("product_id") or None,
-                handle=(
-                    (it.get("metadata") or {}).get("handle")
-                    if isinstance(it.get("metadata"), dict) else None
-                ),
-            )
-            for it in (raw.get("items") or [])
-        ]
+        items_detail = _build_items(raw)
 
         shipping = _map_address(raw.get("shipping_address"))
         billing = _map_address(raw.get("billing_address"))
@@ -571,15 +601,7 @@ class MedusaOrderQuery:
         )
 
         # ---- Payment method label ----
-        pay_method_raw = metadata.get("payment_method")
-        # `card` y "Transferencia" son legacy (pre-requisito 2026-08-31);
-        # los métodos vigentes: transfer (anticipado) / payment_link / cod.
-        payment_method_label = {
-            "transfer": "Pago anticipado (Nequi)",
-            "payment_link": "Link de pago",
-            "card": "Tarjeta",
-            "cash_on_delivery": "Contra entrega",
-        }.get(pay_method_raw)
+        payment_method_label = _payment_method_label(metadata)
 
         # ---- Notes: combinamos human_note + cancelled_reason si aplica ----
         notes: list[str] = []
@@ -662,6 +684,66 @@ def _choice_fields(item: dict[str, Any]) -> dict[str, Any]:
         for key in ("color", "aroma")
         if isinstance(value := meta.get(key), str) and value.strip()
     }
+
+
+def _build_items(raw: dict[str, Any]) -> list[OrderItemDTO]:
+    """Las líneas de un pedido crudo de Medusa. Lo usan el detalle y
+    `list_lines` (reporte por producto, tarjeta del ciclo #49): un solo
+    armador para que el reporte y el inspector den la misma cuenta.
+
+    Heurística de suppression para mismatch (2026-05-26):
+    En esta tienda los aromas/colores viven como **tags** del producto,
+    no como variantes. Productos típicamente tienen 1 variante "Unico".
+    Para data persistida ANTES del fix del write side (en medusa_order.py),
+    `variant_label_mismatch=True` puede estar set falsamente. Si la
+    entry correspondiente en `metadata.variant_mismatches` indica que
+    el `selected_variant_title == "Unico"` (sentinel de single-variant),
+    suppress el flag — no era un mismatch real, solo un tag descriptivo.
+    """
+    order_meta = raw.get("metadata") or {}
+    order_mismatches = order_meta.get("variant_mismatches") or []
+    single_variant_handles: set[str] = {
+        str(m.get("handle"))
+        for m in order_mismatches
+        if isinstance(m, dict) and m.get("selected_variant_title") == "Unico"
+    }
+    return [
+        OrderItemDTO(
+            **_variant_match_fields(it, single_variant_handles),
+            **_coupon_fields(it),
+            **_price_adjustment_fields(it),
+            **_choice_fields(it),
+            title=str(it.get("title", "—")),
+            sku=it.get("sku") or it.get("variant_sku"),
+            quantity=int(it.get("quantity", 0)),
+            unit_price_cop=_to_int_cop(it.get("unit_price", 0)),
+            total_cop=_to_int_cop(it.get("total", 0)) or (
+                _to_int_cop(it.get("unit_price", 0))
+                * int(it.get("quantity", 0))
+            ),
+            thumbnail=it.get("thumbnail"),
+            product_id=it.get("product_id") or None,
+            handle=(
+                (it.get("metadata") or {}).get("handle")
+                if isinstance(it.get("metadata"), dict) else None
+            ),
+        )
+        for it in (raw.get("items") or [])
+    ]
+
+
+# `card` y "Transferencia" son legacy (pre-requisito 2026-08-31); los
+# métodos vigentes: transfer (anticipado) / payment_link / cod.
+_PAYMENT_METHOD_LABELS = {
+    "transfer": "Pago anticipado (Nequi)",
+    "payment_link": "Link de pago",
+    "card": "Tarjeta",
+    "cash_on_delivery": "Contra entrega",
+}
+
+
+def _payment_method_label(metadata: dict[str, Any]) -> str | None:
+    return _PAYMENT_METHOD_LABELS.get(metadata.get("payment_method"))
 
 
 def _coupon_fields(item: dict[str, Any]) -> dict[str, Any]:

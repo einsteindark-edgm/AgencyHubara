@@ -214,6 +214,43 @@ class OrderListDTO:
     error_detail: str | None = None
 
 
+@dataclass(frozen=True)
+class OrderLinesDTO:
+    """Las líneas de un pedido para el reporte por producto (tarjeta del
+    ciclo #49). Mismas `OrderItemDTO` que el detalle, armadas con el mismo
+    código, para que el reporte y el inspector den la misma cuenta."""
+    order_id: str
+    display_id: str
+    payment_method_label: str | None
+    items: list[OrderItemDTO]
+
+
+@dataclass(frozen=True)
+class OrderLinesListDTO:
+    """Envelope de `list_lines(...)`: misma paginación y mismo «vacío con el
+    motivo» que `OrderListDTO`."""
+    orders: list[OrderLinesDTO]
+    count: int
+    offset: int
+    limit: int
+    catalog_available: bool
+    error_detail: str | None = None
+
+
+@runtime_checkable
+class OrderLinesQueryPort(Protocol):
+    """Líneas de los pedidos de una página de la lista, en UNA llamada a la
+    tienda (no una por pedido). Solo lectura."""
+
+    async def list_lines(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        include_drafts: bool = True,
+    ) -> OrderLinesListDTO: ...
+
+
 @runtime_checkable
 class OrderQueryPort(Protocol):
     """Contrato para consultar ordenes para el dashboard.
