@@ -10,6 +10,7 @@ import { ReactivateConversationModal } from "./ReactivateConversationModal";
 
 const sendTemplateMutate = vi.fn();
 const uploadMock = vi.fn();
+const compressMock = vi.fn();
 
 const templatesFixture = [
   {
@@ -55,11 +56,7 @@ vi.mock("@/shared/lib", async () => {
   const actual = await vi.importActual<typeof import("@/shared/lib")>("@/shared/lib");
   return {
     ...actual,
-    compressImage: async (file: File) => ({
-      blob: file,
-      mime: "image/jpeg",
-      previewUrl: "blob:preview-pedido",
-    }),
+    compressImage: (file: File) => compressMock(file),
   };
 });
 
@@ -78,11 +75,25 @@ function pickPhoto() {
     type: "image/jpeg",
   });
   fireEvent.change(screen.getByLabelText(/foto del pedido/i), { target: { files: [file] } });
+  return file;
+}
+
+/** Clics que le llegan al selector de archivos (lo que abre el explorador). */
+function watchPickerClicks() {
+  const clicks = vi.fn();
+  screen.getByLabelText(/foto del pedido/i).addEventListener("click", clicks);
+  return clicks;
 }
 
 beforeEach(() => {
   sendTemplateMutate.mockReset();
   uploadMock.mockReset();
+  compressMock.mockReset();
+  compressMock.mockImplementation(async (file: File) => ({
+    blob: file,
+    mime: "image/jpeg",
+    previewUrl: "blob:preview-pedido",
+  }));
 });
 
 describe("ReactivateConversationModal · plantilla con foto", () => {
@@ -128,6 +139,50 @@ describe("ReactivateConversationModal · plantilla con foto", () => {
       header_attachment_id: "MEDIA_OK",
       client_message_id: expect.any(String),
     });
+  });
+
+  it("shows a visible button to choose the photo, like the ready-order modal", () => {
+    openPhotoTemplate();
+    const clicks = watchPickerClicks();
+
+    fireEvent.click(screen.getByText(/^elegir foto/i));
+
+    expect(clicks).toHaveBeenCalled();
+  });
+
+  it("tapping the empty photo slot of the preview also opens the picker", () => {
+    openPhotoTemplate();
+    const clicks = watchPickerClicks();
+
+    fireEvent.click(screen.getByText("{ foto del pedido }"));
+
+    expect(clicks).toHaveBeenCalled();
+  });
+
+  it("once a photo is attached the button offers to change it", async () => {
+    uploadMock.mockResolvedValue({ ok: true, attachment_id: "MEDIA_OK", media_ref: "/m.jpg" });
+    openPhotoTemplate();
+    pickPhoto();
+
+    expect(await screen.findByText(/^cambiar foto/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^elegir foto/i)).not.toBeInTheDocument();
+  });
+
+  it("if the browser cannot shrink the photo it uploads the original file", async () => {
+    compressMock.mockRejectedValue(new Error("no se pudo decodificar"));
+    uploadMock.mockResolvedValue({ ok: true, attachment_id: "MEDIA_OK", media_ref: "/m.jpg" });
+    openPhotoTemplate();
+    const file = pickPhoto();
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /enviar plantilla/i })).toBeEnabled(),
+    );
+    expect(uploadMock).toHaveBeenCalledWith(
+      "wa_573001234567",
+      file,
+      expect.stringMatching(/\.jpg$/),
+      expect.any(Function),
+    );
   });
 
   it("a failed upload shows the error and keeps sending blocked", async () => {
