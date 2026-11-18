@@ -12,10 +12,15 @@
  * pedido en el encabezado: el operador la adjunta acá, se sube a Meta como
  * cualquier foto del chat y el envío referencia su `attachment_id`. Hasta que
  * la foto no está subida no se puede enviar (Meta rechazaría la plantilla).
+ * El selector es un botón visible ("Elegir foto del pedido", igual que el modal
+ * de pedido listo de Órdenes) y el hueco de la foto en la vista previa también
+ * lo abre: el `<input type="file">` nativo quedaba como texto gris sin forma de
+ * botón y el operador no encontraba dónde adjuntar.
  */
 
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import { compressImage } from "@/shared/lib";
+import { Icon } from "@/shared/ui";
 import {
   buildTemplatePreview,
   isTemplateReady,
@@ -68,6 +73,26 @@ function revokeBlobUrl(url: string) {
   }
 }
 
+/** Preview del archivo sin comprimir; vacío donde no hay object URLs (jsdom). */
+function rawPreviewUrl(file: File): string {
+  try {
+    return URL.createObjectURL(file);
+  } catch {
+    return "";
+  }
+}
+
+/** Comprime la foto; si el navegador no puede (formato raro, webview viejo),
+ *  sube el archivo original — el backend igual valida tipo y tamaño. */
+async function preparePhoto(file: File): Promise<{ blob: Blob; previewUrl: string }> {
+  try {
+    const { blob, previewUrl } = await compressImage(file);
+    return { blob, previewUrl };
+  } catch {
+    return { blob: file, previewUrl: rawPreviewUrl(file) };
+  }
+}
+
 interface Props {
   chatId: string | null;
   onClose: () => void;
@@ -111,6 +136,7 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
   const [selectedName, setSelectedName] = useState<string | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [photo, dispatchPhoto] = useReducer(headerPhotoReducer, { status: "empty" });
+  const photoInputId = useId();
   // Intento vigente: descarta el resultado de una subida vieja si el operador
   // eligió otra foto (o cambió de plantilla) mientras subía.
   const photoAttempt = useRef(0);
@@ -145,13 +171,13 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
     const attempt = ++photoAttempt.current;
     const current = () => attempt === photoAttempt.current;
     try {
-      const { blob, previewUrl } = await compressImage(file);
+      const { blob, previewUrl } = await preparePhoto(file);
       if (!current()) return revokeBlobUrl(previewUrl);
       dispatchPhoto({ type: "start", previewUrl });
       const uploaded = await uploadHumanMedia(
         chatId,
         blob,
-        `pedido-${Date.now()}.jpg`,
+        `pedido-${Date.now()}.${blob.type === "image/png" ? "png" : "jpg"}`,
         (progress) => current() && dispatchPhoto({ type: "progress", progress }),
       );
       if (current()) dispatchPhoto({ type: "uploaded", attachmentId: uploaded.attachment_id });
@@ -265,23 +291,35 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
             })}
 
             {needsPhoto && (
-              <label className="rt-field">
+              <div className="rt-field">
                 <span>Foto del pedido</span>
-                <input
-                  type="file"
-                  className="rt-photo-input"
-                  accept="image/jpeg,image/png"
-                  onChange={(e) => {
-                    void pickPhoto(e.target.files?.[0]);
-                    e.target.value = ""; // permite re-elegir la misma foto tras un fallo
-                  }}
-                />
-                {photo.status === "uploading" && (
-                  <small className="rt-photo-status">
-                    Subiendo foto… {Math.round(photo.progress * 100)}%
-                  </small>
-                )}
-              </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="mac-btn sm cursor-pointer">
+                    <Icon.attach />
+                    {photo.status === "empty" ? "Elegir foto del pedido" : "Cambiar foto"}
+                    <input
+                      id={photoInputId}
+                      type="file"
+                      accept="image/jpeg,image/png"
+                      aria-label="Foto del pedido"
+                      hidden
+                      disabled={sendTemplate.isPending}
+                      onChange={(e) => {
+                        void pickPhoto(e.target.files?.[0]);
+                        e.target.value = ""; // permite re-elegir la misma foto tras un fallo
+                      }}
+                    />
+                  </label>
+                  {photo.status === "uploading" && (
+                    <small className="rt-photo-status">
+                      Subiendo foto… {Math.round(photo.progress * 100)}%
+                    </small>
+                  )}
+                  {photo.status === "ready" && (
+                    <small className="rt-photo-status">Foto lista ✓</small>
+                  )}
+                </div>
+              </div>
             )}
             {needsPhoto && photo.status === "failed" && (
               <div className="composer-err" role="alert">
@@ -303,7 +341,13 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
                       }
                     />
                   ) : (
-                    <span className="rt-preview-photo-empty">{"{ foto del pedido }"}</span>
+                    <label
+                      htmlFor={photoInputId}
+                      className="rt-preview-photo-empty cursor-pointer"
+                      title="Elegir foto del pedido"
+                    >
+                      {"{ foto del pedido }"}
+                    </label>
                   ))}
                 {preview.map((seg, i) =>
                   seg.kind === "text" ? (
@@ -332,7 +376,7 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
             Cancelar
           </button>
           <button
-            className="interv-btn"
+            className="interv-btn disabled:opacity-50"
             onClick={submit}
             disabled={!ready || sendTemplate.isPending}
           >
