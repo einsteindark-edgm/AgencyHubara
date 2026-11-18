@@ -37,6 +37,8 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from dataclasses import dataclass
+from pathlib import Path as FilePath
 from typing import Annotated, Any, Literal
 
 import structlog
@@ -59,6 +61,7 @@ from src.sdk.mediakit import (
     delete_outbound_image,
     media_url_for,
     persist_outbound_image,
+    resolve_media_file,
     upload_media,
 )
 from src.sdk.messagingkit import (
@@ -224,6 +227,11 @@ class SendTemplateMessageRequest(BaseModel):
     #: Foto del encabezado: el `attachment_id` que devolvió la subida
     #: (`POST .../media`) para ESTA sesión. Solo plantillas con encabezado imagen.
     header_attachment_id: str | None = Field(default=None, max_length=256)
+    #: Foto del encabezado tomada del PEDIDO: el id backend del pedido cuya foto
+    #: subió el operador en Órdenes (`metadata.order_photos[<id>]`). El modal la
+    #: trae ya puesta; se sube a Meta al enviar. Alternativa a
+    #: `header_attachment_id`, no las dos.
+    header_order_photo_id: str | None = Field(default=None, max_length=200)
 
 
 # ---------- Helpers ----------
@@ -944,10 +952,18 @@ async def send_human_template_message(
     if errors:
         raise HTTPException(status_code=422, detail="; ".join(errors))
 
-    header_kwargs = _resolve_template_header_photo(
-        spec, payload.header_attachment_id, data.get("outbound_media", {})
-    )
-    image_url = header_kwargs.get("header_image_url")
+    order_photo: _OrderPhoto | None = None
+    if payload.header_order_photo_id:
+        order_photo = _resolve_order_photo_header(
+            spec, session_id, payload.header_order_photo_id, payload.header_attachment_id, data
+        )
+        header_kwargs: dict[str, str] = {}
+        image_url: str | None = order_photo.media_ref
+    else:
+        header_kwargs = _resolve_template_header_photo(
+            spec, payload.header_attachment_id, data.get("outbound_media", {})
+        )
+        image_url = header_kwargs.get("header_image_url")
 
     content = render_template_body(spec, variables)
     cmid = payload.client_message_id
@@ -960,6 +976,25 @@ async def send_human_template_message(
         return HumanMessageResponse(
             ok=True, role="assistant", sender="human", content=content, image_url=image_url
         )
+
+    if order_photo is not None:
+        # Después del replay: un retry del mismo envío no re-sube la foto.
+        try:
+            media_id = await upload_media(
+                data.get("phone_number_id") or _env_phone(),
+                order_photo.path.read_bytes(),
+                order_photo.mime,
+            )
+        except MediaUploadError as e:
+            logger.error(
+                "dashboard.send_human_template order photo upload failed",
+                session_id=session_id,
+                error=str(e),
+            )
+            raise HTTPException(
+                status_code=502, detail=f"WhatsApp no recibió la foto del pedido: {e}"
+            ) from e
+        header_kwargs = {"header_media_id": media_id, "header_image_url": order_photo.media_ref}
 
     try:
         await send_template_to_session(
@@ -997,6 +1032,59 @@ async def send_human_template_message(
     )
     return HumanMessageResponse(
         ok=True, role="assistant", sender="human", content=content, image_url=image_url
+    )
+
+
+@dataclass(frozen=True)
+class _OrderPhoto:
+    """Foto del pedido (la que subió el operador en Órdenes) lista para subir."""
+
+    path: FilePath
+    mime: str
+    media_ref: str
+
+
+#: Lo que WhatsApp acepta como encabezado IMAGE de una plantilla.
+_HEADER_IMAGE_MIMES = frozenset({"image/jpeg", "image/png"})
+
+
+def _resolve_order_photo_header(
+    spec, session_id: str, order_id: str, attachment_id: str | None, data: dict
+) -> _OrderPhoto:
+    """La foto del pedido como encabezado de la plantilla. 422 si no sirve.
+
+    El puntero lo escribe la API de Órdenes en ``metadata.order_photos[<id>]``
+    (``filename``, ``media_ref``, ``mime``) — el mismo que leen ETA y reviews.
+    """
+    if spec.header_format is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"La plantilla {spec.name!r} no tiene encabezado de imagen: no lleva foto.",
+        )
+    if attachment_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Va la foto que subiste acá o la del pedido, no las dos.",
+        )
+    photos = data.get("order_photos")
+    entry = photos.get(order_id) if isinstance(photos, dict) else None
+    filename = entry.get("filename") if isinstance(entry, dict) else None
+    if not isinstance(filename, str) or not filename:
+        raise HTTPException(
+            status_code=422,
+            detail=f"El pedido {order_id!r} no tiene foto: súbela en Órdenes o elige una acá.",
+        )
+    mime = entry.get("mime") or "image/jpeg"
+    path = resolve_media_file(session_id, filename)
+    if path is None or mime not in _HEADER_IMAGE_MIMES:
+        raise HTTPException(
+            status_code=422,
+            detail="No se encontró el archivo de la foto del pedido: vuelve a subirla.",
+        )
+    return _OrderPhoto(
+        path=path,
+        mime=mime,
+        media_ref=entry.get("media_ref") or media_url_for(session_id, filename),
     )
 
 

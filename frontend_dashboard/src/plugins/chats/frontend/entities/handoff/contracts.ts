@@ -87,4 +87,8 @@ export interface SendTemplateMessageInput {
   /** Foto del encabezado: `attachment_id` de la subida (`uploadHumanMedia`).
    *  Solo en plantillas con `header_format === "image"`. */
   header_attachment_id?: string;
+  /** Foto del encabezado tomada del PEDIDO (id backend): la que el operador
+   *  subió en Órdenes. El backend la sube a Meta al enviar. Alternativa a
+   *  `header_attachment_id`, no las dos. */
+  header_order_photo_id?: string;
 }

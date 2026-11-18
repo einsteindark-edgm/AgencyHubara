@@ -13,6 +13,11 @@
  * entorno no los soporta (jsdom, webview viejo) cae al archivo original —
  * el backend igual valida tamaño/tipo, así que un fallback nunca rompe el
  * envío, solo se pierde la optimización.
+ *
+ * La vista previa es una URL `data:`, NO `blob:`: la CSP del dashboard en prod
+ * (CloudFront, `infra/terraform/platform/modules/frontend/main.tf`) tiene
+ * `img-src 'self' data: https:` y bloquea `blob:` — la foto se veía rota en
+ * producción (en local no hay CSP y se veía bien).
  */
 
 export interface CompressOptions {
@@ -25,7 +30,7 @@ export interface CompressOptions {
 export interface CompressedImage {
   blob: Blob;
   mime: string;
-  /** URL de objeto para preview optimista. El caller DEBE revocarla. */
+  /** URL `data:` para la preview optimista ("" si no se pudo leer). */
   previewUrl: string;
 }
 
@@ -52,13 +57,21 @@ export function computeTargetDimensions(
   };
 }
 
-/** Object URL para preview; safe en entornos sin `URL.createObjectURL` (jsdom). */
-function safeObjectUrl(blob: Blob): string {
-  try {
-    return URL.createObjectURL(blob);
-  } catch {
-    return "";
-  }
+/**
+ * URL `data:` de la imagen para un `<img>` de vista previa. La CSP de prod
+ * permite `data:` pero no `blob:`. Nunca lanza: si no se puede leer, "".
+ */
+export function previewDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(blob);
+    } catch {
+      resolve("");
+    }
+  });
 }
 
 /** True si el entorno puede reencodear por canvas (browser real, no jsdom). */
@@ -85,7 +98,7 @@ export async function compressImage(
     return {
       blob: file,
       mime: file.type || OUTPUT_MIME,
-      previewUrl: safeObjectUrl(file),
+      previewUrl: await previewDataUrl(file),
     };
   }
 
@@ -109,7 +122,7 @@ export async function compressImage(
     return {
       blob: file,
       mime: file.type || OUTPUT_MIME,
-      previewUrl: safeObjectUrl(file),
+      previewUrl: await previewDataUrl(file),
     };
   }
   ctx.drawImage(bitmap, 0, 0, width, height);
@@ -122,6 +135,6 @@ export async function compressImage(
   return {
     blob: finalBlob,
     mime: OUTPUT_MIME,
-    previewUrl: safeObjectUrl(finalBlob),
+    previewUrl: await previewDataUrl(finalBlob),
   };
 }

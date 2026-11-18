@@ -313,3 +313,145 @@ def test_rejects_wrong_photo_combinations_without_sending(
     assert res.status_code == 422, res.text
     assert detail in res.json()["detail"]
     send_mock.assert_not_awaited()
+
+
+# ---------- foto del PEDIDO (la que el operador subió en Órdenes) ----------
+#
+# El modal se llena solo: si el pedido del cliente ya tiene foto
+# (`metadata.order_photos[<id>]`, la escribe la API de Órdenes), el operador no
+# la vuelve a elegir — el envío referencia el pedido y el backend sube ESA foto
+# a Meta en el momento de mandar la plantilla.
+
+ORDER_ID = "order_01ABC"
+ORDER_PHOTO_FILE = "out-order-order_01ABC-abc123.jpg"
+ORDER_PHOTO_REF = f"/api/dashboard/media/wa_57310/{ORDER_PHOTO_FILE}"
+JPEG_BYTES = b"\xff\xd8\xff\xe0fake-jpeg"
+
+
+def _with_order_photo(vault, *, write_file: bool = True) -> dict:
+    if write_file:
+        media = vault / "wa_57310" / "media"
+        media.mkdir(parents=True, exist_ok=True)
+        (media / ORDER_PHOTO_FILE).write_bytes(JPEG_BYTES)
+    return _humano(
+        order_photos={
+            ORDER_ID: {
+                "filename": ORDER_PHOTO_FILE,
+                "media_ref": ORDER_PHOTO_REF,
+                "mime": "image/jpeg",
+                "uploaded_at_ms": 1_700_000_000_000,
+            }
+        },
+    )
+
+
+def test_sends_order_ready_template_with_the_order_photo_from_orders(client_and_vault):
+    client, vault = client_and_vault
+    _write_metadata(vault, "wa_57310", _with_order_photo(vault))
+
+    upload_mock = AsyncMock(return_value="MEDIA_FROM_ORDER")
+    send_mock = AsyncMock(
+        return_value=OutboundResult(wa_message_id="wamid.O", ok=True, error=None)
+    )
+    with (
+        patch("src.platform.media.store.WORKSPACE_VAULT_DIR", vault),
+        patch("src.plugins.chats.api.handoff.upload_media", new=upload_mock),
+        patch("src.plugins.chats.api.handoff.send_template_to_session", new=send_mock),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_57310/template-messages",
+            json={
+                "template_name": ORDER_READY,
+                "variables": {"order_reference": "#169"},
+                "header_order_photo_id": ORDER_ID,
+                "client_message_id": "cmid-order-photo",
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["image_url"] == ORDER_PHOTO_REF
+    upload_mock.assert_awaited_once_with("test_phone", JPEG_BYTES, "image/jpeg")
+    send_mock.assert_awaited_once_with(
+        "wa_57310",
+        ORDER_READY,
+        {"order_reference": "#169"},
+        sender="human",
+        header_media_id="MEDIA_FROM_ORDER",
+        header_image_url=ORDER_PHOTO_REF,
+    )
+
+
+def test_retry_with_order_photo_does_not_upload_or_send_again(client_and_vault):
+    client, vault = client_and_vault
+    data = _with_order_photo(vault)
+    data["sent_human_message_ids"] = ["cmid-order-photo"]
+    _write_metadata(vault, "wa_57310", data)
+
+    upload_mock = AsyncMock()
+    send_mock = AsyncMock()
+    with (
+        patch("src.platform.media.store.WORKSPACE_VAULT_DIR", vault),
+        patch("src.plugins.chats.api.handoff.upload_media", new=upload_mock),
+        patch("src.plugins.chats.api.handoff.send_template_to_session", new=send_mock),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_57310/template-messages",
+            json={
+                "template_name": ORDER_READY,
+                "variables": {"order_reference": "#169"},
+                "header_order_photo_id": ORDER_ID,
+                "client_message_id": "cmid-order-photo",
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["image_url"] == ORDER_PHOTO_REF
+    upload_mock.assert_not_awaited()
+    send_mock.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("template_name", "extra", "write_file", "detail"),
+    [
+        # Ese pedido no tiene foto subida en Órdenes.
+        (ORDER_READY, {"header_order_photo_id": "order_OTRO"}, True, "no tiene foto"),
+        # El puntero existe pero el archivo ya no está en el vault.
+        (ORDER_READY, {"header_order_photo_id": ORDER_ID}, False, "archivo"),
+        # O la foto subida acá o la del pedido, no las dos.
+        (
+            ORDER_READY,
+            {"header_order_photo_id": ORDER_ID, "header_attachment_id": "MEDIA_OK"},
+            True,
+            "no las dos",
+        ),
+        # Una plantilla sin encabezado no lleva foto.
+        (FOLLOWUP, {"header_order_photo_id": ORDER_ID}, True, "encabezado"),
+    ],
+)
+def test_rejects_wrong_order_photo_combinations_without_sending(
+    client_and_vault, template_name, extra, write_file, detail
+):
+    client, vault = client_and_vault
+    data = _with_order_photo(vault, write_file=write_file)
+    data["outbound_media"] = _with_uploaded_photo()["outbound_media"]
+    _write_metadata(vault, "wa_57310", data)
+
+    variables = (
+        {"order_reference": "#169"} if template_name == ORDER_READY else {"followup_message": "hola"}
+    )
+    upload_mock = AsyncMock()
+    send_mock = AsyncMock()
+    with (
+        patch("src.platform.media.store.WORKSPACE_VAULT_DIR", vault),
+        patch("src.plugins.chats.api.handoff.upload_media", new=upload_mock),
+        patch("src.plugins.chats.api.handoff.send_template_to_session", new=send_mock),
+    ):
+        res = client.post(
+            "/api/dashboard/sessions/wa_57310/template-messages",
+            json={"template_name": template_name, "variables": variables, **extra},
+        )
+
+    assert res.status_code == 422, res.text
+    assert detail in res.json()["detail"]
+    upload_mock.assert_not_awaited()
+    send_mock.assert_not_awaited()

@@ -31,6 +31,10 @@ from src.platform.media import (
     is_safe_segment as is_safe_segment,
     media_url_for as media_url_for,
     persist_outbound_image as persist_outbound_image,
+    # Archivo de media de la sesión → Path (o None), con guardas anti
+    # path-traversal: chats lee la foto del pedido que subió Órdenes para
+    # mandarla como encabezado de plantilla.
+    resolve_media_file as resolve_media_file,
 )
 
 # Upload de bytes a WhatsApp Cloud API (POST /{phone_id}/media → media_id).

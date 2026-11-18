@@ -145,6 +145,10 @@ vi.mock("@plugins/chats/frontend/entities/order-ref", () => ({
   }),
   useOrderRefDetail: (orderId: string | null, opts?: { enabled?: boolean }) =>
     orderDetailMock(orderId, opts),
+  // El modal «Reactivar conversación» se llena con el pedido; acá sin pedidos.
+  useCustomerOrders: () => ({ data: undefined }),
+  useOrderRefPhoto: () => ({ data: undefined }),
+  ORDER_REF_STATUS_META: {},
 }));
 
 function makeWrapper() {
