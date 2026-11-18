@@ -17,6 +17,7 @@ def test_mediakit_reexports_media_store():
     assert kit.persist_outbound_image is impl.persist_outbound_image
     assert kit.media_url_for is impl.media_url_for
     assert kit.is_safe_segment is impl.is_safe_segment
+    assert kit.resolve_media_file is impl.resolve_media_file
 
 
 def test_mediakit_reexports_whatsapp_media_upload():
