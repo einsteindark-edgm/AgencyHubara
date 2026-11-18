@@ -185,6 +185,43 @@ describe("ReactivateConversationModal · plantilla con foto", () => {
     );
   });
 
+  it("previews the photo with a data: URL when it uploads the original file", async () => {
+    compressMock.mockRejectedValue(new Error("no se pudo decodificar"));
+    uploadMock.mockResolvedValue({ ok: true, attachment_id: "MEDIA_OK", media_ref: "/m.jpg" });
+    openPhotoTemplate();
+    pickPhoto();
+
+    const img = await screen.findByTestId("template-preview-photo");
+    expect(img.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
+  it("says the order number is missing when only the photo is attached", async () => {
+    uploadMock.mockResolvedValue({ ok: true, attachment_id: "MEDIA_OK", media_ref: "/m.jpg" });
+    render(<ReactivateConversationModal chatId="wa_573001234567" onClose={() => {}} />);
+    fireEvent.change(screen.getByLabelText(/plantilla/i), {
+      target: { value: "order_ready_photo_utility_v1" },
+    });
+    pickPhoto();
+    await screen.findByText(/foto lista/i);
+
+    expect(screen.getByRole("button", { name: /enviar plantilla/i })).toBeDisabled();
+    expect(screen.getByTestId("template-missing")).toHaveTextContent(
+      /falta.*número o referencia del pedido/i,
+    );
+
+    fireEvent.change(screen.getByLabelText(/número o referencia/i), {
+      target: { value: "#169" },
+    });
+    expect(screen.queryByTestId("template-missing")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /enviar plantilla/i })).toBeEnabled();
+  });
+
+  it("says the photo is missing when only the order number is written", () => {
+    openPhotoTemplate();
+
+    expect(screen.getByTestId("template-missing")).toHaveTextContent(/falta.*foto del pedido/i);
+  });
+
   it("a failed upload shows the error and keeps sending blocked", async () => {
     uploadMock.mockRejectedValue(new Error("upload falló (HTTP 502)"));
     openPhotoTemplate();

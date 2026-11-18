@@ -16,10 +16,14 @@
  * de pedido listo de Órdenes) y el hueco de la foto en la vista previa también
  * lo abre: el `<input type="file">` nativo quedaba como texto gris sin forma de
  * botón y el operador no encontraba dónde adjuntar.
+ *
+ * Con el botón de enviar apagado, una línea dice qué falta (el número del
+ * pedido, la foto): sin ella el operador adjuntaba la foto y no entendía por
+ * qué no podía enviar.
  */
 
 import { useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
-import { compressImage } from "@/shared/lib";
+import { compressImage, previewDataUrl } from "@/shared/lib";
 import { Icon } from "@/shared/ui";
 import {
   buildTemplatePreview,
@@ -73,15 +77,6 @@ function revokeBlobUrl(url: string) {
   }
 }
 
-/** Preview del archivo sin comprimir; vacío donde no hay object URLs (jsdom). */
-function rawPreviewUrl(file: File): string {
-  try {
-    return URL.createObjectURL(file);
-  } catch {
-    return "";
-  }
-}
-
 /** Comprime la foto; si el navegador no puede (formato raro, webview viejo),
  *  sube el archivo original — el backend igual valida tipo y tamaño. */
 async function preparePhoto(file: File): Promise<{ blob: Blob; previewUrl: string }> {
@@ -89,7 +84,7 @@ async function preparePhoto(file: File): Promise<{ blob: Blob; previewUrl: strin
     const { blob, previewUrl } = await compressImage(file);
     return { blob, previewUrl };
   } catch {
-    return { blob: file, previewUrl: rawPreviewUrl(file) };
+    return { blob: file, previewUrl: await previewDataUrl(file) };
   }
 }
 
@@ -160,6 +155,18 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
   const ready =
     (selected ? isTemplateReady(selected, values) : false) &&
     (!needsPhoto || photo.status === "ready");
+  // Qué le falta al envío, en palabras del operador (sin el ejemplo "(ej. #31)").
+  const missing = selected
+    ? [
+        ...selected.variables
+          .filter((v) => !(values[v.name] ?? "").trim())
+          .map((v) => (v.description ?? v.name).replace(/\s*\(.*\)\s*$/, ""))
+          .map((label) => label.charAt(0).toLowerCase() + label.slice(1)),
+        ...(needsPhoto && photo.status !== "ready"
+          ? [photo.status === "uploading" ? "que termine de subir la foto" : "la foto del pedido"]
+          : []),
+      ]
+    : [];
 
   const resetPhoto = () => {
     photoAttempt.current += 1;
@@ -366,6 +373,11 @@ export function ReactivateConversationModal({ chatId, onClose }: Props) {
           </>
         )}
 
+        {missing.length > 0 && (
+          <p className="rt-warn" data-testid="template-missing">
+            Para enviar falta: {missing.join(" y ")}.
+          </p>
+        )}
         {sendTemplate.isError && (
           <div className="composer-err" role="alert">
             No se pudo enviar la plantilla: {apiErrorDetail(sendTemplate.error)}

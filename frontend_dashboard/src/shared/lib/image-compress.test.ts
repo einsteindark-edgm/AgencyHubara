@@ -54,4 +54,12 @@ describe("compressImage fallback (sin canvas en jsdom)", () => {
     expect(result.mime).toContain("image/");
     expect(typeof result.previewUrl).toBe("string");
   });
+
+  it("la vista previa es una URL data: (la CSP de prod bloquea imágenes blob:)", async () => {
+    const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "foto.jpg", {
+      type: "image/jpeg",
+    });
+    const result = await compressImage(file);
+    expect(result.previewUrl).toMatch(/^data:image\/jpeg;base64,/);
+  });
 });
