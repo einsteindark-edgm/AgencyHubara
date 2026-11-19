@@ -132,7 +132,14 @@ function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, toda
   };
 
   return (
-    <Modal open labelledBy={titleId} onClose={onClose} className="min-[760px]:max-w-[760px]!">
+    // Ancho en pantallas grandes: la fila de «Por producto» (producto, cantidad,
+    // precio, cliente, pedido, canal de pago) cabe sin desplazarse (2026-11-19).
+    <Modal
+      open
+      labelledBy={titleId}
+      onClose={onClose}
+      className="min-[760px]:max-w-[760px]! min-[1240px]:max-w-[1180px]!"
+    >
       <div className="flex items-start gap-3 border-b border-line bg-titlebar px-4 py-3">
         <div className="min-w-0">
           <h2 id={titleId} className="m-0 text-[15px] font-semibold">
@@ -195,6 +202,9 @@ function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, toda
           incluye lo pagado que falta entregar.
         </p>
 
+        {/* Lo que se vendió en cada pedido, justo después de las cifras (2026-11-19). */}
+        <ProductSales lines={lines} report={byProduct ?? null} />
+
         <div className="grid gap-4 min-[560px]:grid-cols-2">
           <Breakdown
             title="Por etapa"
@@ -205,8 +215,6 @@ function ExportBody({ onClose, orders, listLimit, initialRange, activeDays, toda
           <Breakdown title="Por canal" rows={report.byChannel} />
           <Breakdown title="Por ciudad" rows={report.byCity} />
         </div>
-
-        <ProductSales lines={lines} report={byProduct ?? null} />
       </div>
 
       <div className="flex justify-end gap-2 border-t border-line px-4 py-3">

@@ -61,7 +61,7 @@ import type { Order, OrderStatus, PayStatus, PayType } from "./model";
 export function toLegacyOrder(s: OrderSummary): Order {
   return {
     id: s.display_id, // "#1247" — la UI espera el formato display
-    customer: s.customer,
+    customer: s.display_customer || s.customer,
     short: s.short,
     color: s.color,
     phone: s.phone ?? "—",

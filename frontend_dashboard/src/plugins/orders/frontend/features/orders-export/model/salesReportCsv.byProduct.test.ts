@@ -75,7 +75,7 @@ function csvRows(): string[][] {
   const report = salesReport(ORDERS, RANGE);
   const byProduct = salesReportByProduct(ORDERS, LINES, RANGE);
   return salesReportCsv(report, ORDERS, RANGE, byProduct)
-    .replace(/^﻿/, "")
+    .replace(/^\uFEFF/, "")
     .split("\r\n")
     .map((line) => line.split(";"));
 }
@@ -100,6 +100,14 @@ const COLUMNS = [
   "Motivo del descuento",
   "Envío asumido por la tienda",
   "Costo del envío asumido",
+  // Los datos del pedido de cada fila (2026-11-19).
+  "Día",
+  "Ciudad",
+  "Canal",
+  "Etapa",
+  "Pago",
+  "Envío del pedido",
+  "Total del pedido",
 ];
 
 describe("salesReportCsv por producto", () => {
@@ -135,6 +143,13 @@ describe("salesReportCsv por producto", () => {
       "Cupón LUNA10",
       "Sí",
       "8000",
+      "2026-11-02",
+      "Bogotá",
+      "WhatsApp",
+      "En preparación",
+      "Pendiente",
+      "0",
+      "32000",
     ]);
   });
 

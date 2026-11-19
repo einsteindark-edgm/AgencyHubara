@@ -5,11 +5,60 @@
  * no cuadran o no trajeron sus líneas. Las cifras salen de
  * `salesReportByProduct`, las mismas que baja el CSV.
  */
+import type { ReactNode } from "react";
 import { fmtMoney } from "@/shared/lib";
-import type { OrderLinesResponse, ProductSalesReport } from "@plugins/orders/frontend/entities/order";
+import type { OrderLinesResponse, ProductSaleRow, ProductSalesReport } from "@plugins/orders/frontend/entities/order";
 import { PRODUCT_REPORT_COLUMNS } from "../model/salesReportCsv";
 
 const money = (v: number | null) => (v === null ? "" : fmtMoney(v));
+
+interface Column {
+  label: (typeof PRODUCT_REPORT_COLUMNS)[number];
+  cell: (r: ProductSaleRow) => ReactNode;
+  numeric?: boolean;
+  /** La fila tiene dato en esta columna. Sin dato en ninguna fila del rango,
+   *  la columna no se muestra (2026-11-19: sin fuente de costo, seis columnas
+   *  vacías empujaban el pedido fuera de la vista). El CSV las trae todas. */
+  has?: (r: ProductSaleRow) => boolean;
+}
+
+/** En el orden de `PRODUCT_REPORT_COLUMNS` (el que pidió el equipo). */
+const COLUMNS: Column[] = [
+  { label: "Producto", cell: (r) => r.product },
+  { label: "Producto en el catálogo (variante)", cell: (r) => r.variant, has: (r) => r.variant !== "" },
+  { label: "Cantidad", cell: (r) => r.quantity, numeric: true },
+  { label: "Costo unitario", cell: (r) => money(r.unitCost), numeric: true, has: (r) => r.unitCost !== null },
+  { label: "Precio unitario", cell: (r) => fmtMoney(r.unitPrice), numeric: true },
+  { label: "Costo total", cell: (r) => money(r.totalCost), numeric: true, has: (r) => r.totalCost !== null },
+  { label: "Venta total sin envío", cell: (r) => fmtMoney(r.saleWithoutShipping), numeric: true },
+  { label: "Ganancia", cell: (r) => money(r.profit), numeric: true, has: (r) => r.profit !== null },
+  { label: "Margen", cell: (r) => (r.margin === null ? "" : `${r.margin} %`), numeric: true, has: (r) => r.margin !== null },
+  { label: "Cliente", cell: (r) => r.customer },
+  { label: "Número de pedido", cell: (r) => r.orderId },
+  { label: "Línea de producto", cell: (r) => r.line ?? "", has: (r) => r.line !== null },
+  {
+    label: "Costo completo unitario",
+    cell: (r) => money(r.fullUnitCost),
+    numeric: true,
+    has: (r) => r.fullUnitCost !== null,
+  },
+  { label: "Canal de pago", cell: (r) => r.paymentChannel },
+  { label: "Precio de lista", cell: (r) => money(r.listPrice), numeric: true, has: (r) => r.listPrice !== null },
+  {
+    label: "Descuento",
+    cell: (r) => (r.discount ? fmtMoney(r.discount) : ""),
+    numeric: true,
+    has: (r) => r.discount > 0,
+  },
+  { label: "Motivo del descuento", cell: (r) => r.discountReason, has: (r) => r.discountReason !== "" },
+  { label: "Envío asumido por la tienda", cell: (r) => (r.storePaysShipping ? "Sí" : "No"), has: (r) => r.storePaysShipping },
+  {
+    label: "Costo del envío asumido",
+    cell: (r) => money(r.storeShippingCost),
+    numeric: true,
+    has: (r) => r.storeShippingCost !== null,
+  },
+];
 
 interface Props {
   lines: { data?: OrderLinesResponse; isLoading: boolean; isError?: boolean };
@@ -56,44 +105,7 @@ export function ProductSales({ lines, report }: Props) {
         {report.rows.length === 0 ? (
           <p className="m-0 text-xs text-fg-muted">Sin productos vendidos.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-max min-w-full text-[12px]">
-              <thead>
-                <tr className="text-[10px] uppercase tracking-wider text-fg-faint">
-                  {PRODUCT_REPORT_COLUMNS.map((c) => (
-                    <th key={c} scope="col" className="py-1 pr-3 text-left font-semibold whitespace-nowrap">
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {report.rows.map((r, i) => (
-                  <tr key={`${r.orderId}-${i}`} className="border-b border-line last:border-b-0">
-                    <td className="py-1 pr-3 text-fg-soft">{r.product}</td>
-                    <td className="py-1 pr-3">{r.variant}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{r.quantity}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{money(r.unitCost)}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{fmtMoney(r.unitPrice)}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{money(r.totalCost)}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{fmtMoney(r.saleWithoutShipping)}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{money(r.profit)}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{r.margin === null ? "" : `${r.margin} %`}</td>
-                    <td className="py-1 pr-3">{r.customer}</td>
-                    <td className="py-1 pr-3">{r.orderId}</td>
-                    <td className="py-1 pr-3">{r.line ?? ""}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{money(r.fullUnitCost)}</td>
-                    <td className="py-1 pr-3">{r.paymentChannel}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{money(r.listPrice)}</td>
-                    <td className="py-1 pr-3 text-right tabular-nums">{r.discount ? fmtMoney(r.discount) : ""}</td>
-                    <td className="py-1 pr-3">{r.discountReason}</td>
-                    <td className="py-1 pr-3">{r.storePaysShipping ? "Sí" : "No"}</td>
-                    <td className="py-1 text-right tabular-nums">{money(r.storeShippingCost)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ProductTable rows={report.rows} />
         )}
       </>
     );
@@ -104,5 +116,37 @@ export function ProductSales({ lines, report }: Props) {
       <h3 className="m-0 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">Por producto</h3>
       {body}
     </section>
+  );
+}
+
+/** Una fila por producto, agrupadas por pedido (vienen en el orden de los
+ *  pedidos); solo las columnas con algún dato en el rango. */
+function ProductTable({ rows }: { rows: ProductSaleRow[] }) {
+  const columns = COLUMNS.filter((c) => !c.has || rows.some(c.has));
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-max min-w-full text-[12px]">
+        <thead>
+          <tr className="text-[10px] uppercase tracking-wider text-fg-faint">
+            {columns.map((c) => (
+              <th key={c.label} scope="col" className="py-1 pr-3 text-left font-semibold whitespace-nowrap">
+                {c.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.orderId}-${i}`} className="border-b border-line last:border-b-0">
+              {columns.map((c) => (
+                <td key={c.label} className={`py-1 pr-3 ${c.numeric ? "text-right tabular-nums" : ""}`}>
+                  {c.cell(r)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

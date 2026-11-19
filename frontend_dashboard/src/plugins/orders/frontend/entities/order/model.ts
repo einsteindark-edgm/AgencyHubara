@@ -261,6 +261,16 @@ export interface ProductSaleRow {
   /** Lo que pagó la tienda por el envío gratis: solo en la primera fila del
    *  pedido, para que la columna sume una vez por pedido. */
   storeShippingCost: number | null;
+  /* Datos del pedido de la fila (2026-11-19): «qué compró cada pedido» en
+   * una sola tabla. */
+  day: string;
+  city: string;
+  channel: string;
+  status: OrderStatus;
+  payStatus: PayStatus;
+  /** Envío y total del pedido: solo en su primera fila, como el envío asumido. */
+  orderShipping: number | null;
+  orderTotal: number | null;
 }
 
 export interface ProductLineTotals {
@@ -361,6 +371,13 @@ export function salesReportByProduct(
         discountReason: discountReasonOf(it),
         storePaysShipping,
         storeShippingCost: storePaysShipping && i === 0 ? (o.storeShippingCost ?? null) : null,
+        day: orderDayIso(o),
+        city: o.city,
+        channel: o.channel,
+        status: o.status,
+        payStatus: o.payStatus,
+        orderShipping: i === 0 ? (o.shipping ?? 0) : null,
+        orderTotal: i === 0 ? o.total : null,
       });
     });
   }
