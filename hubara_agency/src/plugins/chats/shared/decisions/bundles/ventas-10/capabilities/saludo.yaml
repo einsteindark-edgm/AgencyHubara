@@ -1,0 +1,59 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# ¿Hace falta la burbuja de bienvenida (la hora del día y la marca)? Solo en el
+# primer contacto y si el turno le manda algo al cliente (eso lo sabe el
+# código); Jev contesta si alguno de los textos que el cliente recibe ya saluda
+# con la hora Y nombra a la tienda. Valor: true = la burbuja sale.
+#
+# Saludo v2 (ventas-8, informe de huecos del 2026-11-03):
+#   - APE-01: la pregunta de ventas-7 («¿ya saluda: buenos días, hola,
+#     bienvenida?») daba por saludado un «¡Hola!», y la burbuja con la hora y la
+#     marca no salía. Ahora un «hola» o una bienvenida sin la hora y sin la marca
+#     no bastan.
+#   - El primer contacto de verdad es «la tienda nunca escribió»
+#     (`hours_since_store == null`, la misma cuenta de la vista `reply_gap`):
+#     si la tienda ya le escribió (una campaña, un colega, otro episodio) no
+#     hay burbuja de bienvenida.
+# Sin Jev decide la regla de hoy (`first_contact_greeting`).
+capability: saludo
+value: bool
+input: GreetingCheck
+rule: {builtin: first_contact_greeting}
+state: {builtin: greeting_texts}
+questions:
+  - id: egreso.saludo_hora_marca
+    kind: noul
+    text: "¿Alguno de estos mensajes ya saluda al cliente con la hora del día (buenos días, buenas tardes o buenas noches) Y nombra a la tienda, Hubara?"
+    criteria:
+      "true": "sí: uno de los mensajes saluda con la hora del día y nombra a Hubara"
+      "false": "no: ninguno lo hace (solo «hola», una bienvenida sin la hora, o no nombra a Hubara)"
+thresholds: {"yes": 0.85, "no": 0.15}
+decide:
+  # La tienda ya le escribió: no es un primer contacto (no hay burbuja).
+  - when: "inp.hours_since_store != null"
+    then: false
+  - when: "!('egreso.saludo_hora_marca' in p)"
+    then: doubt
+  - when: "p['egreso.saludo_hora_marca'] >= th['yes']"
+    then: false
+  - when: "p['egreso.saludo_hora_marca'] <= th['no']"
+    then: true
+  - otherwise: doubt
+floor: {builtin: jev}
+same: {builtin: bool_eq}
+examples:
+  # Sonda con Jev real (jev-v5, textos sintéticos, 2026-11-03): «¡Hola! ¿En qué te ayudo?»,
+  # «¡Hola! Bienvenido a Hubara» y «¡Buenas noches! ¿Qué buscas?» 0,04–0,05 (la burbuja
+  # sale); la hora con Hubara 0,98–0,99.
+  - {answers: {egreso.saludo_hora_marca: 0.85}, expect: false}
+  # «¡Hola! ¿En qué te ayudo?»: saluda, pero sin la hora ni la marca → la burbuja sale.
+  - {answers: {egreso.saludo_hora_marca: 0.15}, expect: true}
+  - {answers: {egreso.saludo_hora_marca: 0.5}, expect: doubt}
+  # Sin respuesta (premortem 2026-10-02: un ejemplo por fila).
+  - {answers: {}, expect: doubt}
+  # La tienda ya le escribió hace 30 horas (una campaña): no es primer contacto.
+  - {answers: {egreso.saludo_hora_marca: 0.10}, input: {hours_since_store: 30}, expect: false}
+  # Le escribió en esta misma hora (un colega antes del bot): tampoco.
+  - {answers: {}, input: {hours_since_store: 0}, expect: false}
+  # Nunca escribió: decide la respuesta de Jev.
+  - {answers: {egreso.saludo_hora_marca: 0.10}, input: {hours_since_store: null}, expect: true}

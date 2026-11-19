@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# Saludo v2 fuera del primer contacto (ventas-8, APE-04). Informe de huecos del
+# 2026-11-03: al cliente que vuelve (primer turno de su segundo episodio) el
+# modelo le escribía «Buenos días. Bienvenido a *Hubara*, velas artesanales…»,
+# la bienvenida de quien escribe por primera vez. La burbuja no salía (el
+# código ya sabe que no es primer contacto): lo escribía el modelo y nadie lo
+# revisaba.
+#
+# Solo cuando la tienda ya le había escrito (`hours_since_store`, la cuenta de
+# la vista `reply_gap`) o el turno no es un primer contacto. La regla de
+# palabras (frases del paquete) PROPONE las oraciones que dan la bienvenida;
+# Jev dice si le presentan la tienda como si fuera la primera vez, y esas se
+# quitan. Sin Jev no revisa (`constant_empty`: el texto sale igual).
+# Valor: el texto que sale; "" = sale igual.
+capability: saludo_repetido
+value: string
+input: OutgoingText
+# Las frases son de la tienda: un falso positivo, o algo que se escapa, se
+# corrige aquí con otra frase en una versión nueva del paquete, no en el código.
+items:
+  builtin: phrase_sentences
+  with:
+    frases: "bienvenid*, velas artesanales hechas, somos hubara"
+rule: {builtin: constant_empty}
+state:
+  builtin: numbered_items
+  with:
+    header: >-
+      La tienda ya le había escrito a este cliente: vuelve otro día, contesta un mensaje
+      de la tienda o sigue la conversación. Mensaje que la tienda le va a enviar por
+      WhatsApp, oración por oración:
+    max: 12
+each:
+  id: "saludo_repetido.{n}"
+  kind: noul
+  when: "item.hit && (!inp.first_contact || inp.hours_since_store != null)"
+  text: "¿La oración [{n}] le da la bienvenida a la tienda o le presenta la tienda (quiénes somos, qué hacemos) como si fuera la primera vez que escribe?"
+  criteria:
+    "true": "sí: le da la bienvenida o le presenta la tienda"
+    "false": "no: lo saluda, le agradece o le habla de otra cosa"
+thresholds: {"yes": 0.85}
+vars:
+  # Las oraciones que se quitan: Jev, seguro, dice que presentan la tienda.
+  drop: "items.filter(i, i.hit && has(i.p) && i.p >= th['yes'])"
+decide:
+  # Jev no contestó: decide la regla (el texto sale igual).
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - when: "size(vars.drop) == 0"
+    then: ""
+  # Todo el mensaje es la bienvenida: sale igual (nunca un cliente sin respuesta).
+  - when: "size(vars.drop) == size(items)"
+    then: ""
+  - otherwise: {expr: "items.filter(i, !(i.hit && has(i.p) && i.p >= th['yes'])).map(i, i.text).join(' ')"}
+floor: {builtin: jev}
+same: {builtin: text_eq}
+examples:
+  # Sonda con Jev real (jev-v5, textos sintéticos, 2026-11-03): la bienvenida con la
+  # propuesta de valor, sola o en la misma oración que «Buenos días», 0,91; «¡Qué bueno
+  # tenerte de vuelta! Bienvenida de nuevo» 0,44 (sale igual).
+  # El caso del informe (sintético): el primer turno del segundo episodio.
+  - items:
+      - {text: "Buenos días.", hit: false}
+      - {text: "Bienvenido a *Hubara*, velas artesanales hechas a base de cera de palma.", hit: true, p: 0.95}
+      - {text: "¿Buscas algo para regalar o para tu casa?", hit: false}
+    input: {first_contact: false}
+    expect: "Buenos días. ¿Buscas algo para regalar o para tu casa?"
+  # «Qué bueno tenerte de vuelta, bienvenida de nuevo»: un saludo cálido, no una presentación.
+  - items:
+      - {text: "¡Qué bueno tenerte de vuelta, bienvenida de nuevo!", hit: true, p: 0.10}
+      - {text: "¿Seguimos con tu pedido?", hit: false}
+    input: {first_contact: false}
+    expect: ""
+  # Borde de la certeza: 0,85 quita; 0,84 queda.
+  - items:
+      - {text: "Bienvenido a Hubara.", hit: true, p: 0.85}
+      - {text: "Bienvenida otra vez a Hubara.", hit: true, p: 0.84}
+      - {text: "¿Te muestro el catálogo?", hit: false}
+    input: {first_contact: false}
+    expect: "Bienvenida otra vez a Hubara. ¿Te muestro el catálogo?"
+  # Todo el mensaje es la bienvenida: sale igual.
+  - items: [{text: "¡Bienvenido a Hubara!", hit: true, p: 0.95}]
+    input: {first_contact: false}
+    expect: ""
+  # Jev no contestó.
+  - items: [{text: "Bienvenido a Hubara.", hit: true}, {text: "¿Te ayudo?", hit: false}]
+    input: {first_contact: false}
+    expect: doubt

@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# La regla de hoy propone los términos que el cliente pide y no existen; por
+# cada uno, «¿es algo que el cliente pide o muestra?». Jev solo QUITA
+# candidatos falsos (una ciudad, una fecha, una persona), y solo con certeza;
+# nunca inventa un término (piso: lo de la regla, en su orden).
+# Dominio (F5): «material» no es producto (falso en zapatos), «envase».
+capability: fuera_de_catalogo
+value: "list<string>"
+input: PedidoDelCliente
+items: {builtin: unavailable_term_items}
+rule: {builtin: unavailable_terms_rule}
+state: {builtin: customer_order_text}
+each:
+  id: "fuera_de_catalogo.termino_{n}"
+  kind: noul
+  text: "En el mensaje, ¿«{term}» es algo que el cliente pide o muestra: un producto, una forma, un envase, un tamaño o un diseño?"
+  criteria:
+    "true": "sí, lo pide o lo muestra"
+    "false": "no: es otra cosa (un lugar, una fecha, una persona, un medio de pago, un material o una forma de hablar)"
+thresholds: {"no": 0.15}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, !has(i.p) || i.p > th['no']).map(i, i.term)"}
+floor: {builtin: rule_order_subset}
+same: {builtin: tuple_eq}
+examples:
+  - {items: [{term: cartagena, p: 0.05}, {term: vaso, p: 0.9}], expect: [vaso]}
+  - {items: [{term: cartagena, p: 0.16}, {term: vaso}], expect: [cartagena, vaso]}
+  - {items: [{term: vaso}], expect: doubt}

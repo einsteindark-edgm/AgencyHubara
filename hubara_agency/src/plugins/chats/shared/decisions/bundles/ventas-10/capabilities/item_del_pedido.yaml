@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿A cuál producto del pedido van estos datos?» (aroma/color/diseño sin
+# producto en un pedido de varios). Solo se pregunta cuando dos o más
+# productos los aceptan (ahí la regla se queda con el ítem en curso sin mirar
+# lo que dijo el cliente); Jev solo elige entre ellos.
+# Dominio (F5): los campos aroma/color/diseño son de velas.
+capability: item_del_pedido
+value: "{item: int, producto: string}"
+input: DatoDelItem
+rule: {builtin: order_item_for_values}
+state: {builtin: order_item_data}
+questions:
+  - id: item.cual
+    kind: choice
+    text: "¿A cuál producto del pedido van estos datos?"
+    options: {builtin: accepting_items}
+    criteria:
+      "ambiguo": "podría ser de más de uno de estos productos"
+      "ninguno": "de ninguno de estos productos"
+thresholds: {"choice": 0.8}
+decide:
+  - when: "!('item.cual' in choice) || conf['item.cual'] < th['choice'] || choice['item.cual'] == 'ambiguo' || choice['item.cual'] == 'ninguno'"
+    then: doubt
+  - when: "choice['item.cual'] in opt['item.cual']"
+    then: {expr: "opt['item.cual'][choice['item.cual']]"}
+  - otherwise: doubt
+floor: {builtin: jev}
+same:
+  builtin: key_eq
+  with: {key: item}
+examples:
+  - {answers: {item.cual: {choice: item_2, p: 0.8}}, options: {item.cual: {item_2: {item: 1, producto: Velón}}}, expect: {item: 1, producto: Velón}}
+  - {answers: {item.cual: {choice: ninguno, p: 0.9}}, expect: doubt}
+  - {answers: {item.cual: {choice: item_3, p: 0.9}}, options: {item.cual: {item_2: {item: 1, producto: Velón}}}, expect: doubt}

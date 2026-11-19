@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿La oración cotiza el precio de un producto?» (tool del checkout). Valor:
+# las oraciones que cotizan un producto; pierden el contexto de política y
+# sus montos se cruzan contra el catálogo. La regla de hoy no marca ninguna:
+# Jev solo puede hacer el chequeo más estricto. La cuenta sigue en código.
+# Dominio (F5): «pago contra entrega» es de Colombia.
+capability: monto
+value: "tuple<string>"
+input: OracionesPrecio
+items:
+  builtin: items_of
+  with: {field: sentences}
+rule: {builtin: no_items}
+state:
+  builtin: numbered_items
+  with: {header: "Oraciones que la tienda le escribió a un cliente por WhatsApp:", max: 12}
+each:
+  id: "monto.{n}"
+  kind: noul
+  text: "¿La oración [{n}] le dice al cliente el precio de un producto (por unidad o por cantidad)? No cuenta si es un total con envío, un mínimo para el pago contra entrega, una tarifa de envío o lo que le falta para un mínimo."
+  criteria:
+    "true": "sí"
+    "false": "no"
+thresholds: {"yes": 0.85}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, has(i.p) && i.p >= th['yes']).map(i, i.text)"}
+floor: {builtin: jev}
+same: {builtin: set_eq}
+examples:
+  - {items: [{text: "El Cubo Love vale $45.000.", p: 0.9}, {text: "El envío cuesta $12.900.", p: 0.1}], expect: [El Cubo Love vale $45.000.]}
+  - {items: [{text: "El Cubo Love vale $45.000.", p: 0.84}], expect: []}
+  - {items: [{text: "El Cubo Love vale $45.000."}], expect: doubt}

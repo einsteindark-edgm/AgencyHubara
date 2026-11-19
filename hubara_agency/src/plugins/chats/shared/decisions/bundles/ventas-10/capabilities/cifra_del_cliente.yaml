@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿La respuesta le da la razón al cliente en una cifra suya que no es la de
+# su pedido?» (laboratorio del 2026-10-14, Jev real): «1 cuadrada + 1 ondulada
+# me da $45.000, ¿no?» (suma $47.500). ventas-6 contestó una vez «Sí, las dos
+# suman $45.000» y ventas-7 «Así es: … $47.500». `precio_ajeno` no lo ve:
+# $45.000 es 2 × $22.500 y el mínimo de contra entrega, y en el segundo no hay
+# un monto falso (el error es el «Así es»). La regla propone las cifras del
+# mensaje del cliente que no son ninguna de las de su pedido (precios, líneas,
+# subtotal, con envío, el total registrado: `fact_rules.customer_figures`; sin
+# pedido anotado, los precios de los productos de la charla y sus sumas con uno
+# de cada uno); Jev, por cada una, lee el mensaje del cliente y la respuesta y
+# dice si le da la razón. Solo QUITA, y solo con certeza. Lo pide `send_reply`
+# (y las tarjetas) antes de enviar, con las demás decisiones de los hechos.
+capability: cifra_del_cliente
+value: "list<string>"
+input: CifraDelCliente
+items: {builtin: customer_figure_items}
+# La regla no lee la respuesta: sin Jev no se retiene nada (en `reglas` y en
+# sombra decide `no_items`; en sombra Jev contesta al lado y se mide).
+rule: {builtin: no_items}
+state: {builtin: customer_and_reply_facts}
+each:
+  id: "cifra_del_cliente.termino_{n}"
+  kind: noul
+  text: "El cliente escribió «{term}». ¿La respuesta le contesta que sí a que su pedido suma o cuesta eso? Lo cierto: {fact}."
+  criteria:
+    "true": "sí: le contesta «sí», «así es», «correcto» o «exacto» a que su pedido suma esa cifra, o la repite como lo que suma su pedido; cuenta aunque después dé otro número, porque el cliente lee el «sí»"
+    "false": "no: le contesta «casi» o «no», o le explica la cuenta sin decirle que sí; o el cliente hablaba de otra cosa (un mínimo, una tarifa de envío, un abono o un presupuesto) y el «sí» contesta eso"
+# Sonda con Jev real (2026-10-14, frases sintéticas, 2-3 veces cada una):
+# - «¿le da la razón en esa cifra?» confirmaba «el mínimo es $45.000» (0,93) y un abono (0,8).
+# - «El cliente dice que su pedido suma X. ¿La respuesta le dice que sí?» dejaba pasar «Sí, las
+#   dos suman $47.500» (0,22–0,34): Jev leía ese «sí» como del $47.500.
+# - Esta, que nombra el «sí» que lee el cliente y el «sí» que contesta otra cosa, con la pista
+#   «una de cada una suma…» sin pedido anotado: 34 de 34. Le da la razón 0,61–0,97; no se la da
+#   0,03–0,26 (lo más alto: «el envío nacional arranca en $16.940» a «¿sale en 16.000?»).
+# Un aviso falso cuesta un reenvío del mismo texto.
+thresholds: {"no": 0.35}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, !has(i.p) || i.p > th['no']).map(i, i.term)"}
+floor: {builtin: jev}
+same: {builtin: tuple_eq}
+examples:
+  # El laboratorio: «Así es: … $47.500» le da la razón en los $45.000.
+  - {items: [{term: "$45.000", fact: x, p: 0.92}], expect: ["$45.000"]}
+  # «Casi: … serían $47.500»: no se la da, Jev lo quita.
+  - {items: [{term: "$45.000", fact: x, p: 0.05}], expect: []}
+  # Borde de la certeza: 0,35 quita; 0,36 queda.
+  - {items: [{term: a, fact: x, p: 0.35}, {term: b, fact: x, p: 0.36}], expect: [b]}
+  # Lo que Jev no contestó queda (lo propuso la regla).
+  - {items: [{term: a, fact: x, p: 0.9}, {term: b, fact: x}], expect: [a, b]}
+  - {items: [{term: a, fact: x}], expect: doubt}

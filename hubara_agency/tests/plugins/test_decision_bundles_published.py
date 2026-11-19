@@ -58,6 +58,10 @@ PUBLISHED = {
     # el cliente, por mensaje, para el informe de estrategia; 2026-11-10). Nace
     # apagada y su valor no entra a las lecturas del ingest (test_decisions_ventas_9.py).
     "ventas-9@9": "c5915e487bf1062e6fc0e74f3bc88f8465b797716a49dbd5c9ba1dac05b30e7e",
+    # ventas-9 con una decisión nueva que solo anota: `datos_por_mayor` (qué datos ya
+    # dio el cliente al relevar un pedido al por mayor y si pidió una persona;
+    # tarjeta 34 del ciclo). Nace apagada y el relevo no cambia (test_decisions_ventas_10.py).
+    "ventas-10@10": "e32f6f94ca8e48422a44d9282df3cde7aff91474e9d360dd2662d195b0421721",
     "centinela@1": "59200ee02051d7867a113259a44b396be8ae448c7cec88c2dd61e0f7767285ef",
     "operador@1": "136c79489136666aa6632bfee8c86329d2f04b5e29929e2cdaace15bd4434f26",
     "operador-2@2": "a48b58350cda620ec8f5db0b8b6676d80174cb429f5f8ed2cebcdd3d164d413b",

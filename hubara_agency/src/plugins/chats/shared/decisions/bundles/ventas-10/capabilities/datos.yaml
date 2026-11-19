@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=../../../../../../../../schemas/decision-capability.schema.json
+#
+# «¿El cliente dio este dato?», uno por dato de envío o de pago que el LLM
+# quiere guardar. Lo que está en las palabras del cliente se guarda sin
+# preguntar (`ask: false`); los datos personales nunca van en la pregunta
+# (Jev los ve tapados). Solo bloquea con certeza alta: si Jev duda, el dato
+# se guarda. Valor: los campos que NO se guardan.
+# Dominio (F5): cédula, barrio y las etiquetas de los datos son de Colombia.
+capability: datos
+value: "tuple<string>"
+input: DatosDelPedido
+items: {builtin: order_slot_values}
+rule: {builtin: no_items}
+state: {builtin: conversation_for_slots}
+each:
+  id: "datos.{slot}"
+  kind: noul
+  when: "item.ask"
+  text:
+    - {when: "item.personal", text: "¿El cliente dio en la conversación el dato «{label}», con sus palabras o confirmándolo cuando se lo preguntaron? Los datos personales aparecen tapados, como [nombre], [dirección] o [teléfono]."}
+    - {otherwise: "¿El cliente dio este dato en la conversación, con sus palabras o confirmándolo cuando se lo preguntaron? {label}: «{value}»"}
+  criteria:
+    "true": "sí"
+    "false": "no"
+thresholds: {"no": 0.15}
+decide:
+  - when: "!items.exists(i, has(i.p))"
+    then: doubt
+  - otherwise: {expr: "items.filter(i, has(i.p) && i.p <= th['no']).map(i, i.slot)"}
+floor: {builtin: jev}
+same: {builtin: set_eq}
+examples:
+  - {items: [{slot: ciudad, value: Cali, ask: true, p: 0.15}, {slot: metodo_pago, value: contra entrega, ask: true, p: 0.9}], expect: [ciudad]}
+  - {items: [{slot: ciudad, value: Cali, ask: true, p: 0.16}], expect: []}
+  - {items: [{slot: ciudad, value: Cali, ask: true}], expect: doubt}

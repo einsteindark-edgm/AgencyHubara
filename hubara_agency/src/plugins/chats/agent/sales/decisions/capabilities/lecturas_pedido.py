@@ -213,6 +213,16 @@ class PedidoPorMayor:
 
 
 @dataclass(frozen=True)
+class RelevoPorMayor:
+    """El asesor ya pasó al equipo un pedido al por mayor, un pedido grande o
+    un evento de empresa: lo último de la charla con su nota para el colega
+    (`charla`). Capacidad `datos_por_mayor` (tarjeta 34 del ciclo): qué datos
+    ya había dado el cliente y si pidió una persona. Solo anota."""
+
+    charla: str
+
+
+@dataclass(frozen=True)
 class CajaNombrada:
     """El asesor va a anotar un producto que se cobra por caja (`producto`,
     `por_caja`) y el cliente nombró el tamaño de la caja de otro (`otro`,
