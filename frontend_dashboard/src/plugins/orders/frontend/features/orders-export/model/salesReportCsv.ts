@@ -1,12 +1,16 @@
 /**
  * El CSV del reporte de ventas (tarjeta del ciclo #18): el resumen con las
- * mismas cifras que se ven en pantalla y, debajo, una fila por pedido del
- * rango (sin pedidos de prueba), para que el equipo pueda revisar la cuenta.
- * Montos en pesos enteros, sin formato: Excel los suma.
+ * mismas cifras que se ven en pantalla y una fila por pedido del rango (sin
+ * pedidos de prueba), para que el equipo pueda revisar la cuenta. Montos en
+ * pesos enteros, sin formato: Excel los suma.
  *
- * Con el reporte por producto (tarjeta del ciclo #49), debajo va una tabla
- * con una fila por producto vendido, las columnas en el orden que pidió el
- * equipo y el aviso de las celdas sin fuente (vacías, nunca un cero).
+ * Con el reporte por producto (tarjeta del ciclo #49): una tabla con una fila
+ * por producto vendido, las columnas en el orden que pidió el equipo y el
+ * aviso de las celdas sin fuente (vacías, nunca un cero).
+ *
+ * Orden (2026-11-19, el operador no encontraba los productos de cada pedido):
+ * resumen → por producto (cada fila con los datos de su pedido) → por pedido
+ * (con la columna «Productos»: qué compró cada uno).
  */
 import { isInDateRange, toCsv, type CsvCell, type DateRange } from "@/shared/lib";
 import {
@@ -45,6 +49,28 @@ export const PRODUCT_REPORT_COLUMNS = [
   "Costo del envío asumido",
 ] as const;
 
+/** Datos del pedido de cada fila, después de las columnas del equipo (solo
+ *  en el CSV: en pantalla la fila ya dice su número de pedido). */
+const PRODUCT_ORDER_COLUMNS = [
+  "Día",
+  "Ciudad",
+  "Canal",
+  "Etapa",
+  "Pago",
+  "Envío del pedido",
+  "Total del pedido",
+] as const;
+
+/** «2 × Vela Luna (Lavanda) + 1 × Vela Sol»: lo que compró cada pedido. */
+function productsByOrder(byProduct: ProductSalesReport | undefined): Map<string, string> {
+  const parts = new Map<string, string[]>();
+  for (const r of byProduct?.rows ?? []) {
+    const label = `${r.quantity} × ${r.product}${r.variant ? ` (${r.variant})` : ""}`;
+    parts.set(r.orderId, [...(parts.get(r.orderId) ?? []), label]);
+  }
+  return new Map([...parts].map(([id, labels]) => [id, labels.join(" + ")]));
+}
+
 function productRows(byProduct: ProductSalesReport): CsvCell[][] {
   const empty = (v: number | string | null): CsvCell => v ?? "";
   const rows: CsvCell[][] = [[], ["Por producto"], ["Venta total sin envío", byProduct.sales]];
@@ -53,7 +79,7 @@ function productRows(byProduct: ProductSalesReport): CsvCell[][] {
     rows.push([`Las líneas del pedido ${m.orderId} no cuadran con su valor sin envío`, m.difference]);
   }
   for (const id of byProduct.ordersWithoutLines) rows.push([`Pedido ${id} sin detalle de productos`]);
-  rows.push([...PRODUCT_REPORT_COLUMNS]);
+  rows.push([...PRODUCT_REPORT_COLUMNS, ...PRODUCT_ORDER_COLUMNS]);
   for (const r of byProduct.rows) {
     rows.push([
       r.product,
@@ -75,6 +101,13 @@ function productRows(byProduct: ProductSalesReport): CsvCell[][] {
       r.discountReason,
       r.storePaysShipping ? "Sí" : "No",
       empty(r.storeShippingCost),
+      r.day,
+      r.city,
+      r.channel,
+      ORDER_STATUS_META[r.status].label,
+      PAY_STATUS_META[r.payStatus].label,
+      empty(r.orderShipping),
+      empty(r.orderTotal),
     ]);
   }
   if (byProduct.byLine.length > 0) {
@@ -109,9 +142,14 @@ export function salesReportCsv(
     ["Contra entrega", report.byPayType.cod.orders, report.byPayType.cod.sales],
     ["Pago confirmado", report.byPayType.confirmed.orders, report.byPayType.confirmed.sales],
     ["Cancelados", report.cancelled.orders, report.cancelled.sales],
-    [],
-    ["Pedido", "Día", "Cliente", "Ciudad", "Canal", "Etapa", "Pago", "Modalidad", "Total", "Envío"],
   ];
+  if (byProduct) rows.push(...productRows(byProduct));
+  const products = productsByOrder(byProduct);
+  rows.push(
+    [],
+    ["Por pedido"],
+    ["Pedido", "Día", "Cliente", "Ciudad", "Canal", "Etapa", "Pago", "Modalidad", "Total", "Envío", "Productos"],
+  );
   const inPeriod = orders.filter((o) => countsInStats(o) && isInDateRange(orderDayIso(o), range));
   for (const o of inPeriod) {
     rows.push([
@@ -125,8 +163,8 @@ export function salesReportCsv(
       PAY_TYPE_LABEL[o.payType],
       o.total,
       o.shipping ?? 0,
+      products.get(o.id) ?? "",
     ]);
   }
-  if (byProduct) rows.push(...productRows(byProduct));
   return toCsv(rows);
 }

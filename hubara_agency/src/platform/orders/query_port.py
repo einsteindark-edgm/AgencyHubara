@@ -176,6 +176,11 @@ class OrderSummaryDTO:
     # Barrio de entrega (`shipping_address.address_2`, donde lo guarda el
     # formulario). Con `city`, es el "dónde compran" de Ads (2026-10-23).
     neighborhood: str | None = None
+    # Nombre que muestra el panel (Orders y el reporte de ventas, 2026-11-19):
+    # el del cliente si es real; si es el relleno con el que el bot crea al
+    # cliente («Cliente WhatsApp»), el de quien recibe en la dirección de
+    # envío. `customer` no cambia: lo leen el saludo de ETA y los facts.
+    display_customer: str = ""
 
 
 @dataclass(frozen=True)

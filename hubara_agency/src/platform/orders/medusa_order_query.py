@@ -391,6 +391,7 @@ class MedusaOrderQuery:
 
         # ---- nombre del cliente ----
         customer_name = _customer_name(customer, shipping_addr, raw.get("email"))
+        display_customer = _display_customer(customer, shipping_addr, customer_name)
 
         # ---- channel ----
         source = (metadata.get("source") or "").lower()
@@ -516,7 +517,7 @@ class MedusaOrderQuery:
             id=order_id,
             display_id=display,
             customer=customer_name,
-            short=_initials(customer_name),
+            short=_initials(display_customer),
             color=_color_from_id(order_id),
             phone=shipping_addr.get("phone"),
             city=shipping_addr.get("city"),
@@ -544,6 +545,7 @@ class MedusaOrderQuery:
                 read_real_shipping_cost(metadata) if read_free_shipping(metadata) is not None else None
             ),
             neighborhood=shipping_addr.get("address_2"),
+            display_customer=display_customer,
         )
 
     def _build_detail(
@@ -822,6 +824,33 @@ def _customer_name(
     if email:
         return email
     return "Cliente sin nombre"
+
+
+# Nombres de relleno: el bot crea al cliente (y, en pedidos viejos sin
+# `receiver_name`, también la dirección) como «Cliente WhatsApp»
+# (`medusa_order.py`); «Cliente sin nombre» es el último recurso de arriba.
+_PLACEHOLDER_NAMES = frozenset({"cliente whatsapp", "cliente sin nombre", "cliente"})
+
+
+def _full_name(person: dict[str, Any]) -> str:
+    return " ".join(
+        s.strip() for s in (person.get("first_name"), person.get("last_name"))
+        if isinstance(s, str) and s.strip()
+    )
+
+
+def _display_customer(
+    customer: dict[str, Any] | None,
+    shipping_addr: dict[str, Any] | None,
+    fallback: str,
+) -> str:
+    """Nombre para el panel: el del cliente si es real; si es el relleno del
+    bot, el de quien recibe (formulario de envío); si ninguno es real, lo que
+    ya se mostraba (`fallback`)."""
+    for name in (_full_name(customer or {}), _full_name(shipping_addr or {})):
+        if name and name.lower() not in _PLACEHOLDER_NAMES:
+            return name
+    return fallback
 
 
 def _initials(name: str) -> str:

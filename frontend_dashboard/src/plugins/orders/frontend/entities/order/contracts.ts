@@ -34,6 +34,9 @@ export const orderSummarySchema = z.object({
   id: z.string(),
   display_id: z.string(),
   customer: z.string(),
+  // Nombre para el panel (2026-11-19): el de quien compró cuando `customer` es
+  // el relleno «Cliente WhatsApp». Opcional: un backend viejo no lo manda.
+  display_customer: z.string().optional(),
   short: z.string(),
   color: orderColorSchema,
   phone: z.string().nullable(),

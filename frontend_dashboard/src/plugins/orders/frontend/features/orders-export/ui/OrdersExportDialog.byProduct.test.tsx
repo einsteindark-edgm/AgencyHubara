@@ -113,20 +113,16 @@ describe("Reporte de ventas: por producto", () => {
 
     const section = screen.getByRole("region", { name: "Por producto" });
     const headers = within(section).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(headers.slice(0, 14)).toEqual([
+    // En el orden pedido; sin fuente de costo, la pantalla no muestra las
+    // columnas que quedarían vacías (2026-11-19). El CSV sí las trae.
+    expect(headers).toEqual([
       "Producto",
       "Producto en el catálogo (variante)",
       "Cantidad",
-      "Costo unitario",
       "Precio unitario",
-      "Costo total",
       "Venta total sin envío",
-      "Ganancia",
-      "Margen",
       "Cliente",
       "Número de pedido",
-      "Línea de producto",
-      "Costo completo unitario",
       "Canal de pago",
     ]);
     const row = within(section).getByRole("row", { name: /Vela Luna/ });
