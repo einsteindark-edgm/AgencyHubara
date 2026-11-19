@@ -46,6 +46,10 @@ variable "tenants" {
     # Auth / Cognito
     callback_urls = list(string) # URLs de redirect OAuth (https://dashboard.<tenant>...)
     logout_urls   = list(string)
+    # Pasa el login web a managed login (v2) — requisito del `aud` del Agent Gateway.
+    # Cambia la pantalla de login: activarlo a propósito y correr enseguida
+    # infra/scripts/cognito-managed-login-branding.sh (ADR 2026-10-14-agent-gateway-auth).
+    managed_login = optional(bool, false)
 
     # Operación
     enabled_plugins = optional(string, "ads,agents_admin,catalog,chats,eta,orders,system_map")

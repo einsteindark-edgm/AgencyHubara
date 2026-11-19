@@ -1,0 +1,77 @@
+{
+  "type": "object",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean",
+          "const": false
+        }
+      },
+      "required": [
+        "connected"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "connected": {
+          "type": "boolean",
+          "const": true
+        },
+        "account_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "account_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expired": {
+          "default": false,
+          "type": "boolean"
+        },
+        "can_manage": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "connected",
+        "account_id",
+        "account_name",
+        "scopes",
+        "expires_at"
+      ]
+    }
+  ]
+}

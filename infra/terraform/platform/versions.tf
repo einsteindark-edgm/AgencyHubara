@@ -9,8 +9,10 @@ terraform {
 
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.40"
+      source = "hashicorp/aws"
+      # 5.100 es la versión con la que se probó `managed_login_version` del dominio
+      # de Cognito (modules/auth); las primeras 5.x no traen ese atributo.
+      version = "~> 5.100"
     }
   }
 }

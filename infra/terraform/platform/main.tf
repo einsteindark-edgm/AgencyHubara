@@ -21,6 +21,7 @@ module "auth" {
   tenant        = each.key
   callback_urls = each.value.callback_urls
   logout_urls   = each.value.logout_urls
+  managed_login = each.value.managed_login
 }
 
 # ── Auth ids (NO-secretos) a SSM — el backend los lee para enforcar Cognito ──
@@ -45,6 +46,27 @@ resource "aws_ssm_parameter" "cognito_app_client_id" {
   name  = "/hubara/${each.key}/COGNITO_APP_CLIENT_ID"
   type  = "String"
   value = module.auth[each.key].app_client_id
+}
+
+# ── Agent Gateway (ADR docs/adr/2026-10-14-agent-gateway-auth.md) ─────
+# El backend acepta el M2M del gateway SOLO para GET /api/ads/* (`require_auth` §4).
+# Id público → String bajo /hubara/<tenant>/ (render-env-from-ssm.sh lo barre al .env).
+resource "aws_ssm_parameter" "cognito_m2m_client_ids" {
+  for_each = var.tenants
+
+  name  = "/hubara/${each.key}/COGNITO_M2M_CLIENT_IDS"
+  type  = "String"
+  value = module.auth[each.key].agent_gateway_client_id
+}
+
+# El secreto del M2M va FUERA de /hubara/<tenant>/ a propósito (render-env-from-ssm.sh
+# vuelca ese path entero al .env de TODOS los servicios); este secreto es solo del gateway.
+resource "aws_ssm_parameter" "agent_gateway_client_secret" {
+  for_each = var.tenants
+
+  name  = "/hubara/agent-gateway/${each.key}/BACKEND_M2M_CLIENT_SECRET"
+  type  = "SecureString"
+  value = module.auth[each.key].agent_gateway_client_secret
 }
 
 # ── Secretos: parámetros SSM SecureString por tenant ────────────────────────

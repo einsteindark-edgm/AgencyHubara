@@ -1,0 +1,27 @@
+[project]
+name = "hubara-agent-gateway"
+version = "0.1.0"
+description = "Hubara Agent Gateway — MCP server de solo lectura sobre /api/ads/* (fuente de datos de @acktos/dsh-hubara)."
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=2.3,<3",
+    "httpx>=0.28",
+    "pyjwt[crypto]>=2.10",
+    "uvicorn>=0.30",
+    "jsonschema>=4.23",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q"
+asyncio_mode = "auto"

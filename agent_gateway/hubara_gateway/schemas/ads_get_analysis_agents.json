@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "default": null,
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "example_input": {}
+        },
+        "required": [
+          "id",
+          "label",
+          "example_input"
+        ]
+      }
+    }
+  },
+  "required": [
+    "items"
+  ]
+}
