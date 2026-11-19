@@ -228,8 +228,9 @@ def _disk_bytes(path) -> bytes:
 def test_the_flush_failure_history_does_not_revive_the_bot(tmp_path, damage):
     """La reproducción de la revisión: el histórico de fallos del flush sobre
     una sesión humana con `metadata.json` dañado. Antes quedaba solo
-    `{"ui_intents_failures": [...]}` y el bot revivía; ahora el fallo se anota
-    sobre la última copia buena y la sesión sigue en humano."""
+    `{"ui_intents_failures": [...]}` y el bot revivía; ahora el fallo (y el
+    aviso del turno siguiente, `undelivered_cards`) se anota sobre la última
+    copia buena y la sesión sigue en humano."""
     from src.plugins.chats.agent.sales.activities import flush_ui_intents
 
     store = FilesystemMetadataStore(tmp_path)
@@ -238,11 +239,14 @@ def test_the_flush_failure_history_does_not_revive_the_bot(tmp_path, damage):
     path = tmp_path / "wa_1" / "metadata.json"
     damage(path)
 
-    flush_ui_intents._append_failures(store, "wa_1", [{"kind": "product_detail", "error": "x"}])
+    flush_ui_intents._append_failures(
+        store, "wa_1", [{"kind": "product_detail", "error": "x"}], ["la foto del producto «Vela»"], now_ms=1
+    )
 
     after = json.loads(_disk_bytes(path))
     assert (after["active_route"], after["registered_order"]) == ("humano", {"order_id": "order_1"})
     assert after["ui_intents_failures"][-1]["kind"] == "product_detail"
+    assert after["undelivered_ui_intents"][-1]["what"] == "la foto del producto «Vela»"
 
 
 def test_update_retries_a_transient_read_failure(tmp_path, monkeypatch):
