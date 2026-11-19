@@ -242,6 +242,7 @@ replacements:
     files:
       - "infra/terraform/**"
       - "infra/compose/render-env-from-ssm.sh"
+      - "infra/compose/split-env-by-service.py"   # reparto por servicio (2026-10-26)
       - "infra/scripts/**"
       - "infra/robotocore/**"
       - "infra/whatsapp-provisioning/**"

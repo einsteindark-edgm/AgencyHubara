@@ -92,8 +92,9 @@ module "graphagents" {
 
 # ── Caja del laboratorio de conversaciones (bajo demanda, sin llaves de prod) ─
 # count: el módulo entero se prende/apaga con var.lab.enabled. Lo único que toca
-# de producción es AGREGAR una política (launch-lab) al rol de las cajas de app:
-# ni la instancia ni el vault cambian (checklist "terraform apply destroyed vault").
+# de producción es AGREGAR una política (launch-lab) al rol de las cajas de app y
+# al de sus contenedores: ni la instancia ni el vault cambian (checklist
+# "terraform apply destroyed vault").
 module "lab" {
   source = "./modules/lab-instance"
   count  = var.lab.enabled ? 1 : 0
@@ -105,7 +106,10 @@ module "lab" {
   autostop_idle_minutes = var.lab.autostop_idle_minutes
   max_run_hours         = var.lab.max_run_hours
   image_repo            = var.image_repo
-  app_role_names        = [for tenant, m in module.app : m.role_name if contains(var.lab.tenants, tenant)]
-  tenants               = var.lab.tenants
-  use_local             = local.use_local
+  # Con hop limit 1 la API y sales_eval llaman al laboratorio con el rol de los
+  # contenedores: `launch-lab` va también a ese rol (el de la caja lo conserva
+  # mientras dure la transición).
+  app_role_names = flatten([for tenant, m in module.app : [m.role_name, m.containers_role_name] if contains(var.lab.tenants, tenant)])
+  tenants        = var.lab.tenants
+  use_local      = local.use_local
 }

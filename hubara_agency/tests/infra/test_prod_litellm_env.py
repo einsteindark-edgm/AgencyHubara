@@ -9,15 +9,17 @@ reiniciaba LiteLLM, que arranca en ~990 MB y con los días baja a ~200 (lo que n
 usa se va a swap). Las alarmas de poca memoria del 8, 13, 14 y 21 de octubre y
 del 5 de noviembre sonaron justo después de un deploy.
 
-Ahora `render-env-from-ssm.sh` le arma `litellm.env` con solo las llaves que
-nombra su config (`os.environ/…`) y la huella del config: compose lo recrea
-cuando cambia una de esas cosas (o su imagen), no con cada deploy.
+Ahora el reparto de `render-env-from-ssm.sh` (`split-env-by-service.py`) le
+arma `litellm.env` con solo las llaves que nombra su config (`os.environ/…`) y
+la huella del config: compose lo recrea cuando cambia una de esas cosas (o su
+imagen), no con cada deploy.
 
 Se corre el script con un `aws` falso en el PATH y la caja en un directorio
 temporal (`HUBARA_DIR`).
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -72,9 +74,13 @@ def _box(tmp_path: Path, *, config: str = _CONFIG) -> Path:
 def _render(tmp_path: Path, box: Path, *, image: str = "ghcr.io/x/agencyhubara:aaa", params: dict | None = None) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
-    lines = "".join(f"/hubara/hubara/{k}\\t{v}\\n" for k, v in (params or _PARAMS).items())
+    answer = tmp_path / "ssm.json"
+    answer.write_text(json.dumps({"Parameters": [
+        {"Name": f"/hubara/hubara/{k}", "Type": "String" if k.startswith("COGNITO_") else "SecureString", "Value": v}
+        for k, v in (params or _PARAMS).items()
+    ]}), encoding="utf-8")
     fake = bin_dir / "aws"
-    fake.write_text(f"#!/bin/bash\nprintf '{lines}'\n", encoding="utf-8")
+    fake.write_text(f"#!/bin/bash\ncat '{answer}'\n", encoding="utf-8")
     fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HUBARA_DIR": str(box),
            "HUBARA_IMAGE": image, "OTEL_ENDPOINT": ""}
@@ -96,7 +102,7 @@ def test_litellm_gets_only_the_keys_its_config_names(tmp_path: Path) -> None:
         "GEMINI_API_KEY": "sk-gemini-1",
     }
     assert re.fullmatch(r"[0-9a-f]{64}", litellm["LITELLM_CONFIG_SHA256"])
-    assert "WHATSAPP_APP_SECRET" in _env_file(box / ".env")  # el resto del stack sigue igual
+    assert "WHATSAPP_APP_SECRET" in _env_file(box / "secrets" / "api.env")  # el resto del stack recibe lo suyo
     assert stat.S_IMODE((box / "litellm.env").stat().st_mode) == 0o600
 
 

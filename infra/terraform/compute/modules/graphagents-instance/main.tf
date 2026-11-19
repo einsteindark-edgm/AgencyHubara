@@ -192,6 +192,10 @@ resource "aws_instance" "graphagents" {
 
   metadata_options {
     http_tokens = "required"
+    # 1 salto: ningún contenedor de la caja llega a sus credenciales (ninguno usa
+    # AWS; el autoapagado y el agente SSM corren en el host). Revisión 2026-10-26.
+    http_put_response_hop_limit = 1
+    http_endpoint               = "enabled"
   }
 
   # Incidente 2026-07-08: AMI drift (data source most_recent) convertía un apply
